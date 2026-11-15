@@ -68,8 +68,8 @@ export function hairStrips(head, { style = 'short', fem = false } = {}) {
 
 /**
  * The ways a real face's hair is combed over its sculpted hair (hairStrips, human-strands.js): lines (spines) walked from roots over it the way
- * it lies, each a list of { p, n, at, tip, skin } (a point on the hair, the way the hair there faces, the head's point under it, past the end
- * of the hair, rooted on the skin), with full (how long it was meant to be), layer (0 inner .. 1 outer), wide, kind, flip, shade and edge (rooted
+ * it lies, each a list of { p, n, at, tip, skin, lies } (a point on the hair, the way the hair there faces, the head's point under it, past the end
+ * of the hair, rooted on the skin, a tip lying on the skin and not in the air), with full (how long it was meant to be), layer (0 inner .. 1 outer), wide, kind, flip, shade and edge (rooted
  * on the skin outside the hairline). space: how far apart their roots are; edgeSpace: the hairline's. Or null: too little hair.
  */
 export function hairGuides(head, { style = 'short', fem = false, space: sp0 = 0, edgeSpace = .005, seed: s0 = 7 } = {}) {
@@ -164,13 +164,16 @@ export function hairGuides(head, { style = 'short', fem = false, space: sp0 = 0,
       if (!s || s.edge || !outward(s.p, s.n) || (bun && Math.hypot(s.p[0] - BUN[0], s.p[1] - BUN[1], s.p[2] - BUN[2]) < .035)) {
         // past the end of the hair: the tips run on a little way, lying on the skin where there is skin, else on into the air (the ends of long
         // hair further, falling as they go)
-        const air = !(s && s.edge) || bob, run = air && style === 'long' ? .015 + .03 * rnd() : mn(full - len, .006 + .01 * rnd()), steps = Math.max(1, Math.round(run / STEP));
+        // (onto the skin of the brow only a few millimetres: further, the front of a head of hair combed forward hung its ends over the forehead)
+        // (a lock of long hair whose next step finds no hair but the forehead's skin under it lies on the skin too: in the air, the front of long
+        // hair had fallen a few centimetres in front of the brow)
+        const air = !(s ? s.edge : sample(q[0], q[1], q[2], true)?.edge) || bob, run = air && style === 'long' ? .015 + .03 * rnd() : mn(full - len, air ? .006 + .01 * rnd() : .002 + .004 * rnd()), steps = Math.max(1, Math.round(run / STEP));
         let tp = p;
         for (let k = 1; k <= steps; k++) {
           if (air) { dir = [dir[0], dir[1] - .25, dir[2]]; const dl = Math.hypot(...dir); dir = dir.map(v => v / dl); }
           tp = [tp[0] + dir[0] * STEP, tp[1] + dir[1] * STEP, tp[2] + dir[2] * STEP]; let tn = nrm; const sk = air ? null : sample(tp[0], tp[1], tp[2], true);
           if (sk && outward(sk.p, sk.n)) { tp = sk.p.slice(); tn = sk.n.slice(); }
-          spine.push({ p: tp, n: tn, at, tip: true });
+          spine.push({ p: tp, n: tn, at, tip: true, lies: !air });
         }
         break;
       }

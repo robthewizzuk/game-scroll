@@ -209,6 +209,7 @@ const U = [0, .2, .4, .6, .8, .92, 1];   // (along half the mouth, from its midd
  *     red (up) and the bottom of the lower's (dn), y from the middle of the head;
  *   nose: the outside of the left wing of the nose [x, y, z].
  */
+export const EYE_LONG = .002, EYE_UP = 0;
 export function gnmMarks(c, eyeAt) {
   const P = marksOf(c), M = MARKS, pt = i => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]];
   const eL = pt(M.eyes[0]), eR = pt(M.eyes[1]), mid = [(eL[0] + eR[0]) / 2, (eL[1] + eR[1]) / 2, (eL[2] + eR[2]) / 2];
@@ -222,7 +223,10 @@ export function gnmMarks(c, eyeAt) {
     let hu = 0, hl = 0; for (const p of L) { const v = ca * (p[1] - cy) - sa * (p[0] - cx); hu = Math.max(hu, v); hl = Math.max(hl, -v); }
     return [cx, cy, w, ang, hu, hl];
   });
-  const rv = rims[0].map((v, i) => (v + rims[1][i]) / 2), rim = { cx: r5(rv[0]), cy: r5(rv[1]), w: r5(rv[2]), ang: Math.round(rv[3] * 1e4) / 1e4, hu: r5(rv[4]), hl: r5(rv[5]) };
+  // (GNM's openings come out shorter than measured eyes', 23 mm from corner to corner against about 28, each corner short of where a real one
+  // is (the inner 20 mm from the middle of the face, a real one's 16 or 17), and the upper lid low over the iris: with the lid's rest over it,
+  // a sleepy eye. Each corner out by EYE_LONG, the upper lid's edge up by EYE_UP)
+  const rv = rims[0].map((v, i) => (v + rims[1][i]) / 2), rim = { cx: r5(rv[0]), cy: r5(rv[1]), w: r5(rv[2] + EYE_LONG), ang: Math.round(rv[3] * 1e4) / 1e4, hu: r5(rv[4] + EYE_UP), hl: r5(rv[5]) };
   // the mouth: its corners, where the lips meet (between the two edges of the slit the inner edges of the lips leave), their red
   const mouth = M.mouth.map(i => at(pt(i))), half = (Math.max(...mouth.map(p => p[0])) - Math.min(...mouth.map(p => p[0]))) / 2;
   const fold = L => { const o = []; for (const p of L) o.push([Math.abs(p[0]), p[1]]); return o.sort((a, b) => a[0] - b[0]); };

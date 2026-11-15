@@ -216,6 +216,9 @@ function mats() {
   // (less of the sky in it than the shine off the sun or a lamp: under a grey sky dark hair had turned silver)
   MATS.hairReal = pbr('#ffffff', { rough: .52, vertexColors: true, aniso: .7 }); Object.assign(MATS.hairReal, { envMapIntensity: .25, specularIntensity: .55 });
   Object.assign(MATS.hairReal, { map: MATS.hair.map, normalMap: MATS.hair.normalMap }); MATS.hairReal.normalScale.set(.6, .6); MATS.hairReal.color.copy(MATS.hair.color);
+  // (curly and coily hair: hardly a shine at all, as such hair has: each coil turns every way, so no band of light runs along the head. With
+  // the straight hair's, the combed picture under the coils had shone through them as pale streaks from the crown)
+  MATS.hairCoil = MATS.hairReal.clone(); Object.assign(MATS.hairCoil, { specularIntensity: .12, envMapIntensity: .08 });
   // a real head of hair's strips (human-hair.js), lit as that hair is: drawn twice, first what is mostly hair (solid, kept to: the alpha test),
   // then what is between and round it, see-through, over that (no MSAA on the phones' WebGPU, so the alpha test's edge alone stepped and crawled)
   { const { px, mips } = paintCards(), t = new DataTexture(px, CARD.w, CARD.h, RGBAFormat, UnsignedByteType);
@@ -692,6 +695,9 @@ export function human(o = {}) {
   const hairUnder = hairC.clone().multiplyScalar(.5).lerp(skinC.clone().multiplyScalar(.6), .25);   // (skin under the hair's edge: its roots and its shade, the hair's colour in shadow)
   const hairNear = sp.face.real && headP && sp.hair && sp.hairStyle !== 'bald' && !sp.hat ? hairGrid(headP, slotsOf[pieces.indexOf(headP)]) : null;
   const skinNear = hairNear && hairGrid(headP, slotsOf[pieces.indexOf(headP)], 'skin'), hairThin = hairC.clone().lerp(skinC, .65);   // (the hair at its edge, where the skin shows between its first hairs)
+  // (curly and coily hair thins out over a few millimetres, not a centimetre: its coils stand off the scalp and hide it, so a wide band
+  // of skin's colour under them had read as a bare band round the hairline)
+  const thinW = 1 - .65 * ss(.55, .9, sp.curl);
   let at = 0; const offs = [];
   for (let pi = 0; pi < pieces.length; pi++) {
     const p = pieces[pi], cs = slotsOf[pi], sm = seam[pi], LAY = sm.lay, bi = p.names.map(b => Math.max(0, bones.indexOf(b)));
@@ -736,7 +742,7 @@ export function human(o = {}) {
       // a real head's hairline: the hair starts with a few hairs and thickens over the first centimetre or so, with the skin showing between them;
       // the sculpted hair under the strands is coloured so there, the skin's colour through the hair's, so its edge is not the edge of a cap.
       // Where the hair meets the face and the temples (behind, a fringe or a bob hangs off the skin: no skin shows), and wandering along it
-      if (skinNear && s.k === HAIRK && p === headP) { const d = skinNear(x, y, z); if (d < .012) { const w = .75 + .5 * lumps(x * 90 + 1.3, y * 90, z * 90), t = Math.max(0, 1 - d / (.011 * w)) ** 1.3 * ss(-.06, -.01, y - HC[1] - (z - HC[2]) * .6); col.lerp(hairThin, Math.min(1, t)); } }
+      if (skinNear && s.k === HAIRK && p === headP) { const d = skinNear(x, y, z); if (d < .012) { const w = (.75 + .5 * lumps(x * 90 + 1.3, y * 90, z * 90)) * thinW, t = Math.max(0, 1 - d / (.011 * w)) ** 1.3 * ss(-.06, -.01, y - HC[1] - (z - HC[2]) * .6); col.lerp(hairThin, Math.min(1, t)); } }
       if (s.k === HAIRK && p === headP && !sp.fem) { const hy = y - HC[1], clip = ss(.035, -.03, hy) * (.3 + .1 * ss(-.02, -.06, z - HC[2])); col.lerp(skinC, clip); col.multiplyScalar(.94 + .08 * lumps(x * 60, y * 60, z * 60)); }
       // the iris: fine streaks out from the pupil (each sliver of it a little lighter or darker than the next)
       if (s.a === 'eyes' && p === headP && !sp.face.real) { const b = +p.slots[p.slot[i]][3]; if (b >= 1 && b <= 3) col.multiplyScalar(1 + .14 * lumps(Math.round(Math.atan2(y - HC[1] - EYE[1], abs(x) - EYE[0]) / (PI * 2) * 24) * 7.31 + (x > 0 ? 3 : 11), b * .37, 2.9)); }
@@ -809,7 +815,7 @@ export function human(o = {}) {
   const tu = new InterleavedBuffer(TU, 4);
   const attrs = { position: new BufferAttribute(P, 3), normal: new BufferAttribute(N, 3), color: new BufferAttribute(C, 3), uv: new BufferAttribute(U, 2), skinIndex: new BufferAttribute(SI, 4), skinWeight: new BufferAttribute(SW, 4), gsThin: new InterleavedBufferAttribute(tu, 2, 0), uv1: new InterleavedBufferAttribute(tu, 2, 2) };
   // each level: its triangles in groups by material (close: all six; middle: skin and the rest; far: one)
-  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, sp.face.real ? M.hairReal : M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
+  const matsFor = [[skin, sp.face.real ? M.eyesReal : M.eyes, M.cloth, M.leather, M.hard, M.steel, sp.face.real ? (sp.curl > .55 ? M.hairCoil : M.hairReal) : M.hair, M.lash], [skin, M.far], [M.far]], groupOf = [k => k, k => k <= 1 ? 0 : 1, () => 0];
   const geos = [0, 1, 2].map(L => {
     const by = matsFor[L].map(() => []);
     pieces.forEach((p, pi) => { const I = L ? p.I[L] : seam[pi].I, off = offs[pi]; for (let t = 0; t < I.length; t += 3) { const a = I[t] + off, b = I[t + 1] + off, c = I[t + 2] + off, k = cls[b] === cls[c] ? cls[b] : cls[a]; by[groupOf[L](k)].push(a, b, c); } });
@@ -955,7 +961,7 @@ export function human(o = {}) {
     root.grime = root.rig.grime = new Grime(B, jointAt);   // (how wet, muddy, dusty and snowy, and the elbows' and knees' bends: what the clothes' and skin's look reads on WebGPU)
     for (const m of lods) { m.userData.gsGrime = root.grime.v; m.userData.gsBends = root.grime.bends; }
     for (const [name, how] of hung) root.rig.hang(B[name], how);   // a pack, a bag, a canteen, a holster: they bounce and swing as he moves (close up)
-    root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid, droop: sp.face.real ? .14 : 0 });   // blinks, eyes, brows and mouth: the rig steps it with the body
+    root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid, droop: sp.face.real ? (sp.face.gnm ? -.12 + .12 * ss(45, 75, sp.face.age ?? 30) : .14) : 0 });   // blinks, eyes, brows and mouth: the rig steps it with the body
     root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)
     root.idle = root.rig.idle = new Idle(root, root.rig);   // (fidgets, the head after the eyes, glances, gestures: person.idle)
     // (looks that change while the game runs, made the first time they are asked for: human-looks.js)
