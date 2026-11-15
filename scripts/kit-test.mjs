@@ -7430,6 +7430,41 @@ console.log('physics ok');
   assert.equal(pickSize(...FOLD, 1.3e6, 1, 2, 12, { upscale: 5, scene: 5 }), 'lvl', 'the final picture at its last step: the 3D');
   assert.equal(pickSize(...PHONE, .5e6, 0, 0, null, null), 'out', 'where the chip doesn\'t say: the final picture while it is over one and a half times the 3D\'s size');
   assert.equal(pickSize(...PHONE, 1.3e6, 0, 0, null, null), 'lvl', 'and the 3D where it is not');
+  // drawn only as big as the picture's detail needs (detail-size.js): the power law's sums, the size it picks, and
+  // how it moves (down slowly in tenths, up at once, never under its least)
+  {
+    const D = await import('../src/kit/detail-size.js'), { DS } = D, keep = { ...DS };
+    const close = (a, b, e, m) => assert.ok(Math.abs(a - b) < e, `${m}: ${a} vs ${b}`);
+    // an octave ratio of .5: each octave above the drawn one holds half the one below
+    close(D.missing(.01, .02, 1, 1), .01 * .5 / Math.log(2), 1e-9, 'drawn at half size, the octave just above it as the power law sums it (between e1 s and e1)');
+    close(D.missing(.01, .02, 30, 30), .01 / Math.log(2), 1e-6, 'drawn far smaller, all the octaves above: e1 / ln(1 / s)');
+    assert.equal(D.missing(.01, .02, 1, 0), 0, 'drawn at the final size, nothing is missed');
+    assert.ok(D.lossDb(.004, .01, .5, 1) < D.lossDb(.004, .01, .5, .5), 'drawn smaller than when measured, more is lost');
+    for (const [e1, e2, r] of [[2e-4, 6e-4, .85], [1e-3, 1.5e-3, .7], [5e-5, 4e-4, .6]]) {
+      const k = D.sizeFor(e1, e2, r, 36), n = Math.log2(1 / r);
+      if (k < 1) close(D.lossDb(e1, e2, n, Math.log2(1 / k)), 36, .01, 'the size picked misses just the target');
+    }
+    assert.ok(D.sizeFor(.02, .021, .5, 36) > .95, 'a picture full of detail at every octave: about the final size');
+    assert.ok(D.sizeFor(1e-6, 1e-4, .85, 36) < .3, 'a picture with almost none: far smaller');
+    assert.equal(D.sizeFor(0, 0, .8), .8, 'a flat picture (nothing measured): as drawn');
+    assert.equal(D.sizeFor(1e-3, 1e-3 / 1.19, .85, 36), 1, 'a pattern at the pixel\'s own size (the village\'s bricks: the finest octave holding more than the one below): the full size, the power law doesn\'t hold');
+    // the meter's bytes: 16-bit logs of e1 and e2, two bytes each
+    const enc = e => { const c = Math.min(1, Math.max(0, (Math.log2(Math.max(e, 2 ** -32)) + 32) / 32)) * 255; return [Math.floor(c), Math.round((c % 1) * 255)]; };
+    { const px = new Uint8Array(8); px.set([...enc(1e-3), ...enc(4e-3), ...enc(3e-3), ...enc(2e-3)]); const [a, b] = D.fromPixels(px);
+      close(a / 2e-3, 1, .01, 'e1 back as the mean over the blocks'); close(b / 3e-3, 1, .01, 'e2 back'); }
+    assert.deepEqual(D.fromPixels(new Uint8Array(4)), [0, 0], 'a flat block reads as none');
+    // moving: from the quality steps' full size, a picture with little detail is drawn smaller a step at a time
+    Object.assign(DS, { on: true, k: 1, use: 1, least: .6 });
+    const flat = [1e-5, 1e-3], seen = [];
+    for (let i = 0; i < 30; i++) seen.push(D.measured(...flat, .8 * DS.use, .8));
+    assert.ok(seen[0] === 1 && seen.every((v, i) => !i || v <= seen[i - 1]), 'down, never at once');
+    assert.ok(seen.every(v => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9), 'in tenths, so the pictures behind are made again now and then');
+    assert.equal(seen.at(-1), .6, 'and never under the least share');
+    assert.equal(D.measured(.02, .021, .8 * .6, .8), 1, 'detail back: up at once');
+    DS.on = false; assert.equal(D.measured(...flat, .8, .8), 1, 'off: the quality steps\' size');
+    D.resetSize(); Object.assign(DS, keep);
+  }
+  console.log('gs.hd picture-led size ok');
   // the steps themselves (hd3d.js stepsRun): Rob's Fold run again, low at the first resolution step, the chip 11.6 ms a frame
   // in the middle and 22 at its worst, the upscaler 5.9 of it
   const { stepsRun } = await import('../src/kit/hd3d.js');

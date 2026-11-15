@@ -13,13 +13,23 @@
 //   smoke: gs.gas works out how much sun reaches each part of its box (gas-gpu.js, its light volume); a point under
 //     or in the smoke looks that up where its way to the sun enters the box (gasSunAt, which the froxel fog reads too).
 // Kit use only.
-import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, DataTexture, Data3DTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
+import { RenderTarget, HalfFloatType, FloatType, RGFormat, RedFormat, RGBAFormat, NearestFilter, LinearFilter, DataTexture, Data3DTexture, NodeMaterial, QuadMesh, Mesh, PlaneGeometry, OrthographicCamera, Matrix4, Vector2, Vector3, Vector4, RendererUtils, DoubleSide, AlwaysDepth, NoBlending } from 'three/webgpu';
 import { Fn, Loop, If, Break, float, int, vec2, vec4, ivec2, uniform, renderGroup, texture, uv, positionWorld, positionGeometry, select, smoothstep, clamp, min, max, abs, dot, length, mix, fract, floor, pow, getViewPosition, interleavedGradientNoise, screenCoordinate, dFdx, dFdy, texture3D, vec3 } from 'three/tsl';
 import { CAPS, GRID, HeightTiles } from './sunmask.js';
 import { ORIGIN } from './origin.js';
 
 const NOTHING_V = -10000;
 const STEPS = 12, FAR_STEPS = 24, MS = 768;   // (the mask's picture is MS x MS, the mask drawn into a corner of it: see MASK)
+// Visual masking (option 9 of the GPU ideas, 2026-11-15): grain is harder to see over a busy picture than over a flat
+// one. Past the contrast a flat patch shows its own grain at (c0), how much a pattern has to be to be seen rises as
+// (C / c0)^0.7 (Legge and Foley 1980; Daly's visible differences predictor uses the same law), and the grain of N
+// jittered steps falls as 1 / sqrt(N): so where the picture is busy, the same unseen grain needs (c0 / C)^1.4 of the
+// steps. hd3d-gpu.js busyMeter draws the last frame's picture into rt in blocks of 8 x 8 pixels as that share (kept to
+// least), and the contact shadows take that share of their steps there (grass, gravel, bark and roof tiles about
+// seven of twelve; smooth walls, ground and sky all twelve), and the soft sun shadows that share of their taps while
+// those turn and the upscaler's history averages them (hd3d-gpu.js pcss: three or four filter taps of seven). on false: off.
+export const BUSY = { on: true, c0: .03, least: .55, k: uniform(0), drawn: false, rt: new RenderTarget(1, 1, { depthBuffer: false }) };
+BUSY.rt.texture.minFilter = BUSY.rt.texture.magFilter = LinearFilter;
 // (every number here is read per render: three sends a thing's own numbers again only when it or its material changes)
 const U = {
   on: uniform(0), VP: uniform(new Matrix4()), maskK: uniform(new Vector2(1, 1)),   // what materials read: whether the mask is this view's, the camera that drew it, the corner of the picture it fills
@@ -107,7 +117,7 @@ const capShade = (P, L, A, B) => {
 
 function maskMaterial(depthTex, rev) {
   const m = new NodeMaterial(); m.name = 'Sun mask';
-  const dT = texture(depthTex), hT = texture(HT.rt ? HT.rt.texture : HT.none), cT = texture(capT), gT = texture(gridT);
+  const dT = texture(depthTex), hT = texture(HT.rt ? HT.rt.texture : HT.none), cT = texture(capT), gT = texture(gridT), bT = texture(BUSY.rt.texture);
   const depthAt = q => dT.sample(q).x;
   m.fragmentNode = Fn(() => {
     const q = uv(), d = depthAt(q).toVar(), out = vec4(1, 60000, 0, 1).toVar();
@@ -120,8 +130,10 @@ function maskMaterial(depthTex, rev) {
       // contact: a few steps towards the sun through the depth picture; a surface in front of the ray (and not too far in front) shades it
       If(U.contact.x.greaterThan(.5).and(dist.lessThan(U.contact.w)), () => {
         const len = U.contact.y, jit = interleavedGradientNoise(screenCoordinate), occ = float(0).toVar();
+        const ns = mix(float(STEPS), max(bT.sample(q).r.mul(STEPS).round(), 6), BUSY.k).toVar();   // (fewer where the picture hides the grain: BUSY)
         Loop(STEPS, ({ i }) => {
-          const t = float(i).add(jit).add(.3).div(STEPS).mul(len), Q = P.add(U.sunV.mul(t));
+          If(float(i).greaterThanEqual(ns), () => { Break(); });
+          const t = float(i).add(jit).add(.3).div(ns).mul(len), Q = P.add(U.sunV.mul(t));
           const c = U.proj.mul(vec4(Q, 1)), n = c.xy.div(c.w), qq = vec2(n.x.mul(.5).add(.5), n.y.mul(-.5).add(.5));
           If(qq.x.lessThan(0).or(qq.x.greaterThan(1)).or(qq.y.lessThan(0)).or(qq.y.greaterThan(1)), () => { Break(); });
           const S = getViewPosition(qq, depthAt(qq), U.invProj), gap = S.z.sub(Q.z), qd = Q.z.negate();
