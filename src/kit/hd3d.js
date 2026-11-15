@@ -3368,8 +3368,14 @@ export class HDView {
     // only when the camera's own setting disagrees, and the SGSR 2 jitter puts back the matrix it saved
     // before, so a switch made inside the frame was undone (on WebGPU the near clip sat at twice its
     // distance: Long Shadow's rifle was cut away). Switch it here, before anything saves it.
-    const cs = G ? G.r.coordinateSystem : WebGLCoordinateSystem;
-    if (this.cam.coordinateSystem !== cs) { this.cam.coordinateSystem = cs; this.cam.updateProjectionMatrix(); }
+    // The same for which way depth runs (gpu.js REVERSED: WebGPU keeps it reversed, 1 near to 0 far): three turns the
+    // camera's projection round inside the frame the first time it draws with it, the jitter put the old one back,
+    // and from then on three took the camera for turned. Until a game changed its field of view the depth test ran
+    // backwards: the furthest thing won, so a valley drew as its far hills and the water under the land, with no
+    // village and no people (Long Shadow's flyover). And a camera once turned stays turned if the view goes on to
+    // WebGL (a lost chip), which three never turns back.
+    const cs = G ? G.r.coordinateSystem : WebGLCoordinateSystem, rev = !!(G && G.r.reversedDepthBuffer);
+    if (this.cam.coordinateSystem !== cs || this.cam.reversedDepth !== rev) { this.cam.coordinateSystem = cs; this.cam._reversedDepth = rev; this.cam.updateProjectionMatrix(); }
     if (!r) { c.fillStyle = this.scene.background ? '#' + this.scene.background.getHexString() : '#0b0f14'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = '600 12px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('This device cannot show 3D', w / 2, h / 2); return; }
     const now = performance.now();
     // where the frame goes: straight onto the card (moving the 3D canvas here first, which bakes the

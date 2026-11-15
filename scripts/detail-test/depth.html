@@ -66,6 +66,28 @@ try {
     check('the walls at 3 km, a metre apart: only the front one shows', far[1].front === far[1].n && !far[1].back, `${far[1].front} of ${far[1].n} front, ${far[1].back} back`);
     check('the walls at 8 km, a metre apart: only the front one shows', far[2].front === far[2].n && !far[2].back, `${far[2].front} of ${far[2].n} front, ${far[2].back} back`);
   }
+  // A view drawn as games draw (the upscaler on: it nudges the camera's projection each frame and puts back the one
+  // it saved) whose camera's field of view never changes after make(). three turns a camera's projection round the
+  // first time it draws with it, inside the frame, and the upscaler then put the old one back: the depth test ran
+  // backwards from the first frame until a game happened to change its camera, and the furthest thing won (Long
+  // Shadow's flyover drew as far hills and the water under the land). The view sets the camera before the frame.
+  {
+    HD.upscale = true;
+    const v2 = new gs.hd.HDView({ bg: '#8fa6c4', fog: 0, amb: 1 });
+    const s2 = gs.hd.sun('#ffffff', 2, 14, [.2, 1, .6]); v2.scene.add(s2, s2.target); v2.sun = s2; s2.follow(0, 0, 0);
+    v2.cam.fov = 45; v2.cam.aspect = W / H; v2.cam.near = .1; v2.cam.far = 2000; v2.cam.position.set(0, 0, 0); v2.cam.lookAt(0, 0, -1); v2.cam.updateProjectionMatrix(); v2.cam.updateMatrixWorld();
+    const flat = (col, w, h, z) => { const m = new T.Mesh(new T.PlaneGeometry(w, h), gs.hd.pbr(col, { rough: .9 })); m.position.set(0, 0, z); v2.scene.add(m); return m; };
+    flat('#20d020', 400, 300, -60); flat('#d02020', 1.2, .9, -3);   // (a green wall right across the view, a red card in front of its middle)
+    let px2; for (let i = 0; i < (GPU ? 10 : 5); i++) { x.clearRect(0, 0, W, H); v2.render(x, W, H); await frame(); px2 = x.getImageData(0, 0, W, H).data; }
+    out.upscaled = c.toDataURL();
+    let red = 0, green = 0, n = 0;
+    for (let j = H / 2 - 12; j < H / 2 + 12; j++) for (let i = W / 2 - 16; i < W / 2 + 16; i++) { const k = (j * W + i) * 4; n++; if (px2[k] > px2[k + 1] + 40) red++; else if (px2[k + 1] > px2[k] + 40) green++; }
+    const e14 = v2.cam.projectionMatrix.elements[14], want = !!(GPU && G.r.reversedDepthBuffer);
+    info.upscaled = { red, green, n, projection: e14 > 0 ? 'reversed' : 'forward' };
+    check('with the upscaler on and a camera that is never changed: the near card is in front of the wall', red === n, `${red} of ${n} pixels the card, ${green} the wall behind it`);
+    check('and after its frames the camera\'s projection runs the way the renderer keeps depth', (e14 > 0) === want && !!v2.cam.reversedDepth === want, `projection ${e14 > 0 ? 'reversed' : 'forward'}, the renderer ${want ? 'reversed' : 'forward'}`);
+    HD.upscale = false;
+  }
   // what a game is told is the same either way
   const a = v.toScreen(0, 0, -1), b = v.toScreen(0, 0, -1000), far3 = v.toScreen(0, 0, -19999), behind = v.toScreen(0, 0, 5), side = v.toScreen(.2, .1, -1);
   check('toScreen: the middle of the view is the middle of the picture', Math.abs(a[0] - W / 2) < .01 && Math.abs(a[1] - H / 2) < .01, `${a[0].toFixed(2)}, ${a[1].toFixed(2)}`);
