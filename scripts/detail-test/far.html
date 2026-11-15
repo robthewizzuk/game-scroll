@@ -1,0 +1,97 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// The far world as a picture (v.farWorld; src/kit/hd3d-gpu-far.js) for scripts/detail-test.cjs --page far --webgpu: a
+// valley seen from a tower, blocks and farms out to 700 m all round and a few near ones, the sun throwing shadows. Each
+// view is drawn with the far world live and from its pictures, and they are compared: looking each of the four ways,
+// a step to the side (the pictures hold up), a walk on (live until the pictures are drawn again where the camera
+// settles), zoomed in (live), a far block that starts to move (live from then on, and no copy of it left behind).
+// Also what it saves: draws and the chip's time. WebGL: the setting does nothing and the frame is as live.
+//   ?gpu  ?tier=2  ?w=240&h=320  ?from=150  ?bundle (still things in render bundles, as in the app)  ?dbg (sets the scene up and stops: window.__dbg)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320), FROM = +(Q.get('from') || 150);
+HD.force = +(Q.get("tier") ?? 2); HD.bundle = Q.has("bundle"); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note) => checks.push({ name, ok: !!ok, note: String(note ?? '') });
+// a seeded random
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const v = new gs.hd.HDView({ bg: '#b8c8dc', env: .5, amb: .4, fov: 62 }), c = document.createElement('canvas'); c.width = W; c.height = H;
+const x = c.getContext('2d', { willReadFrequently: true });
+const sun = gs.hd.sun('#fff2d8', 2.2, 300, [.5, .8, .35]); v.scene.add(sun, sun.target); v.sun = sun;
+const ground = new T.Mesh(new T.PlaneGeometry(3000, 3000, 8, 8), gs.hd.pbr('#7a8a52', { rough: 1 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; v.scene.add(ground);
+const COLS = ['#c0392b', '#e8e4dc', '#2e86c1', '#d4ac0d', '#7d3c98', '#5d6d7e', '#a04000', '#1e8449'];
+const blocks = [];
+const block = (r, a, w, h, col) => { const m = new T.Mesh(new T.BoxGeometry(w, h, w * (.6 + rnd() * .8)), gs.hd.pbr(col, { rough: .8 })); m.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); m.rotation.y = rnd() * 3; m.castShadow = m.receiveShadow = true; v.scene.add(m); blocks.push(m); return m; };
+for (let i = 0; i < 90; i++) block(200 + rnd() * 500, rnd() * Math.PI * 2, 8 + rnd() * 30, 6 + rnd() * 50, COLS[i % COLS.length]);   // far all round
+const near = []; for (let i = 0; i < 8; i++) near.push(block(25 + rnd() * 70, rnd() * Math.PI * 2, 3 + rnd() * 6, 3 + rnd() * 10, COLS[(i + 3) % COLS.length]));   // near: always live
+const tower = new T.Mesh(new T.BoxGeometry(4, 18, 4), gs.hd.pbr('#8a7a6a', { rough: .9 })); tower.position.set(0, 9, 0); tower.castShadow = tower.receiveShadow = true; v.scene.add(tower);
+sun.follow?.(0, 0, -150);
+const EYE = new T.Vector3(0, 21, 0);
+const aim = (yaw, pitch = -.08, at = EYE, fov = 62) => { v.cam.fov = fov; v.cam.far = 2000; v.cam.position.copy(at); v.cam.rotation.set(0, 0, 0); v.cam.rotation.order = 'YXZ'; v.cam.rotation.y = yaw; v.cam.rotation.x = pitch; v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld(); };
+const draw = () => { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; };
+const settle = async n => { let d; for (let i = 0; i < n; i++) { d = draw(); await frame(); } return d; };
+const live = async () => { HD.farWorld = false; const d = await settle(3); const calls = HD.info.calls; HD.farWorld = undefined; return { d, calls }; };
+const untilOn = async (max = 80) => { let d, n = 0; for (; n < max; n++) { d = draw(); await frame(); if (HD.info.far?.on) break; } d = await settle(2); return { d, n, calls: HD.info.calls, on: !!HD.info.far?.on }; };
+// how far apart two pictures are: the mean difference a channel, and the share of pixels more than 40 apart
+const diff = (a, b) => { let s = 0, big = 0; for (let i = 0; i < a.length; i += 4) { const e = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); s += e / 3; if (e > 120) big++; } const n = a.length / 4; return { mean: +(s / n).toFixed(2), big: +(big / n * 100).toFixed(2) }; };
+const close = q => q.mean < 3.5 && q.big < 2;
+const shot = (name, d) => { const id = new ImageData(new Uint8ClampedArray(d), W, H); x.putImageData(id, 0, 0); out[name] = c.toDataURL(); };
+if (Q.has('dbg')) { window.__dbg = { v, draw, settle, aim, blocks, HD, x, c, diff, T, G }; window.result = { checks: [], info: {}, out: {} }; }
+else try {
+  aim(0); v.farWorld = { from: FROM, every: 2 };
+  if (!GPU) {
+    HD.farWorld = false; const a = await settle(20); HD.farWorld = undefined; const b = await settle(20);
+    check('WebGL: the setting does nothing (the frame is as live)', diff(a, b).mean < .5 && HD.info.far == null, JSON.stringify(diff(a, b)));
+    shot('webgl', b);
+  } else {
+    await settle(20);
+    const L0 = await live(), P0 = await untilOn();
+    info.first = { frames: P0.n, far: { ...HD.info.far }, liveCalls: L0.calls, calls: P0.calls };
+    check('the pictures stand in for the far world once drawn (within a few frames)', P0.on && P0.n < 40, `${P0.n} frames, ${JSON.stringify(HD.info.far)}`);
+    check('the far things are all taken in (90 far blocks), none of the near ones', HD.info.far.things >= 90 && HD.info.far.things <= 91, `${HD.info.far.things} things`);
+    check('fewer draws a frame with the picture', P0.calls < L0.calls * .7, `${L0.calls} live, ${P0.calls} with the picture`);
+    const q0 = diff(L0.d, P0.d); check('looking north: the picture matches the far world drawn live', close(q0), JSON.stringify(q0));
+    shot('live-north', L0.d); shot('far-north', P0.d);
+    // the other three ways (each its own picture, and the seams between them)
+    for (const [k, yaw] of [['east', -Math.PI / 2], ['south', Math.PI], ['west', Math.PI / 2], ['seam', Math.PI / 4]]) {
+      aim(yaw); const P = await settle(4), Lr = await live(), q = diff(Lr.d, P);
+      check(`looking ${k}: the picture matches the far world drawn live`, HD.info.far.on !== false && close(q), JSON.stringify(q)); info[k] = q;
+      if (k === 'seam') { shot('live-seam', Lr.d); shot('far-seam', P); }
+    }
+    // a step to the side: the pictures still hold up, every far thing where it should be from the new spot
+    aim(0, -.08, EYE.clone().add(new T.Vector3(2, .3, -1)));
+    { const P = await settle(4), on = HD.info.far.on, Lr = await live(), q = diff(Lr.d, P); check('a step to the side: the pictures still stand in, and match the far world from there', on && close(q), `${on ? 'on' : 'off: ' + HD.info.far.why} ${JSON.stringify(q)}`); shot('far-step', P); }
+    // walking on 30 m: live at once, then the pictures drawn again where the camera settles
+    aim(0, -.08, EYE.clone().add(new T.Vector3(0, 0, -30)));
+    { draw(); const why = HD.info.far.why, offNow = !HD.info.far.on; const P = await untilOn(), Lr = await live(), q = diff(Lr.d, P.d);
+      check('walking on: live at once, and the pictures are drawn again once the camera settles', offNow && P.on && close(q), `first frame ${offNow ? 'off (' + why + ')' : 'ON'}, back on in ${P.n} frames, ${JSON.stringify(q)}`); }
+    // zoomed in (a scope): live
+    aim(0, -.08, EYE.clone().add(new T.Vector3(0, 0, -30)), 8);
+    { await settle(3); check('zoomed in past the pictures\' sharpness: drawn live', !HD.info.far.on && HD.info.far.why === 'zoomed', HD.info.far.why); }
+    aim(0, -.08, EYE.clone().add(new T.Vector3(0, 0, -30)));
+    await untilOn();
+    // a far block starts to move: drawn live from then on, and no copy of it is left where it was once the pictures are drawn again
+    const mover = blocks.slice(0, 90).map(b => [b, b.position.distanceTo(v.cam.position), new T.Vector3(...b.position.toArray()).project(v.cam)]).filter(([b, d, p]) => Math.abs(p.x) < .6 && Math.abs(p.y) < .6 && p.z < 1).sort((a, b) => a[1] - b[1])[0]?.[0];
+    if (!mover) check('a far block in view to move', false, 'none');
+    else {
+      const n0 = HD.info.far.things; mover.position.x += 25; mover.updateMatrixWorld();
+      const P = await settle(14), Lr = await live(), q = diff(Lr.d, P);
+      check('a far block that moves is drawn live from then on, with no copy left behind', HD.info.far.things === n0 - 1 && HD.info.far.on && close(q), `${n0} to ${HD.info.far.things} things, ${JSON.stringify(q)}`);
+      shot('far-moved', P);
+    }
+    // the chip's time, live and with the picture (the same view; the pictures' own drawing is in "far world")
+    aim(0);
+    { HD.farWorld = false; await settle(16); const a = { all: HD.info.gpuMs, parts: HD.info.gpuParts, calls: HD.info.calls, tris: HD.info.tris, cpu: +HD.info.cpu.toFixed(2) }; HD.farWorld = undefined;
+      await untilOn(); await settle(16); const b = { all: HD.info.gpuMs, parts: HD.info.gpuParts, calls: HD.info.calls, tris: HD.info.tris, cpu: +HD.info.cpu.toFixed(2) };
+      info.chip = { live: a, far: b, far_info: { ...HD.info.far } }; }
+    check('nothing went wrong on the chip', !HD.info.gpuError, HD.info.gpuError || '');
+  }
+} catch (e) { if (e !== 0) window.result = { error: String(e && e.stack || e) }; }
+window.result ||= { checks, info, out };
+</script>

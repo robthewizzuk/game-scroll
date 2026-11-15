@@ -634,5 +634,6 @@ export function horizon(land, { inner = land.size * .47, outer = land.size * 2, 
   const mat = new MeshStandardMaterial({ vertexColors: true, roughness: 1 });
   if (look !== false) hills(mat, look);
   const m = new Mesh(g, mat); m.receiveShadow = false; m.userData.noAO = true;
+  m.userData.hollow = inner;   // (nothing within inner metres of its middle: the far world's picture takes it in, v.farWorld)
   return m;
 }
