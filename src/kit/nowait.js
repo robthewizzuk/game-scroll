@@ -45,6 +45,13 @@ export function noWait(r) {
     /** things put off and not drawable yet (their text or pipeline still on its way) */
     get pending() { return this.list.length + this.inflight + (this.running ? 1 : 0); } };
   const direct = r._renderObjectDirect, N = r._nodes, P = r._pipelines;
+  // A render object made in a frame and left out of it has no bindings yet. three, freeing one (the thing thrown away
+  // before its turn: a game's reset() under the loading screen), asks for its bindings, which writes its shader's text
+  // there and then, and takes one off the count of each group it shares, the camera's and lights' block among them,
+  // though it never added one: the block's buffer was freed under everything else, and the next frame's write to it
+  // threw (Long Shadow's round never started). One never set up has nothing to free.
+  const B = r._bindings, del = B?.deleteForRender;
+  if (typeof del === 'function') B.deleteForRender = function (ro) { if (this.get(ro).initialized !== true) { this.delete(ro); return; } return del.call(this, ro); };
   // a pipeline asked for in the frame: in the background while the view's frame is being drawn
   const upd = P.updateForRender;
   P.updateForRender = function (ro) {
@@ -82,8 +89,8 @@ export function noWait(r) {
     // the shader's text is not written yet: queued, as three's compileAsync queues a thing, and left out of this frame
     bundle();
     Q.has.add(ro); NOWAIT_STATS.texts++; name(ro, 'text');
-    Q.list.push({ ro, object, top: top(object), material, side: material.side, scene, camera, lightsNode, group, clippingContext, passId, renderContext: this._currentRenderContext,
-      state: { useFrameBufferTarget: true, renderTarget: this.getRenderTarget(), mrt: this.getMRT(), renderContext: this._currentRenderContext }, frame: take(this, lightsNode) });
+    Q.list.push(watch({ ro, object, top: top(object), material, side: material.side, scene, camera, lightsNode, group, clippingContext, passId, renderContext: this._currentRenderContext,
+      state: { useFrameBufferTarget: true, renderTarget: this.getRenderTarget(), mrt: this.getMRT(), renderContext: this._currentRenderContext }, frame: take(this, lightsNode) }));
     drain(r);
   };
 }
@@ -136,7 +143,10 @@ function drain(r) {
       if (r._isDeviceLost) { Q.list.length = 0; Q.has.clear(); break; }
       // (a thing taken out of what it was drawn in meanwhile: nothing to build for)
       // (or its material changed since: a kit's WebGL look swapped back in when the view left WebGPU, hd3d.js gpuSwap)
-      if (top(it.object) !== it.top || glLook(it.object.material) || glLook(it.material)) { NOWAIT_STATS.dropped++; Q.has.delete(it.ro); Q.counted.delete(it.object); continue; }
+      // (or it, its look, its shape or its render object was thrown away meanwhile: a game's reset() under the loading
+      // screen, three making the render object again; built, its bindings wrote to buffers already freed and the chip
+      // refused the frame: Long Shadow's round never started)
+      if (it.gone || top(it.object) !== it.top || glLook(it.object.material) || glLook(it.material)) { NOWAIT_STATS.dropped++; it.unwatch(); Q.has.delete(it.ro); Q.counted.delete(it.object); continue; }
       if (performance.now() - t0 >= NOWAIT.ms) { await nextFrame(); t0 = performance.now(); }
       const st = it.state;
       st.item = it; st.materialSide = null; back(r, st);
@@ -149,6 +159,7 @@ function drain(r) {
         const ro = it.ro;
         ro.drawRange = it.object.geometry.drawRange; ro.group = it.group;
         await r._nodes.getForRenderAsync(ro, yieldNow);
+        if (it.gone) { NOWAIT_STATS.dropped++; continue; }   // (thrown away while its text was written: nothing to make a pipeline for)
         r._nodes.updateBefore(ro);
         r._geometries.updateForRender(ro);
         r._nodes.updateForRender(ro);
@@ -158,7 +169,7 @@ function drain(r) {
         ok = true;
       } catch (e) {
         if (e !== LOST) { NOWAIT_STATS.failed++; console.warn('3D: a shader put off from a frame failed to build', e); }
-      } finally { if (r._precompilationState) finish(r); Q.has.delete(it.ro); }
+      } finally { if (r._precompilationState) finish(r); Q.has.delete(it.ro); it.unwatch(); }
       if (ok) NOWAIT_STATS.built++;
       if (!promises.length) Q.done++;
       for (const p of promises) { const end = () => { pipes.delete(q); Q.done++; }, q = p.then(end, end); pipes.add(q); }
@@ -174,6 +185,19 @@ function drain(r) {
   r.gsCompiling = p;
 }
 const LOST = new Error('device lost');
+// a queued thing is marked gone when it, its material or its geometry is disposed, or three disposes the frame's render
+// object for it (a material changed under it, its lights node freed); unwatch() takes the marks off once it is built or dropped
+function watch(it) {
+  const gone = () => { it.gone = true; }, ro = it.ro, geo = ro.geometry, own = Object.hasOwn(ro, 'dispose'), d = ro.dispose;
+  for (const t of [it.object, it.material, geo]) t?.addEventListener?.('dispose', gone);
+  ro.dispose = function () { it.gone = true; return d.apply(this, arguments); };
+  it.unwatch = () => {
+    for (const t of [it.object, it.material, geo]) t?.removeEventListener?.('dispose', gone);
+    if (own) ro.dispose = d; else delete ro.dispose;
+    it.unwatch = () => {};
+  };
+  return it;
+}
 // What else of the renderer a shader's text is written from, as the frame had it: the scene pass sets its own context on
 // the renderer while it draws (three's PassNode: the kit's ambient occlusion, reflections and lights read through it), and
 // the frame's tone mapping, shadows and depth, and the lights the scene's lights node had for this draw (it is one node for

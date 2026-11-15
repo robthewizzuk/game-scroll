@@ -663,7 +663,7 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__nowait = { NOWAIT, NOWAIT_STATS }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
+if (TEST) { window.__hd = HD; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;

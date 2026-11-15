@@ -6,7 +6,8 @@
 // each is left out of its frame and built in the background, and shows a few frames later; ?nw=0: three builds it
 // in the frame, for the comparison. Counted in the frames: shader text three wrote, and pipelines made at once
 // (createRenderPipeline: the frame waits for the driver). Also: pipelines the chip refused (a build made for the
-// wrong picture), the longest frame, and the picture once everything is built, to compare between the two.
+// wrong picture), the longest frame, and the picture once everything is built, to compare between the two. Last, a
+// thing put off and thrown away before its turn: the frames after must draw without an error.
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), NW = Q.get('nw') !== '0';
@@ -63,6 +64,22 @@ await phase('switched on', () => { h.visible = true; }, h);
 const fill = new T.DirectionalLight('#ffd8b0', .4); fill.position.set(-3, 4, 2);
 await phase('a light added', () => v.scene.add(fill), ground);
 await settle();
+// some put off and thrown away before their turn (a game's reset() under the loading screen): three freed their render
+// objects, never set up, as if they had been, and the camera's and lights' shared block went with them (the frames after
+// threw). The page fails through its errors, and the frames after must still draw. (This page did not bring the fault
+// back with the guard taken out; Long Shadow's start did: scripts/shader-replay.cjs long-shadow.)
+{
+  // (several: each freed one took one off the shared block's count, and it took a few to reach none)
+  const geo = new T.IcosahedronGeometry(.3, 3), mat = new T.MeshPhysicalMaterial({ color: '#48c', clearcoat: .6, transmission: .2 }); mat.name = 'thrown away';
+  const gone = []; for (let i = 0; i < 64; i++) { const m = new T.Mesh(geo, mat); m.name = 'thrown away'; m.position.set(-3 + (i % 8) * .8, 2.2 + (i >> 3) * .4, -1); m.castShadow = true; gone.push(m); v.scene.add(m); }
+  await draw();
+  // (thrown away in the middle of a frame, as a game's update can be: three looks up the shared block of the picture
+  // being drawn then, and frees from that one)
+  let thrown = false;
+  ground.onBeforeRender = () => { if (thrown) return; thrown = true; for (const m of gone) v.scene.remove(m); mat.dispose(); geo.dispose(); };
+  await draw(); ground.onBeforeRender = () => {};
+  await settle();
+}
 const img = x.getImageData(0, 0, 240, 320).data, pix = [];
 for (let y = 0; y < 320; y += 4) for (let xx = 0; xx < 240; xx += 4) { const k = (y * 240 + xx) * 4; pix.push(img[k], img[k + 1], img[k + 2]); }
 const texts = {}; if (Q.has('png')) for (const [k, st] of r._nodes.nodeBuilderCache) { const n = (st.fragmentShader.match(/fn main/)) ? 1 : 0; texts[k] = { f: st.fragmentShader, v: st.vertexShader, mat: (st.gsMat || ''), tex: (st.bindings || []).flatMap(g => (g.bindings || []).map(b => (b.texture ? 'T:' + (b.texture.name || b.texture.constructor?.name || '?') : b.name || '?'))) }; }

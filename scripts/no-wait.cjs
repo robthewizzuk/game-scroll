@@ -4,7 +4,8 @@
 //  - no shader text is written and no pipeline made at once in a frame, for a thing added and a thing switched on;
 //  - a light added (every lit shader new at once) is built in its frame as three does: the scene never goes;
 //  - each of them still shows (a few frames later), and no pipeline is refused (a build for the wrong picture);
-//  - once everything is built the picture is the one drawn without it.
+//  - once everything is built the picture is the one drawn without it;
+//  - a thing put off and thrown away before its turn leaves no error behind (the page's errors fail it).
 // Without it the same steps must write shader text in their frames (or the page shows nothing).
 // Usage: node scripts/no-wait.cjs
 const { chromium } = require('playwright');
