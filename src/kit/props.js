@@ -169,7 +169,7 @@ export class Props {
   }
   remove(name, id) {
     const k = this.kinds.get(name); if (!k) return this; k.mesh.removeInstances(id); delete k.items[id];
-    const S = k.solid; if (S) { const b = S.loose?.get(id); if (b) { b.remove(); S.loose.delete(id); } else S.body?.drop(id); }
+    const S = k.solid; if (S) { const b = S.loose?.get(id), kn = S.knocked?.get(id); if (b) { b.remove(); S.loose.delete(id); } else if (kn) { kn.body.remove(); S.knocked.delete(id); } else S.body?.drop(id); }
     return this;
   }
   /**
@@ -180,7 +180,7 @@ export class Props {
    * copy a body of its own that falls, tumbles and gets knocked over (density; it draws where its body is by itself;
    * best for tens, not thousands). Returns the body (still) or a Map of id to body (loose).
    */
-  solid(world, name, { shape = 'box', r = null, loose = false, density = 1, tag = name, sound, friction, bounce } = {}) {
+  solid(world, name, { shape = 'box', r = null, loose = false, density = 1, tag = name, sound, friction, bounce, knock = 0 } = {}) {
     const k = this.kinds.get(name); if (!k) throw new Error(`No prop kind "${name}": call kind() first`);
     this.unsolid(name);
     const g = k.mesh.geometry; if (!g.boundingBox) g.computeBoundingBox();
@@ -201,7 +201,18 @@ export class Props {
       const body = world.shapes(list, o);
       // (hit.part: the copy, and whose)
       for (const [id, c] of body.colliders) if (id !== null) c.userData = { props: this, kind: name, id };
-      k.solid = { world, body, upright: shape === 'trunk' };
+      k.solid = { world, body, upright: shape === 'trunk', spec, o, knock, knocked: new Map() };
+      // knock: something moving at least this fast (metres a second) knocks a copy over: it leaves the still body and
+      // falls as a body of its own, and what hit it carries on, a little slower (a car through a lamp post, a bin, a sign)
+      if (knock > 0) {
+        const S = k.solid;
+        world.onHit((a, b, speed, c) => {
+          if (k.solid !== S || speed < knock) return;
+          const me = a === body ? a : b === body ? b : null, it = me === a ? b : a; if (!me || it.fixed || it.kind === 'ground' || it.tag === 'wreckage') return;
+          const part = c?.part; if (!part || part.props !== this || part.kind !== name) return;
+          this.knock(name, part.id, it, me === a ? c.vb : c.va);
+        });
+      }
       return body;
     }
     const map = new Map();
@@ -213,8 +224,37 @@ export class Props {
     k.solid = { world, loose: map };
     return map;
   }
+  /**
+   * Knocks a still copy over (solid() with knock does this by itself when something hits it hard enough): it leaves the
+   * still body and becomes a body of its own that falls and tumbles, drawn where its body is. by: what hit it (a World3D
+   * body; it is handed back most of the speed it had, was: how it was moving before it hit). Returns the copy's body.
+   */
+  knock(name, id, by = null, was = null) {
+    const k = this.kinds.get(name), S = k?.solid; if (!S?.body || S.knocked.has(id) || !k.items[id]) return null;
+    k.mesh.getMatrixAt(id, PM4); const at = new Vector3(), q = new Quaternion(), sc = new Vector3(); PM4.decompose(at, q, sc);
+    S.body.drop(id);
+    const stand = new Copy(k.mesh, id, at, q, sc), sp = S.spec(sc);
+    const b = S.world.shape(stand, { ...sp, off: sp.off }, { ...S.o, tag: S.o.tag }); b.part = { props: this, kind: name, id, knocked: true };
+    S.knocked.set(id, { body: b, m: PM4.clone() });
+    const v = was || by?.vel || null;
+    if (v) {
+      const sp2 = Math.hypot(v.x, v.z) || 1, ux = v.x / sp2, uz = v.z / sp2;
+      b.setVel(v.x * .85, 1.5 + Math.random(), v.z * .85).setSpin(uz * 5, (Math.random() - .5) * 2, -ux * 5);   // (tipped over the way it was hit)
+      if (by?.body?.isDynamic?.()) { const m1 = b.mass, m2 = by.mass || 1, keep = Math.max(.6, 1 - 2 * m1 / (m1 + m2)); by.body.setLinvel({ x: v.x * keep, y: v.y * keep, z: v.z * keep }, true); }
+    }
+    return b;
+  }
+  /** Puts the copies of a kind (all kinds with none) that were knocked over back where they stood, solid again. */
+  mend(name = null) {
+    for (const [n, k] of this.kinds) {
+      if (name && n !== name) continue; const S = k.solid; if (!S?.knocked?.size) continue;
+      for (const [id, r] of S.knocked) { r.body.remove(); if (!k.items[id]) continue; k.mesh.setMatrixAt(id, r.m); r.m.decompose(PV, PQ, PS); const sp = S.spec(PS); S.body.add({ ...sp, at: PV.clone(), turn: sp.upright ? null : PQ.clone(), part: id }); const c = S.body.colliders.get(id); if (c) c.userData = { props: this, kind: n, id }; }
+      S.knocked.clear(); if (k.mesh.instanceMatrix) k.mesh.instanceMatrix.needsUpdate = true;
+    }
+    return this;
+  }
   /** Takes a kind's copies out of the physics world again (they stay drawn). */
-  unsolid(name) { const k = this.kinds.get(name), S = k?.solid; if (!S) return this; if (S.body) S.body.remove(); for (const b of S.loose?.values() || []) b.remove(); k.solid = null; return this; }
+  unsolid(name) { const k = this.kinds.get(name), S = k?.solid; if (!S) return this; if (S.body) S.body.remove(); for (const b of S.loose?.values() || []) b.remove(); for (const r of S.knocked?.values() || []) r.body.remove(); k.solid = null; return this; }
   hide(name, id, hidden = true) { this.kinds.get(name)?.mesh.setVisibilityAt(id, !hidden); return this; }
   /**
    * Scatters count of a kind over an area { x0, z0, x1, z1 } (or a function () => { x, z } for odd

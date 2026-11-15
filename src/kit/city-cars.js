@@ -99,6 +99,7 @@ const INSIDE = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
 function bare(m) { const ud = m.userData; m.userData = {}; try { return m.clone(); } finally { m.userData = ud; } }
 const hashOf = s => { let h = 2166136261; for (const ch of String(s)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return ((h >>> 0) % 10007) / 10007; };
 const KITS = new Map();
+const SIT_HIPS = .51;   // (a person's hips over their feet, seated at a wheel: the drive pose lowers them .245 of 1.8 m from .95)
 let canKeep = false; simplifyReady.then(() => { canKeep = true; });   // (before the simplifier is in, the far shapes aren't simpler: not ones to keep)
 /** A style of car taken apart for the city (made once, kept). */
 export function carKit(style) {
@@ -107,8 +108,8 @@ export function carKit(style) {
   const v = vehicle('car', { style, seed: 3, colour: '#ffffff', finish: 'gloss' }); v.updateMatrixWorld(true);
   const paint = [], rest = [], head = [], tail = [], wheelsFar = [], lensed = [], inner = [], glass = [], shut = [];
   let pLook = null, gLook = null;
-  for (const m of v.shell.children) {
-    if (!m.isMesh || m.isInstancedMesh) continue;
+  const all = []; v.shell.traverse(m => { if (m.isMesh && !m.isInstancedMesh && m.name !== 'wheel') all.push(m); });   // (the doors and the steering wheel are parts of their own)
+  for (const m of all) {
     const mt = m.material;
     if (m.name === 'paint') { paint.push(plain(m, v)); pLook ||= mt; }
     else if (INSIDE.has(m.name)) inner.push(plain(m, v, { colour: mt.color, pal: palIndex(mt.roughness, mt.metalness) }));
@@ -125,7 +126,7 @@ export function carKit(style) {
   const P = join(paint), R0 = join(rest), R = join([R0, ...inner].map(g => g.clone())), G = join(glass), lampAt = v.points.lampL?.position;
   const whole = join([R, ...wheelsFar, ...lensed].map(g => g.clone())), closed = join([R0, ...shut, ...wheelsFar, ...lensed].map(g => g.clone()));   // (whole: a parked car's close by, wheels, unlit lamps and its inside in, its glass apart; closed: with dark glass and no inside)
   k = {
-    style, rough: !canKeep, size: { ...v.size }, length: v.size.length, width: Math.min(v.size.width, 2), wheelbase: v.wheelbase, lampY: lampAt ? lampAt.y : .6,
+    style, rough: !canKeep, size: { ...v.size }, driver: v.points.driver ? { x: v.points.driver.position.x, y: v.points.driver.position.y, z: v.points.driver.position.z } : null, length: v.size.length, width: Math.min(v.size.width, 2), wheelbase: v.wheelbase, lampY: lampAt ? lampAt.y : .6,
     paint: P, rest: R, whole, closed, glass: G, head: join(head), tail: join(tail), wheel, wheels: W, paintLook: pLook, glassLook: gLook,
     far: { paint: farShape(P, .12), rest: farShape(join([R0, ...shut, ...wheelsFar].map(g => g.clone())), .1) },
   };
@@ -230,8 +231,9 @@ export class ParkedGlass {
 
 /** The drawing of a city's traffic: styles (CITY_CARS), cap (most cars at once), near (how many drawn whole), reach (metres). */
 export class Fleet {
-  constructor(parent, styles, cap, { near = 6, reach = 32 } = {}) {
+  constructor(parent, styles, cap, { near = 6, reach = 32, crowd = null } = {}) {
     this.parent = parent; this.styles = styles; this.cap = Math.max(1, cap); this.nearMax = near; this.reach = reach;
+    this.crowd = crowd;   // (the city's crowd, or a function that gives it: the drivers of the cars drawn whole are its members, at the wheel)
     this.kits = styles.map(carKit);
     this.group = new Group(); this.group.name = 'city cars'; parent.add(this.group);
     const look = this.kits[0].paintLook, farPaint = shared('farpaint', () => { const m = bare(look); m.color.set('#ffffff'); m.vertexColors = true; return m; });   // (far off: plain paint)
@@ -287,11 +289,35 @@ export class Fleet {
     if (k.head) mesh(k.head, lampMat('head'), false);
     const tail = k.tail ? mesh(k.tail, lampMat('tail'), false) : null;
     const wheels = new InstancedMesh(k.wheel, restMat(), k.wheels.length); wheels.castShadow = wheels.receiveShadow = true; wheels.instanceMatrix.setUsage(DynamicDrawUsage); o.add(wheels);
-    const rec = { o, body, tail, wheels, odo: c.odo || 0, steer: 0, lean: 0, pitch: 0, h: c.heading, v: c.v };
+    const rec = { o, body, tail, wheels, odo: c.odo || 0, steer: 0, lean: 0, pitch: 0, h: c.heading, v: c.v, driver: null };
     this.group.add(o); this.close.set(c, rec);
     this.pose(c, rec, 0, 0);
   }
-  drop(c) { const r = this.close.get(c); if (!r) return; r.o.removeFromParent(); r.wheels.dispose(); this.close.delete(c); }
+  drop(c) { const r = this.close.get(c); if (!r) return; r.o.removeFromParent(); r.wheels.dispose(); if (r.driver) this.crowdOf()?.remove(r.driver); this.close.delete(c); }
+  /**
+   * A car out of the traffic and into the game's hands: a gs.models vehicle in its style and colour, where it was and turned
+   * as it was (its doors open, its driver can be pulled out), and nothing of it left among the traffic's copies.
+   */
+  real(c) {
+    this.drop(c);
+    const F = this.far[c.style]; if (F && c.slot != null) { F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); F.paint.instanceMatrix.needsUpdate = F.rest.instanceMatrix.needsUpdate = true; }
+    const v = vehicle('car', { style: c.taxi && this.styles[c.style] !== 'van' ? 'taxi' : this.styles[c.style] || 'saloon', colour: '#' + new Color(c.colour).getHexString(), seed: c.slot | 0 });
+    v.position.set(c.x, 0, c.z); v.rotation.y = c.heading + Math.PI;
+    return v;
+  }
+  crowdOf() { const w = typeof this.crowd === 'function' ? this.crowd() : this.crowd; return w && w.moves?.includes?.('drive') !== false ? w : null; }
+  // a close-up car's driver: one of the crowd at the wheel (the crowd's 'drive' move), sat on the seat as the car is turned; a car
+  // that is empty (c.empty: parked, or the one the player took) has none
+  driverOf(c, r, k) {
+    const crowd = k.driver && !c.empty ? this.crowdOf() : null;
+    if (!crowd) { if (r.driver) { this.crowdOf()?.remove(r.driver); r.driver = null; } return; }
+    if (!r.driver || !crowd.list.includes(r.driver)) {   // (a crowd that was cleared, as a new round starts, gets its drivers again)
+      const kinds = crowd.kinds?.length || 1, n = Math.floor(hashOf('driver' + c.slot + ':' + c.style) * 9973);
+      r.driver = crowd.add({ x: c.x, y: 0, z: c.z, kind: n % kinds, move: 'drive', size: .94 + (n % 7) * .02, phase: (n % 13) / 13 });
+    }
+    const d = k.driver, yaw = c.heading + Math.PI, cs = Math.cos(yaw), sn = Math.sin(yaw), m = r.driver, size = m.size || 1;
+    m.x = c.x + d.x * cs + d.z * sn; m.z = c.z - d.x * sn + d.z * cs; m.y = d.y + .09 - SIT_HIPS * size; m.turn = yaw + Math.PI;
+  }
   // a close-up car each frame: where it is, its body on its springs, its wheels, its brake lamps
   pose(c, r, dt, night) {
     const k = this.kitOf(c), o = r.o;
@@ -313,6 +339,7 @@ export class Fleet {
     });
     r.wheels.instanceMatrix.needsUpdate = true;
     if (r.tail) r.tail.material = lampMat(c.braking ? 'brake' : 'tail');
+    this.driverOf(c, r, k);
   }
   /**
    * The headlights of the cars drawn whole, as spots for view.placeLamps (src/kit/lamps.js): a dipped beam's shape,

@@ -19,7 +19,7 @@ const { PI, sin, cos, sqrt, abs, min, max, hypot, round } = Math;
 export function shell(b, p) {
   const { L, W, H = 0, clear, r, tw, deck, cab = null, tub = null, axles = [], soft = .06, step = .09, tumble = .13, at = -p.L / 2, gap = .065,
     plan = [[0, .9], [.3, .975], [.7, 1], [L - .7, 1], [L - .25, .97], [L, .9]], glass = cab ? [cab[0] + .12, cab[3] - .1] : null, pillars = [], lift = .05,
-    inside = 'paint', paint = 'paint', capA = paint, capB = paint, crown = 1 } = p;
+    inside = 'paint', paint = 'paint', capA = paint, capB = paint, crown = 1, panels = [] } = p;
   const hw = W / 2, Ra = r + gap;
   const fDeck = line(deck, soft), fPlan = line(plan, .12), fFloor = line([[0, clear + lift], [.35, clear], [L - .4, clear], [L, clear + lift * 1.2]], .1);
   const fCab = cab ? line([[cab[0], 0], [cab[1], 1], [cab[2], 1], [cab[3], 0]], .035) : () => 0;
@@ -37,17 +37,30 @@ export function shell(b, p) {
   if (cab) must.push(cab[0], cab[0] + .03, cab[1] - .03, cab[1], cab[2], cab[2] + .03, cab[3] - .03, cab[3]);
   if (glass) must.push(glass[0], glass[1]);
   for (const q of pillars) must.push(q - .035, q + .035);
+  for (const d of panels) must.push(d.z0, d.z1);
   if (tub) must.push(tub[0], tub[0] + .012, tub[1] - .012, tub[1]);
   const Z = stations(0, L, step, must, .025), mid = i => (Z[i] + Z[i + 1]) / 2, rd = [0, 0, 0, .03, 0, .03, .045, .05, 0, 0];
   const sideGlass = z => glass && z > glass[0] && z < glass[1] && fCab(z) > .25 && !pillars.some(q => abs(z - q) < .035);
   const screen = z => cab && ((z > cab[0] + .03 && z < cab[1] - .03) || (z > cab[2] + .03 && z < cab[3] - .03));
   b.skin(Z.map(ring), {
     round: [...rd, ...rd.slice(1, 9).reverse()], capA, capB,
-    slot: (i, j) => { const s = j <= 8 ? j : 17 - j, z = mid(i); return s <= 2 ? 'under' : s === 5 ? (sideGlass(z) ? 'glass' : paint) : s >= 7 ? (inTub(z) ? inside : screen(z) ? 'glass' : paint) : paint; },
+    slot: (i, j) => { const s = j <= 8 ? j : 17 - j, z = mid(i), slot = s <= 2 ? 'under' : s === 5 ? (sideGlass(z) ? 'glass' : paint) : s >= 7 ? (inTub(z) ? inside : screen(z) ? 'glass' : paint) : paint; return panelOf(panels, z, s, j <= 8 ? 1 : -1, slot); },
   });
   // how far out the side is at height y (along the side's own corners, from the sill up to the roof's edge)
   const sideAt = (z, y) => { const h = half(z); if (y <= h[3][1]) return h[3][0]; for (let j = 3; j < 7; j++) { const a = h[j], c = h[j + 1]; if (y <= c[1]) return c[1] > a[1] ? lerp(a[0], c[0], (y - a[1]) / (c[1] - a[1])) : c[0]; } return h[7][0]; };
-  return { half, Z: z => at + z, deck: fDeck, floor: fFloor, wide: z => hw * fPlan(z), wheelX: z => hw * fPlan(z) * .965 - .03 - tw / 2, cabin: fCab, sideAt };
+  return { half, Z: z => at + z, deck: fDeck, floor: fFloor, wide: z => hw * fPlan(z), wheelX: z => hw * fPlan(z) * .965 - .03 - tw / 2, cabin: fCab, sideAt, panels };
+}
+// a door's share of a skin: the pieces of the side (from the sill to the roof's edge: s 3..6) between its shut lines go to
+// a part of its own, named 'door|slot' while skinning and then taken out of the body by apart()
+function panelOf(panels, z, s, side, slot) {
+  if (!slot || s < 3 || s > 6) return slot;
+  for (const d of panels) if (d.side === side && z > d.z0 && z < d.z1) return d.name + '|' + slot;
+  return slot;
+}
+// what was skinned as 'door|slot' out of a shape and into each door's own (its own space is the vehicle's: the door is hung in place)
+function apart(b, into) {
+  for (const [key, l] of [...b.slots]) { const k = key.indexOf('|'); if (k < 0) continue; b.slots.delete(key); const name = key.slice(0, k); for (const g of l) (into[name] ||= new Shape()).put(key.slice(k + 1), g); }
+  return into;
 }
 
 /**
@@ -60,12 +73,15 @@ export function band(b, sh, slot, z0, z1, y0, y1, { gaps = [], out = .004, step 
   const runs = []; let a = z0;
   for (const [ga, gb] of gaps.slice().sort((p, q) => p[0] - q[0])) { if (gb <= a || ga >= z1) continue; if (ga > a + .01) runs.push([a, ga]); a = max(a, gb); }
   if (z1 > a + .01) runs.push([a, z1]);
-  for (const s of sides) for (const [ra, rb] of runs) {
+  // (on a car whose doors open, each door's share of the band goes with the door)
+  const hung = sh.hung, doorsOn = hung ? sh.panels : [];
+  for (const s of sides) for (const [ra, rb] of runs.flatMap(([ra, rb]) => { const cut = [ra, ...doorsOn.filter(d => d.side === s).flatMap(d => [d.z0, d.z1]).filter(z => z > ra + .01 && z < rb - .01).sort((p, q) => p - q), rb]; return cut.slice(1).map((z, i) => [cut[i], z]); })) {
+    const zm0 = (ra + rb) / 2, door = doorsOn.find(d => d.side === s && zm0 > d.z0 && zm0 < d.z1), into = door ? hung[door.name] ||= new Shape() : b;
     // (in strips one above another, broken where the side bends, so the band lies on it and not through it)
     const zm = (ra + rb) / 2, lo0 = Y0(zm), hi0 = Y1(zm), cuts = [0, ...sh.half(zm).slice(3, 8).map(p => (p[1] - lo0) / (hi0 - lo0)).filter(f => f > .02 && f < .98), 1].sort((p, q) => p - q);
     for (let k = 0; k < cuts.length - 1; k++) {
       const rows = stations(ra, rb, step).map(z => { const lo = Y0(z), hi = Y1(z), ya = lerp(lo, hi, cuts[k]), yb = lerp(lo, hi, cuts[k + 1]); return [[s * (sh.sideAt(z, yb) + out), yb, sh.Z(z)], [s * (sh.sideAt(z, ya) + out), ya, sh.Z(z)]]; });
-      b.ribbon(slot, rows, [s, 0, 0]);
+      into.ribbon(slot, rows, [s, 0, 0]);
     }
   }
 }
@@ -86,8 +102,11 @@ export function lightBar(b, w, at, { d = .26, h = .1, tilt = 0 } = {}) {
 // what every road vehicle carries on its ends: bumpers, lamps, a grille, plates
 function ends(b, sh, { L, clear, lamp = 'round', bumper = 'chrome', grille = true, lampY = .13, tail = [.2, .09], rear = true, bars = 4, lampR = .082, by = .26 }) {
   const { Z, deck, wide } = sh, w0 = wide(.02), w1 = wide(L - .02), y0 = deck(0), y1 = deck(L), k = lampR / .082;
-  if (bumper) { b.box(bumper, w0 * 2 + .08, .11 * k, .13 * k, [0, clear + by, Z(-.005)], 0, .045); if (rear) b.box(bumper, w1 * 2 + .08, .11, .13, [0, clear + by + .01, Z(L + .005)], 0, .045); }
-  b.box('plate', .4, .1, .012, [0, clear + by, Z(-.01 - .065 * k)]); if (rear) b.box('plate', .4, .1, .012, [0, clear + by + .01, Z(L + .075)]);
+  // (on a car whose doors open, its bumpers and their plates are parts too, so a crash can knock them loose: hung.bumperF, bumperR)
+  const H = sh.hung && sh.panels?.length ? sh.hung : null, F = H && bumper ? H.bumperF = new Shape() : b, Bk = H && bumper ? H.bumperR = new Shape() : b;
+  if (bumper) { F.box(bumper, w0 * 2 + .08, .11 * k, .13 * k, [0, clear + by, Z(-.005)], 0, .045); if (rear) Bk.box(bumper, w1 * 2 + .08, .11, .13, [0, clear + by + .01, Z(L + .005)], 0, .045); }
+  F.box('plate', .4, .1, .012, [0, clear + by, Z(-.01 - .065 * k)]); if (rear) Bk.box('plate', .4, .1, .012, [0, clear + by + .01, Z(L + .075)]);
+  if (H && bumper) { H.bumperAt = [[0, clear + by, Z(-.005)], [0, clear + by + .01, Z(L + .005)], w0 * 2 + .08, w1 * 2 + .08]; if (!rear) delete H.bumperR; }
   if (grille) { const gw = w0 * 2 - .62 * k, gh = .037 * bars, gy = y0 - lampY - .01 - (bars - 4) * .018; b.box('dark', gw, gh + .002, .03, [0, gy, Z(-.008)], 0, .01); for (let i = 0; i < bars; i++) b.box('chrome', gw - .02, .012, .012, [0, gy - gh / 2 + .019 + i * .037, Z(-.026)]); }
   for (const s of [-1, 1]) {
     const x = s * (w0 - .11 - lampR), y = y0 - lampY;
@@ -97,11 +116,11 @@ function ends(b, sh, { L, clear, lamp = 'round', bumper = 'chrome', grille = tru
   }
 }
 // the lines where doors shut, and their handles
-function doors(b, sh, seams, handles = []) {
-  const { half, Z, deck, wide } = sh;
+function doors(b, sh, seams, handles = [], hung = {}) {
+  const { half, Z, deck, wide, panels } = sh, on = (z, s) => { const d = panels.find(d => d.side === s && z > d.z0 && z < d.z1); return d ? hung[d.name] ||= new Shape() : b; };
   for (const z of seams) { const h = half(z), a = [lerp(h[3][0], h[4][0], .12), lerp(h[3][1], h[4][1], .12)], c = [lerp(h[4][0], h[5][0], .82), lerp(h[4][1], h[5][1], .82)];
     for (const s of [-1, 1]) { b.strip('dark', [s * (a[0] + .001), a[1], Z(z)], [s * (h[4][0] + .001), h[4][1], Z(z)], .008, .004).strip('dark', [s * (h[4][0] + .001), h[4][1], Z(z)], [s * (c[0] + .001), c[1], Z(z)], .008, .004); } }
-  for (const z of handles) for (const s of [-1, 1]) b.box('chrome', .022, .024, .12, [s * (wide(z) * .997 + .006), deck(z) - .115, Z(z)], 0, .008);
+  for (const z of handles) for (const s of [-1, 1]) on(z, s).box('chrome', .022, .024, .12, [s * (wide(z) * .997 + .006), deck(z) - .115, Z(z)], 0, .008);
 }
 
 // a shape's triangles turned to face the other way (inside out): the lining seen from within
@@ -118,8 +137,8 @@ function inward(g) {
  * back when there is room; a van has a wall behind its two), a mirror. Slots: lining, liner, carpet, dash,
  * dials, seat. hip: the seat's height and its place along the car (the driver point's).
  */
-function cabin(b, sh, c, style, hip) {
-  const { half, Z, deck, wide, wheelX, cabin: fCab } = sh, cab = c.cab, z0 = cab[0] + .02, z1 = cab[3] - .03;
+function cabin(b, sh, c, style, hip, hung = {}) {
+  const { half, Z, deck, wide, wheelX, cabin: fCab, panels } = sh, cab = c.cab, z0 = cab[0] + .02, z1 = cab[3] - .03;
   const glass = c.glass || [cab[0] + .12, cab[3] - .1], pillars = c.pillars || [];
   const sideGlass = z => z > glass[0] && z < glass[1] && fCab(z) > .25 && !pillars.some(q => abs(z - q) < .035);
   const screen = z => (z > cab[0] + .03 && z < cab[1] - .03) || (z > cab[2] + .03 && z < cab[3] - .03);
@@ -128,11 +147,18 @@ function cabin(b, sh, c, style, hip) {
     const h = half(z), y0 = h[0][1], y1 = h[9][1], cy = (y0 + y1) / 2, ky = max(.5, 1 - .1 / max(.2, y1 - y0)), kx = max(.5, 1 - .05 / max(.3, h[4][0]));
     const r = h.map(([x, y]) => [x * kx, cy + (y - cy) * ky, Z(z)]); for (let j = h.length - 2; j >= 1; j--) r.push([-r[j][0], r[j][1], Z(z)]); return r;
   };
-  const must = [cab[1], cab[2], glass[0], glass[1], ...pillars.flatMap(q => [q - .035, q + .035]), cab[0] + .03, cab[1] - .03, cab[2] + .03, cab[3] - .03];
+  const must = [cab[1], cab[2], glass[0], glass[1], ...pillars.flatMap(q => [q - .035, q + .035]), cab[0] + .03, cab[1] - .03, cab[2] + .03, cab[3] - .03, ...panels.flatMap(d => [d.z0, d.z1].filter(z => z > z0 && z < z1))];
   const Zs = stations(z0, z1, .1, must, .02), mid = i => (Zs[i] + Zs[i + 1]) / 2, I = new Shape();
+  // (the door cards below the glass go with their doors)
   I.skin(Zs.map(ring), { capA: 'lining', capB: 'lining', crease: .6,
-    slot: (i, j) => { const s = j <= 8 ? j : 17 - j, z = mid(i); return s <= 2 ? null : s === 5 ? (sideGlass(z) ? null : 'lining') : s >= 7 ? (screen(z) ? null : 'liner') : s === 6 ? 'liner' : 'lining'; } });
-  for (const [s, l] of I.slots) for (const g of l) b.put(s, inward(g));
+    slot: (i, j) => { const s = j <= 8 ? j : 17 - j, z = mid(i), slot = s <= 2 ? null : s === 5 ? (sideGlass(z) ? null : 'lining') : s >= 7 ? (screen(z) ? null : 'liner') : s === 6 ? 'liner' : 'lining'; return s < 6 ? panelOf(panels, z, s, j <= 8 ? 1 : -1, slot) : slot; } });
+  for (const [s, l] of I.slots) { const k = s.indexOf('|'); for (const g of l) (k < 0 ? b : hung[s.slice(0, k)] ||= new Shape()).put(k < 0 ? s : s.slice(k + 1), inward(g)); }
+  // each door's edges, closing its skin to its card: front, back and along the sill (from the sill to the foot of the glass)
+  for (const d of panels) {
+    const D = hung[d.name] ||= new Shape(), at = z => { const h = half(z), r = ring(z); return [3, 4, 5].map(j => [[d.side * h[j][0], h[j][1], Z(z)], [d.side * r[j][0], r[j][1], Z(z)]]); };
+    D.ribbon('paint', at(d.z0 + .003), [0, 0, -1]).ribbon('paint', at(d.z1 - .003), [0, 0, 1]);
+    D.ribbon('paint', stations(d.z0 + .003, d.z1 - .003, .1).map(z => at(z)[0]), [0, -1, 0]);
+  }
   // the floor, a little above the underside
   const fy = c.clear + .15, fw = min(wide(z0), wide(z1)) * 1.9 - .14;
   b.box('carpet', fw, .04, z1 - z0, [0, fy - .02, Z((z0 + z1) / 2)]);
@@ -143,9 +169,11 @@ function cabin(b, sh, c, style, hip) {
   for (const dx of [-.075, .075]) b.cyl('dials', .052, .052, .012, [x + dx, yd - .045, Z(zd + dd + .004)], [PI / 2 - .25, 0, 0], 16);
   b.box('dials', .2, .12, .012, [0, yd - .1, Z(zd + dd + .006)], [-.2, 0, 0]);
   // the wheel on its column, before the driver's chest
-  const hy = hip[1], hz = hip[2] - Z(0), wz = hz - .5, wy = hy + .39;
-  b.ring('dash', .185, .017, [x, wy, Z(wz)], [-.42, 0, 0], PI * 2, 28).box('dash', .07, .06, .04, [x, wy, Z(wz + .015)], [-.42, 0, 0], .015);
-  for (const a of [PI / 2, PI * 7 / 6, PI * 11 / 6]) b.bar('dash', [x, wy, Z(wz + .01)], [x + cos(a) * .18, wy + sin(a) * .18 * cos(.42), Z(wz + .01 - sin(a) * .18 * sin(.42))], .011, 5);
+  // (the wheel is a part of its own that turns as the car steers: hung.steering, on its pivot, tilted .42 back)
+  const hy = hip[1], hz = hip[2] - Z(0), wz = hz - .5, wy = hy + .39, Wh = hung.steering = new Shape();
+  Wh.ring('dash', .185, .017, [0, 0, 0], 0, PI * 2, 28).box('dash', .07, .06, .04, [0, 0, .015], 0, .015);
+  for (const a of [PI / 2, PI * 7 / 6, PI * 11 / 6]) Wh.bar('dash', [0, 0, .01], [cos(a) * .18, sin(a) * .18, .01], .011, 5);
+  hung.wheelAt = [x, wy, Z(wz)];
   b.bar('dash', [x, wy, Z(wz + .02)], [x, wy - .14, Z(zd + dd - .05)], .03, 8);
   // a console between the front seats, its lever
   const zc0 = zd + dd - .05, zc1 = hz + .05;
@@ -172,7 +200,7 @@ const CARS = {
   hatch: { L: 4.05, W: 1.74, H: 1.48, base: 2.55, front: .84, r: .31, tw: .195, clear: .17, deck: [[0, .71], [.12, .78], [1.27, .96], [3.9, 1.02], [4.05, 1]], cab: [1.29, 1.94, 3.4, 3.97], pillars: [2.6], seams: [1.38, 2.6, 3.36], handles: [2.47, 3.24] },
   estate: { L: 4.75, W: 1.8, H: 1.47, base: 2.78, front: .9, r: .32, tw: .2, clear: .18, deck: [[0, .7], [.12, .77], [1.4, .95], [4.6, 1], [4.75, .98]], cab: [1.42, 2.1, 4.28, 4.68], pillars: [2.75, 3.72], seams: [1.5, 2.75, 3.66], handles: [2.62, 3.54] },
   sports: { L: 4.35, W: 1.86, H: 1.25, base: 2.56, front: .9, r: .335, tw: .25, clear: .13, gap: .045, tumble: .17, deck: [[0, .56], [.3, .72], [.9, .84], [1.5, .87], [3.6, .93], [4.35, .86]], cab: [1.6, 2.38, 2.9, 3.9], seams: [1.7, 2.86], handles: [2.72], spoiler: true },
-  van: { L: 4.95, W: 1.92, H: 1.98, base: 3.1, front: .92, r: .34, tw: .21, clear: .2, tumble: .07, deck: [[0, .8], [.15, .95], [.78, 1.14], [4.95, 1.17]], cab: [.8, 1.4, 4.9, 4.94], glass: [.95, 2.3], pillars: [], seams: [1.36, 2.3, 3.5], handles: [2.18, 2.42], lamp: 'box' },
+  van: { L: 4.95, W: 1.92, H: 1.98, base: 3.1, front: .92, r: .34, tw: .21, clear: .2, tumble: .07, deck: [[0, .8], [.15, .95], [.78, 1.14], [4.95, 1.17]], cab: [.8, 1.4, 4.9, 4.94], glass: [.95, 2.3], pillars: [], seams: [1.36, 2.3, 3.5], handles: [2.18, 2.42], slide: true, lamp: 'box' },
   pickup: { L: 5.25, W: 1.88, H: 1.78, base: 3.3, front: .94, r: .39, tw: .25, clear: .26, tumble: .1, lugs: 22, deck: [[0, 1], [.2, 1.1], [1.45, 1.22], [5.25, 1.27]], cab: [1.47, 2.02, 3, 3.12], tub: [3.22, 5.17, .9], seams: [1.56, 2.92], handles: [2.78], lamp: 'box' },
   jeep: { L: 3.45, W: 1.6, H: 1.05, base: 2.05, front: .64, r: .37, tw: .19, clear: .25, lugs: 20, soft: .025, deck: [[0, .96], [.05, 1.02], [1.3, 1.05], [1.42, 1.05], [1.52, .82], [2, .82], [2.12, 1.02], [3.45, 1.02]], tub: [1.3, 3.38, .42],
     plan: [[0, .93], [.15, .98], [.4, 1], [3.2, 1], [3.45, .97]], bumper: 'dark', grille: false, open: true },
@@ -185,8 +213,10 @@ CARS.ambulance = { ...CARS.van, H: 2.5, cab: [.8, 1.32, 4.9, 4.94], deck: [[0, .
 /** A car: saloon, hatch, estate, sports, van, pickup, jeep; police, taxi, ambulance. */
 export function car(o = {}) {
   const style = CARS[o.style] ? o.style : 'saloon', c = CARS[style], b = new Shape(), L = c.L, zf = c.front, zr = c.front + c.base;
-  const sh = shell(b, { ...c, axles: [zf, zr], step: .09 / (o.detail || 1) }), { Z, deck, wide, wheelX } = sh;
-  ends(b, sh, c); doors(b, sh, c.seams || [], c.handles || []);
+  // its doors, each a part on its hinge at its front edge (a van's back door slides): one a side for each handle, between the shut lines either side of it
+  const panels = c.open || o.doors === false ? [] : (c.handles || []).flatMap((hz, k) => [-1, 1].map(side => ({ name: (k ? 'back' : 'door') + (side < 0 ? 'L' : 'R'), side, z0: c.seams[k], z1: c.seams[k + 1], slide: k > 0 && c.slide })));
+  const sh = shell(b, { ...c, axles: [zf, zr], step: .09 / (o.detail || 1), panels }), { Z, deck, wide, wheelX, half } = sh, hung = sh.hung = apart(b, {});
+  ends(b, sh, c); doors(b, sh, c.seams || [], c.handles || [], hung);
   const points = {}, spares = [], beacons = livery(b, sh, c, zf, zr);
   if (!c.open) {   // mirrors at the foot of the screen, an exhaust
     for (const s of [-1, 1]) { const z = c.cab[0] + .2, x = wide(z); b.box('paint', .16, .1, .06, [s * (x + .1), deck(z) + .07, Z(z)], [0, s * .25, 0], .025).box('dark', .08, .03, .03, [s * (x + .03), deck(z) + .04, Z(z)]); }
@@ -208,15 +238,27 @@ export function car(o = {}) {
   } else {   // (a long cabin's seats stay near the screen: a van's are not halfway down it)
     const hz = min(lerp(c.cab[1], c.cab[2], .3) + .25, c.cab[1] + .85);
     Object.assign(points, { driver: [-.37, c.clear + .32, Z(hz)], passenger: [.37, c.clear + .32, Z(hz)] });
-    if (o.inside !== false) cabin(b, sh, c, style, points.driver);
+    if ((c.handles || []).length > 1 && !c.slide && c.cab[2] - c.cab[1] > 1.1) for (const sd of [-1, 1]) points[sd < 0 ? 'backL' : 'backR'] = [sd * .37, c.clear + .32, Z(hz + .88)];   // (the bench behind, by the back doors)
+    if (o.inside !== false) cabin(b, sh, c, style, points.driver, hung);
   }
+  // the parts: the doors hung in place on their hinges (their shapes in the car's own space), the steering wheel on its column
+  const parts = {}, doorList = [];
+  for (const d of panels) {
+    if (!hung[d.name]) continue;
+    const h = half(d.z0 + .02), y = (h[3][1] + h[6][1]) / 2;
+    parts[d.name] = { shape: hung[d.name], at: [d.side * (h[4][0] + .004), y, Z(d.z0)], inPlace: true };
+    doorList.push({ name: d.name, side: d.side, slide: !!d.slide, length: d.z1 - d.z0, z: [Z(d.z0), Z(d.z1)] });
+  }
+  if (hung.steering) parts.steering = { shape: hung.steering, at: hung.wheelAt, rot: [-.42, 0, 0] };
+  if (hung.bumperF) parts.bumperF = { shape: hung.bumperF, at: hung.bumperAt[0], inPlace: true };
+  if (hung.bumperR) parts.bumperR = { shape: hung.bumperR, at: hung.bumperAt[1], inPlace: true };
   const wg = { r: c.r, w: c.tw, lugs: c.lugs || 0, seg: round(clamp(24 * (o.detail || 1), 12, 32)) }, wheels = [];
   for (const [z, steer] of [[zf, true], [zr, false]]) for (const s of [-1, 1]) wheels.push({ at: [s * wheelX(z), c.r, Z(z)], steer, geo: wg });
   for (const sp of spares) sp.geo = wg;
   Object.assign(points, { exhaust: [.42, c.clear + .04, Z(L + .05)], lampL: [-(wide(0) - .19), deck(0) - .13, Z(-.05)], lampR: [wide(0) - .19, deck(0) - .13, Z(-.05)], hitch: [0, c.clear + .2, Z(L + .08)] });
   const bx = b.bounds();
   beacons.forEach((q, i) => { points['beacon' + i] = q.at; });
-  return { kind: 'car', style, inside: !c.open && o.inside !== false, screen: c.open ? null : [deck(c.cab[0] + .04) + .03, Z(c.cab[0] + .05)], body: b, wheels, spares, points, beacons, size: { length: bx.l, width: bx.w, height: bx.hi[1] }, wheelbase: c.base, track: wheelX(zf) * 2, radius: c.r, clear: c.clear, mid: (zf + zr) / 2 - L / 2 };
+  return { kind: 'car', style, parts, doors: doorList, inside: !c.open && o.inside !== false, screen: c.open ? null : [deck(c.cab[0] + .04) + .03, Z(c.cab[0] + .05)], body: b, wheels, spares, points, beacons, size: { length: bx.l, width: bx.w, height: bx.hi[1] }, wheelbase: c.base, track: wheelX(zf) * 2, radius: c.r, clear: c.clear, mid: (zf + zr) / 2 - L / 2 };
 }
 // a working car's livery and lamps (c.livery): bands along its sides in its trim colour, a light bar, a taxi's sign; returns its flashing lamps
 function livery(b, sh, c, zf, zr) {

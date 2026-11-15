@@ -21,6 +21,9 @@
 //   climb.state: 'free' | 'hang' | 'shimmy' | 'up' | 'leap' | 'swing'; climb.facing (yaw towards the wall)
 //
 // Units are metres with y up, like the 3D styles. A ledge's normal points out from the wall.
+// In the water: Swimmer (swim.js) wades, swims, dives with a breath and climbs out onto the bank.
+
+export { Swimmer } from './swim.js';
 
 const V = (x = 0, y = 0, z = 0) => ({ x, y, z });
 const lerp = (a, b, t) => a + (b - a) * t;

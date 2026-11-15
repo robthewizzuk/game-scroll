@@ -28,7 +28,11 @@ const BIT_MAX = 160;
  */
 export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
   const state = { dirt: 0, wet: null, dents: 0, glass: 0, lamps: 0 }, owned = [], geos = [];
-  const meshes = name => shell.children.filter(m => m.isMesh && !m.isInstancedMesh && (typeof name === 'string' ? m.name === name : name.has(m.name)));
+  // (the body's meshes and its parts': a car's doors, hung on their hinges, take dents and lose their glass too)
+  const meshes = name => { const out = []; shell.traverse(m => { if (m.isMesh && !m.isInstancedMesh && (typeof name === 'string' ? m.name === name : name.has(m.name))) out.push(m); }); return out; };
+  // from the shell's space into a mesh's own (the same for the body's; a door's as it hangs open)
+  const RM = new Matrix4(), toMesh = (m, v, dir = false) => { if (m.parent === shell) return v; RM.copy(m.matrixWorld).invert().multiply(shell.matrixWorld); return dir ? v.transformDirection(RM) : v.applyMatrix4(RM); };
+  const toShell = (m, v, dir = false) => { if (m.parent === shell) return v; RM.copy(shell.matrixWorld).invert().multiply(m.matrixWorld); return dir ? v.transformDirection(RM) : v.applyMatrix4(RM); };
   // a mesh's material, its own from now on (its car look's settings carried over)
   const own = m => {
     if (!m.userData.gsOwn) {
@@ -42,9 +46,10 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
   // the vehicle's own space (its shell's: the body that leans on its springs) from the world's
   const local = p => { root.updateMatrixWorld(true); return shell.worldToLocal(P.set(p.x, p.y, p.z)); };
   const localDir = d => { root.updateMatrixWorld(true); const e = shell.matrixWorld.elements; return D.set(e[0] * d.x + e[1] * d.y + e[2] * d.z, e[4] * d.x + e[5] * d.y + e[6] * d.z, e[8] * d.x + e[9] * d.y + e[10] * d.z).normalize(); };   // (the inverse of a rotation: its transpose)
-  const nearest = (list, p) => {   // the corner of these meshes nearest p: { mesh, i, d, n }
-    let best = null;
-    for (const m of list) { const a = m.geometry.attributes.position, na = m.geometry.attributes.normal; for (let i = 0; i < a.count; i++) { const d = hypot(a.getX(i) - p.x, a.getY(i) - p.y, a.getZ(i) - p.z); if (!best || d < best.d) best = { mesh: m, i, d, n: new Vector3(na.getX(i), na.getY(i), na.getZ(i)).normalize(), at: new Vector3(a.getX(i), a.getY(i), a.getZ(i)) }; } }
+  const nearest = (list, p0) => {   // the corner of these meshes nearest p0 (in the shell's space): { mesh, i, d, n, at } in the mesh's own space, sat and sn in the shell's
+    let best = null; const p = new Vector3();
+    for (const m of list) { toMesh(m, p.copy(p0)); const a = m.geometry.attributes.position, na = m.geometry.attributes.normal; for (let i = 0; i < a.count; i++) { const d = hypot(a.getX(i) - p.x, a.getY(i) - p.y, a.getZ(i) - p.z); if (!best || d < best.d) best = { mesh: m, i, d, n: new Vector3(na.getX(i), na.getY(i), na.getZ(i)).normalize(), at: new Vector3(a.getX(i), a.getY(i), a.getZ(i)) }; } }
+    if (best) { best.sat = toShell(best.mesh, best.at.clone()); best.sn = toShell(best.mesh, best.n.clone(), true); }
     return best;
   };
 
@@ -72,12 +77,13 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
    * vehicle), radius, depth (metres; from power by default). Dents add up.
    */
   root.dent = (point, { power = 1, dir = null, radius = null, depth = null } = {}) => {
-    const c = local(point).clone(), R = radius ?? .2 + .3 * min(power, 1.5), Dp = depth ?? min(.17, .03 + .09 * power);
-    const push = dir ? localDir(dir).clone() : new Vector3(0, size.height * .45, 0).sub(c).normalize();
-    // its shape: a hollow with a crisp rim, crumpled in ridges (deeper in the middle)
+    const c0 = local(point).clone(), R = radius ?? .2 + .3 * min(power, 1.5), Dp = depth ?? min(.17, .03 + .09 * power);
+    const push0 = dir ? localDir(dir).clone() : new Vector3(0, size.height * .45, 0).sub(c0).normalize();
+    let any = false, c = c0, push = push0;
+    // its shape: a hollow with a crisp rim, crumpled in ridges (deeper in the middle; worked out in each mesh's own space, which for a shut door is the shell's)
     const h = (x, y, z) => { const s = hypot(x - c.x, y - c.y, z - c.z) / R; if (s >= 1) return 0; const e = Math.min(1, (1 - s) / .5), f = e * e * (3 - 2 * e); return Dp * f * (1 + 1.1 * f * crumple(x * 11, y * 11, z * 11)); };
-    let any = false;
     for (const m of meshes(BENDS)) {
+      c = toMesh(m, c0.clone()); push = toMesh(m, push0.clone(), true);
       let g = m.geometry; if (!g.boundingSphere) g.computeBoundingSphere();
       if (g.boundingSphere.center.distanceTo(c) > g.boundingSphere.radius + R) continue;
       const a0 = g.attributes.position; let near = false;
@@ -99,8 +105,8 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
     if (any) {
       state.dents++;
       // the paint rubbed through round it (on the paint's own material: carpaint's scrapes)
-      const s = nearest(meshes('paint'), c);
-      if (s && s.d < R) for (const m of meshes(new Set(['paint', 'paint2']))) { const U = own(m); if (!U?.gsCpX) continue; const H = U.gsCpX.value; let i = H.findIndex(q => q.w <= 0); if (i < 0) i = U.gsCpNext = ((U.gsCpNext ?? -1) + 1) % 4; H[i].set(s.at.x, s.at.y, s.at.z, R * .8); U.gsCpXK.value.setComponent(i, Math.min(1, .45 + .5 * power)); }
+      const s = nearest(meshes('paint'), c0);
+      if (s && s.d < R) for (const m of meshes(new Set(['paint', 'paint2']))) { const U = own(m); if (!U?.gsCpX) continue; const H = U.gsCpX.value, at = toMesh(m, s.sat.clone()); let i = H.findIndex(q => q.w <= 0); if (i < 0) i = U.gsCpNext = ((U.gsCpNext ?? -1) + 1) % 4; H[i].set(at.x, at.y, at.z, R * .8); U.gsCpXK.value.setComponent(i, Math.min(1, .45 + .5 * power)); }
     }
     return root;
   };
@@ -117,7 +123,7 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
     if (l && l.d < .35 && (!g || l.d < g.d)) {   // a lamp
       const U = own(l.mesh); if (!U?.gsCgH) return null;
       put(U, l.at, .09 + .04 * min(power, 1), 3); state.lamps++;
-      bits(l.at, l.n, 8 + floor(6 * min(power, 1)), l.mesh.name === 'tail' ? '#b0221a' : '#e8e4da', .9);
+      bits(l.sat, l.sn, 8 + floor(6 * min(power, 1)), l.mesh.name === 'tail' ? '#b0221a' : '#e8e4da', .9);
       return 'lamp';
     }
     if (!g || g.d > .6) return null;
@@ -126,7 +132,7 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
     const gg = g.mesh.geometry; if (!gg.boundingBox) gg.computeBoundingBox();
     const screen = g.at.z < 0 && abs(g.at.x) < gg.boundingBox.max.x * .72, soft = power < .45;
     if (screen || soft) put(U, g.at, (screen ? .12 : .06) + .26 * min(power, 1.4), 1);
-    else { put(U, g.at, .3 + .25 * min(power, 1.4), 2); bits(g.at, g.n, 22 + floor(30 * min(power, 1.4)), '#cfe2dd', 1.6); }
+    else { put(U, g.at, .3 + .25 * min(power, 1.4), 2); bits(g.sat, g.sn, 22 + floor(30 * min(power, 1.4)), '#cfe2dd', 1.6); }
     state.glass++;
     return screen ? 'screen' : soft ? 'crack' : 'window';
   };
@@ -207,5 +213,6 @@ export function wearAndTear(root, shell, { size, clear = .2, lampOf }) {
     if (busy) place();
     return root;
   };
-  return state;
+  // (what vehicle-wreck.js builds on: its meshes, its own materials, the shell's space, the falling bits)
+  return { state, meshes, own, local, nearest, bits: (at, n, count, colour, speed) => bits(at, n, count, colour, speed) };
 }

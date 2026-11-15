@@ -2471,9 +2471,20 @@ your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up,
 handhold the way you push, drops or kicks off. `Rope` is a swing you pump higher. `climber.pos` and
 `climber.state` drive your character and its poses.
 
+**Swimming** (`gs.climb`): `Swimmer()` takes the hero into the water the game made (every `gs.outdoors` `Water` and
+`Sea` is found by itself; or `water:` a level, a function of x and z, or a `gs.flow` `Streams` whose current carries
+them). Call `swim.update(dt, { move, up, down, fast }, hero)` after your own `hero.walk()`: ankle deep nothing changes;
+deeper it wades (`swim.slow`: the walk slows to about half by the waist); out of its depth it swims at the surface
+(`pose` `'swim'`, the front crawl, or `'tread'` when the stick is let go, shoulders at the surface) with the mover's
+gravity off; `down` dives under (`'diveDown'`, `'dive'`, `'diveUp'`) and the breath runs out (`swim.air`, events
+`'low'`, `'empty'`; `swim.hurt` is the damage from then on until they come up, gasping); pushing into a bank, a jetty or a
+pool's edge up to `climb` metres (.9) over the water pulls them out onto it (`'climbOut'` with `swim.at`). A Water made
+with ripples splashes and leaves a wake by itself. Then `rig.play(swim.pose, { at: swim.at })` when there is one and
+face `swim.facing`. With no mover, move `{ x, y, z }` feet by `swim.vel`.
+
 **Poses** (`gs.poses`, 3D): `figure()` builds a simple jointed person and `Rig` blends poses on it:
 idle, walk, run, sprint, crouch, sneak, aim, jump, fall, land, hang, shimmy, climb, swing, cover,
-punch, takedown, downed, wave, sit, in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
+punch, takedown, downed, wave, sit, in the water (`tread`, `swim`, `dive`, `diveDown`, `diveUp`, `wade`, `climbOut`), in cover with the back to the wall (`coverHighL`, `coverLowL` and their `R`
 sides, `peekHighL` leaning out round an end, upper `blindOver` and `blindSideL` firing blind), shooting from a seat
 (upper `carAimL`, `carAimR`, `carAimF`, turned at the waist by `rig.update(dt, { aimYaw })`), or your own;
 `mirror(fn)` makes the other side of a pose of your own. Walk and run cycles follow `speed` so feet don't
@@ -4252,10 +4263,66 @@ update(dt) {
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.
-- Not there: nothing dents or comes off, doors and bonnets do not open, cars have dark glass with no
-  inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
-  there are no simpler shapes for far away made by themselves, and a train has no physics of its
-  own.
+- **Doors that open.** A car's doors are parts of their own, hung on their front edges: `car.doors`
+  (`doorL`, `doorR`, and `backL`, `backR` on a four-door car; a van's back ones slide), `car.open(which,
+  amount)` and `car.shut(which)` ease them there as `update(dt)` or `move()` runs. `which` is a door's name,
+  a seat's (`'driver'` is the door beside it), a side (`-1`, `1`) or `'all'`. Each door says how far open
+  it is (`open`) and, for a frame, that it was `opened` or `slammed` (for its sound). They dent and lose their
+  glass as the body does, open or shut. `doors: false` keeps them in the body: about 12 fewer draws, for a
+  car nobody gets into. The steering wheel is a part too (`parts.steering`) and turns with `steer`.
+- **People in it.** `car.seats` are its seats by name (`driver`, `passenger`, `backL`, `backR`; a
+  motorbike's `rider`, `pillion`; a helicopter's `pilot`, `copilot`), each with its `point`, its `door` and
+  `who` sits there.
+  ```js
+  trip = car.enter(player);                 // walks to the driver's door, opens it, gets in, sits, pulls it shut
+  trip.then(() => { driving = true; });     // trip.step: 'walk', 'open', 'in', 'close', then 'done'
+  car.exit();                               // opens the door, steps out, shuts it: the player is the game's again
+  car.pull('driver', player);               // wrenches the door open, throws the driver out, gets in in their place
+  car.putIn(driver, 'driver');              // a car that comes with someone at the wheel (takeOut(person) the other way)
+  ```
+  A person in a car, or on the way in or out, is the car's: its `update(dt)` runs their rig, sits them on
+  the cushion, and puts their hands on the wheel as it turns (a motorbike's: on the bars), so leave anyone
+  with `person.vehicle` set alone. A person who is pulled out is thrown down by their
+  `gs.characters.Reactions` if they have one (`trip.thrown` says who it was; they are the game's again).
+  `seats.driver.hold = false` frees the hands (shooting out of the window: `gs.combat.DriveBy`). The poses
+  are `drive` and `ride` (any `gs.poses` rig has them). Enter and exit take about four seconds with the walk,
+  `pull` about three and a half.
+- **In the city,** the cars drawn whole have drivers (the crowd's people at the wheel), and
+  `city.cars.take(c)` takes a traffic car out of the traffic as one of these, with its driver in it, ready to
+  `pull`.
+- **Crashes.** A car, a lorry, a bus and a motorbike take crashes by themselves: every `hit()` (and so every
+  `World3D.vehicle` crash) takes some of its `health` (1 new, 0 done for; a hard knock takes about a sixth of a
+  car's, a lorry or a bus takes half that). Under .55 its engine smokes, under .3 the smoke goes black, under
+  .12 it is on fire, and a few seconds later it blows up: a fireball, its paint charred, its glass blown out,
+  most doors and bumpers thrown off, its tyres burnt flat. The blast is felt round it as an Explosives blast is
+  (the world's bodies, people who react, smoke, buildings that come apart, and other vehicles, which may catch
+  fire in turn). A sharp hit on a tyre bursts it (`car.tyres[i].flat`); a hard hit on a door or bumper knocks it
+  loose (a door hangs and swings, a bumper droops) and the next takes it off, to lie in the road as a body of its
+  own in the game's World3D.
+  ```js
+  car.on('blow', e => { player.hp -= 60 * e.hurt(player.position); });   // the game's own damage
+  car.on('fire', () => sounds.whoosh());                                  // also 'smoke', 'burst', 'off'
+  car.hit(shot.point, { power: .6 });       // a shot: a dent, a window, a tyre if it was there
+  car.harm(.3); car.putOut(); car.blow();   // the game's own rules: a fire, a hose, a bomb
+  car.burst(2); car.loosen('doorL'); car.detach('bumperR');
+  car.mend();                               // as new, its doors and bumpers back on
+  ```
+  `World3D.vehicle` reads it back: a flat tyre sits low and grips less, a smoking engine pulls less
+  (`car.engine`), a wreck (`car.wrecked`) not at all.
+- **How each drives.** `chassis()` gives each its weight and feel for `World3D.vehicle`: `density` (a bus
+  shoves a car aside), `power`, `top` (the speed its pull fades to), `steerFade` (the speed its wheels turn
+  half as far, so it takes a fast bend wide), `brakes`, `grip`. A sports car is quick and light, a van and an
+  ambulance heavier, a lorry and a bus heavy and slow to turn. What you pass wins. `drive(throttle, steer,
+  brake, handbrake)`: the handbrake locks the back wheels so it slides round; with nothing pressed it slows
+  and then stands still (no creeping).
+- **Street props that go over.** `city.solid(world)` makes lamp posts, signals, signs, benches, hydrants and
+  bins that a car going fast enough knocks over (they fall as bodies of their own; the car carries on, a
+  little slower); trees, bollards and poles stop it. `city.props.mend()` stands them up again. Your own
+  `gs.props`: `props.solid(world, 'post', { shape: 'trunk', knock: 6 })` (m/s), `props.knock(name, id)`, `props.mend()`.
+- Not there: bonnets and boots do not open, lorries, buses and helicopters have no doors that open (people
+  walk in by their door point), only doors and bumpers come off (wheels, bonnets and boots stay on), a fire does
+  not spread to what is round it but a blast's heat can, there are no simpler shapes for far away made by
+  themselves, and a train has no physics of its own.
 
 ## Fur and hair
 

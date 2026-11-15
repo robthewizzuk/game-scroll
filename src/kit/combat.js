@@ -280,7 +280,7 @@ export class Explosives {
   get world() { return this._world; }
   find() { if (!this.seeks) return; const L = this.links, w = L.one('world') ?? L.one('world2d'); if (w && w !== this._world) this.world = w; }
   // What else the game made feels a blast (3D): buildings that come apart are blown in, smoke and fire burst, liquid is thrown,
-  // water splashes, people who react are thrown, the ground is dented and its grass flattened, and the weather looks again at
+  // water splashes, people who react are thrown, vehicles are dented and harmed (and may catch fire), the ground is dented and its grass flattened, and the weather looks again at
   // what is still a roof. Each is what that kit's own blast call does; link: false keeps a blast to itself.
   felt(b, at) {
     const L = this.links; if (!L || b.z == null) return;
@@ -290,6 +290,13 @@ export class Explosives {
     for (const f of L.all('fluid')) f.push(at.x, at.y, at.z, { radius: r, strength: push * .5, up: push * .25 });
     for (const w of L.all('water')) { if (!w.rip) continue; const h = w.height(at.x, at.z); if (Math.abs(at.y - h) < r * .6) w.splash(at.x, at.z, { size: r * .5, speed: 6 + r }); }   // (water made to be disturbed: ripples; a blast makes no ripple field the game never asked for)
     for (const p of L.all('reactions')) p.blast(at, push, r * 1.5);
+    // vehicles (gs.models): dented on the side facing it and harmed, the nearest catching fire, a wreck's own blast to follow
+    for (const v of L.all('vehicles')) {
+      if (v.wrecked || !v.harm || !v.parent) continue;
+      const p = v.getWorldPosition(this._vp ||= v.position.clone()), d = Math.hypot(p.x - at.x, p.z - at.z); if (d > r * 1.3) continue;
+      const k = 1 - d / (r * 1.3), half = Math.min(d, (v.size?.width || 1.8) / 2), ux = (at.x - p.x) / (d || 1), uz = (at.z - p.z) / (d || 1);
+      v.dent?.({ x: p.x + ux * half, y: p.y + .7, z: p.z + uz * half }, { power: k * 1.4 }); v.harm(k * (b.damage / 90));
+    }
     const marks = L.one('marks');
     if (marks) { const k = marks.kindAt(at.x, at.z, this._k ||= {}); if (k.kind && Math.abs(at.y - k.y) < r * .5) marks.press(at.x, at.z, r * .3, { by: b }); marks.push(at.x, at.z, r, { amount: 1 }); }
     L.one('weather')?.cover?.touch?.(at.x, at.z, r);

@@ -1775,6 +1775,46 @@ console.log('physics ok');
   console.log('tactics 3D: cover from a world, snap, slide, dash, peek, blind fire, squads ok');
 }
 {
+  // swimming: a pool 3 m deep with a shallow end and a bank 30 cm over the water; wade, swim, dive with a breath that runs out, climb out
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Swimmer } = await import('../src/kit/climb.js');
+  const w = new World3D(), box = (x, y, z, sx, sy, sz) => w.box(null, sx, sy, sz, { fixed: true, at: { x, y, z } });
+  box(-2, -3.5, 0, 14, 1, 20); box(-12, -.6, 0, 6, 1, 20); box(-8, -1.1, 0, 2, 1, 20); box(10, -1.35, 0, 10, 3.3, 20);   // the pool's floor (top -3), its shallow end (top -.1), a step (top -.6), the bank (top .3)
+  const hero = w.mover(null, { at: { x: -12, y: -.1, z: 0 } }); w.step(1 / 60);
+  const swim = new Swimmer({ water: 0, world: w, breath: 3, sounds: false }), seen = new Set(), events = new Set();
+  const frame = (input, walk = [0, 0]) => { hero.walk(walk[0], walk[1]); swim.update(1 / 60, input, hero); w.step(1 / 60); seen.add(swim.state); for (const e of swim.events) events.add(e); };
+  for (let i = 0; i < 20; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'out' && Math.abs(hero.vx - 4) < .01, 'ankle deep: on foot as ever (' + swim.depth.toFixed(2) + ' m)');
+  hero.place(-8, -.6, 0); for (let i = 0; i < 10; i++) frame({}, [0, 0]);
+  frame({ move: { x: 1, z: 0 } }, [4, 0]);
+  assert.ok(swim.state === 'wade' && swim.slow < .9 && hero.vx < 3.8, 'knee deep and more: wading, slower: ' + swim.state + ' ' + swim.slow.toFixed(2));
+  hero.place(-3, -2, 0); for (let i = 0; i < 120; i++) frame({});
+  assert.ok(swim.state === 'swim' && swim.pose === 'tread' && Math.abs(hero.feet.y + 1.8 * .78) < .15 && hero.gravity === 0, 'deep water: treading, shoulders at the surface: ' + hero.feet.y.toFixed(2));
+  for (let i = 0; i < 60; i++) frame({ down: true });
+  assert.ok(swim.state === 'dive' && swim.under && swim.pose === 'diveDown' && swim.air < 1 && hero.feet.y < -2.2, 'dives under, the breath going: ' + swim.air.toFixed(2));
+  for (let i = 0; i < 160; i++) frame({ down: true });
+  assert.ok(events.has('low') && events.has('empty') && swim.hurt > 0, 'out of breath under water: it hurts');
+  events.clear(); for (let i = 0; i < 400 && swim.under; i++) frame({ up: true });
+  for (let i = 0; i < 30; i++) frame({});
+  assert.ok(!swim.under && events.has('surface') && events.has('gasp') && swim.state === 'swim', 'comes up for air, gasping');
+  for (let i = 0; i < 200; i++) frame({});
+  assert.ok(swim.air > .9, 'and gets the breath back: ' + swim.air.toFixed(2));
+  // the crawl to the bank, then out onto it
+  let climbed = false; for (let i = 0; i < 900 && !climbed; i++) { frame({ move: { x: 1, z: 0 } }); if (swim.state === 'climb') { assert.equal(swim.pose, 'climbOut'); climbed = true; } }
+  assert.ok(climbed && seen.has('swim'), 'swims to the bank and pulls out: ' + hero.feet.x.toFixed(2));
+  for (let i = 0; i < 90; i++) frame({}, [0, 0]);
+  assert.ok(swim.state === 'out' && hero.feet.x > 5 && Math.abs(hero.feet.y - .3) < .12 && hero.gravity < 0, 'on the bank, on foot: ' + JSON.stringify(hero.feet));
+  // a Water-like surface and the current of a stream
+  const sw = new Swimmer({ water: { height: () => 1, size: 0 }, sounds: false }), p = { x: 0, y: -1, z: 0 };
+  sw.update(1 / 60, { move: { x: 0, z: 1 } }, p); assert.ok(sw.state === 'swim' && sw.vel.z > 1 && sw.vel.y > 0 && sw.facing === 0, 'any { x, y, z } feet: read vel and move them yourself');
+  const { Water } = await import('../src/kit/water.js'), lake = new Water({ level: .5, waves: 0, size: 40, link: false }), sl = new Swimmer({ water: lake, sounds: false });
+  assert.ok(sl.waterAt(3, 4).y === .5 && sl.waterAt(30, 0).y === -Infinity, 'a gs.outdoors Water: its level, and none past its edge');
+  const flow = { at: () => ({ in: true, level: 0, current: { x: 1, z: 0 }, stream: { push: 2 } }) }, sc = new Swimmer({ water: flow, sounds: false });
+  sc.update(1 / 60, {}, { x: 0, y: -1.6, z: 0 }); assert.ok(sc.vel.x > .9, 'a stream\'s current carries them');
+  console.log('swimming: wade, tread, dive, breath, surface, climb out, currents ok');
+}
+{
   const { DriveBy, Gun } = await import('../src/kit/combat.js');
   const car = { position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, points: { driver: { position: { x: -.37, y: .6, z: .2 } } }, size: { width: 1.8 } };
   const d = new DriveBy(car);
@@ -2458,7 +2498,8 @@ console.log('physics ok');
   const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
   const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
   const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
-  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  const all = []; v.shell.traverse(m => { if (m.isMesh) all.push(m); });   // (its doors' cards and its steering wheel are parts of their own)
+  const inner = all.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
   assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
   const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
   F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
@@ -6606,7 +6647,7 @@ console.log('physics ok');
     const steam = plans.find(p => p.style === 'steam'); assert.ok(steam.rods && steam.parts.rods && steam.parts.mainRods && steam.sets[0].geo.spokes && steam.points.smoke[1] > 3 && steam.radius === steam.rods.r, 'a steam engine: spoked wheels, rods, a chimney to smoke from; its radius is its driving wheels\'');
     const van = plans.find(p => p.kind === 'train' && p.style === 'van'); assert.ok(near(van.points.roof[1], van.size.height, .01) && van.points.roof[0] === 0 && van.points.roof[2] === 0, 'a van\'s roof point is the top of its roof');
     // the goods train: wagons on leaf springs with spoked wheels; a guard's van (look-outs, an open end, two tail lamps); loads; a tank wagon's filler; smoke deflectors
-    const cut = (p, n) => (p.body.slots.get(n) || []).reduce((t, g) => t + g.attributes.position.count / 3, 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
+    const cut = (p, n) => [p.body, ...Object.values(p.parts || {}).map(q => q.shape)].reduce((t, b) => t + (b.slots.get(n) || []).reduce((u, g) => u + g.attributes.position.count / 3, 0), 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
     const guard = rail('guard'), open = rail('open'), flat = rail('flat'), tank = rail('tanker');
     assert.ok(R.RAIL.includes('guard') && guard.points.veranda[2] > 2.5 && guard.points.tail[2] > guard.points.veranda[2] && near(guard.points.roof[1], van.points.roof[1], 1e-9) && guard.size.height > guard.points.roof[1] + .4 && guard.size.width > van.size.width + .25 && cut(guard, 'tail') > 0 && cut(guard, 'glass') > 0 && cut(guard, 'boards') > cut(van, 'boards'), 'a guard\'s van: look-outs wider than a van, a stove pipe above its roof, an open end, tail lamps');
     for (const w of [van, guard, open, flat, tank]) assert.ok(w.sets.length === 1 && w.sets[0].geo.spokes === 9 && w.sets[0].at.length === 2 && cut(w, 'iron') > 2000, w.style + ': two spoked wheelsets under their springs and guards');
@@ -6678,6 +6719,103 @@ console.log('physics ok');
       const fe = vehicle('truck', { style: 'fire' }); fe.aim(.6, 3); assert.ok(fe.parts.turntable.rotation.y === .6 && fe.parts.ladder.rotation.x === 1.25 && fe.beacons.length === 4, 'a fire engine\'s ladder turns and lifts, to its stop');
       const hc = vehicle('helicopter', { style: 'medic' }); for (let i = 0; i < 120; i++) hc.move(1 / 60, 0, { power: 1 }); assert.ok(hc.parts.rotor.rotation.z > 20 && hc.parts.tail.rotation.z > 20 && hc.parts.rotor.children.find(m => m.name === 'blur').visible, 'a helicopter\'s rotors spin up into a blur');
     }
+    // a car's doors hang on their hinges and open; its steering wheel turns with its wheels; people get in, sit at the wheel, get out and are pulled out
+    {
+      const { skeleton } = await import('../src/kit/models/human.js'), { Reactions } = await import('../src/kit/reactions.js'), wp = o => o.getWorldPosition(new THREE.Vector3());
+      const sal = vehicle('car', { style: 'saloon' }), sp = vehicle('car', { style: 'sports' }), van = vehicle('car', { style: 'van' }), jp = vehicle('car', { style: 'jeep' }), shut = vehicle('car', { style: 'saloon', doors: false });
+      assert.deepEqual(sal.doors.map(d => d.name), ['doorL', 'doorR', 'backL', 'backR'], 'a saloon: four doors');
+      assert.ok(sp.doors.length === 2 && van.doors.filter(d => d.slide).length === 2 && !jp.doors && !shut.doors && Object.keys(shut.parts).join() === 'steering', 'a sports car two; a van\'s back doors slide; a jeep none; doors: false keeps them in the body');
+      assert.ok(sal.seats.driver.door === 'doorL' && sal.seats.passenger.door === 'doorR' && sal.seats.backL.door === 'backL' && sal.seats.driver.steer && !sal.seats.passenger.steer, 'each seat its door');
+      // (shut, a door is just where the body was: its meshes, hung on the hinge, put back by the hinge)
+      sal.updateMatrixWorld(true); const dl = sal.parts.doorL, paint = dl.children.find(m => m.name === 'paint'), bb = paint.geometry.boundingBox || (paint.geometry.computeBoundingBox(), paint.geometry.boundingBox);
+      assert.ok(paint && dl.children.some(m => m.name === 'glass') && dl.children.some(m => m.name === 'lining') && dl.children.some(m => m.name === 'chrome') && bb.min.x < -.8 && bb.max.z - bb.min.z > 1, 'a door: its paint, glass, card and handle, on the car\'s left');
+      const corner = new THREE.Vector3(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld), c0 = corner.clone();
+      sal.open('driver'); for (let i = 0; i < 40; i++) sal.update(1 / 60); sal.updateMatrixWorld(true); corner.set(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld);
+      assert.ok(sal.door('doorL').open === 1 && dl.rotation.y < -1 && corner.x < c0.x - .6 && sal.door('doorR').open === 0, 'open(\'driver\'): the driver\'s door swings out on its front edge: ' + corner.x.toFixed(2));
+      let slam = 0; sal.shut('all'); for (let i = 0; i < 40; i++) { sal.update(1 / 60); if (sal.door('doorL').slammed) slam++; } assert.ok(slam === 1 && dl.rotation.y === 0, 'shut: slammed once');
+      van.open('backR'); for (let i = 0; i < 90; i++) van.update(1 / 60); assert.ok(van.parts.backR.position.z - van.door('backR').at.z > .9 && van.parts.backR.position.x > van.door('backR').at.x, 'a van\'s side door comes out and slides back');
+      sal.steer(.3); assert.ok(sal.parts.steering.rotation.z < -1, 'the wheel turns with the steering');
+      // the damage reaches the doors: a dent there bends the door's own paint
+      const pv = paint.geometry.attributes.position.array.slice(); const dent = new THREE.Vector3(-.9, .65, -.2); sal.updateMatrixWorld(true); sal.dent(sal.localToWorld(dent.clone()), { power: 1 });
+      const pa = paint.geometry.attributes.position.array; let bent = 0; for (let i = 0; i < pa.length; i++) bent = Math.max(bent, Math.abs(pa[i] - pv[i])); assert.ok(bent > .03 && sal.damage.dents === 1, 'a dent in a door: ' + bent.toFixed(3));
+      // in, sat, out
+      const scene = new THREE.Group(), car = vehicle('car', { style: 'saloon' }); scene.add(car); car.position.set(10, 0, 5); car.rotation.y = .7;
+      const me = skeleton({ seed: 1 }); scene.add(me); me.position.set(7, 0, 9);
+      const go = car.enter(me); let steps = [], opened = false;
+      for (let i = 0; i < 900 && !go.done; i++) { car.update(1 / 60); if (steps.at(-1) !== go.step) steps.push(go.step); if (car.door('doorL').open > .9) opened = true; }
+      assert.deepEqual(steps.slice(0, 4), ['walk', 'open', 'in', 'close'], 'enter: walk, open, in, close: ' + steps);
+      car.updateMatrixWorld(true);
+      const hips = wp(me.rig.parts.hips), seat = wp(car.points.driver);
+      assert.ok(go.done && opened && me.vehicle === car && me.seat === 'driver' && car.who('driver') === me && me.parent === car.shell && car.door('doorL').open === 0 && hips.distanceTo(seat) < .16 && me.rig.state === 'drive', 'sat at the wheel, hips on the cushion, the door shut: ' + hips.distanceTo(seat).toFixed(2));
+      const hand = wp(me.bones.handL), rimL = wp(car.parts.steering); assert.ok(hand.distanceTo(rimL) < .3, 'a hand on the wheel: ' + hand.distanceTo(rimL).toFixed(2));
+      const out = car.exit(); for (let i = 0; i < 600 && !out.done; i++) car.update(1 / 60);
+      assert.ok(out.done && me.parent === scene && !me.vehicle && car.who('driver') === null && Math.abs(me.rotation.x) < 1e-6 && wp(me).distanceTo(wp(car)) > 1.2 && wp(me).distanceTo(wp(car)) < 3 && car.door('doorL').open === 0, 'exit: out, beside it, the door shut, theirs again');
+      // pulled out: the one at the wheel goes down (by their Reactions), the one who pulled sits there
+      const them = skeleton({ seed: 2 }); scene.add(them); car.putIn(them); const react = new Reactions(them, { world: false, link: false }); them.react = react;
+      const pull = car.pull('driver', me); let downAt = -1;
+      for (let i = 0; i < 900 && !pull.done; i++) { car.update(1 / 60); if (them.parent === scene) { them.rig.update(1 / 60); react.update(1 / 60); if (downAt < 0 && react.busy) downAt = i; } }
+      assert.ok(pull.done && pull.thrown === them && downAt > 0 && them.parent === scene && !them.vehicle && car.who('driver') === me && wp(them).distanceTo(wp(car)) > 1.2, 'pull: thrown out and down, and the puller at the wheel');
+      // astride a motorbike, from its left: hands on the bars
+      const bk = vehicle('bike', { style: 'road' }), rider = skeleton({ seed: 3 }); scene.add(bk, rider); rider.position.set(-2, 0, 1);
+      const mount = bk.enter(rider); for (let i = 0; i < 600 && !mount.done; i++) bk.update(1 / 60); bk.updateMatrixWorld(true);
+      assert.ok(mount.done && bk.who('rider') === rider && rider.rig.state === 'ride' && wp(rider.rig.parts.hips).distanceTo(wp(bk.points.rider)) < .16, 'on a bike: astride it, on the saddle');   // (hands go on the bars where the person has touch(): a sculpted one)
+      assert.throws(() => car.enter(skeleton(), { seat: 'boot' }), /no seat 'boot'/);
+    }
+    // a crash: health that runs down hit by hit, smoke, then fire, then a blast; tyres that burst; doors and bumpers loose, then off
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const scene = new THREE.Scene(), car = vehicle('car', { style: 'saloon' }), wp = o => o.getWorldPosition(new THREE.Vector3()); scene.add(car); car.updateMatrixWorld(true);
+      const seen = []; for (const ev of ['smoke', 'fire', 'blow', 'burst', 'off']) car.on(ev, () => seen.push(ev));
+      assert.ok(car.health === 1 && car.engine === 1 && !car.wrecked && car.tyres.length === 4 && car.parts.bumperF && car.parts.bumperR, 'a car starts whole: health, its engine, four tyres, bumpers of its own');
+      car.hit(new THREE.Vector3(.95, .6, .3), { power: .8 }); assert.ok(car.health < .9 && car.health > .8 && car.door('doorR').part.rotation.y === 0, 'a knock takes some health: ' + car.health.toFixed(2));
+      // a tyre right where a sharp hit lands bursts; the wheel sits lower and smaller
+      const w0 = wp(car.wheels[1]); car.hit(w0.clone().add(new THREE.Vector3(.1, 0, 0)), { power: .6 });
+      assert.ok(car.tyres[1].flat && !car.tyres[0].flat && car.wheels[1].children[0].scale.y < .9 && seen.includes('burst'), 'a shot at its tyre: flat');
+      // a door hit hard hangs loose and swings; hit again it comes off and falls to the road
+      const door = car.parts.doorR, dc = new THREE.Vector3(); door.children[0].geometry.computeBoundingSphere(); door.children[0].localToWorld(dc.copy(door.children[0].geometry.boundingSphere.center));
+      car.hit(dc, { power: 1 }); let swung = 0; for (let i = 0; i < 60; i++) { car.update(1 / 60); swung = Math.max(swung, Math.abs(door.rotation.y)); }
+      assert.ok(swung > .1 && door.parent !== scene && car.door('doorR').gone !== true, 'hit hard: the door hangs loose and swings open: ' + swung.toFixed(2));
+      car.hit(dc, { power: 1 }); for (let i = 0; i < 120; i++) car.update(1 / 60);
+      assert.ok(door.parent === scene && car.door('doorR').gone && seen.includes('off') && wp(door).y < .4, 'hit again: off, lying in the road at ' + wp(door).y.toFixed(2));
+      car.open('all'); for (let i = 0; i < 30; i++) car.update(1 / 60); assert.ok(door.parent === scene, 'a door that came off is not opened');
+      // more hits: smoke, black smoke, then fire, which blows it up when its fuse runs out
+      assert.ok(car.health > .4 && car.health < .55 && seen.includes('smoke') && !car.burning, 'four hard knocks: smoking, ' + car.health.toFixed(2)); car.harm(.1); assert.ok(car.health <= .55 && seen.includes('smoke') && car.engine < 1 && !car.burning, 'smoking: ' + car.health.toFixed(2) + ', its engine ' + car.engine.toFixed(2));
+      car.harm(.4); assert.ok(car.burning && seen.includes('fire'), 'on fire');
+      car.putOut(); assert.ok(!car.burning && car.health > .12, 'putOut(): it smokes on');
+      car.harm(.2); let t = 0; while (!car.wrecked && t < 12) { car.update(1 / 30); t += 1 / 30; }
+      assert.ok(car.wrecked && seen.includes('blow') && t > 4 && car.engine === 0 && car.health === 0, 'and blows up when the fire has burnt ' + t.toFixed(1) + ' s');
+      const glass = []; car.traverse(m => { if (m.isMesh && m.name === 'glass') glass.push(m); }); const paint = car.shell.children.find(m => m.name === 'paint');
+      assert.ok(glass.every(m => !m.visible) && paint.material.color.getHex() < 0x303030 && car.tyres.every(q => q.flat), 'a burnt-out shell: its glass gone, its paint black, its tyres flat');
+      car.mend(); assert.ok(car.health === 1 && !car.wrecked && door.parent !== scene && !car.door('doorR').gone && glass.every(m => m.visible) && car.tyres.every(q => !q.flat) && paint.material.color.getHex() > 0x303030, 'mend(): as new, its door back on');
+      // on gs.physics3d: a flat tyre sits low and grips less; a wreck has no pull; a part that comes off is a body that lands
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const pc = vehicle('car', { style: 'hatch' }), hold = new THREE.Scene(); hold.add(pc);
+      const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1.2, z: 0 } })); for (let i = 0; i < 60; i++) pw.step(1 / 60);
+      assert.ok(drv.top > 30 && drv.top < 60 && drv.steerFade > 0, 'chassis(): a car\'s top speed and how its steering fades: ' + drv.top);
+      const tilt = () => { pc.updateMatrixWorld(true); return new THREE.Vector3(1, 0, 0).applyQuaternion(pc.quaternion).y; }, before = tilt();
+      pc.burst(1); for (let i = 0; i < 60; i++) pw.step(1 / 60); assert.ok(tilt() < before - .01, 'a flat front right tyre: it sits lower on that side: ' + tilt().toFixed(3));
+      pc.mend(); for (let i = 0; i < 60; i++) pw.step(1 / 60); pc.blow(); for (let i = 0; i < 120; i++) { drv.drive(1, 0); pw.step(1 / 60); pc.update(1 / 60); }
+      assert.ok(Math.abs(drv.speed) < 2, 'a wreck does not drive: ' + drv.speed.toFixed(2));
+      pw.free();
+      // the handbrake: the back steps out in a turn
+      const hw = new World3D({ gravity: -9.81 }); hw.floor(0); const hc = vehicle('car', { style: 'saloon' }), h2 = new THREE.Scene(); h2.add(hc); const hd = hw.vehicle(hc, hc.chassis({ at: { x: 0, y: 1.2, z: 0 } }));
+      for (let i = 0; i < 150; i++) { hd.drive(1, 0); hw.step(1 / 60); } let spinWith = 0; for (let i = 0; i < 40; i++) { hd.drive(0, 1, false, true); hw.step(1 / 60); spinWith = Math.max(spinWith, Math.abs(hd.chassis.body.angvel().y)); }
+      assert.ok(spinWith > 1, 'handbrake in a turn: it slides round, ' + spinWith.toFixed(2) + ' rad/s'); hw.free();
+    }
+    // street props a car knocks over: a lamp post leaves the still body and falls; the car carries on; mend() stands it up again
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D(); const { Props } = await import('../src/kit/props.js');
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const scene = new THREE.Scene(), pr = new Props(scene);
+      pr.kind('lamp', new THREE.CylinderGeometry(.08, .1, 5, 8).translate(0, 2.5, 0), new THREE.MeshStandardMaterial()); pr.add('lamp', 0, 0, -10); pr.add('lamp', 3, 0, -10);
+      pr.solid(pw, 'lamp', { shape: 'trunk', r: .1, knock: 6, density: .8 });
+      const pc = vehicle('car', { style: 'saloon' }); scene.add(pc); const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1, z: 0 } }));
+      let top = 0; for (let i = 0; i < 240; i++) { drv.drive(1, 0); pw.step(1 / 60); top = Math.max(top, drv.speed); if (pc.position.z < -13) break; }
+      const m = new THREE.Matrix4(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); const up = new THREE.Vector3(0, 1, 0).transformDirection(m);
+      assert.ok(pr.kinds.get('lamp').solid.knocked.has(0) && !pr.kinds.get('lamp').solid.knocked.has(1) && pc.position.z < -11 && drv.speed > top * .5, 'a car through a lamp post at ' + top.toFixed(1) + ' m/s knocks it over and carries on at ' + drv.speed.toFixed(1));
+      for (let i = 0; i < 90; i++) pw.step(1 / 60); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m);
+      assert.ok(up.y < .8, 'the post goes over: ' + up.y.toFixed(2));
+      pr.mend(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m); assert.ok(up.y > .99 && !pr.kinds.get('lamp').solid.knocked.size && pr.kinds.get('lamp').solid.body.colliders.has(0), 'mend(): stood up and solid again');
+      pw.free();
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
@@ -6738,7 +6876,7 @@ console.log('physics ok');
       'dirt and wet change this car only');
     // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
     const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
-    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const hp = hc.parts.doorR.children.find(m => m.name === 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
     const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
     let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
     assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),
@@ -7412,6 +7550,41 @@ console.log('physics ok');
   assert.equal(pickSize(...FOLD, 1.3e6, 1, 2, 12, { upscale: 5, scene: 5 }), 'lvl', 'the final picture at its last step: the 3D');
   assert.equal(pickSize(...PHONE, .5e6, 0, 0, null, null), 'out', 'where the chip doesn\'t say: the final picture while it is over one and a half times the 3D\'s size');
   assert.equal(pickSize(...PHONE, 1.3e6, 0, 0, null, null), 'lvl', 'and the 3D where it is not');
+  // drawn only as big as the picture's detail needs (detail-size.js): the power law's sums, the size it picks, and
+  // how it moves (down slowly in tenths, up at once, never under its least)
+  {
+    const D = await import('../src/kit/detail-size.js'), { DS } = D, keep = { ...DS };
+    const close = (a, b, e, m) => assert.ok(Math.abs(a - b) < e, `${m}: ${a} vs ${b}`);
+    // an octave ratio of .5: each octave above the drawn one holds half the one below
+    close(D.missing(.01, .02, 1, 1), .01 * .5 / Math.log(2), 1e-9, 'drawn at half size, the octave just above it as the power law sums it (between e1 s and e1)');
+    close(D.missing(.01, .02, 30, 30), .01 / Math.log(2), 1e-6, 'drawn far smaller, all the octaves above: e1 / ln(1 / s)');
+    assert.equal(D.missing(.01, .02, 1, 0), 0, 'drawn at the final size, nothing is missed');
+    assert.ok(D.lossDb(.004, .01, .5, 1) < D.lossDb(.004, .01, .5, .5), 'drawn smaller than when measured, more is lost');
+    for (const [e1, e2, r] of [[2e-4, 6e-4, .85], [1e-3, 1.5e-3, .7], [5e-5, 4e-4, .6]]) {
+      const k = D.sizeFor(e1, e2, r, 36), n = Math.log2(1 / r);
+      if (k < 1) close(D.lossDb(e1, e2, n, Math.log2(1 / k)), 36, .01, 'the size picked misses just the target');
+    }
+    assert.ok(D.sizeFor(.02, .021, .5, 36) > .95, 'a picture full of detail at every octave: about the final size');
+    assert.ok(D.sizeFor(1e-6, 1e-4, .85, 36) < .3, 'a picture with almost none: far smaller');
+    assert.equal(D.sizeFor(0, 0, .8), .8, 'a flat picture (nothing measured): as drawn');
+    assert.equal(D.sizeFor(1e-3, 1e-3 / 1.19, .85, 36), 1, 'a pattern at the pixel\'s own size (the village\'s bricks: the finest octave holding more than the one below): the full size, the power law doesn\'t hold');
+    // the meter's bytes: 16-bit logs of e1 and e2, two bytes each
+    const enc = e => { const c = Math.min(1, Math.max(0, (Math.log2(Math.max(e, 2 ** -32)) + 32) / 32)) * 255; return [Math.floor(c), Math.round((c % 1) * 255)]; };
+    { const px = new Uint8Array(8); px.set([...enc(1e-3), ...enc(4e-3), ...enc(3e-3), ...enc(2e-3)]); const [a, b] = D.fromPixels(px);
+      close(a / 2e-3, 1, .01, 'e1 back as the mean over the blocks'); close(b / 3e-3, 1, .01, 'e2 back'); }
+    assert.deepEqual(D.fromPixels(new Uint8Array(4)), [0, 0], 'a flat block reads as none');
+    // moving: from the quality steps' full size, a picture with little detail is drawn smaller a step at a time
+    Object.assign(DS, { on: true, k: 1, use: 1, least: .6 });
+    const flat = [1e-5, 1e-3], seen = [];
+    for (let i = 0; i < 30; i++) seen.push(D.measured(...flat, .8 * DS.use, .8));
+    assert.ok(seen[0] === 1 && seen.every((v, i) => !i || v <= seen[i - 1]), 'down, never at once');
+    assert.ok(seen.every(v => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9), 'in tenths, so the pictures behind are made again now and then');
+    assert.equal(seen.at(-1), .6, 'and never under the least share');
+    assert.equal(D.measured(.02, .021, .8 * .6, .8), 1, 'detail back: up at once');
+    DS.on = false; assert.equal(D.measured(...flat, .8, .8), 1, 'off: the quality steps\' size');
+    D.resetSize(); Object.assign(DS, keep);
+  }
+  console.log('gs.hd picture-led size ok');
   // the steps themselves (hd3d.js stepsRun): Rob's Fold run again, low at the first resolution step, the chip 11.6 ms a frame
   // in the middle and 22 at its worst, the upscaler 5.9 of it
   const { stepsRun } = await import('../src/kit/hd3d.js');

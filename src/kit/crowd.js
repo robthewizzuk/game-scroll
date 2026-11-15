@@ -35,6 +35,7 @@ import { HD } from './hd3d.js';
 import { sameList } from './slim.js';
 import { skin8 } from './slim-core.js';
 import { figureCapsule } from './sunmask.js';
+import { BODY_LAYER } from './scene-list.js';
 
 const CYCLE = 32, FPS = 24, FADE = .25, STRIDE = 20;   // rows a stride cycle, rows a second for moves by the clock, seconds a blend takes, numbers a member
 const FINE = .15, KEEP = 1.4, NOMINAL = 800;            // triangles a member wants for each pixel of its height, squared (of a screen 800 high: triangles about two pixels across); a level is kept until one 1.4 times as fine would do
@@ -240,6 +241,24 @@ export class Crowd {
         mesh.onAfterRender = (r, sc, cam, g) => { if (lv.held >= 0) { g.instanceCount = lv.held; lv.held = -1; } };
         this.grow(lv, 64); k.levels.push(lv); group.add(mesh);
       }
+      // the shadow body (as each gs.models.human has, shadowBody): every member whose level casts, in the shape after the kind's
+      // coarsest own one (a person's: about 1,000 triangles), in one material, on a layer only the passes that draw shadow
+      // casters see; the levels shown then cast nothing. A member close up went into every shadow map and every part of one
+      // whole, to fill a few texels.
+      if (this.shadows) {
+        const last = k.levels[Math.min(k.levels.length - 1, k.own[k.own.length - 1] + 1)], g0 = last.geo, geo = new InstancedBufferGeometry();
+        if (g0.index) geo.setIndex(g0.index);
+        for (const n in g0.attributes) if (!n.startsWith('gs') || n === 'gsSkinI' || n === 'gsSkinW') geo.setAttribute(n, g0.attributes[n]);
+        geo.boundingSphere = new Sphere(); geo.instanceCount = 0;
+        const m0 = Array.isArray(last.mesh.material) ? last.mesh.material[0] : last.mesh.material, mesh = new Mesh(geo, m0);
+        mesh.name = 'gs-crowd:shadow body'; mesh.castShadow = true; mesh.receiveShadow = false; mesh.matrixAutoUpdate = false; mesh.visible = false; mesh.raycast = () => {};
+        mesh.layers.set(BODY_LAYER); mesh.customDepthMaterial = depth; mesh.customDistanceMaterial = dist;
+        Object.assign(mesh.userData, { gsMoved: 0, gsBall: true, noBatch: true, noLod: true, noOcclude: true, noContact: true, noAO: true, detail: false });
+        const body = { mesh, geo, n: 0, cap: 0, buf: null, a: null, held: -1, tris: trisOf(geo), draws: 1, sum: 0 };
+        mesh.onBeforeRender = (r, sc, cam, g, m) => { if (r.isWebGLRenderer && !m.userData.gsCrowd) { body.held = g.instanceCount; g.instanceCount = 0; } };
+        mesh.onAfterRender = (r, sc, cam, g) => { if (body.held >= 0) { g.instanceCount = body.held; body.held = -1; } };
+        this.grow(body, 64); k.body = body; group.add(mesh);
+      }
       return k;
     });
   }
@@ -267,7 +286,7 @@ export class Crowd {
   /** Takes a member out. */
   remove(p) { const i = this.list.indexOf(p); if (i >= 0) this.list.splice(i, 1); return this; }
   /** Takes them all out (call in reset()). */
-  clear() { this.list.length = 0; this.made = 0; for (const k of this.kinds) for (const lv of k.levels) { lv.n = 0; lv.geo.instanceCount = 0; lv.mesh.visible = false; } return this; }
+  clear() { this.list.length = 0; this.made = 0; for (const k of this.kinds) for (const lv of k.levels.concat(k.body || [])) { lv.n = 0; lv.geo.instanceCount = 0; lv.mesh.visible = false; } return this; }
   /** The members within r metres of (x, z). */
   near(x, z, r, out = []) { out.length = 0; const r2 = r * r; for (const p of this.list) { const dx = p.x - x, dz = p.z - z; if (dx * dx + dz * dz <= r2) out.push(p); } return out; }
   /**
@@ -347,8 +366,9 @@ export class Crowd {
     I.draws = 0; I.triangles = 0; I.levels.length = 0;
     for (const k of this.kinds) k.levels.forEach((lv, li) => {
       const n = lv.n, a = lv.a; lv.geo.instanceCount = n; lv.mesh.visible = n > 0; I.levels[li] = (I.levels[li] || 0) + n;
-      const cast = this.shadows && (!caps || lv.near);
-      if (lv.mesh.castShadow !== cast) { lv.mesh.castShadow = cast; lv.mesh.userData.gsMoved++; }
+      const cast = this.shadows && (!caps || lv.near), own = cast && !(k.body && HD.shadowBody !== false);   // (with the shadow body it casts for them: below)
+      lv.casts = cast;
+      if (lv.mesh.castShadow !== own) { lv.mesh.castShadow = own; lv.mesh.userData.gsMoved++; }
       if (!n) return;
       if (!cast && caps) for (let i = 0; i < n; i++) {
         const o = i * STRIDE, x = a[o], y = a[o + 1], z = a[o + 2], q = (this.caps ||= [])[this.capN] ||= new Float32Array(8);
@@ -365,7 +385,23 @@ export class Crowd {
       if (sum !== lv.sum) { lv.sum = sum; lv.mesh.userData.gsMoved++; }   // (the shadow maps draw them again only when one of them moved or stepped on in its move)
       I.draws += lv.draws; I.triangles += lv.tris * n;
     });
+    for (const k of this.kinds) if (k.body) this.fillBody(k, HD.shadowBody !== false);
     return this;
+  }
+  // the shadow body: the members of each level that casts, one after another in the coarsest shape (on: HD.shadowBody)
+  fillBody(k, on) {
+    const B = k.body; let n = 0;
+    if (on) for (const lv of k.levels) if (lv.casts) n += lv.n;
+    if (n > B.cap) this.grow(B, Math.max(B.cap * 2, 2 ** Math.ceil(Math.log2(Math.max(n, this.list.length)))));
+    B.geo.instanceCount = n; B.mesh.visible = n > 0; B.n = n;
+    if (!n) return;
+    let at = 0, sum = n; const a = B.a, S = B.geo.boundingSphere;
+    for (const lv of k.levels) if (lv.casts && lv.n) {
+      a.set(lv.a.subarray(0, lv.n * STRIDE), at); at += lv.n * STRIDE; sum += lv.sum * 1.37;
+      if (at === lv.n * STRIDE) S.copy(lv.geo.boundingSphere); else S.union(lv.geo.boundingSphere);
+    }
+    B.buf.clearUpdateRanges(); B.buf.addUpdateRange(0, n * STRIDE); B.buf.needsUpdate = true;
+    if (sum !== B.sum) { B.sum = sum; B.mesh.userData.gsMoved++; }
   }
   // Kit use (hd3d.js sunMaskFrame): the capsules of the members whose level casts no shadow into the sun's map, each
   // [ax, ay, az, bx, by, bz, r, distance squared from the camera], added to list.
@@ -392,6 +428,7 @@ export class Crowd {
   /** Takes the crowd out of the scene and frees what it made. */
   dispose() {
     for (const k of this.kinds) for (const lv of k.levels) { lv.mesh.removeFromParent(); lv.geo.dispose(); }
+    for (const k of this.kinds) if (k.body) { k.body.mesh.removeFromParent(); k.body.geo.dispose(); }
     this.group.removeFromParent(); this.scene.userData.gsPosed?.delete(this);
     for (const m of this.mats.values()) m.dispose(); for (const m of [this.depth, this.dist, this.normal, this.black]) m.dispose(); this.tex.dispose();
     this.kinds.length = 0; this.list.length = 0;

@@ -22,11 +22,24 @@ import { bike, BIKE_KINDS } from './vehicle-bike.js';
 import { wheelGeo, wheelsetGeo } from './vehicle-parts.js';
 import { carPaint, carGlass } from './vehicle-looks.js';
 import { wearAndTear } from './vehicle-damage.js';
+import { wreckable } from './vehicle-wreck.js';
+import { riders } from './vehicle-seats.js';
 import { looksOf } from '../looks.js';
 
 const MAKERS = { ...ROAD, bike, train: o => railcar(o.style, o), boat, plane, helicopter }, KINDS = { ...ROADS, bike: BIKE_KINDS, train: RAIL, ...CRAFT };
 const ROADGOING = new Set(['car', 'truck', 'bus', 'bike']);   // (what wears a car's looks and its wear and tear: dirt, rain, dents, glass that breaks)
 
+// how each drives on World3D.vehicle (chassis()): density (its weight against what it hits: a bus shoves a car aside), power
+// (metres per second² of pull), top (the speed its pull fades to), steerFade (the speed its wheels turn half as far), brakes, grip
+const FEEL = {
+  car: { density: 1, power: 12, top: 44, steerFade: 22 }, sports: { density: .9, power: 17, top: 60, steerFade: 30, grip: 2.9 },
+  police: { density: 1.05, power: 15, top: 54, steerFade: 26 }, taxi: { density: 1, power: 11, top: 42, steerFade: 22 },
+  van: { density: 1.5, power: 9, top: 35, steerFade: 17, brakes: .26 }, ambulance: { density: 1.6, power: 10, top: 38, steerFade: 18, brakes: .26 },
+  pickup: { density: 1.3, power: 11, top: 40, steerFade: 20 }, jeep: { density: 1.3, power: 10, top: 36, steerFade: 18, grip: 2.7 },
+  truck: { density: 2.6, power: 7, top: 28, steerFade: 14, brakes: .22, grip: 2.3 }, fire: { density: 2.8, power: 8, top: 32, steerFade: 15, brakes: .22, grip: 2.3 },
+  bus: { density: 2.8, power: 6, top: 26, steerFade: 13, brakes: .22, grip: 2.3 },
+  bike: { density: .7, power: 14, top: 50, steerFade: 26 }, scooter: { density: .55, power: 9, top: 24, steerFade: 16 }, sport: { density: .7, power: 18, top: 66, steerFade: 32 }, dirt: { density: .6, power: 13, top: 40, steerFade: 22, grip: 3.3 },
+};
 const { PI, abs, min, max, tan, sign } = Math, clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const hash = n => { let t = (n * 2654435761) >>> 0; t ^= t >>> 15; t = Math.imul(t, 0x2c1b3c6d); t ^= t >>> 12; return (t >>> 0) / 4294967296; };
 
@@ -177,7 +190,7 @@ function one(kind, opts, k, age) {
 function looks(v, k, seed) {
   const { plan } = v, size = [plan.size.length, plan.size.height, plan.clear || .2];
   const sc = plan.screen ? [-.31, plan.screen[0], plan.screen[1], .6] : [0, 0, 0, 0];
-  for (const p of v.body) {
+  for (const p of [...v.body, ...Object.values(v.parts).flat()]) {   // (a car's doors and wheel too)
     if (looksOf(p.mat).length || p.mat.userData?.pom) continue;
     if (p.slot === 'paint' || p.slot === 'paint2') carPaint(p.mat, { flakes: p.slot === 'paint' ? k.flakes || 0 : 0, size, seed });
     else if (p.slot === 'glass') carGlass(p.mat, { see: k.inside ? .42 : -1, size, screen: sc, seed });
@@ -195,7 +208,7 @@ function stand(kind, v, k, opts) {
   wheelMat ||= pbr('#ffffff', { rough: .78, vertexColors: true });
   // the parts that turn, each on its own pivot (inside the part it rides on)
   const parts = {};
-  for (const [name, p] of Object.entries(plan.parts || {})) { const g = parts[name] = new Group(); g.name = name; g.position.set(...p.at); if (p.order) g.rotation.order = p.order; if (p.rot) g.rotation.set(...p.rot); tris += meshes(v.parts[name], g); }
+  for (const [name, p] of Object.entries(plan.parts || {})) { const g = parts[name] = new Group(); g.name = name; g.position.set(...p.at); if (p.order) g.rotation.order = p.order; if (p.rot) g.rotation.set(...p.rot); tris += meshes(v.parts[name], g); if (p.inPlace) for (const m of g.children) m.position.set(-p.at[0], -p.at[1], -p.at[2]); }   // (inPlace: a door, its shape in the vehicle's own space, hung on its hinge)
   for (const [name, p] of Object.entries(plan.parts || {})) (p.on ? parts[p.on] : shell).add(parts[name]);
   const wheel = (w, into) => {
     const piv = new Object3D(), g = wheelOf(w.geo), m = new Mesh(g, wheelMat); piv.rotation.order = 'YXZ'; piv.position.set(...w.at); if (w.rot) piv.rotation.set(...w.rot);
@@ -226,7 +239,7 @@ function stand(kind, v, k, opts) {
   /** Turns its wheels (and tracks) for a distance travelled so far, in metres (backwards: a smaller number). */
   root.roll = (d, right = d) => { dist = d; for (const w of wheels) w.rotation.x = -d / w.radius; tracks?.roll(d, right); if (sets.length || plan.rods) spin(d); return root; };
   /** Turns its front wheels: radians, + to the right. */
-  root.steer = a => { turn = a; for (const w of wheels) if (w.steers) w.rotation.y = -a; if (forks) forks.rotation.y = -a; return root; };
+  root.steer = a => { turn = a; for (const w of wheels) if (w.steers) w.rotation.y = -a; if (forks) forks.rotation.y = -a; if (parts.steering) parts.steering.rotation.z = -a * 4.5; return root; };
   /**
    * The easy way to keep it alive each frame: rolls its wheels for its speed (metres a second), eases its front
    * wheels to steer (-1..1, + right; lock: how far they turn at 1, radians), and rocks its body on its springs:
@@ -262,8 +275,9 @@ function stand(kind, v, k, opts) {
     const r = plan.radius, h = o.h ?? .5, rest = o.rest ?? .3, len = rest - 9.81 / (4 * (o.stiffness ?? 30));
     shell.position.set(0, -(h / 2 + len + r), -(plan.mid || 0));
     for (let i = 4; i < wheels.length; i++) { const w = wheels[i], lead = wheels[2 + i % 2], dz = w.position.z - lead.position.z; w.children[0].onBeforeRender = () => { w.rotation.x = lead.rotation.x; w.position.set(w.position.x, lead.position.y, lead.position.z + dz); }; }
-    if (plan.lean) return { w: .36, h, l: plan.wheelbase + r * 1.6, radius: r, rest, travel: .2, wheels: [], bike: true, steer: .45, grip: 3, ...o };   // (a bike: its wheels go with its body, which leans)
-    return { w: plan.track + .1, h, l: plan.wheelbase + r * 1.8, radius: r, rest, travel: .25, wheels: wheels.slice(0, 4), ...o };
+    const feel = FEEL[plan.style] || FEEL[kind] || {};   // (how it drives: its weight, pull, top speed; what you pass wins)
+    if (plan.lean) return { w: .36, h, l: plan.wheelbase + r * 1.6, radius: r, rest, travel: .2, wheels: [], bike: true, steer: .45, grip: 3, ...feel, ...o };   // (a bike: its wheels go with its body, which leans)
+    return { w: plan.track + .1, h, l: plan.wheelbase + r * 1.8, radius: r, rest, travel: .25, wheels: wheels.slice(0, 4), ...feel, ...o };
   };
   /** A tank's turret turned (radians, + to its left, from straight ahead) and its gun lifted (radians up); a fire engine's ladder on its turntable. */
   const AIM = plan.aim || { turn: 'turret', lift: 'gun', lo: -.14, hi: .45 };
@@ -278,11 +292,63 @@ function stand(kind, v, k, opts) {
   };
   root.userData.lit = !!k.lit;
   // a road vehicle's own dirt, rain and damage (vehicle-damage.js)
-  if (ROADGOING.has(kind)) wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) });
+  // (and how it takes a crash: health, smoke, fire, a blast, tyres that burst, doors and bumpers that come off: vehicle-wreck.js)
+  if (ROADGOING.has(kind)) wreckable(root, shell, plan, kind, wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) }));
   if (plan.beacons?.length) sirens(root, plan, points, opts.seed);
+  if (plan.doors?.length) hinges(root, plan, parts);
+  seatsOf(root, plan, points);
+  if (Object.keys(root.seats).length) riders(root, plan);   // (people getting in, sitting, getting out: vehicle-seats.js)
   /** Another one just like it (sharing its shapes and materials). */
   root.twin = () => stand(kind, v, k, opts);
   return root;
+}
+
+// a car's doors: open(which, amount) and shut(which) ease them there in update() (move() calls it); a hinged door swings out on its
+// front edge, a van's back door comes out and slides back. which: a door's name ('doorL', 'doorR', 'backL', 'backR'), a seat's
+// ('driver', 'passenger', 'backL', 'backR': the door beside it), a side (-1 left, 1 right), 'all', or a list of these.
+// Each door says how far open it is (open 0..1) and, for one frame, that it was opened (opened) or slammed shut (slammed).
+const SWING = 1.15;
+function hinges(root, plan, parts) {
+  const doors = root.doors = plan.doors.map(d => ({ name: d.name, side: d.side, slide: d.slide, part: parts[d.name], at: parts[d.name].position.clone(), length: d.length, open: 0, want: 0, speed: 3, opened: false, slammed: false }));
+  const pick = which => {
+    if (which === 'all' || which == null) return doors;
+    if (Array.isArray(which)) return which.flatMap(pick);
+    if (typeof which === 'number') return doors.filter(d => d.side === Math.sign(which));
+    const seat = root.seats?.[which]; if (seat?.door) which = seat.door;
+    return doors.filter(d => d.name === which);
+  };
+  root.door = which => pick(which)[0] || null;
+  /** Opens doors (amount 0..1 of the way; speed: how many times a second it would swing all the way, 3). */
+  root.open = (which = 'all', amount = 1, { speed = null } = {}) => { for (const d of pick(which)) { d.want = clamp(amount, 0, 1); if (speed) d.speed = speed; } return root; };
+  root.shut = (which = 'all', o) => root.open(which, 0, o);
+  const set = d => {
+    const e = d.open * d.open * (3 - 2 * d.open);
+    if (d.slide) { const out = clamp(d.open * 5, 0, 1); d.part.position.set(d.at.x + d.side * .14 * out, d.at.y, d.at.z + max(0, d.open - .15) / .85 * d.length * .92); }
+    else d.part.rotation.y = d.side * SWING * e;
+  };
+  const up = root.update;
+  root.update = dt => {
+    up?.(dt);
+    for (const d of doors) {
+      d.opened = d.slammed = false; if (d.gone || d.open === d.want) continue;   // (gone: knocked off in a crash, vehicle-wreck.js)
+      const was = d.open, step = dt * d.speed * (d.want < d.open ? 1.4 : 1);   // (a door is shut harder than it is opened)
+      d.open = d.want > d.open ? min(d.want, d.open + step) : max(d.want, d.open - step);
+      if (was === 0 && d.open > 0) d.opened = true; if (d.open === 0 && was > 0) d.slammed = true;
+      set(d);
+    }
+    return root;
+  };
+}
+// where people sit (a vehicle's seats, by name): each its point, the door beside it (a car's), the side it gets in from and
+// whether it is a saddle (a motorbike's: legs either side); who sits there is the game's (gs.models.seat, vehicle-seats.js)
+function seatsOf(root, plan, points) {
+  const seats = root.seats = {};
+  const near = (side, z) => (root.doors || []).filter(d => d.side === side).sort((a, b) => Math.abs(a.at.z + a.length / 2 - z + .35) - Math.abs(b.at.z + b.length / 2 - z + .35))[0]?.name || null;
+  for (const name of ['driver', 'passenger', 'backL', 'backR', 'rider', 'pillion', 'pilot', 'copilot']) {
+    const p = points[name]; if (!p) continue;
+    const side = plan.lean ? -1 : Math.sign(p.position.x) || -1;
+    seats[name] = { name, point: p, side, door: near(side, p.position.z), saddle: !!plan.lean, steer: name === 'driver' || name === 'rider' || name === 'pilot', hold: true, who: null };
+  }
 }
 
 // a working vehicle's flashing lamps: its own copies of the lenses (so its copies flash in their own time), siren(on) to set

@@ -81,6 +81,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { power } from './power.js';
 import { heat } from './heat.js';
 import { lensFrame, afTake, AF_LOG } from './lens.js';
+import { DS, measured, resetSize, fromPixels } from './detail-size.js';
 import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
@@ -170,7 +171,7 @@ const OUT_PX = 2.4e6;
 // the screen take a real share of the chip's frame (pickSize). The 3D's own picture is never under MIN_PX (or the
 // tier's pixels, where those are fewer): below that a game is easier to read at a lower tier, or frame rate, than
 // at fewer pixels still.
-const UPS = [2, 1.7, 1.45], MIN_PX = .4e6, OUT_SHARE = .25;
+const UPS = [2, 1.7, 1.45], MIN_PX = .4e6, OUT_SHARE = .25, DS_MOST = 2.5, DS_FROM = .9, DSR = { n: 0, busy: false };
 /**
  * The sizes a frame is drawn at (pure: tests). cw, ch: the screen's pixels (the card's); px: the tier's; lvl: the
  * resolution step (LEVELS); out: the final picture's step (UPS); capped: the final picture held to OUT_PX (a game
@@ -245,7 +246,7 @@ function startGame(def) {
   Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.out = Math.min(UPS.length - 1, s?.out | 0); Q.outCeil = Q.out;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = Q.gmax = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
-  Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
+  Q.fx = {}; Q.fxLast = []; Q.fxPin = false; resetSize();
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
 }
 // WebGPU timestamps: three times every pass on the GPU, the picture's and the compute passes' (frame
@@ -2131,7 +2132,7 @@ export class HDView {
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
   /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
-  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; }
+  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; this._far?.dispose(); this._far = null; }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -2619,6 +2620,23 @@ export class HDView {
     // (the grid's box where the drawing has it: originOff puts it back in the world's own numbers)
     const bb = b.grid.boundingBox; bb.min.copy(b.minW).sub(ORIGIN); bb.max.copy(bb.min).add(b.dims);
     b.grid.intensity = spec.strength ?? 1;
+  }
+  // The far world as a picture (v.farWorld = true or { from, every, res, slack }; WebGPU: hd3d-gpu-far.js says how): whether it
+  // stands in for the far things in this frame's scene pass. skip: a card's picture or a frame drawn off the screen (all live).
+  farStep(G, r, ph, skip, shc) {
+    const fw = this.farWorld, spec = fw && (typeof fw === 'object' ? fw : {});
+    if (!spec || this.clearBg || !G.fx.FarWorld) {
+      if (this._far) { this._far.dispose(); this._far = null; } this._farSpec = null; HD.info.far = null; return false;
+    }
+    if (skip || HD.farWorld === false) { this._farSpec = null; return false; }   // (HD.farWorld false: everything live, the pictures kept)
+    const from = Math.max(20, spec.from ?? 150);
+    this._farSpec = { from, slack: spec.slack ?? Math.max(1, from * .02), max: Math.max(256, HD.farRes || spec.res || 1024), every: spec.every ?? 6, h: ph, shadowCams: shc };
+    let F = this._far; if (F?.r !== r) { F?.dispose(); F = this._far = new G.fx.FarWorld(r, { shBits: SH_BITS, prep: m => G.fx.noAO(m) }); }
+    if (F.box.parent !== this.scene) this.scene.add(F.box);
+    const on = F.step(this.scene, this.cam, this._farSpec); HD.info.far = F.info;
+    F.draw(this.scene, this.cam, this._farSpec);   // (a picture that is due, for the frames after this one)
+    if (on) F.hide(this.cam, shc);
+    return on;
   }
   bounceRun(TK, r, spec) {
     const b = this._tb; if (!b) return;
@@ -3402,6 +3420,10 @@ export class HDView {
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
+    // the far world from its pictures (v.farWorld): its still far things leave the camera's layer for the scene's pass
+    if (pm >= 0) enter('3D: far world');
+    const farOn = this.farStep(G, r, ph, baking || off, shc);
+    if (pm >= 0) leave(pm);
     // the sky's own pictures (a gs.sky Sky on WebGPU: its air, its clouds and their shadow, hd3d-gpu-sky.js), before the scene that shows them
     const sky = this._sky?.dome.parent ? this._sky.gpu : null;
     if (sky) { if (pm >= 0) enter('3D: sky'); sky.frame(r, this.cam, { w: pw, h: ph, cut: o.cut, bake: baking || off, tier: T, t: this.t, flags: HD }); if (pm >= 0) leave(pm); }
@@ -3412,7 +3434,7 @@ export class HDView {
     fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
     sendEarly('before the scene');   // (skinning, compute, the kit's shadow maps and the sky's pictures go to the chip now, to be drawn while the scene is encoded: submit.js)
     if (nw) nw.begin();
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (nw) { nw.end(); noWaitFrame(r); } if (pm >= 0) leave(pm); }
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); if (farOn) this._far.back(); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (nw) { nw.end(); noWaitFrame(r); } if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
@@ -3426,6 +3448,18 @@ export class HDView {
     if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
     if (ls?.afWant && !baking && !off && ch.lensN?.on) this.lensRead(() => ch.lensN.readAF(r));   // (v.lens autofocus: the distance under the spot)
+    // how busy each part of the picture is, for the next frame's contact shadow steps and soft shadow taps (sunmask-gpu.js BUSY: visual masking)
+    if (!baking && !off && ch.sp && G.fx.BUSY) {
+      if ((o.sunMask || (s2 && T.shadow > 0)) && HD.mask !== false && G.fx.BUSY.on) { try { (ch.busyM ||= G.fx.busyMeter(r)).draw(ch.sp.getTexture('output'), r.toneMappingExposure); } catch (e) { ch.busyM?.off(); } }
+      else ch.busyM?.off();
+    }
+    // the picture's own detail now and then, for the size the frames after are drawn at (detail-size.js; one reading at a time)
+    const ds = this._ds;
+    if (ds && !baking && !off && ch.sp && !DSR.busy && ++DSR.n % DS.every === 0) {
+      DSR.busy = true;
+      let p; try { p = (ch.dsM ||= G.fx.detailMeter(r)).read(ch.sp.getTexture('output'), r.toneMappingExposure); } catch (e) { p = null; }
+      Promise.resolve(p).then(px => { if (px) { const [e1, e2] = fromPixels(px); measured(e1, e2, ds.r, ds.full); } }, () => {}).finally(() => { DSR.busy = false; });
+    }
     const made = !!fg && !!shown;
     if (made && HD.fgTap) { flushGPU('frame'); HD.fgTap(shown, r.domElement, 'frame'); }
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
@@ -3594,6 +3628,18 @@ export class HDView {
     let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px;
     if (sized) ({ pw, ph, fw, fh } = frameSizes(fw, fh, px, Q.lvl, Q.out, Q.lvl + Q.out > 0 || desktop));
     else { const q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res; pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q)); }
+    // ...and only as big as the picture's own detail needs (detail-size.js; WebGPU with GSSR, HD.detailSize false: off): a
+    // share of the size above, never under MIN_PX, nor blown up more than DS_MOST times each way. Only while GSSR is
+    // already upscaling (the quality steps' size under DS_FROM of the final): at the final size it is the edge smoothing,
+    // and going under that at all cost the village scene 5 to 6 dB however little (30.3 dB at .95 of the size, 30.6 at
+    // .75), where once upscaling a smaller size cost it about half a dB more
+    this._ds = null;
+    if (sized && G && HD.detailSize !== false && DS.on && HD.upscale && !this.clearBg && (this.upscaler ?? HD.upscaler) === 'sgsr2' && pw < fw * DS_FROM) {
+      const full = pw / fw, k = Math.min(1, Math.max(DS.use, Math.sqrt(MIN_PX / (pw * ph)), fw / (pw * DS_MOST)));
+      if (k < 1) { pw = Math.max(16, Math.round(pw * k)); ph = Math.max(16, Math.round(ph * k)); }
+      this._ds = { full, r: pw / fw, k };
+    }
+    if (!baking && !off) HD.info.detailSize = this._ds ? { k: this._ds.k, want: DS.k, db: DS.db } : null;
     if (!baking && !off) { HD.info.rw = pw; HD.info.rh = ph; HD.info.ow = fw; HD.info.oh = fh; }   // the 3D's own size and the final picture's (the frame lab's resolution counter)
     // The 3D is drawn at pw x ph (fewer pixels on big screens and when the phone struggles). Below the
     // screen's size, Snapdragon GSR 2 (sgsr2.js, temporal: jitters the camera and builds on the frames
@@ -3615,6 +3661,7 @@ export class HDView {
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
     if (this._tb) this.bounceGrid(null, null);   // (traced bounce light is WebGPU's: its grid leaves a WebGL frame's scene)
+    if (this._far) { this._far.dispose(); this._far = null; HD.info.far = null; }   // (and the far world's picture: WebGL draws it all live)
     if (!baking && !off) { speed.between = null; HD.info.framegen = false; }   // (frame generation is WebGPU only)
     gpuSwap(this, null);
     const cp = this.clearBg ? seeThrough(r, pw, ph) : chain(r, pw, ph); if (cp.cw !== pw || cp.ch !== ph) { cp.setSize(pw, ph); cp.cw = pw; cp.ch = ph; }
