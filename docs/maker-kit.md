@@ -2556,6 +2556,41 @@ few seconds of replay (`playback(t)`). `BallCar` is a real suspension car with b
 jump that flips you the way you push, and air control. `chaseBall(car, arena)` is a simple
 opponent to start from.
 
+**Magic** (`gs.magic`, 2D or 3D): a book of spells, `new Magic({ book })`, and a unit for each who casts
+or can be hit, `magic.unit(body, { stats, team, radius, height, hand })` (its `stats` is a `gs.stats`
+`Stats` with `hp` and `mana` pools). `unit.cast(name, { dir | at | target })` starts a spell or says why
+not (`'mana'`, `'cooling'`, `'busy'`, `'stunned'`, `'silenced'`, `'range'`); `magic.update(dt)` finishes
+casts, flies bolts, sets off areas, burns beams, runs the units' Stats on and gives back the frame's
+events (`hit` with `damage`, `absorbed`, `statuses`, `reaction`, `push`; `heal`, `shield`, `warn`,
+`interrupt`, `dead`...). A spell is data: `kind` (`bolt`, `area`, `beam`, `shield`, `heal`, `buff`),
+`element`, `cost`, `cool` and `charges` (gs.stats cooldowns), `cast` (seconds; `still`: moving cuts it
+off, `fragile`: a big hit does), `damage`, `heal`, `status`, `push`. Bolts can `homing`, `pierce`,
+`chain` (jumps on to the next foe) and `splash`; areas are a `circle`, `cone`, `line` or `ring`, at the
+caster, the aimed point or the target, with a `delay` (a warning ring first: `area.part`), lingering
+(`for`, `every`) or following the caster (an aura), and `blocks: true` stops foes' bolts at its edge;
+beams are held (`channel`, `drain` a second); shields soak up harm (`absorb`) or send bolts back
+(`reflect`); heals are at once or `over` seconds. Statuses (`STATUSES`: burn, chill, frozen, shocked,
+wet, poison, rooted, weak, silence, slow, regen, haste, might, stoneskin) are gs.stats buffs, so put
+them in the Stats' buffs table and saving keeps them; three doses of chill freeze, and they meet
+(`REACTIONS`): fire thaws ice for half again, frost freezes the wet, lightning through water stuns,
+earth shatters ice, fire flares poison. Targets resist with a `resist.fire` stat (0..1), `armour`
+takes half off, and `power` and `castSpeed` stats on the caster count. A wall in the game's physics
+world stops bolts by itself; a `push` spell throws loose things and people who react; fire bursts in
+the game's smoke. `magic.hit(by, who, name, spell)` lands one of your own (a burning blade, a trap). Draw
+from `magic.bolts`, `magic.areas`, `magic.beams`, `magic.zaps`, `unit.casting.part` and `unit.ward`,
+or in 3D let `new Looks(magic, particles)` (a `gs.fx3d.Particles3D`) do it: a glow in the hand, bolt
+trails with their own light, flashes where they land, rings for areas, sparks along beams, a shimmer
+round a ward, motes from a heal.
+
+```js
+const { Magic, STATUSES, Looks } = gs.magic, { Stats } = gs.stats;
+const BOOK = { firebolt: { kind: 'bolt', element: 'fire', cost: 8, cool: .8, cast: .3, speed: 24, damage: 14, status: 'burn' },
+               nova: { kind: 'area', element: 'frost', at: 'self', radius: 4, damage: 8, status: 'chill', cost: 20, cool: 6 } };
+magic = new Magic({ book: BOOK }); looks = new Looks(magic, new gs.fx3d.Particles3D(view.scene));
+hero = magic.unit(heroMesh, { team: 'hero', stats: new Stats({ hp: { max: 100 }, mana: { max: 60, regen: 6 } }, { buffs: STATUSES }) });
+// update(dt): for (const e of magic.update(dt)) if (e.type === 'hit') feel.hit(...); looks.update(dt);
+```
+
 **Campaigns** (`gs.campaign`): `Campaign(chapters, { extras }).attach(api)` keeps which missions are
 open (in order, or by stars), up to three stars each (score targets or named challenges), best
 scores, collectibles and extras that unlock at a star count, saved compactly with `api.save()`.
