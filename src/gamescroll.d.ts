@@ -2324,6 +2324,33 @@ export interface FightPart {
   Reader: new (o?: { window?: number; buffer?: number; dead?: number }) => FightReader;
   Fighter: new (moves: Record<string, FightMove>, o?: { x?: number; y?: number; facing?: number; hurt?: FBox[]; hp?: number }) => Fighter;
   clash(a: Fighter, b: Fighter): { move: FightMove; name: string; blocked: boolean; x: number; y: number } | null;
+  /** new Opponent(api, { name, skill, learn, rng }) in make(); join(its fighter, the player's) each round; think(dt) each frame. */
+  Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** false: it never learns the player. */ learn?: boolean; rng?: () => number }) => FightOpponent;
+}
+/** What a fighting game's Opponent wants to do this frame, for your game to do. */
+export interface FightWant { /** 1 towards the player, -1 away, 0. */ walk: -1 | 0 | 1; block: false | 'high' | 'low'; /** A move to start now, or null. */ move: string | null }
+/**
+ * A ready-made opponent for a fighting game (Tiny Brains). It reads its moves' frames for what reaches, what is fast
+ * and what is safe; punishes a move that missed or was blocked, takes its follow-ups, goes round a guard it can see,
+ * and guards what it sees coming, a person's reaction time after the move began. What is too fast to react to it must
+ * expect: it learns how high this player attacks from each distance, how eager they are, how they guard and whether
+ * they punish, across rounds and sessions.
+ */
+export interface FightOpponent {
+  /** 0..1, or a gs.brains.Dial. Set it any time. */
+  skill: Skill;
+  /** The two fighters of a round: its own, and the player's. Call it for each new pair. */
+  join(me: Fighter, foe: Fighter): FightOpponent;
+  /** Each frame: what it wants to do. */
+  think(dt?: number, me?: Fighter, foe?: Fighter): FightWant;
+  /** What it expects of the player from `dist` apart: chances for how high their next attack is, and the attacks they begin a second while it is in their reach. */
+  expect(dist?: number): { mid: number; low: number; high: number; eager: number };
+  /** How it expects the player to be guarding when it attacks. */
+  guard(): { open: number; high: number; low: number };
+  /** The end of a round: did the player win? Tells a Dial given as its skill, and saves what it learned. */
+  result(playerWon: boolean | 'draw' | number): FightOpponent;
+  /** Forgets how the player fights. */
+  forget(): FightOpponent;
 }
 export interface BulletOpts { accel?: number; turn?: number; wave?: [number, number]; home?: number; kind?: number; life?: number }
 export interface Bullets {
