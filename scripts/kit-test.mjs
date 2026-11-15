@@ -514,6 +514,57 @@ console.log('physics ok');
   assert.ok(tw.done && ticks === 7, 'typewriter ' + ticks);
   console.log('story ok');
 }
+// a conversation played by people (Talk)
+{
+  const { Story, Talk } = await import('../src/kit/story.js');
+  const { Reputation } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const TALK = `
+  EXTERNAL did(deed)
+  EXTERNAL give(id, n)
+  VAR town_rank = "neutral"
+  VAR town = 0
+  #shot:two
+  Back again, are you? #who:mara #mood:frown
+  Just passing. #who:hero
+  * {town_rank == "loved"} [Ask for the key] Anything for you. #who:mara #mood:smile .5 #do:nod
+    ~ did("helped")
+    ~ give("key", 1)
+    -> END
+  * [Leave] Off you go then. #who:mara #wait:0
+    -> END`;
+  const face = () => ({ moods: {}, looked: null, said: [], set(n, a) { this.moods[n] = a; return this; }, look(t) { this.looked = t; return this; }, say(t) { this.said.push(t); return Promise.resolve(true); }, hush() {}, talking: false });
+  const at = (x, z) => ({ matrixWorld: { elements: [1,0,0,0, 0,1,0,0, 0,0,1,0, x, 1.6, z, 1] } });
+  const hero = { face: face(), bones: { head: at(0, 0) } }, mara = { face: face(), bones: { head: at(0, 2) } };
+  const cam = { position: { set(x, y, z) { Object.assign(this, { x, y, z }); } }, lookAt(x, y, z) { this.look = { x, y, z }; } };
+  let cuts = 0; const view = { cut: () => cuts++ };
+  for (const loved of [true, false]) {
+    const rep = new Reputation({ factions: { town: {} }, deeds: { helped: { town: 5, good: 5 } } }); if (loved) rep.move('town', 70);
+    const inv = new Inventory({ key: { stack: 1 } }, { slots: 2 });
+    hero.face = face(); mara.face = face();
+    const t = new Talk(new Story(TALK), { cast: { hero: { person: hero }, mara: { person: mara, name: 'Mara', voice: 'woman' } }, hero: 'hero', camera: cam, view, rep, inv });
+    const done = []; t.on('do', (m, w) => done.push(m + ':' + w)); t.on('end', () => done.push('end'));
+    t.start();
+    assert.equal(t.who, 'Mara'); assert.equal(t.text, 'Back again, are you?'); assert.equal(mara.face.moods.frown, 1); assert.equal(mara.face.said[0], 'Back again, are you?');
+    assert.ok(mara.face.looked === hero.bones.head && hero.face.looked === mara.bones.head, 'they look at each other');
+    assert.equal(t.shot.kind, 'two'); assert.ok(Math.abs(cam.position.x) > 1.5, 'two shot from the side ' + cam.position.x);
+    assert.equal(t.shown, ''); t.tap(); assert.equal(t.shown, t.text, 'first tap shows the line'); t.tap();
+    assert.equal(t.who, 'hero'); assert.equal(t.shot.kind, 'over'); assert.ok(cam.position.z > 2, 'over Mara\'s shoulder onto the hero: behind her ' + cam.position.z);
+    const side1 = Math.sign(cam.position.x);
+    t.update(10); assert.equal(t.choices.length, loved ? 2 : 1, 'choices by the town\'s feeling');
+    if (loved) {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Anything for you.'); assert.equal(mara.face.moods.smile, .5); assert.equal(mara.face.moods.frown, 0, 'the old mood goes');
+      assert.ok(cam.position.z < 0, 'over the hero\'s shoulder onto Mara ' + cam.position.z); assert.equal(Math.sign(cam.position.x), side1, 'same side of the line');
+      assert.deepEqual(done, ['nod:mara']);
+      t.update(10); t.tap(); assert.ok(t.ended && done.includes('end'));
+      assert.ok(rep.with('town') > 70 && inv.has('key'), 'the deed and the key reached the game');
+    } else {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Off you go then.'); t.update(1); t.update(.1); assert.ok(t.ended, 'a #wait line moves on by itself');
+    }
+  }
+  assert.ok(cuts >= 3, 'cuts ' + cuts);
+  console.log('story Talk: voices and moods on faces, eyes on each other, shots on one side of the line, cuts, choices by reputation, deeds and items through EXTERNAL functions, #wait ok');
+}
 
 // save versions: old saves go through migrate(), a newer save is kept safe
 {
@@ -1854,6 +1905,17 @@ console.log('physics ok');
   cs.on('say', () => lines++).on('end', () => ended++); for (let i = 0; i < 30; i++) cs.update(1 / 60); assert.ok(cs.shot && cs.shot.x > 0 && cs.shot.x < 10, 'camera moves along the path');
   cs.skip(); assert.ok(ended === 1 && !cs.playing, 'skip ends it');
   console.log('cutscene: camera path, lines, skip ok');
+  // actors: walk, gesture, mood, a line in their voice, turn; skip puts them where they were going
+  const played = [], p = { position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, rig: { play: n => played.push(n), blend() {} }, face: { look(t) { this.l = t; }, set(n, a) { this[n] = a; }, say(t) { this.s = t; return Promise.resolve(true); } } };
+  const c2 = new Cutscene([{ at: 0, actor: p, walk: { x: 2, z: 0 } }, { at: .5, actor: p, play: 'bow', mood: 'smile' }, { at: 1, actor: p, say: 'Hello.', who: 'M', look: { x: 0, y: 1, z: 0 } }, { at: 4, actor: p, turn: 0, time: 2 }]);
+  for (let i = 0; i < 30; i++) c2.update(1 / 60); assert.ok(c2.motion(p).speed > 0 && p.position.x > 0, 'walking');
+  for (let i = 0; i < 150; i++) c2.update(1 / 60);
+  assert.ok(Math.abs(p.position.x - 2) < .04 && Math.abs(p.rotation.y - Math.PI / 2) < .05, 'walked there, facing the way it went');
+  assert.ok(played.includes('bow') && played.includes('idle') && p.face.s === 'Hello.' && p.face.smile === 1 && p.face.l, 'gesture, stop, line in its voice, mood, eyes');
+  c2.skip(); assert.equal(p.rotation.y, 0, 'skip turns it as it was told');
+  const { GESTURES, Rig } = await import('../src/kit/poses.js');
+  for (const [n, g] of Object.entries(GESTURES)) { assert.ok(g.once && g.time > 0, n); const a = g.cycle(0).j, b = g.cycle(1).j; for (const k of Object.keys(a)) assert.ok(a[k].every((x, i) => Math.abs(x - b[k][i]) < 1e-9), n + ' ends where it began: ' + k); }
+  console.log('cutscene actors and gestures ok');
 }
 {
   const { Prompts } = await import('../src/kit/prompts.js');

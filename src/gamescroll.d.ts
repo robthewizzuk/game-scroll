@@ -1402,6 +1402,25 @@ export interface StoryPart {
   };
   Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: string): Loose; skip(): Loose; update(dt: number): Loose };
   loadStory(): Promise<Loose>;
+  /**
+   * A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other,
+   * #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide | none). rep / grow / vars set the
+   * ink's own VARs of those names before each line; bind (and rep: did, grow: xp, inv: has, give, take) answer its EXTERNAL functions.
+   */
+  Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; head?: Loose | (() => P3) }>; hero?: string | null; camera?: Loose; view?: Loose; speed?: number; voices?: boolean; shots?: boolean; rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; vars?: (() => Record<string, Loose>) | null; bind?: Record<string, (...a: Loose[]) => Loose> }) => TalkScene;
+}
+export interface TalkScene {
+  on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this;
+  /** Starts (at a section of the story, or where it is). */ start(section?: string | null): this;
+  /** The speaker's cast id (null: a narrator). */ readonly speaker: string | null; /** Their name to draw. */ readonly who: string;
+  /** The line so far, typed out. */ readonly shown: string; readonly text: string;
+  /** Choices open once the line is typed out. */ readonly choices: StoryLine['choices'];
+  line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null;
+  /** The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). */
+  shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null;
+  ended: boolean;
+  /** Shows the whole line, or goes on. */ tap(): this; choose(index: number): this; stop(): this; update(dt: number): this;
+  save(): string; load(json: string): this;
 }
 
 export declare class Ghost {
@@ -2867,11 +2886,12 @@ export interface MissionsPart {
  * focus now), stops (the exposure it adds).
  */
 export interface Lens { fstop?: number; focal?: number; focus?: number | 'auto' | P3 | Loose; spot?: [number, number]; pull?: number; blades?: number; turn?: number; bokeh?: number; max?: number; blur?: number; sensor?: number; shutter?: number; iso?: number | 'auto'; ev?: number; key?: number; night?: number; speed?: number; readonly at?: number; readonly stops?: number }
-export interface CutsceneStep { at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
+export interface CutsceneStep { /** A person it directs: walk to { x, z } at speed, turn (an angle or a point), look (a point or thing; null: free), play (a gesture or move), mood + amount, and say in voice with the mouth moving. */ actor?: Loose; walk?: { x: number; z: number }; speed?: number; turn?: number | P3; play?: string; mood?: string; amount?: number; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
 export interface CutscenePart {
   along(points: P3[], u: number): P3;
   Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & {
     playing: boolean; done: boolean; bars: number; line: { text: string; who: string | null } | null; shot: { x: number; y: number; z: number; look: P3 } | null; readonly progress: number; /** the lens the last lens step set (for v.lens) */ lens: Lens | null;
+    /** What an actor is doing, for its rig: person.rig.update(dt, cut.motion(person)). */ motion(person: Loose): { speed?: number };
     update(dt: number): Loose; skip(): Loose; reset(): Loose; drawBars(c: CanvasRenderingContext2D, w: number, h: number, colour?: string): void; drawLine(c: CanvasRenderingContext2D, w: number, h: number, o?: Loose): void;
   };
 }
@@ -3270,6 +3290,8 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
+  /** Gestures every rig has, played once from standing at ease: rig.play('nod'): nod, shake, bow, shrug, point, cheer, laugh, think, beckon. */
+  GESTURES: Record<'nod' | 'shake' | 'bow' | 'shrug' | 'point' | 'cheer' | 'laugh' | 'think' | 'beckon', Loose>;
   /** A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go with, so a bent limb keeps its girth. Kit use: gs.models.human() makes them; nothing poses them. of: the joint it follows; home: its place; out: where the outside of the bend is (metres), or null. */
   Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null };
   /** A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. Kit use: gs.models.human() makes them; nothing poses them. */

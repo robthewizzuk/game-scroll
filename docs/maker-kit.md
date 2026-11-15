@@ -1947,6 +1947,22 @@ with `anim.update(dt, 'run')` or play one with `anim.play('punch')`.
 `{ text, tags, choices }`, `choose(i)`, `vars` for ink variables, `ended`. `Typewriter` reveals the
 text with `shown`, `done`, `skip()` and `ticked` (for a blip sound). Your game draws the box.
 
+**A conversation played by people** (`gs.story.Talk`, for 3D games): the same ink, said by your cast.
+`new Talk(new Story(TALK), { cast: { hero: { person: me }, mara: { person: mara, name: 'Mara', voice: 'woman', pitch: 1.1 } }, hero: 'hero', camera: view.camera, view, rep })`,
+then `start()`, `update(dt)` each frame, `tap()` (shows the whole line, then goes on) and `choose(index)`; draw
+`talk.who`, `talk.shown` and `talk.choices`. Each line's `#who:mara` speaks in her voice with her mouth moving to
+it (`voices: false` for text only), the speaker looks at the one spoken to and everyone else at the speaker,
+`#mood:angry` (or `#mood:smile .5`) shows on the speaker's face until their next mood, `#do:nod` fires
+`on('do', (move, who) => ...)` (play the gesture), and `#wait:1` goes on by itself a second after the line.
+The camera is framed as a film crew would: `#shot:over` the listener's shoulder onto the speaker (the default),
+`close`, `two` (both, from the side), `wide` or `none`, always from one side of the line between them so cuts
+never flip them over; it cuts with `view.cut()`, or read `talk.shot` without a camera. The game's world comes
+in as ink variables: `rep` (a `gs.rpg` Reputation: `town`, `town_rank`, `good`, `fame`, `bounty_guard`...), `grow`
+(`level` and the attributes) and `vars: () => ({ gold })` set the ink's own `VAR`s of those names before each
+line, so `* {town_rank == "loved"} [Ask for the key]` only shows to someone the town loves. And out again:
+ink's `EXTERNAL did(deed)` reaches `rep.did`, `xp(n)` reaches `grow.gain`, `has`/`give`/`take(id, n)` an `inv`,
+and `bind: { name: fn }` anything else. `scripts/talk.cjs` films a scene and the gestures.
+
 `gs.replay.Ghost` records a few numbers over time (`record(dt, x, y, angle)`), plays them back
 smoothly (`at(t)`) and packs to about 1 KB (`pack()`, `Ghost.unpack()`) to keep with `api.save()`:
 race your best run. `Recorder` / `Replayer` replay a whole round exactly, if the game takes its
@@ -2439,6 +2455,9 @@ changes; `drop` lowers the hips, `shift: [x, y, z]` moves them, in metres). `rig
 1.2, once: true })` plays by the clock and holds its end (`rig.done`); `rig.play('climb', { at: rungs % 1 })` lets
 the game hold the phase itself, in step with a ladder or a cutscene. `gs.models.human` people use all of this, and
 `person.touch({ handL, footR, ... })` then puts hands and feet on points in the world (a rung, a bar, a ledge).
+Every figure with arms and a head also knows nine gestures (`GESTURES`), each played once from standing at ease:
+`rig.play('nod')`, `shake`, `bow` (a hand to the chest), `shrug`, `point`, `cheer`, `laugh`, `think` (a hand to the
+cheek) and `beckon`; `rig.done` when it is over.
 
 **Steps that are really taken** (`gs.models.human` people, by themselves): a walk is drawn for a body going
 straight ahead at the walk's own speed, and a game turns its people, starts and stops them and moves them a
@@ -2564,6 +2583,11 @@ the lines already heard), and `save()`/`load()` keep it between sessions.
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
 skipped. Put your camera at `scene.shot` each frame. Camera shakes follow Reduce motion.
+It directs people too: a step with `actor: mara` and `walk: { x, z }` (`speed`, 1.3 m/s: she turns, walks there and
+stops), `turn` (an angle or a point), `look` (a point or a thing; `null` lets the eyes go), `play: 'bow'` (a gesture
+or move), `mood: 'smile'` + `amount`, and `say` with `voice` (her own voice, the mouth moving to it). Update each
+rig once a frame with what the cutscene says it is doing: `person.rig.update(dt, cut.motion(person))`. `skip()`
+puts everyone where they were going.
 
 **Quick-time prompts** (`gs.prompts`): `Prompts().start([{ kind: 'tap', x, y }, { kind: 'swipe', dir: 'left' },
 { kind: 'hold', hold: 1 }, { kind: 'mash', count: 8 }])` checks taps, swipes, holds and mashing in
