@@ -215,6 +215,8 @@ const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'vo
 const FX_ORDER = ['light shafts', 'sun mask', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
 const FX_SHARE = .12, FX_MS = .5;
 let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
+const FX_FRAME = new Set();   // (the one a frame fills: not a new one a frame)
+const fxFrame = () => { FX_FRAME.clear(); return fxOn = FX_FRAME; };
 /** This effect's size now (1: as the tier has it). */
 const fxK = name => Q.force != null && !Q.fxPin ? 1 : FXS[name][Q.fx[name] | 0] ?? 1;
 /**
@@ -434,7 +436,7 @@ function sizeDown(g) {
  * 'tier 1' (wanted, from the next round) or ''. o.game: a definition ({ id }) the steps are saved for (none: nothing saved). The game being played is left as it was.
  */
 export function stepsRun(list, o = {}) {
-  const keep = { ...Q, fx: { ...Q.fx }, fxLast: [...Q.fxLast] }, parts0 = HD.info.gpuParts, on0 = fxOn, did = [];
+  const keep = { ...Q, fx: { ...Q.fx }, fxLast: [...Q.fxLast] }, parts0 = HD.info.gpuParts, on0 = new Set(fxOn), did = [];
   Object.assign(Q, { game: o.game || null, force: null, tier: o.tier ?? 2, capNow: CAP, lvl: o.lvl | 0, ceil: 0, out: o.out | 0, outCeil: 0, cw: o.cw, ch: o.ch, slow: 0, fast: 0, easy: 0, want: null, fx: {}, fxLast: [], ceilT: -1e9, upT: -1e9, hold: HOLD, tierCeil: 3 });
   fxOn = new Set(o.fx || []);
   try {
@@ -3411,7 +3413,7 @@ export class HDView {
     o.aoBack = HD.aoBack !== false; o.aoDirect = HD.aoDirect;   // (ambient occlusion on bounce light only, and the share still on the whole picture: hd3d-gpu.js aoInShading)
     // the effects drawn smaller by their cost (FXS), and which this frame draws (for the next step down)
     o.fxK = { reflections: fxK('reflections'), vol: fxK('volumetric light'), shafts: fxK('light shafts') };
-    if (!baking && !off) { fxOn = new Set(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); if (o.sunMask) fxOn.add('sun mask'); }
+    if (!baking && !off) { fxFrame(); if (o.ao > 0) fxOn.add('ao'); if (o.bloom > 0) fxOn.add('bloom'); if (o.refl) fxOn.add('reflections'); if (o.vol) fxOn.add('volumetric light'); if (o.shaft > 0) fxOn.add('light shafts'); if (o.sunMask) fxOn.add('sun mask'); }
     // fresh aim: made frames turned to where the camera points at the moment they're shown (v.aimNow, AR's own)
     ch.aim = live && fg && HD.aim !== false && (this.aimFn || this.freshAim) ? () => this.aimPose() : null;
     this._aimJit = s2 && fg ? fg.jit : null;   // the real frame is shown while SGSR 2's jitter is still on the camera
@@ -3672,7 +3674,7 @@ export class HDView {
     if (!this.clearBg) {
       const F = P.final, aoK = T.ao * fxK('ao'), blK = T.bloom * fxK('bloom'); P.ao.enabled = T.ao > 0; if (T.ao > 0 && P.ao.scale !== aoK) { P.ao.scale = aoK; P.ao.setSize(P.ao.fw || pw, P.ao.fh || ph); }
       if (F.scale !== blK) { F.scale = blK; if (F.w) F.setSize(F.w, F.h); }   // (the effects ladder, FXS: the bloom's pictures smaller)
-      if (!baking && !off) { fxOn = new Set(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
+      if (!baking && !off) { fxFrame(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
       F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
       const film = this.filmSet(); F.setFilm(film && T.bloom ? film : film && { ...film, halation: 0, streaks: 0 });
       const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035 * (film ? film.grain : 1); u.oled.value = baking || off ? 0 : heat.oled() * OLED_MAX;
@@ -3993,13 +3995,14 @@ function twinOf(gl, G, o, air) {
 function swapTwins(scene, G, cam = null, seen = null, air = null, view = null) {   // (air: the view's air settings, if it has the air on; view: whose pass close-up shaders are built for)
   scene.traverse(o => { if (o.isMesh) swapOne(o, scene, G, cam, seen, air, view); });
 }
+const anyGpu = ms => { for (let i = 0; i < ms.length; i++) if (ms[i]?.userData?.gsGpu) return true; return false; };   // (a loop, not some(): a closure for each mesh each frame)
 function swapOne(o, scene, G, cam, seen, air, view) {
   {
     const gl = o.userData.gsGlMat || o.material;
     if (Array.isArray(gl)) {
       // a mesh in several materials (a sculpted person: skin, eyes, cloth, leather...): each drawn as its own twin where it has one
       // (skin that light soaks through, a recipe's own textures). No close-up versions here: those are built for one material a mesh.
-      if (!gl.some(m => m?.userData?.gsGpu)) return;
+      if (!anyGpu(gl)) return;
       if (G) {
         let list = gpuLists.get(gl);
         if (list?.r !== G.r) gpuLists.set(gl, list = { r: G.r, m: gl.map(m => m?.userData?.gsGpu ? twinOf(m, G, o, air).m : m) });
@@ -4302,9 +4305,11 @@ const LOD_V = new Vector3();
 // time for each renderer, and marked built for the view as holdNew's are; until then a change waits a moment
 // (lod-fade.js FADE.wait), then pops.
 const FADE_LIST = [], FADE_GPU = { object: new WeakMap(), copy: new WeakMap() }, fadeBusy = new WeakSet();
+const TWIN_OF = new WeakMap();   // (the maker for each renderer and kind, made once: not a new closure each call, each frame)
 function fadeTwinsOf(o, G, per) {
   if (!G) return per === 'object' ? glTwins(o) : null;
-  return twinList(o, FADE_GPU[per], m => G.fx.fadeTwin(m, per, G.r));
+  let T = TWIN_OF.get(G); if (!T) TWIN_OF.set(G, T = { object: m => G.fx.fadeTwin(m, 'object', G.r), copy: m => G.fx.fadeTwin(m, 'copy', G.r) });
+  return twinList(o, FADE_GPU[per], T[per]);
 }
 function fadeReady(v, G, r, per) {
   const seen = v.shSeen ||= new Set(), jobs = v.fadeJobs ||= new Set();
@@ -4393,15 +4398,19 @@ function fadeOn(v, G, r, smooth, still) {
 }
 // The twins of the people and animals on screen, built ahead in the background (one at a time, as the frames go),
 // so that their first change of level fades too rather than waiting for its shaders and popping
+// (the walk's state in module scope and its functions made once: a frame of people on screen makes no closures)
+const AH = { ok: null, n: 0, r: null, ready: null, all: true };
+const aheadMesh = m => { if (AH.all !== null && m.isMesh && m.material && !AH.ready(m)) AH.all = fadeBusy.has(AH.r) ? null : false; };
+const aheadRoot = (root, parts) => {
+  if (AH.ok.get(root) > AH.n - 120) return true;   // (all built: looked at again now and then)
+  AH.all = true;
+  for (let i = 0; i < parts.length; i++) parts[i]?.traverse(aheadMesh);
+  if (AH.all) AH.ok.set(root, AH.n);
+  return AH.all !== null;   // (a build started: the rest when it is done)
+};
 function fadeAhead(v, r, ready) {
-  const ok = v._fadeOk ||= new WeakMap(), n = FADE.n;
-  fadeAheadList((root, parts) => {
-    if (ok.get(root) > n - 120) return true;   // (all built: looked at again now and then)
-    let all = true;
-    for (const p of parts) p?.traverse(m => { if (all !== null && m.isMesh && m.material && !ready(m)) all = fadeBusy.has(r) ? null : false; });
-    if (all) ok.set(root, n);
-    return all !== null;   // (a build started: the rest when it is done)
-  });
+  AH.ok = v._fadeOk ||= new WeakMap(); AH.n = FADE.n; AH.r = r; AH.ready = ready;
+  try { fadeAheadList(aheadRoot); } finally { AH.ready = AH.r = AH.ok = null; }
 }
 function fadeBack(v) {
   const keep = v._fadeKeep; if (!keep?.length) return;
