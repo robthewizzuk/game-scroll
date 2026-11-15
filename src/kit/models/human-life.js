@@ -65,7 +65,7 @@ export class Grime {
   constructor(B, at) {
     /** 0..1 each: how wet (dries by itself), how far up the legs the mud has splashed, how dusty, how much snow lies on the shoulders and the head. */
     this.wet = 0; this.mud = 0; this.dust = 0; this.snow = 0;
-    this.v = new Vector4();   // (what the shader reads: wet, mud, dust, snow)
+    this.v = new Vector4(0, 0, 0, 0);   // (what the shader reads: wet, mud, dust, snow)
     this.of = JOINTS.map(j => B[j[1]] || null); this.bends = JOINTS.map((j, i) => new Vector4(...(at?.[i] || [0, -9, 0]), 0));
   }
   step(dt) {

@@ -3669,8 +3669,12 @@ function forPass(r, view, go) {
     make.apply(this, a);
     if (list) for (let i = n; i < list.length; i++) { const st = list[i].precompilationState; if (st) { st.outputRenderTarget = rt0; st.outputMRT = m0; } }
   };
-  try { r.setRenderTarget(pic.rt); r.setMRT(pic.mrt); return go(); }
-  finally { delete r._createObjectPipeline; r.setRenderTarget(rt0); r.setMRT(m0); }
+  // (and whether there is a depth picture: three's frames take that from the picture drawn into, its builds from the
+  // renderer's own setting, which is the screen's: none, gpu.js SCREEN_DEPTH. Left so, every shader made ahead was
+  // made for a pass with no depth picture, and made again, in the frame, the first time it was drawn)
+  const d0 = r.depth, s0 = r.stencil;
+  try { r.setRenderTarget(pic.rt); r.setMRT(pic.mrt); r.depth = pic.rt.depthBuffer !== false; r.stencil = pic.rt.stencilBuffer === true; return go(); }
+  finally { delete r._createObjectPipeline; r.setRenderTarget(rt0); r.setMRT(m0); r.depth = d0; r.stencil = s0; }
 }
 // three's clustered lights (hd3d-gpu.js manyLights) keep, for each cell of a grid laid over the picture, a list
 // of the lamps that reach it, and the room for those lists is made for the first picture the grid meets, with

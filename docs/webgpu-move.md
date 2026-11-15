@@ -61,6 +61,9 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
 - The screen's own picture has no depth picture beside it (`SCREEN_DEPTH` in `gpu.js`): every view draws its scene
   into pictures of its own and only finished rectangles onto the screen. three makes one by default, 4 bytes a
   pixel, cleared and written out every frame.
+  (three's background builds, `compileAsync`, take "is there a depth picture" from this setting of the renderer's,
+  where its frames take it from the picture drawn into: `forPass` in `hd3d.js` sets it for the scene pass while a
+  build starts, or every shader made ahead is made for a pass with no depth and made again when first drawn.)
 - Console's passes are 8-bit and its colour pass throws its samples away (above): about 16 bytes a pixel written
   a frame where it was 76.
 - A sun's shadow map slid whole (`shadowBlit.shift`) is cleared, not loaded (`SHIFT_CLEAR`).

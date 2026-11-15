@@ -18,6 +18,7 @@ if (GPU && !await prepareGPU()) { window.result = { error: 'WebGPU did not start
 const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 360), H = +(Q.get('h') || 480);
 const nextFrame = () => new Promise(r => requestAnimationFrame(r));
 HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.spread = false;
+if (Q.has('set')) for (const kv of Q.get('set').split(',')) { const [k, v] = kv.split(':'); HD[k] = v === 'true' ? true : v === 'false' ? false : +v; }   // (?set=oneSubmit:false: a switch of the view's, to find which one a failure follows)
 if (Q.has('fresh')) await clearBuilds();
 // roof tiles: a barrel across each tile, each row lapping the one below (the height layer is what the relief is made from)
 function tiles() {
@@ -88,7 +89,10 @@ try {
       check('a mesh says its relief is being built', S.roofMesh.userData.relief === 'building');
       const n = await gs.models.relief.ready(S.v.scene); build = performance.now() - t0;
       check('the three reliefs arrived', n === 3, n + ' of 3 after ' + Math.round(build) + ' ms' + [S.roofMesh, S.wall, S.trunk].map(m => ' ' + (reliefOf(m)?.error || '')).join(''));
-      for (let i = 0; i < 400 && twins(S).length < 3; i++) { await draw(S); await new Promise(r => setTimeout(r, 30)); }
+      // (a frame at each refresh, which the browser holds back while the chip is behind, for up to four minutes. Frames drawn from a timer
+      // are held back only once the chip is some hundreds of submits behind, which with a frame's passes sent together (submit.js) is
+      // minutes of frames on a software chip, and the twins' shaders, built on the same chip, come back after all of those)
+      for (const t1 = performance.now(); performance.now() - t1 < 240000 && twins(S).length < 3;) { await draw(S); await nextFrame(); }
       check('the view draws them through cluster detail', twins(S).length === 3, twins(S).length + ' of 3');
       check('the game\'s meshes keep their own geometry', [S.roofMesh, S.wall, S.trunk].every((m, i) => m.geometry === before[i]));
       info.reliefs = Object.fromEntries([['roof', S.roofMesh], ['wall', S.wall], ['trunk', S.trunk]].map(([k, m]) => { const r = reliefOf(m); return [k, r?.info ? { from: (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3, tris: r.info.tris, split: r.info.split, full: r.info.full, depth: +r.info.depth.toFixed(4), fine: +r.info.fine.toFixed(4), levels: r.clusters.levels, coarse: r.clusters.coarseTris } : null]; }));
@@ -143,7 +147,7 @@ try {
   HD.detail = false; await draw(S, 2);
   check('HD.detail = false draws every mesh as it was', v.details.map.size === 0 && (S.roofMesh.layers.mask & 1) && !v.scene.children.some(o => o.isDetailMesh));
   HD.detail = true;
-  for (let i = 0; i < 400 && twins(S).length < 2; i++) { await draw(S); await new Promise(r => setTimeout(r, 30)); }   // (on WebGPU a new twin waits for its shader)
+  for (const t1 = performance.now(); performance.now() - t1 < 240000 && twins(S).length < 2;) { await draw(S); await nextFrame(); }   // (on WebGPU a new twin waits for its shader)
   check('and on again brings the reliefs back', twins(S).length === 2, twins(S).length + ' of 2');
   // while a card loads, a recipe's layers are painted in a worker: a relief asked for then waits for the picture
   {
