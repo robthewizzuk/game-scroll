@@ -1,5 +1,5 @@
 // Parcel Dash: rush parcels across a made-up city at dusk before the clock runs out. Made with
-// gs.city (streets, traffic at the lights, people, routes), gs.vehicles (the van's handling), gs.sky
+// gs.city (streets, traffic at the lights, people, the GPS: route, minimap and arrows on the road), gs.vehicles (the van's handling), gs.sky
 // (the evening light) and gs.hd (Next Gen 3D).
 import gs from '../gamescroll.js';
 const { sounds, bed, Radio } = gs.sound;
@@ -7,7 +7,7 @@ const { haptic } = gs.device;
 const { Juice } = gs.juice;
 const { twoThumb, Keys } = gs.controls;
 const { HDView, pbr, rbox, sun, THREE } = gs.hd;
-const { City } = gs.city;
+const { City, Gps } = gs.city;
 const { Sky } = gs.sky;
 const { Car } = gs.vehicles;
 const { rng } = gs.math;
@@ -15,7 +15,7 @@ const { icon } = gs.icons;
 const { PhoneAI } = gs.phoneai;
 
 let W = 300, H = 300;
-let v, light, city, sky, van, wheels, beacon, ring, arrow;
+let v, light, city, sky, van, wheels, beacon, ring, arrow, gps, drop;
 
 function setup() {
   v = new HDView({ bg: '#8a98b0', fog: .0035, env: .5, amb: .5, fov: 62 });
@@ -24,6 +24,9 @@ function setup() {
   v.air({ haze: .0016, colour: '#9aa6bc' });
   sky = new Sky(v, { time: 17.9, speed: 0, stars: 200, sun: light, physical: true, fog: true });
   city = new City(v, { seed: 7, blocks: 6, style: 'downtown', sky, traffic: 1, people: 1 });
+  // the GPS: the way to the drop, worked out again when you leave it, on the minimap and as arrows on the road
+  gps = new Gps(city, { icon }); gps.show(v, { reach: 160, width: 1.6, opacity: .8 });
+  drop = { at: { x: 0, z: 0 }, kind: 'job', icon: 'cardboard-box', pinned: true };
   // the delivery van: rounded body, a parcel on the roof rack, four wheels
   van = new THREE.Group(); wheels = [];
   const body = new THREE.Mesh(rbox(1.9, 1.3, 4, .25), pbr('#e8701c', { rough: .45, metal: .15 })); body.position.y = 1.05; body.castShadow = true; van.add(body);
@@ -61,10 +64,11 @@ function make(api) {
     sounds.click(); haptic('tick');
   };
   const tellRadio = text => { if (newsT <= 0) { radio.news(text); newsT = 25; } };
-  let car, score, time, t, target, route, routeT, hitT, delivered, engine, msg, msgT, R, camPos, camLook, radioStarted;
+  let car, score, time, t, target, trip, hitT, delivered, engine, msg, msgT, R, camPos, camLook, radioStarted;
   const pickTarget = () => {
     target = city.spot('door', { near: { x: car.x, z: car.y }, min: 110, max: 300, rnd: R }) || city.spot('door', { rnd: R });
-    ring.position.set(target.x, .2, target.z); beacon.position.set(target.x, 80, target.z); routeT = 0;
+    ring.position.set(target.x, .2, target.z); beacon.position.set(target.x, 80, target.z);
+    drop.at = target; gps.to(target); trip = city.route({ x: car.x, z: car.y }, target)?.length || 0;   // (how far it is by road, for the bonus)
   };
   const say = (s, col = '#fff') => { msg = [s, col]; msgT = 1.6; };
   // the radio's dial on the HUD: the station, then the song (or what the DJ is saying)
@@ -91,7 +95,7 @@ function make(api) {
       car = new Car({ x: st.x, y: st.z, angle: Math.PI / 2 - st.heading, top: 21, accel: 13, brakes: 32, turn: 2.3, roll: .35, grip: 7, reverse: .35 });
       score = 0; time = 50; t = 0; hitT = 0; delivered = 0; msg = null; msgT = 0; engine = null; radioStarted = false; newsT = 0;
       camPos = new THREE.Vector3(car.x, 6, car.y - 10); camLook = new THREE.Vector3(car.x, 1, car.y);
-      pickTarget(); route = city.route({ x: car.x, z: car.y }, target);
+      gps.clear(); gps.add(drop); pickTarget(); gps.update(0, { x: car.x, z: car.y, heading: Math.PI / 2 - car.angle });
       fx.clear(); pad.release(); keys.clear();
     },
     resize(w, h) { W = w; H = h; pad.layout(w, h); },
@@ -118,14 +122,14 @@ function make(api) {
       if (d < 4.5) {
         if (Math.abs(car.speed) < 7) {
           delivered++; score = delivered; api.score(score);
-          const bonus = Math.round(10 + Math.min(14, route.length / 30)); time += bonus;
+          const bonus = Math.round(10 + Math.min(14, trip / 30)); time += bonus;
           say(`Delivered! +${bonus}s`, '#60ffb8'); sounds.coin(1.2); sounds.powerup(); haptic('success');
           if (delivered % 3 === 0) tellRadio(`the orange parcel van has dropped off ${delivered} parcels already this evening`);
           const [x, y] = v.toScreen(target.x, 2, target.z); fx.pop(x, y, '📦', { color: '#fff' });
           pickTarget();
         } else if (msgT <= 0) say('Slow down to drop it off', '#fff');
       }
-      routeT -= dt; if (routeT <= 0) { route = city.route({ x: car.x, z: car.y }, target); routeT = 1; }
+      gps.update(dt, { x: car.x, z: car.y, heading: Math.PI / 2 - car.angle });   // (heading as atan2(dx, dz); the car's angle is atan2(dz, dx))
       if (time <= 0) { sounds.lose(); api.over(); }
     },
     draw(c) {
@@ -134,8 +138,8 @@ function make(api) {
       for (const w of wheels) w.rotation.x += car.speed * .016 / .42;
       ring.rotation.z += .02; ring.position.y = .25 + Math.sin(t * 3) * .08;
       // the arrow over the van points along the route
-      const nxt = route.points.find(q => Math.hypot(q[0] - car.x, q[1] - car.y) > 12) || [target.x, target.z];
-      arrow.position.set(car.x, 3.4 + Math.sin(t * 4) * .1, car.y); arrow.rotation.set(Math.PI / 2, 0, 0); arrow.lookAt(nxt[0], 3.4, nxt[1]); arrow.rotateX(Math.PI / 2);
+      const nxt = gps.ahead(12) || target;
+      arrow.position.set(car.x, 3.4 + Math.sin(t * 4) * .1, car.y); arrow.rotation.set(Math.PI / 2, 0, 0); arrow.lookAt(nxt.x, 3.4, nxt.z); arrow.rotateX(Math.PI / 2);
       // a chase camera that swings round behind the van
       const want = new THREE.Vector3(car.x - fx3 * 10, 5.2 + car.pace * 1.5, car.y - fz3 * 10), look = new THREE.Vector3(car.x + fx3 * 6, 1.2, car.y + fz3 * 6);
       camPos.lerp(want, .12); camLook.lerp(look, .2);
@@ -150,13 +154,16 @@ function make(api) {
       c.fillText(Math.ceil(Math.max(0, time)) + 's', 12, 26);
       c.font = '600 13px Rubik, sans-serif'; c.fillStyle = '#e8f0ff'; c.fillText('📦 ' + delivered + '   ' + Math.round(Math.hypot(target.x - car.x, target.z - car.y)) + ' m', 12, 46);
       const ms = Math.min(86, W * .28), mx = W - ms - 10, my = 10;
-      c.globalAlpha = .9; city.drawMap(c, mx, my, ms, ms, { at: { x: car.x, z: car.y }, range: 140, turn: ang + Math.PI / 2 }); c.globalAlpha = 1;
-      c.strokeStyle = '#40ffb0'; c.lineWidth = 2; c.beginPath();
-      route.points.forEach((q, i) => { const [x, y] = city.mapPoint({ x: q[0], z: q[1] }); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.save(); c.beginPath(); c.rect(mx, my, ms, ms); c.clip();
-      c.beginPath(); route.points.forEach((q, i) => { const [x, y] = city.mapPoint({ x: q[0], z: q[1] }); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke();
-      const [tx, ty] = city.mapPoint(target); c.fillStyle = '#40ffb0'; c.beginPath(); c.arc(tx, ty, 4, 0, 7); c.fill(); c.restore();
-      c.fillStyle = '#f07a1a'; c.beginPath(); c.moveTo(mx + ms / 2, my + ms / 2 - 6); c.lineTo(mx + ms / 2 + 4, my + ms / 2 + 4); c.lineTo(mx + ms / 2 - 4, my + ms / 2 + 4); c.fill();
-      c.strokeStyle = '#ffffff55'; c.lineWidth = 1; c.strokeRect(mx + .5, my + .5, ms - 1, ms - 1);
+      c.globalAlpha = .92; gps.mini(c, mx, my, ms, ms, { range: 140 }); c.globalAlpha = 1;
+      // the next turn, under the map
+      const nx = gps.next;
+      if (nx && nx.turn !== 'arrive' && nx.in < 120) {
+        const ix = mx + ms / 2, iy = my + ms + 14;
+        const sg = nx.turn === 'left' ? -1 : 1, ax = ix - 18;   // a bent arrow: up, then round to the side of the turn
+        c.strokeStyle = '#40ffb0'; c.fillStyle = '#40ffb0'; c.lineWidth = 2.5; c.lineCap = 'round'; c.beginPath(); c.moveTo(ax - sg * 3, iy + 7); c.lineTo(ax - sg * 3, iy - 2); c.lineTo(ax + sg * 3, iy - 2); c.stroke();
+        c.beginPath(); c.moveTo(ax + sg * 8, iy - 2); c.lineTo(ax + sg * 3, iy - 7); c.lineTo(ax + sg * 3, iy + 3); c.fill();
+        c.font = '700 12px Rubik, sans-serif'; c.textAlign = 'left'; c.fillStyle = '#e8fff4'; c.fillText(Math.round(nx.in / 5) * 5 + ' m', ix - 6, iy + 4);
+      }
       drawDial(c);
       if (msgT > 0 && msg) { c.globalAlpha = Math.min(1, msgT * 2); c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'center'; c.fillStyle = msg[1]; c.fillText(msg[0], W / 2, H * .3); c.globalAlpha = 1; }
       if (t < 4) {
