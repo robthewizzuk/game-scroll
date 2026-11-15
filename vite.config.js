@@ -1,5 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
-import { readdirSync, readFileSync, existsSync, createReadStream, cpSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, createReadStream, cpSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 import { gsNeeds, sensorsOf } from './src/game-modules.js';
@@ -92,6 +92,28 @@ function hotGames() {
       if (!m) return;
       server.ws.send({ type: 'custom', event: 'gs:game', data: { id: m[1], url: `/src/games/${m[1]}.js` } });
       return [];
+    },
+    // The tweak panel's "Save to file" (src/kit/tweak.js): writes slider values into the knobs of a game's
+    // gs.tweak block (scripts/lib/knobs.mjs changes only those values). Dev server only.
+    configureServer(server) {
+      server.middlewares.use('/__gs/knobs', (req, res) => {
+        const reply = (code, body) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(body)); };
+        if (req.method !== 'POST') return reply(405, { error: 'POST { id, changes }' });
+        let body = '';
+        req.on('data', d => { body += d; if (body.length > 64e3) req.destroy(); });
+        req.on('end', async () => {
+          try {
+            const { id, changes } = JSON.parse(body);
+            if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(id) || !changes || typeof changes !== 'object') return reply(400, { error: 'bad request' });
+            const file = resolve('src/games', id + '.js');
+            if (!existsSync(file)) return reply(404, { error: 'no such game' });
+            const { writeKnobs } = await import('./scripts/lib/knobs.mjs');
+            const r = writeKnobs(readFileSync(file, 'utf8'), changes);
+            if (r.changed.length) writeFileSync(file, r.src);
+            reply(200, { changed: r.changed, missing: r.missing });
+          } catch (e) { reply(400, { error: String(e.message || e) }); }
+        });
+      });
     },
   };
 }

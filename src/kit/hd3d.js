@@ -39,6 +39,7 @@ import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
 import { LightProbeGenerator } from 'three/examples/jsm/lights/LightProbeGenerator.js';
 import { LightProbeGridWebGL } from 'three/examples/jsm/lighting/LightProbeGridWebGL.js';
+import { LightBake } from './bake-light.js';
 import { SSRPass } from 'three/examples/jsm/postprocessing/SSRPass.js';
 import { HorizontalBlurShader } from 'three/examples/jsm/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/examples/jsm/shaders/VerticalBlurShader.js';
@@ -81,6 +82,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { power } from './power.js';
 import { heat } from './heat.js';
 import { lensFrame, afTake, AF_LOG } from './lens.js';
+import { DS, measured, resetSize, fromPixels } from './detail-size.js';
 import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
@@ -170,7 +172,7 @@ const OUT_PX = 2.4e6;
 // the screen take a real share of the chip's frame (pickSize). The 3D's own picture is never under MIN_PX (or the
 // tier's pixels, where those are fewer): below that a game is easier to read at a lower tier, or frame rate, than
 // at fewer pixels still.
-const UPS = [2, 1.7, 1.45], MIN_PX = .4e6, OUT_SHARE = .25;
+const UPS = [2, 1.7, 1.45], MIN_PX = .4e6, OUT_SHARE = .25, DS_MOST = 2.5, DS_FROM = .9, DSR = { n: 0, busy: false };
 /**
  * The sizes a frame is drawn at (pure: tests). cw, ch: the screen's pixels (the card's); px: the tier's; lvl: the
  * resolution step (LEVELS); out: the final picture's step (UPS); capped: the final picture held to OUT_PX (a game
@@ -212,7 +214,15 @@ const Q = { gsum: 0, gcnt: 0, gmax: 0, tier: 2, lvl: 0, out: 0, outCeil: 0, cw: 
 // is full again, the last effect stepped down comes back first. Where a game settles is kept with its tier
 // and resolution.
 const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5], 'sun mask': [1, .7, .5] };
-const FX_ORDER = ['light shafts', 'sun mask', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
+// Which to step is a rate-distortion choice, as a video encoder makes one (Rob's pick 8 of 2026-11-15): the chip time a
+// step saves for the picture it costs. FX_SEEN is what each step costs the picture, measured on eight test scenes on
+// WebGPU with the camera still (scripts/detail-test, each effect at .7 and .5 against its full size, as a share of the
+// difference between two full-size frames a moment apart: 0 is lost in that, 1 is as much again). Bloom's smaller
+// sizes showed plainly where it is strong (the hall's lamps, the embers: 1.7 to 2.4 at .7, 6.6 to 9.6 at .5); every
+// other effect's were lost in the frame-to-frame difference everywhere. So bloom, the cheapest, steps last.
+const FX_SEEN = { ao: [0, .05, .1], bloom: [0, 2, 8], reflections: [0, .05, .1], 'volumetric light': [0, .05, .1], 'light shafts': [0, .05, .1], 'sun mask': [0, .05, .1] };
+const FX_SEEN_MIN = .25;   // (a step that shows nothing measurable still counts as this much: saved time decides between those)
+const FX_ORDER = ['ao', 'reflections', 'sun mask', 'volumetric light', 'light shafts', 'bloom'];   // (without the chip's times: by the same measure, the costliest that shows least first)
 const FX_SHARE = .12, FX_MS = .5;
 let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
 const FX_FRAME = new Set();   // (the one a frame fills: not a new one a frame)
@@ -220,13 +230,19 @@ const fxFrame = () => { FX_FRAME.clear(); return fxOn = FX_FRAME; };
 /** This effect's size now (1: as the tier has it). */
 const fxK = name => Q.force != null && !Q.fxPin ? 1 : FXS[name][Q.fx[name] | 0] ?? 1;
 /**
- * Which effect to draw smaller next, or null (pure: tests). on: the effects the last frame drew (a Set);
+ * Which effect to draw smaller next (the most chip time saved for the picture lost), or null (pure: tests). on: the effects the last frame drew (a Set);
  * steps: { name: steps taken }; g: the chip's ms a frame (null where it doesn't say); parts: HD.info.gpuParts.
  */
 export function pickEffect(on, steps, g, parts) {
   let best = null, most = 0;
   if (g != null && parts) {
-    for (const k of on) { const ms = parts[k] || 0; if (FXS[k] && (steps[k] | 0) < FXS[k].length - 1 && ms >= Math.max(FX_MS, g * FX_SHARE) && ms > most) { best = k; most = ms; } }
+    for (const k of on) {
+      const ms = parts[k] || 0, i = steps[k] | 0, sz = FXS[k];
+      if (!sz || i >= sz.length - 1 || ms < Math.max(FX_MS, g * FX_SHARE)) continue;
+      // (an effect's time goes with its pictures' area: the step from size a to b saves ms (1 - (b/a)^2))
+      const saved = ms * (1 - (sz[i + 1] / sz[i]) ** 2), cost = Math.max(FX_SEEN_MIN, (FX_SEEN[k]?.[i + 1] ?? 1) - (FX_SEEN[k]?.[i] ?? 0)), v = saved / cost;
+      if (v > most) { best = k; most = v; }
+    }
   } else for (const k of FX_ORDER) if (on.has(k) && !(steps[k] > 0)) { best = k; break; }
   return best;
 }
@@ -247,7 +263,7 @@ function startGame(def) {
   Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.out = Math.min(UPS.length - 1, s?.out | 0); Q.outCeil = Q.out;
   Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = Q.easy = Q.gsum = Q.gcnt = Q.gmax = 0; Q.lastT = 0; Q.want = null; Q.hold = HOLD; Q.upT = -1e9; Q.fpsHold = 60000;
-  Q.fx = {}; Q.fxLast = []; Q.fxPin = false;
+  Q.fx = {}; Q.fxLast = []; Q.fxPin = false; resetSize();
   for (const k of FX_ORDER) { const n = Math.min(FXS[k].length - 1, s?.fx?.[k] | 0); if (n > 0) { Q.fx[k] = n; for (let i = 0; i < n; i++) Q.fxLast.push(k); } }
 }
 // WebGPU timestamps: three times every pass on the GPU, the picture's and the compute passes' (frame
@@ -671,7 +687,7 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
+if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending(), glMade: () => !!R }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -2252,6 +2268,7 @@ export class HDView {
    * v.clearProbes() removes them all.
    */
   bakeLight(at, { radius = 10, strength = 1, size = 32 } = {}) {
+    if (at && !at.isVector3 && !Array.isArray(at)) return this.bakeLevel(at);
     // on the renderer the view draws with: baking on WebGL built every WebGL shader for a view that never uses them
     const G = gpuFor(this), r = G ? G.r : renderer(); if (!r) return Promise.resolve(null);
     gpuSwap(this, G);
@@ -2279,6 +2296,22 @@ export class HDView {
       this.blendProbes();
       return p;
     }, () => { rt.dispose(); return null; });
+  }
+  /**
+   * Baked light for a whole level (v.bakeLight({ ... }), bake-light.js): the phone works out the light of the still scenery
+   * itself the first time the game is played (rays in background workers while the loading screen builds the shaders), keeps
+   * it, and only reads it back after that. Light probes over box (the sky as each spot sees it and the sun bounced off
+   * what is round it: people and vehicles moving through take it up), and light maps on maps (big still meshes with UVs, like
+   * Land's ground: the dark foot of a wall, a hollow). The sun, its shadows, lamps and moving things stay live. Call it once the level's view is made,
+   * before the first frame. Returns the bake: .progress, .rebake(), .remove().
+   */
+  bakeLevel(o = {}) {
+    this._baked?.remove();
+    // (how many pictures a material may read on the chip that will draw it: light maps are one more, and are left off at
+    // 16, before any shader is made with them)
+    const G = webgpu(), pics = G ? G.r?.backend?.device?.limits?.maxSampledTexturesPerShaderStage ?? 16 : R?.capabilities?.maxTextures;
+    this._baked = new LightBake(this, o, pics);
+    return this._baked;
   }
   /**
    * Bounce light (baked global illumination): light that has hit the floor, the walls and the props
@@ -2959,6 +2992,7 @@ export class HDView {
   warmOn(G, extra = []) {
     this.holdBase = 'all';   // (what it builds never waits: holdNew)
     if (G) { gpuSwap(this, G); this.warmed = true; try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ } this.scene.environment = this.envFor(G); this.aheadAgain = true; compileGPU(G.r, this.scene, this.cam, null, null, this).catch(buildFailed); return; }   // (hidden things: buildAhead, from the next frame)
+    if (gpuMending()) return;   // (a lost graphics chip being made again: warmed for the new one later, not on WebGL now)
     const r = renderer(); if (!r) return; this.warmed = true; gpuSwap(this, null);
     const hidden = [], tmp = [];
     this.scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
@@ -2989,6 +3023,9 @@ export class HDView {
    */
   precompile() {
     const G = gpuFor(this);
+    // (a lost graphics chip being made again: built for the new one once it is there. On WebGL meanwhile every shader of
+    // the scene was built for a renderer the view would not draw with)
+    if (!G && gpuMending()) return gpuMending().then(() => this.precompile());
     if (G) {
       gpuSwap(this, G); this.scene.environment = this.envFor(G); this.warmed = true;
       // (the hidden things too, before it says it is ready, once the view has drawn a frame of the game: before that the
@@ -3449,6 +3486,18 @@ export class HDView {
     if (occJob && ch.sp && drawn) { occJob.pad = s2 || o.msaa ? 1 : 0; (ch.occM ||= G.fx.depthMeter(r)).read(ch.sp.getTexture('depth'), occJob, occBack); }
     if (this.eye && !baking && !off && ch.sp) this.eyeRead(() => (ch.eyeM ||= G.fx.eyeMeter(r)).read(ch.sp.getTexture('output')));
     if (ls?.afWant && !baking && !off && ch.lensN?.on) this.lensRead(() => ch.lensN.readAF(r));   // (v.lens autofocus: the distance under the spot)
+    // how busy each part of the picture is, for the next frame's contact shadow steps and soft shadow taps (sunmask-gpu.js BUSY: visual masking)
+    if (!baking && !off && ch.sp && G.fx.BUSY) {
+      if ((o.sunMask || (s2 && T.shadow > 0)) && HD.mask !== false && G.fx.BUSY.on) { try { (ch.busyM ||= G.fx.busyMeter(r)).draw(ch.sp.getTexture('output'), r.toneMappingExposure); } catch (e) { ch.busyM?.off(); } }
+      else ch.busyM?.off();
+    }
+    // the picture's own detail now and then, for the size the frames after are drawn at (detail-size.js; one reading at a time)
+    const ds = this._ds;
+    if (ds && !baking && !off && ch.sp && !DSR.busy && ++DSR.n % DS.every === 0) {
+      DSR.busy = true;
+      let p; try { p = (ch.dsM ||= G.fx.detailMeter(r)).read(ch.sp.getTexture('output'), r.toneMappingExposure); } catch (e) { p = null; }
+      Promise.resolve(p).then(px => { if (px) { const [e1, e2] = fromPixels(px); measured(e1, e2, ds.r, ds.full); } }, () => {}).finally(() => { DSR.busy = false; });
+    }
     const made = !!fg && !!shown;
     if (made && HD.fgTap) { flushGPU('frame'); HD.fgTap(shown, r.domElement, 'frame'); }
     // the refreshes after this one that the feed skips show the moments due then (last: the next draws a real frame)
@@ -3462,8 +3511,8 @@ export class HDView {
     if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
       const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && (fg.pace === 'after' || fg.pace === 'early');
       const why = `${Math.round(miss * 100)}% of the refreshes between didn’t come${dropped ? `, ${Math.round(dropped * 100)}% of the frames between were late` : ''}${fg.pace ? `, pace ${fg.pace} at ${Math.round(screenHz())} Hz` : ''}`;
-      if ((miss > .08 || dropped > .5) && frameGenSlack(id)) console.info(`Frame generation: 30 → 60 asks for a faster screen for this game, so the frame between has a spare refresh (${why})`);
-      else if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id, why); console.info(`Frame generation off for this game: the phone is too busy for the frames between (${why})`); } }
+      if ((miss > .08 || dropped > .5) && frameGenSlack(id, why)) console.info(`Frame generation: 30 → 60 asks for a faster screen for this game, so the frame between has a spare refresh (${why})`);
+      else if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id, why)))) { if (!speed.shield) { frameGenFailed(id, why); console.info(`Frame generation off for this game: the phone is too busy for the frames between (${why})`); } }
       else if (miss > .08) console.info(fg.pace === 'early' ? `Frame generation: real frames back to one refresh of the chip for this game, its frames came late with two (${why})` : `Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full (${why})`);
     }
     if (made) ch.sent(drawAt, 1000 / screenHz());
@@ -3529,7 +3578,9 @@ export class HDView {
    * its canvas (and the camera picture under that, for AR), so the card keeps its picture.
    */
   bake(c, small = false) {
-    const r = renderer(); if (!r) return;
+    // (on the renderer the view draws with: asking for the WebGL one made a WebGL context, and built its studio
+    // reflections, for a view drawn on WebGPU; while a lost chip is made again nothing is drawn, draw3d)
+    const G = gpuFor(this); if (!G && (gpuMending() || !renderer())) return;
     this.render(c, this.W, this.H, small ? 'small' : true);
     const u = this.under;
     c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over';
@@ -3546,6 +3597,10 @@ export class HDView {
    * v.underCss is a CSS background for it. With HD.direct off (tests), the frame is copied into c.
    */
   render(c, w = this.W, h = this.H, baking = false) {
+    // (baked light, bake-light.js: its probes and light maps for this frame's colours, in the world's own numbers)
+    // (baked for a round being played or got ready, not for a card in the feed; pics: how many pictures a material may read)
+    if (this._baked && HD.baked !== false) { const g = gpuFor(this); this._baked.before(g, !baking && !speed.offscreen && (getready.warming || speed.playing()), g ? g.r?.backend?.device?.limits?.maxSampledTexturesPerShaderStage ?? 16 : R?.capabilities?.maxTextures); }
+    else this._baked?.hide();
     // (far from the world's centre: drawn with every place worked out from near the camera, origin.js)
     const t0 = performance.now(), near = !baking && speed.offscreen ? false : originOn(this), t1 = performance.now();
     try { this.draw3d(c, w, h, baking); } finally { const t2 = performance.now(); if (near) originOff(this); if (!baking) HD.info.originMs = t1 - t0 + performance.now() - t2; }
@@ -3617,6 +3672,18 @@ export class HDView {
     let pw = fw, ph = fh; const px = baking === 'small' ? Math.min(T.px, PIC_PX) : T.px;
     if (sized) ({ pw, ph, fw, fh } = frameSizes(fw, fh, px, Q.lvl, Q.out, Q.lvl + Q.out > 0 || desktop));
     else { const q = HD.scale ?? Math.min(1, Math.sqrt(px / (pw * ph))) * HD.res; pw = Math.max(16, Math.round(pw * q)); ph = Math.max(16, Math.round(ph * q)); }
+    // ...and only as big as the picture's own detail needs (detail-size.js; WebGPU with GSSR, HD.detailSize false: off): a
+    // share of the size above, never under MIN_PX, nor blown up more than DS_MOST times each way. Only while GSSR is
+    // already upscaling (the quality steps' size under DS_FROM of the final): at the final size it is the edge smoothing,
+    // and going under that at all cost the village scene 5 to 6 dB however little (30.3 dB at .95 of the size, 30.6 at
+    // .75), where once upscaling a smaller size cost it about half a dB more
+    this._ds = null;
+    if (sized && G && HD.detailSize !== false && DS.on && HD.upscale && !this.clearBg && (this.upscaler ?? HD.upscaler) === 'sgsr2' && pw < fw * DS_FROM) {
+      const full = pw / fw, k = Math.min(1, Math.max(DS.use, Math.sqrt(MIN_PX / (pw * ph)), fw / (pw * DS_MOST)));
+      if (k < 1) { pw = Math.max(16, Math.round(pw * k)); ph = Math.max(16, Math.round(ph * k)); }
+      this._ds = { full, r: pw / fw, k };
+    }
+    if (!baking && !off) HD.info.detailSize = this._ds ? { k: this._ds.k, want: DS.k, db: DS.db } : null;
     if (!baking && !off) { HD.info.rw = pw; HD.info.rh = ph; HD.info.ow = fw; HD.info.oh = fh; }   // the 3D's own size and the final picture's (the frame lab's resolution counter)
     // The 3D is drawn at pw x ph (fewer pixels on big screens and when the phone struggles). Below the
     // screen's size, Snapdragon GSR 2 (sgsr2.js, temporal: jitters the camera and builds on the frames
@@ -4130,11 +4197,14 @@ const idle = () => new Promise(res => (typeof requestIdleCallback === 'function'
 function bakeLater(view, c) {
   if (speed.busy() || speed.playing()) { if (waiting.has(c)) return; waiting.add(c); setTimeout(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(view, c); }, 250); return; }
   if (host && host.canvas.isConnected && performance.now() - (host.view.drawnAt || 0) < 300) { if (!bakes.some(b => b[1] === c)) bakes.push([view, c]); return; }
+  // (a lost graphics chip being made again: the picture waits for the new one. Asked for now, the WebGL renderer was
+  // made a moment after the browser's graphics process went, its shaders built on a context that was lost or not yet back)
+  const mend = gpuMending(); if (mend) { if (waiting.has(c)) return; waiting.add(c); mend.then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(view, c); }); return; }
   // no 3D game is being played: give the card that holds the 3D canvas its own last picture, take the
-  // canvas off it, and draw this card's picture
-  const r = renderer(); if (!r) return;
+  // canvas off it, and draw this card's picture (on the renderer the view draws with: a WebGPU view's card made no WebGL)
+  const G = gpuFor(view), r = G ? G.r : renderer(); if (!r) return;
   if (host) { const old = host; host = null; if (old.canvas.isConnected) try { old.view.bake(old.ctx); } catch (_) { /* best effort */ } old.canvas.classList.remove('hd-host'); old.under?.remove(); }
-  r.domElement.remove(); webgpu()?.r.domElement.remove();
+  R?.domElement.remove(); webgpu()?.r.domElement.remove();
   try { view.bake(c, true); } catch (_) { /* best effort */ }
 }
 // Getting a round ready (getready.js; the app draws the round's first frames under its loading screen): what

@@ -16,8 +16,11 @@ a dog by tilting the phone."*
 | Gemini CLI | `GEMINI.md` (which loads `AGENTS.md`) | |
 | GitHub Copilot | `.github/copilot-instructions.md` | |
 
-These tools can run the checks themselves (`game-lint`, `game-types`, `npm run games`, the smoke test) and fix
-what fails. Ask them to.
+These tools can run the checks themselves and fix what fails: `node scripts/check.mjs <id>` runs them all and
+prints one report with the line and a fix for each problem, the speed report included (frame time left, the slowest
+lines, garbage, and for 3D games draw calls, triangles and shaders built mid-play against phone budgets; `npm run speed <id>`
+alone). `node scripts/examples.mjs <name>` shows them how
+real games use any part of `gs`. Ask them to.
 
 ## Chat apps (ChatGPT, Gemini, Claude.ai)
 
@@ -26,13 +29,10 @@ what fails. Ask them to.
 2. Open `prompt.txt`, describe your idea where it says so, and paste the whole thing into the chat.
 3. Save the code it gives you as `src/games/<id>.js` and run the checks:
    ```bash
-   node scripts/game-lint.mjs <id>
-   node scripts/game-types.mjs <id>
-   node scripts/unique.mjs <id>
-   npm run games
-   npm run build:bundled && node scripts/smoke.cjs <id>
+   npm run check <id>
    ```
-4. Paste any errors back into the chat and ask it to fix them. Then play it with `npm run dev`.
+4. Paste the report back into the chat and ask it to fix what failed: each problem names the line, shows
+   the code on it and says what to do. Then play it with `npm run dev`.
 
 ## Tips
 

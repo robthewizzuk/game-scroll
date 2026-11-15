@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.mounts.Mount drawn to look over, for scripts/mounts.cjs: a column for each moment, two rows (side on, and from behind and above).
+//   ?views=tack,mount,walk,trot,gallop,jump,strike,fly   &cell=420x320   &gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await gs.physics3d.loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  const views = (Q.get('views') || 'tack,mount,walk,trot,gallop,jump,strike,fly').split(','), [cw, ch] = (Q.get('cell') || '420x320').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const { creature, human } = gs.models;
+  const HORSE = { like: 'horse', seed: 4 }, DRAGON = { like: 'dragon', seed: 3, size: 7 }, RIDER = { heritage: 'european', sex: 'm', seed: 3, age: 34, weight: .5, hair: '#3b2a1a' };
+  await creature.ready([HORSE, DRAGON]); await human.ready([RIDER]);
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const rows = ['side', 'behind'];
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * rows.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#9fb4c8', fog: .004, sky: '#a9c0d8', ground: '#6a6a4a', amb: .4, fov: 50 });
+  v.sun?.({ dir: [-.5, -1, -.35], strength: 2.6 });
+  const world = new gs.physics3d.World3D({ gravity: -20 }); world.floor?.(0);
+  const g = new gs.THREE.Mesh(new gs.THREE.PlaneGeometry(400, 400), gs.models.material('dirt', { repeat: [80, 80], closeUp: false })); g.rotation.x = -Math.PI / 2; g.receiveShadow = true; v.scene.add(g);
+  const info = [];
+  const fresh = (o, flying) => {
+    const B = creature(o); v.scene.add(B); const t0 = performance.now(); const m = new gs.mounts.Mount(B, { world }); m.place(0, 0, 0, 0);
+    info.push(`${o.like}: fitted in ${(performance.now() - t0).toFixed(0)} ms, speeds ${JSON.stringify(Object.fromEntries(Object.entries(m.speeds).map(([k, x]) => [k, +x.toFixed(1)])))}`);
+    return m;
+  };
+  const step = (m, n, input = {}) => { const ev = []; for (let i = 0; i < n; i++) { m.ride(1 / 60, typeof input === 'function' ? input(i) : input); world.step(1 / 60); ev.push(...m.events.map(e => e.type)); } return ev; };
+  const SET = {
+    tack: m => { step(m, 20); },
+    mount: m => { m.enter(rider); step(m, 236); },
+    walk: m => { m.putIn(rider); m.want = 'walk'; step(m, 150, { stick: { x: 0, y: 1 } }); },
+    trot: m => { m.putIn(rider); m.want = 'trot'; step(m, 200, { stick: { x: 0, y: 1 } }); },
+    gallop: m => { m.putIn(rider); m.want = 'gallop'; step(m, 260, { stick: { x: .25, y: 1 } }); },
+    jump: m => { m.putIn(rider); m.want = 'canter'; step(m, 150, { stick: { x: 0, y: 1 } }); step(m, 12, { stick: { x: 0, y: 1 }, jump: true }); },
+    strike: m => { m.putIn(rider); m.want = 'canter'; step(m, 120, { stick: { x: 0, y: 1 } }); m.strike('right'); step(m, 18, { stick: { x: 0, y: 1 } }); },
+    fly: m => { m.putIn(rider); step(m, 10); step(m, 4, { jump: true }); step(m, 200, i => ({ stick: { x: i > 90 ? .8 : 0, y: .6 }, climb: i < 90 ? .6 : 0 })); },
+  };
+  const rider = human(RIDER);
+  for (let c = 0; c < views.length; c++) {
+    const name = views[c], flying = name === 'fly';
+    if (window.m) { window.m.remove(); v.scene.remove(window.m.beast); }
+    if (!rider.parent) v.scene.add(rider);
+    rider.position.set(-3, 0, -2); rider.rotation.set(0, 0, 0);
+    const m = fresh(flying ? DRAGON : HORSE); window.m = m;
+    const ev = []; const st = SET[name]; if (!st) throw new Error('no view ' + name);
+    const evs = []; const keep = m.emit.bind(m); m.emit = e => { evs.push(e.type); return keep(e); };
+    st(m);
+    if (rider.vehicle && m.irons) { const F = rider.rig.parts.footL.getWorldPosition(new gs.THREE.Vector3()), I = m.irons[0].getWorldPosition(new gs.THREE.Vector3()), K = rider.rig.parts.shinL.getWorldPosition(new gs.THREE.Vector3()); info.push(`        foot ${F.distanceTo(I).toFixed(2)} m from the iron, knee ${Math.abs(K.x - m.beast.position.x).toFixed(2)} m out`); }
+    if (name === 'tack') { rider.visible = false; } else rider.visible = true;
+    info.push(`${name.padEnd(7)} gait ${m.gait} speed ${m.speed.toFixed(1)} air ${m.air} flying ${m.flying} stamina ${m.stamina.toFixed(2)} rider ${m.seats.saddle.who ? 'on' : m.trips.length ? 'getting on: ' + m.trips[0].step : 'off'} events ${[...new Set(evs)].join(',')}`);
+    const B = m.beast, L = Math.max(2.5, m.size.length), p = B.position, f = [Math.sin(m.yaw), Math.cos(m.yaw)];
+    for (let r = 0; r < rows.length; r++) {
+      const d = L * (flying ? 1.5 : 1.25);
+      const at = rows[r] === 'side' ? [p.x + f[1] * d + f[0] * d * .25, p.y + L * .35 + (flying ? 0 : .4), p.z - f[0] * d + f[1] * d * .25] : [p.x - f[0] * d * .9 + f[1] * d * .35, p.y + L * .55 + 1, p.z - f[1] * d * .9 - f[0] * d * .35];
+      v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(p.x, p.y + m.size.height * .65, p.z); v.cam.updateMatrixWorld();
+      v.cut?.();
+      for (let n = 0; n < 8; n++) { v.t = n / 60; v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, c * cw, r * ch);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(`${name} ${rows[r]}`, c * cw + 5, r * ch + 14);
+    }
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

@@ -16,22 +16,33 @@ const GROUND = () => H - 24;
 function make(api) {
   const feel = new Feel({ pixel: true });
   const ready = new Ready({ eat: false });        // the first tap starts the round and is already a jump
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    jump: [150, 90, 260, 'speed of a tap jump (higher jumps higher)'],
+    big: [190, 120, 320, 'speed of a held jump'],
+    gravity: [520, 250, 1000, 'how hard it falls back (lower is floatier)'],
+    speed: [70, 30, 140, 'how fast the rocks come at the start'],
+    faster: [2.5, 0, 8, 'how much faster each second'],
+    gap: [.8, .3, 2, 'shortest seconds between rocks'],
+    tall: [.3, 0, .8, 'share of rocks that are tall'],
+  });
   let y, yWas, vy, rocks, score, t, spawn, speed, dead;
-  const jump = big => { if (y < GROUND() - .5 || dead) return; vy = big ? -190 : -150; feel.jump(30, GROUND()); };
+  const jump = big => { if (y < GROUND() - .5 || dead) return; vy = big ? -K.big : -K.jump; feel.jump(30, GROUND()); };
   const g = new Gestures({ tap: () => jump(false), hold: () => jump(true) });
 
   return {
-    reset() { y = yWas = GROUND(); vy = 0; rocks = []; score = 0; t = 0; spawn = 1; speed = 70; dead = 0; feel.clear(); ready.reset(); g.release(); },   // ALL round state here
+    reset() { y = yWas = GROUND(); vy = 0; rocks = []; score = 0; t = 0; spawn = 1; speed = K.speed; dead = 0; feel.clear(); ready.reset(); g.release(); },   // ALL round state here
     resize(w, h) { W = w; H = h; },
     update(dt) {                                  // tick: 60 below, so dt is exactly 1/60 and the jump is the same height on every phone
       feel.update(dt); g.update();
       if (feel.frozen) return;                    // hit-stop
       if (!ready.update(dt)) return;              // nothing runs until the first tap
       if (dead) { dead += dt; if (dead > .8) api.over(); return; }
-      t += dt; speed = 70 + t * 2.5; spawn -= dt;
-      yWas = y; vy += 520 * dt; y = Math.min(GROUND(), y + vy * dt);   // keep where it was: draw() shows the moment between
+      t += dt; speed = K.speed + t * K.faster; spawn -= dt;
+      yWas = y; vy += K.gravity * dt; y = Math.min(GROUND(), y + vy * dt);   // keep where it was: draw() shows the moment between
       if (y >= GROUND()) { if (vy > 120) feel.land(30, GROUND(), vy); vy = 0; }
-      if (spawn <= 0) { spawn = .8 + Math.random() * 1.1; rocks.push({ x: W + 8, was: W + 8, h: Math.random() < .3 ? 14 : 8, passed: false }); }
+      if (spawn <= 0) { spawn = K.gap + Math.random() * 1.1; rocks.push({ x: W + 8, was: W + 8, h: Math.random() < K.tall ? 14 : 8, passed: false }); }
       for (const r of rocks) {
         r.was = r.x; r.x -= speed * dt;
         if (!r.passed && r.x < 24) { r.passed = true; score++; api.score(score); feel.score(30, y - 16, 1, { color: C16[4] }); }

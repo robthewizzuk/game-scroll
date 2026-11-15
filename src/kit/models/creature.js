@@ -209,7 +209,7 @@ export function creature(o = {}) {
     if (fo.from != null) idx.push(...p.I[fo.from]);
     else for (const [I, face] of [[p.I[1], 0], [p.I[0], 1]]) for (let t = 0; t < I.length; t += 3) if ((onHead[I[t]] & onHead[I[t + 1]] & onHead[I[t + 2]]) === face) idx.push(I[t], I[t + 1], I[t + 2]);
     shellGeo = fur.shell(geos[0], {
-      index: idx, where: grow, flow: fo.flow, ease: fo.ease,
+      index: idx, where: grow, flow: fo.flow, ease: fo.ease, vary: fo.vary ?? .7,   // (longer and shorter in patches, as a real coat is)
       length: fo.length > 0 ? fo.length / scale : (FUR[plan.like] ?? .03) * shag * span,
       tile: (fo.tile > 0 ? fo.tile : Math.max(.015, Math.min(.12, plan.size * .07))) / scale,
     });

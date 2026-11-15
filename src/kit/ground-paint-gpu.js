@@ -3,9 +3,9 @@
 // reading the two pictures in place of their own map). The same sums as the WebGL version: change both.
 // Kit use only.
 import { MeshBasicNodeMaterial, NoBlending, DoubleSide, RendererUtils } from 'three/webgpu';
-import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, screenCoordinate, materialColor, materialRoughness, reference,
+import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, materialColor, materialRoughness, reference,
   vec2, vec3, vec4, float, int, floor, fract, mod, abs, min, max, clamp, dot, length, sqrt, cos, sin, smoothstep, step, mix, select, dFdx, dFdy } from 'three/tsl';
-import { DataTexture } from 'three';
+import { DataTexture, LinearFilter } from 'three';
 import { ORIGIN } from './origin.js';
 
 const ORG = uniform(ORIGIN);
@@ -123,9 +123,12 @@ export function groundPaintRender(r, gp, L, pieces, U) {
   }
 }
 
-// a stand-in until the pictures are made
+// a stand-in until the pictures are made. Filtered as the pictures are (three's DataTexture is nearest-filtered by
+// default, which WebGPU reads without a sampler, by whole texels and with no wrapping): a ground material whose
+// shader was written while it read this one kept that way of reading after the pictures came in, and read one
+// texel off their edge for the whole road (Parcel Dash on Rob's Fold, 2026-11-15: roads brown, black or grey on a first load).
 let blank = null;
-const BLANK = () => blank ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 128, 230]), 1, 1), { needsUpdate: true });
+const BLANK = () => blank ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 128, 230]), 1, 1), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });
 
 /** The 'groundpaint' look (hd3d-gpu.js gpuLooks): m: the ground's material (still a classic one); s: its look; live: hd3d-gpu.js's. */
 export function groundPaintLook(m, s, o, { live }) {
@@ -137,18 +140,25 @@ export function groundPaintLook(m, s, o, { live }) {
   // drawing, since a shadow pass draws it with three's shadow material, which has no colour, and reads this node's alpha)
   const col = reference('color', 'color', m);
   const own = m.colorNode ? vec4(m.colorNode) : materialColor, ownRough = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
-  // what the pictures say here (sqrt colour, roughness), or -1 past them
+  // where this is: how far into the fine level's edge (w0: 0 inside, 1 past it) and the coarse one's (w1), and so how
+  // much of the pictures it takes (k; only a face that looks up). Each change is a smooth blend of the two over the
+  // band, never a dither: a dither shows wherever the two differ at all, the coarse level's colour and roughness being
+  // the fine one's averaged over bigger texels, and an upscaler grows it into speckles of the sky's reflection (Parcel
+  // Dash on Rob's Fold, 2026-11-15: "a square around me on the road that follows me").
+  const gp = positionWorld.xz.add(ORG.xz).toVar('gsGpW');
+  const m0 = max(abs(gp.x.sub(L.x)), abs(gp.y.sub(L.y))).div(L.z.mul(.5)), m1 = max(abs(gp.x.sub(L2.x)), abs(gp.y.sub(L2.y))).div(L.w.mul(.5));
+  const w0 = smoothstep(.8, .95, m0).toVar('gsGpW0'), w1 = smoothstep(.82, .97, m1);
+  const k = select(on.greaterThan(.5).and(normalWorldGeometry.y.greaterThan(.7)), float(1).sub(w1), float(0)).toVar('gsGpK');
+  // what the pictures say here: colour (linear) and roughness, the two levels blended
   const G = Fn(() => {
-    const gp = positionWorld.xz.add(ORG.xz).toVar(), gq = vec2(gp.x, gp.y.negate()).toVar(), gx = dFdx(gq).toVar(), gy = dFdy(gq).toVar();   // (the pictures' v runs along -z)
-    const dz = fract(fract(dot(screenCoordinate.xy, vec2(.06711056, .00583715))).mul(52.9829189));
-    const m0 = max(abs(gp.x.sub(L.x)), abs(gp.y.sub(L.y))).div(L.z.mul(.5)), m1 = max(abs(gp.x.sub(L2.x)), abs(gp.y.sub(L2.y))).div(L.w.mul(.5));
-    const g = vec4(-1).toVar();
-    If(on.greaterThan(.5).and(normalWorldGeometry.y.greaterThan(.7)), () => {   // (a face that looks up)
-      If(m0.lessThan(mix(.8, .95, dz)), () => { g.assign(T0.sample(gq.div(L.z)).grad(gx.div(L.z), gy.div(L.z))); })
-        .ElseIf(m1.lessThan(mix(.82, .97, dz)), () => { g.assign(T1.sample(gq.div(L.w)).grad(gx.div(L.w), gy.div(L.w))); });
+    const gq = vec2(gp.x, gp.y.negate()).toVar(), gx = dFdx(gq).toVar(), gy = dFdy(gq).toVar();   // (the pictures' v runs along -z)
+    const g = vec4(0, 0, 0, 1).toVar();
+    If(k.greaterThan(0), () => {
+      If(w0.lessThan(1), () => { const a = T0.sample(gq.div(L.z)).grad(gx.div(L.z), gy.div(L.z)); g.assign(vec4(a.rgb.mul(a.rgb), a.a)); });
+      If(w0.greaterThan(0), () => { const b = T1.sample(gq.div(L.w)).grad(gx.div(L.w), gy.div(L.w)); g.assign(mix(g, vec4(b.rgb.mul(b.rgb), b.a), w0)); });
     });
     return g;
   })().toVar('gsGpG');
-  m.colorNode = select(G.x.greaterThanEqual(0), vec4(col.mul(G.rgb.mul(G.rgb)), 1), own);
-  m.roughnessNode = select(G.x.greaterThanEqual(0), G.a, ownRough);
+  m.colorNode = mix(own, vec4(col.mul(G.rgb), 1), k);
+  m.roughnessNode = mix(ownRough, G.a, k);
 }

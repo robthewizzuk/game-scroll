@@ -39,7 +39,7 @@ export function browAt(x, hy, B, fem, real = false) {
   const [b0, b1, b2] = B, x0 = b0[0], x1 = b1[0], x2 = b2[0]; if (x < x0 - .004 || x > x2 + .003) return 0;
   // the middle line: the round through the three points
   const yc = b0[1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + b1[1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + b2[1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1)), dy = hy - yc;
-  const t = (x - x0) / (x2 - x0), full = real ? (fem ? .0025 : .0036) : fem ? .0019 : .0027, half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
+  const t = (x - x0) / (x2 - x0), full = real ? (fem ? .0032 : .0046) : fem ? .0019 : .0027, half = full * (1 - .72 * ss(.45, 1.02, t)) * ss(-.14, .04, t);
   if (abs(dy) > half * 1.6 + .0006) return 0;
   // the hairs: lines that lean out along the brow, more upright by the nose; each a little longer or shorter, darker or lighter than the next
   const lean = 1.5 - 1.25 * ss(0, .8, t), q = (x - dy / lean) * 3100, hair = lumps(q, 3.7, fem ? 9.1 : 2.3), fine = lumps(q * 2.3 + 11, 1.9, 5.5);
@@ -246,21 +246,22 @@ export function paintFace(o) {
   const frk = R ? (f.freckles || 0) * fair : 0, spots = R ? ss(55, 82, f.age ?? 30) * (1 - .6 * dark) : 0;
   const SK = [0, 0, 0], sk0 = .8 + .4 * hash(seed, 5, 21);   // (the scan's colouring: skinAt; how strongly on this face)
   const moles = R ? Array.from({ length: Math.floor(hash(seed, 3, 1) * 3.6) }, (_, k) => [.012 + .055 * hash(seed, k, 11), -.1 + .12 * hash(seed, k, 12), .0006 + .0006 * hash(seed, k, 13)]) : [];
-  // (a real face's paint is quieter: finer, fainter brows with skin between the hairs (the hairs over them are strands), a thin even line along the lashes (their roots: the lashes are
-  // strands, human-head.js eyeParts), lips nearer the skin's own colour)
+  // (a real face's paint: brows as tall and nearly as dark as the hairs over them (their strands, human-head.js eyeParts, are drawn only close
+  // up: further off the paint IS the brow, as games paint it under their brow cards; faint, the brows had read as pencil lines), a thin even
+  // line along the lashes (their roots: the lashes are strands), lips nearer the skin's own colour)
   const put = (C, k) => { r += (C[0] - r) * k; g += (C[1] - g) * k; b += (C[2] - b) * k; };
   for (let j = 0; j < h; j++) {
     const hy = y0 + (j + .5) / h * (y1 - y0);
     for (let i = 0; i < w; i++) {
       const x = (i + .5) / w * x1; let lip = 0; r = g = b = 1;
       // ---- brows
-      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .4 : .48) * (.8 + .2 * lumps(x * 2600, hy * 700, 1.3)) : fem ? .95 : .98)); }
+      if (hy > .008 && hy < .04) { const k = browAt(x, hy, B, fem, R); if (k > 0) put(BR, k * (R ? (fem ? .7 : .8) * (.8 + .2 * lumps(x * 2600, hy * 700, 1.3)) : fem ? .95 : .98)); }
       // ---- the lids: the lashes' line along the upper one (thicker towards its outer end, its edge the lashes' own ends), a fainter one under
       // the eye, a soft shade over the upper lid; inside the opening the upper lid's edge is dark, the lower one's pale, the corner by the nose pink
       if (abs(hy - EF[1]) < .02 && x > ex0 - .004 && x < ex0 + exw + .006) {
         const q = rim(x, hy), d = q[0], up = q[1], a = (x - ex0) / exw, pink = d < .0004 ? ss(.0098 * ES, .0118 * ES, EF[0] - x) : 0;
         if (up) {
-          const wl = (fem ? .0021 : .0016) * (R ? .45 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * (R ? .3 : 1) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
+          const wl = (fem ? .0021 : .0016) * (R ? .62 : 1) * (.55 + .95 * ss(0, 1, a)) * (1 + (fem ? .3 : .2) * (R ? .3 : 1) * lumps(a * 46, 4.1, 7.7)) * ss(-.04, .1, a);
           const line = d <= 0 ? 1 : ss(wl + .0003, wl - .0001, d), shade = ss(.0062, .001, d) * ss(-.1, .25, a) * ss(1.25, .9, a) * (fem ? .2 : .14) * (R ? .6 : 1);
           put(LA, mx(line * (fem ? .96 : .92), shade) * (1 - pink));
           // (a GNM face's crease across the upper lid, where the skin above folds in over it when the eye is open: a shadow five or six

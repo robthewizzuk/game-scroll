@@ -45,10 +45,12 @@
 //   gs.board     grid boards: match, fall and refill, slide and merge, flood fill, hints
 //   gs.battle    turn-based battles: fighters, moves, types, status effects, items (Bag), XP and loot
 //   gs.stats     real-time stats: buffs that run out, perks, debuffs over time, pools that drain and refill, cooldowns with charges
+//   gs.rpg       role-playing: Growth (levels, attributes, skill trees, gear that counts) and Reputation (fame, good and evil, factions, bounties, prices, moods)
 //   gs.gen       levels made by code: dungeons, caves, mazes, islands, heightmaps, tile patterns, field of view
 //   gs.drag      drag, drop and snap pieces into slots; reorderable lists
 //   gs.history   undo and redo: each step of the round, back and forward, undos counted
 //   gs.items     inventories (slots, stacks, equip slots, sort) and crafting (recipes, what's missing, timed making)
+//   gs.town      towns that live: a world clock (days, dawn, dusk, waiting, sleeping), seeded village and castle plans, townsfolk with routines, shops, night monsters
 //   gs.adventure point-and-click: rooms, hotspots, take, use X on Y, exits, flags, a map of rooms seen
 //   gs.hex       hex maps (honeycomb-grid): taps, neighbours, ranges, movement reach, paths, sight; Iso views
 //   gs.rts       strategy controls: tap and box select, formations, flow fields, build grids, tower targets
@@ -87,11 +89,13 @@
 //   gs.gadgets   grappling hook, zip line, wire / lock / code puzzles   gs.campaign  chapters, stars, collectibles, unlocks
 //   gs.arena     ball games with cars: arena, goals, boost, flips, ball prediction, replays
 //   gs.monsters  monster attack sets with telegraphs, creatures that flinch, stagger, fall and die, bosses in phases
+//   gs.mounts    a horse or a flying beast to ride: saddle and reins made to fit, getting on and off, gaits, jumps, flight, blows from the saddle
+//   gs.companions up to three friends who follow, talk and fight in roles; an order wheel; tactics a coach corrects; approval
 //   gs.magic     spells: casts, mana and cooldowns, bolts, areas, beams, wards, heals, statuses that meet, ready 3D looks
 //   gs.props     thousands of props with culling and detail levels (InstancedMesh2), rooms, chunked worlds
 //   gs.regions   big worlds in parts: levels made when picked, squares and land tiles round the player, freed behind
 //   gs.outdoors  3D outdoor worlds: terrain (THREE.Terrain), grass, trees, rocks, wavy water you can float on
-//   gs.city      made-up 3D cities from a seed: streets, buildings with lit windows, traffic at the lights, people, routes
+//   gs.city      made-up 3D cities from a seed: streets, buildings with lit windows, traffic at the lights, people, routes; Town builds a gs.town plan
 //   gs.craft     planes, boats and hover craft that feel right, and floating bodies in physics3d
 //   gs.soft      cloth, ropes, jelly and squishy blobs you can grab, cut and tear; a simple liquid
 //   gs.cards     decks, deals, hands, blackjack totals, rummy sets and runs, poker hands (pokersolver)
@@ -145,11 +149,13 @@ import * as brains from './kit/brains.js';
 import * as board from './kit/board.js';
 import * as battle from './kit/battle.js';
 import * as stats from './kit/stats.js';
+import * as rpg from './kit/rpg.js';
 import * as gen from './kit/gen.js';
 import * as drag from './kit/drag.js';
 import * as idle from './kit/idle.js';
 import * as history from './kit/history.js';
 import * as items from './kit/items.js';
+import * as town from './kit/town.js';
 import * as adventure from './kit/adventure.js';
 import * as hex from './kit/hex.js';
 import * as rts from './kit/rts.js';
@@ -197,6 +203,7 @@ export const HIDDEN = {
   hd: ['FINAL_EFFECTS', 'gpuFits', 'pickEffect', 'chipFits', 'startTier', 'mayClimb', 'frameSizes', 'pickSize', 'stepsRun'],   // (pickEffect: the effects ladder's choice; chipFits: whether the chip's times fit its frames; startTier, mayClimb: where a tier starts and when it may climb; frameSizes, pickSize, stepsRun: the sizes a frame is drawn at, which of them a slow chip steps, and the steps over made-up windows; for the kit tests)
   toon: ['TOON', 'celReady'],   // test switches, and whether three's toon shader still has the lines the cel look changes
   props: ['simplifyReady'],
+  city: ['Traffic', 'People'],   // (the city's own: a game reaches them as city.cars and city.people)
   fluid: ['FLUID', 'RHO', 'K', 'G0', 'VMAX', 'LO', 'WALL', 'SOLIDS', 'SINKS', 'PUSHES', 'IN', 'RAD', 'SKIN', 'REACH', 'viscosity', 'bulk', 'thin', 'foamOf', 'GRAIN_G', 'GRIP', 'PACK0', 'grainOf'],   // the fluid's numbers (shared with its WebGPU twin) and test switches
   gas: ['GAS', 'SOURCES', 'SOLIDS', 'SOLID', 'WARM', 'IGNITE', 'HEAT', 'BURNS_AT', 'FLAME', 'QUENCH', 'SMOKE_MAX', 'HEAT_MAX', 'FUEL_MAX', 'VMAX', 'SHARP', 'NEAR', 'flameAt', 'emptyField', 'sample', 'CHEB', 'CHEB_W'],   // the gas's numbers (shared with its WebGPU twin) and test switches
   tabletop: ['loadChess'],
@@ -237,14 +244,14 @@ function readOnly(o) {
 // code). The app loads the parts a streamed game needs before running it, so games don't notice;
 // if a part isn't in yet, reading it throws StillLoading and the app shows "Loading…".
 const GROUPS = {
-  '3d': { parts: ['toon', 'hd', 'ar', 'bricks', 'physics3d', 'fx3d', 'camera', 'nav3d', 'characters', 'level3d', 'sky', 'poses', 'destruction', 'props', 'outdoors', 'city', 'models', 'voxels', 'fluid', 'gas', 'tabletop', 'regions', 'THREE'],
+  '3d': { parts: ['toon', 'hd', 'ar', 'bricks', 'physics3d', 'fx3d', 'camera', 'nav3d', 'characters', 'level3d', 'sky', 'poses', 'destruction', 'props', 'outdoors', 'city', 'models', 'voxels', 'fluid', 'gas', 'tabletop', 'regions', 'dungeon', 'mounts', 'THREE'],
     // (with WebGPU picked in Settings, its renderer gets ready alongside: src/kit/gpu.js)
     load: () => Promise.all([import('./gs-3d.js').then(m => Promise.all([m.props.simplifyReady, m.models.ready()]).then(() => m)), import('./kit/gpu.js').then(g => g.prepareGPU())]).then(([m]) => ({ toon: pick('toon', m.toon), hd: pick('hd', m.hd), ar: pick('ar', m.ar), bricks: pick('bricks', m.bricks),
       physics3d: pick('physics3d', m.physics3d), fx3d: pick('fx3d', m.fx3d), camera: pick('camera', m.camera), nav3d: pick('nav3d', m.nav3d),
       characters: pick('characters', m.characters, m.reactions), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
-      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), THREE: m.THREE })) },
+      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city, m.town3d), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), dungeon: pick('dungeon', m.dungeon), mounts: pick('mounts', m.mounts), THREE: m.THREE })) },
   ai: { parts: ['ai'], load: () => import('./kit/ai.js').then(m => ({ ai: pick('ai', m) })) },
-  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic', 'monsters'],
+  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic', 'monsters', 'companions'],
     load: () => import('./gs-action.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
   play: { parts: ['craft', 'soft', 'cards', 'dice', 'words', 'trivia', 'ui'],
     load: () => import('./gs-play.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
@@ -317,11 +324,13 @@ const core = {
   board: pick('board', board),
   battle: pick('battle', battle),
   stats: pick('stats', stats),
+  rpg: pick('rpg', rpg),
   gen: pick('gen', gen),
   drag: pick('drag', drag),
   idle: pick('idle', idle),
   history: pick('history', history),
   items: pick('items', items),
+  town: pick('town', town),
   adventure: pick('adventure', adventure),
   hex: pick('hex', hex),
   rts: pick('rts', rts),

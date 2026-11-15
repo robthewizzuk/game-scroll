@@ -843,7 +843,9 @@ try {
   // (kit-test.mjs has the strand pictures, the shell and the layers; scripts/creatures.cjs draws them to look over)
   {
     const T = gs.THREE, { creature, human } = gs.models, frame = () => new Promise(r => requestAnimationFrame(r)), wait = ms => new Promise(r => setTimeout(r, ms));
-    const hold = window.__hd.hold; window.__hd.hold = false;
+    // (the quality tier pinned: how many layers a coat wears goes by it, none at the lowest, and a slow software GPU's frames had let it fall
+    // there by the time the people were made, so a beard's coat came and went from run to run)
+    const hold = window.__hd.hold, force = window.__hd.force; window.__hd.hold = false; window.__hd.force = 3;
     const v = new gs.hd.HDView({ bg: '#8a9299', amb: .7, env: .4 }), c = document.createElement('canvas'); c.width = 192; c.height = 192; const x = c.getContext('2d');
     const sl = gs.hd.sun('#fff', 2.2, 4, [.5, .9, .6]); v.scene.add(sl, sl.target); v.sun = sl; sl.follow(0, 0, 0);
     const shot = async n => { for (let i = 0; i < n; i++) { v.render(x, 192, 192); await frame(); } return x.getImageData(0, 0, 192, 192).data; };
@@ -905,12 +907,12 @@ try {
         `real eyes: an iris painted in code (${re.map?.image.width} x ${re.map?.image.width}) and a wet film over them (${wg?.index.count / 3} triangles, on ${[...(wb || [])].join(', ')}) close up only; none on the clean look`);
       // a real face's hair (human.js): a shine across the strands (three's anisotropy); a real beard and moustache are single hairs of their own
       // (human-head.js eyeParts, kit-test.mjs counts them) over the beard's colour painted under them, so they wear no coat of fur; the clean
-      // look's beard still wears one, down the neck (the head's middle is 1.69 up)
+      // look's beard still wears one, ending under the jaw (11.5 to 15.5 cm below the head's middle, which is 1.69 up), not on down the neck: there it had read as a mask
       const rbo = { ...ro, beard: .6 }, rmo = { ...ro, beard: 0, moustache: true }, cbo = { ...opts, beard: .6 }; await human.ready([rbo, rmo, cbo]);
       const coat = o => human(o).hair?.shell, front = g => { const P = g.attributes.position; let lo = 9; for (let i = 0; i < P.count; i++) if (P.getZ(i) > .028) lo = Math.min(lo, P.getY(i)); return lo; };
       const rb = coat(rbo), cb = coat(cbo), rm = coat(rmo), rbm = human(rbo).mesh.material[0];
-      ok(real.mesh.material[6].anisotropy > 0 && !(M[6].anisotropy > 0) && !rb && !rm && cb && front(cb) < 1.545 && rbm.map !== rs.map,
-        `real hair: a shine across the strands (anisotropy ${real.mesh.material[6].anisotropy}); a real beard and moustache single hairs over their own paint, no coat (${!rb && !rm}); the clean look's beard a coat down to ${((1.69 - (cb ? front(cb) : 0)) * 100).toFixed(1)} cm below the head's middle`);
+      ok(real.mesh.material[6].anisotropy > 0 && !(M[6].anisotropy > 0) && !rb && !rm && cb && front(cb) > 1.535 && front(cb) < 1.575 && rbm.map !== rs.map,
+        `real hair: a shine across the strands (anisotropy ${real.mesh.material[6].anisotropy}); a real beard and moustache single hairs over their own paint, no coat (${!rb && !rm}); the clean look's beard a coat down to ${((1.69 - (cb ? front(cb) : 0)) * 100).toFixed(1)} cm below the head's middle (under the jaw)`);
       // a real head of hair's strips (human-hair.js, worked out with the head): one geometry drawn twice, what is mostly hair solid (the alpha
       // test) and the rest see-through over it, on the head's bones, close up only, the picture's own smaller copies; none on the clean look,
       // on a bald head or with cards: false
@@ -920,6 +922,14 @@ try {
       ok(real.strips.length === 2 && s1.geometry === sg && s0.material.alphaTest === .5 && !s0.material.transparent && s1.material.transparent && !s1.material.depthWrite && s0.material.map?.mipmaps?.length > 5
         && sg.index.count / 3 > 2000 && sbn.has('head') && stAt(0) && !stAt(1) && Math.min(...sv) >= -.2 && Math.max(...sv) <= 1.001 && plain.strips.length === 0 && human(sto).strips.length === 0 && human(sbo).strips.length === 0,
         `real hair's strips: ${sg ? sg.index.count / 3 : 0} triangles drawn solid and then see-through, on ${[...sbn].join(', ')}, close up only; none on the clean look, a bald head or with cards: false`);
+      // a real head of hair's strands (human-strands.js, worked out with the head): close up only, with the way along each strand (tangent) that
+      // WebGPU turns its ribbon to the camera by, nothing drawn on WebGL (where the strips stay) and the strips hidden on WebGPU; none on the
+      // clean look or a bald head, and hairStrands: false leaves them off. Afro-textured hair coils by itself (hairTexture by heritage)
+      const sno = { ...ro, hairStrands: false }; await human.ready([sno]);
+      const sd = real.strands, sdg = sd?.geometry, sdAt = l => { real.lod = l; const v = sd.visible; real.lod = 0; return v; };
+      ok(!!sd && sdg.attributes.tangent?.itemSize === 4 && sd.material.userData.gsGpu === 'strands' && !sd.material.visible && s0.material.userData.gsGpu === 'hidden' && s1.material.userData.gsGpu === 'hidden'
+        && sdg.index.count / 3 > 20000 && sdAt(0) && !sdAt(1) && !plain.strands && !human(sbo).strands && !human(sno).strands && human(sno).strips[0]?.material.userData.gsGpu !== 'hidden',
+        `real hair's strands: ${sdg ? sdg.index.count / 3 : 0} triangles, turned to the camera on WebGPU, close up only; the strips hidden there; none on the clean look, a bald head or with hairStrands: false`);
       // a face light (HDView.faceLight): one soft light beside the camera, made once, aimed between the eyes each frame wherever the camera
       // goes, as bright on the face near or far; no shadow, no ray traced light, left out of WebGPU's clustered lamps (its skin takes no shine
       // from it); null only dims it
@@ -980,7 +990,7 @@ try {
       v.scene.remove(h, rifle);
       ok(relaxed && thick > easy[1] + .1 && thin > thick + .1 && Math.min(...gThick) > -.005 && Math.max(...gThick) < .006 && Math.min(...gThin) > -.005 && Math.max(...gThin) < .006 && held > easy[1] + .1 && kept === set && Math.abs(back - easy[1]) < .02,
         `hands: relaxed (${easy.map(k => k.toFixed(2))}), round a 4 cm bar ${thick.toFixed(2)} (the middle finger ${gThick.map(g => (g * 1000).toFixed(0)).join(' and ')} mm off it, its tip wrapped on round), a 2 cm bar ${thin.toFixed(2)} (${gThin.map(g => (g * 1000).toFixed(0)).join(' and ')} mm), round a rifle held ${held.toFixed(2)}; set by hand ${set.toFixed(2)}, kept ${kept.toFixed(2)}; back to the engine ${back.toFixed(2)}; a frame's pose and both hands on a bar ${ms.toFixed(2)} ms`); }
-    window.__hd.hold = hold;
+    window.__hd.hold = hold; window.__hd.force = force;
   }
 }
 window.result = out;

@@ -49,14 +49,15 @@ export class Skyline {
    * view: the city's view; plan: the city's layout; colours: its walls' colours (hex, weighted by repeats); street: its roads'
    * colour. reach: how far the stand-ins go (metres from the middle); land: how far the land goes; floors / tall: the city's
    * storeys; water: no stand-ins on the harbour's water; scale: fewer on slower phones (0..1). It makes the camera see as far as
-   * the land if it didn't already (view.cam.far).
+   * the land if it didn't already (view.cam.far). clear: metres round the plan's bounds kept free of stand-ins (60); ground:
+   * metres out from the bounds where its land begins (3040: past the city's own field; a big city's own land ends sooner).
    */
-  constructor(view, plan, { seed = 1, colours = ['#a8a090'], street = '#3b3d40', reach = 6000, land = 10000, floors = [3, 10], tall = 20, water = false, scale = 1 } = {}) {
+  constructor(view, plan, { seed = 1, colours = ['#a8a090'], street = '#3b3d40', reach = 6000, land = 10000, floors = [3, 10], tall = 20, water = false, scale = 1, clear = 60, ground = 3040 } = {}) {
     this.view = view; this.group = new Group(); this.group.name = 'city to the horizon'; view.scene.add(this.group);
     const B = plan.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2, R = rng(seed * 61 + 7), noise = makeNoise(seed * 13 + 5), n01 = (x, z) => .5 + .5 * noise(x, z);
     const pal = colours.map(h => new Color(h)), roof = new Color('#55575a'), road = new Color(street);
     // the city's own ground: its blocks and the asphalt round them (plus a gap), and the harbour's water
-    const ox0 = B.x0 - 60, ox1 = B.x1 + 60, oz0 = B.z0 - 60, oz1 = B.z1 + 60, wet = water ? [B.x0 - 40, B.x1 + 40, B.z1, B.z1 + 3010] : null;
+    const ox0 = B.x0 - clear, ox1 = B.x1 + clear, oz0 = B.z0 - clear, oz1 = B.z1 + clear, wet = water ? [B.x0 - 40, B.x1 + 40, B.z1, B.z1 + 3010] : null;
     const slices = Array.from({ length: SLICES }, () => ({ P: [], N: [], U: [], C: [], I: [] })), pads = { P: [], C: [], I: [] }, lamps = [];
     const box = (x0, z0, x1, z1, h, col) => {
       const a = Math.atan2((z0 + z1) / 2 - cz, (x0 + x1) / 2 - cx), s = slices[Math.floor(((a + Math.PI) / (2 * Math.PI)) * SLICES) % SLICES];
@@ -115,7 +116,7 @@ export class Skyline {
     } else this.pads = null;
     // the land round it all: a ring from where the city's own ground ends (a rectangle 3 km out from its blocks, or the far side
     // of the harbour's water), flat at first and then hills, out to `land` metres
-    const Rx = (B.x1 - B.x0) / 2 + 3040, Rz0 = (B.z1 - B.z0) / 2 + 3040, Rz1 = water ? B.z1 + 3010 - cz : Rz0, A = 96, RN = 28, LP = [], LC = [], LI = [];
+    const Rx = (B.x1 - B.x0) / 2 + ground, Rz0 = (B.z1 - B.z0) / 2 + ground, Rz1 = water ? B.z1 + 3010 - cz : Rz0, A = 96, RN = 28, LP = [], LC = [], LI = [];
     const green = new Color('#56704a'), brown = new Color('#6e6a58'), far = new Color('#6f7d86'), hills0 = Math.max(reach, Math.max(Rx, Rz0) + 1500);
     for (let r = 0; r <= RN; r++) {
       const t = r / RN;
@@ -160,4 +161,44 @@ export class Skyline {
     this.mat.dispose(); this.padMat.dispose(); this.landMat.dispose();
     this.lights?.dispose(); this.lights = null;
   }
+}
+
+/**
+ * Stand-ins for the city's own chunks (city.js): while a chunk of blocks is not built, near the start or after it was let go
+ * behind the player, each of its buildings stands as plain boxes of its own footprint, storeys and wall colour, with the far
+ * stand-ins' windows (lit at night), so nothing is missing from the skyline and its memory is a few hundred bytes a building.
+ * One mesh a chunk, shown only while the chunk is not built. colourOf(building) gives a wall's colour.
+ */
+export class Standins {
+  constructor(parent, plan, chunks, { colourOf, roof = '#55575a' } = {}) {
+    const { map, lit } = pictures(), R = rng((plan.seed || 1) * 89 + 3), top = new Color(roof), col = new Color();
+    this.mat = new MeshStandardMaterial({ map, emissiveMap: lit, emissive: '#ffffff', emissiveIntensity: 0, vertexColors: true, roughness: .85, metalness: .05, name: 'city stand-ins' });
+    this.group = new Group(); this.group.name = 'city stand-ins'; parent.add(this.group);
+    const ids = new Map(); for (const c of chunks.values()) for (const b of c.blocks) ids.set(b.id, c);
+    const per = new Map();
+    for (const b of plan.buildings) { const c = ids.get(b.block); if (!c) continue; let L = per.get(c); if (!L) per.set(c, L = []); L.push(b); }
+    this.count = 0;
+    for (const [c, list] of per) {
+      const P = [], N = [], U = [], C = [], I = [];
+      const quad = (p, n, uv, k) => { const i = P.length / 3; for (let q = 0; q < 4; q++) { P.push(...p[q]); N.push(...n); U.push(...uv[q]); C.push(k.r, k.g, k.b); } I.push(i, i + 1, i + 2, i, i + 2, i + 3); };
+      for (const b of list) {
+        col.set(colourOf(b)); const du = Math.floor(R() * 8) / 8, dv = Math.floor(R() * 8) / 8;
+        for (const p of b.parts) {
+          const { x0, x1, z0, z1 } = p, y0 = p.y0 - .2, y1 = p.y1, H = (y1 - y0) / 28;
+          for (const [ax, az, bx, bz, nx, nz] of [[x0, z1, x1, z1, 0, 1], [x1, z1, x1, z0, 1, 0], [x1, z0, x0, z0, 0, -1], [x0, z0, x0, z1, -1, 0]]) {
+            const L = Math.hypot(bx - ax, bz - az) / 24;
+            quad([[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [nx, 0, nz], [[du, dv], [du + L, dv], [du + L, dv + H], [du, dv + H]], col);
+          }
+          quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [0, 1, 0], [[.01, .01], [.01, .01], [.01, .01], [.01, .01]], top);
+        }
+        this.count++;
+      }
+      const m = new Mesh(geometry(P, N, U, C, I), this.mat); m.name = 'city stand-ins ' + c.key; m.castShadow = true; m.receiveShadow = true;
+      m.matrixAutoUpdate = false; m.updateMatrix(); m.userData.noDetail = true;
+      this.group.add(m); c.stand = m;
+    }
+  }
+  /** night 0..1: the lit windows. */
+  set night(n) { this.mat.emissiveIntensity = n * 1.1; }
+  dispose() { this.group.removeFromParent(); for (const m of this.group.children) m.geometry.dispose(); this.mat.dispose(); }
 }

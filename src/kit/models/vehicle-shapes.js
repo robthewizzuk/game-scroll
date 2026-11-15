@@ -102,8 +102,11 @@ export function lightBar(b, w, at, { d = .26, h = .1, tilt = 0 } = {}) {
 // what every road vehicle carries on its ends: bumpers, lamps, a grille, plates
 function ends(b, sh, { L, clear, lamp = 'round', bumper = 'chrome', grille = true, lampY = .13, tail = [.2, .09], rear = true, bars = 4, lampR = .082, by = .26 }) {
   const { Z, deck, wide } = sh, w0 = wide(.02), w1 = wide(L - .02), y0 = deck(0), y1 = deck(L), k = lampR / .082;
-  if (bumper) { b.box(bumper, w0 * 2 + .08, .11 * k, .13 * k, [0, clear + by, Z(-.005)], 0, .045); if (rear) b.box(bumper, w1 * 2 + .08, .11, .13, [0, clear + by + .01, Z(L + .005)], 0, .045); }
-  b.box('plate', .4, .1, .012, [0, clear + by, Z(-.01 - .065 * k)]); if (rear) b.box('plate', .4, .1, .012, [0, clear + by + .01, Z(L + .075)]);
+  // (on a car whose doors open, its bumpers and their plates are parts too, so a crash can knock them loose: hung.bumperF, bumperR)
+  const H = sh.hung && sh.panels?.length ? sh.hung : null, F = H && bumper ? H.bumperF = new Shape() : b, Bk = H && bumper ? H.bumperR = new Shape() : b;
+  if (bumper) { F.box(bumper, w0 * 2 + .08, .11 * k, .13 * k, [0, clear + by, Z(-.005)], 0, .045); if (rear) Bk.box(bumper, w1 * 2 + .08, .11, .13, [0, clear + by + .01, Z(L + .005)], 0, .045); }
+  F.box('plate', .4, .1, .012, [0, clear + by, Z(-.01 - .065 * k)]); if (rear) Bk.box('plate', .4, .1, .012, [0, clear + by + .01, Z(L + .075)]);
+  if (H && bumper) { H.bumperAt = [[0, clear + by, Z(-.005)], [0, clear + by + .01, Z(L + .005)], w0 * 2 + .08, w1 * 2 + .08]; if (!rear) delete H.bumperR; }
   if (grille) { const gw = w0 * 2 - .62 * k, gh = .037 * bars, gy = y0 - lampY - .01 - (bars - 4) * .018; b.box('dark', gw, gh + .002, .03, [0, gy, Z(-.008)], 0, .01); for (let i = 0; i < bars; i++) b.box('chrome', gw - .02, .012, .012, [0, gy - gh / 2 + .019 + i * .037, Z(-.026)]); }
   for (const s of [-1, 1]) {
     const x = s * (w0 - .11 - lampR), y = y0 - lampY;
@@ -247,6 +250,8 @@ export function car(o = {}) {
     doorList.push({ name: d.name, side: d.side, slide: !!d.slide, length: d.z1 - d.z0, z: [Z(d.z0), Z(d.z1)] });
   }
   if (hung.steering) parts.steering = { shape: hung.steering, at: hung.wheelAt, rot: [-.42, 0, 0] };
+  if (hung.bumperF) parts.bumperF = { shape: hung.bumperF, at: hung.bumperAt[0], inPlace: true };
+  if (hung.bumperR) parts.bumperR = { shape: hung.bumperR, at: hung.bumperAt[1], inPlace: true };
   const wg = { r: c.r, w: c.tw, lugs: c.lugs || 0, seg: round(clamp(24 * (o.detail || 1), 12, 32)) }, wheels = [];
   for (const [z, steer] of [[zf, true], [zr, false]]) for (const s of [-1, 1]) wheels.push({ at: [s * wheelX(z), c.r, Z(z)], steer, geo: wg });
   for (const sp of spares) sp.geo = wg;

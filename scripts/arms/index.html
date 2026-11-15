@@ -1,0 +1,83 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Fighters with the old world's weapons for scripts/arms.cjs: a row for each, a column for each side it is seen from.
+//   ?rows=knight:ss:slash@.45,archer:bow:bowDraw@1,spear:spear:spearThrust@.4,models   &views=front,three,side   &cell=240x300   &zoom=upper   &gpu
+// A row: outfit:kit:pose[@how far through]. Kits: ss (sword and shield), as (axe and shield), ms (mace and shield), sword, longsword,
+// dagger, axe, mace, spear, staff, bow (drawn as far as the pose's at), sheathed (all on the body). 'models' lays out every weapon.
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+const OUTFITS = {
+  knight: { armour: { chest: 'plate', shoulders: 'plate', arms: 'plate', hands: 'plate', thighs: 'plate', shins: 'plate', feet: 'plate' }, hat: 'sallet' },
+  man: { armour: { chest: 'brigandine', shoulders: 'plate', arms: 'plate', shins: 'plate', cloth: '#26394f' }, hat: 'nasal' },
+  archer: { armour: { chest: 'leather', leather: '#5a3a22' }, top: 'gambeson' },
+  plain: { armour: {} },
+};
+const KITS = {
+  ss: [['sword', 'hipL', 1], ['shield', 'shield', 1, { style: 'heater' }]], as: [['axe', 'hipL', 1], ['shield', 'shield', 1, { style: 'round' }]], ms: [['mace', 'hipL', 1], ['shield', 'shield', 1, { style: 'kite', finish: '#24406a' }]],
+  sword: [['sword', 'hipL', 1]], longsword: [['longsword', 'back', 1]], dagger: [['dagger', 'belt', 1]], axe: [['axe', 'hipL', 1]], mace: [['mace', 'hipL', 1]],
+  spear: [['spear', 'back', 1]], staff: [['staff', 'back', 1]], bow: [['bow', 'bow', 1], ['quiver', 'quiver', 0]],
+  sheathed: [['sword', 'hipL', 0, {}, true], ['shield', 'shield', 0, { style: 'round' }], ['quiver', 'quiver', 0], ['dagger', 'belt', 0, {}, true]],
+};
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);   // (names from the address are only looked up, never used as keys of their own)
+  const rows = (Q.get('rows') || 'knight:ss:shieldUp,models').split(','), views = (Q.get('views') || 'front,three,side').split(','), [cw, ch] = (Q.get('cell') || '240x300').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .5, amb: .35 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 2.1, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * rows.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [], who = o => { const O = own(OUTFITS, o) ? OUTFITS[o] : OUTFITS.plain; return { seed: 3, look: 'real', outfit: { top: { kind: O.top || 'tunic', colour: '#6d6450' }, legs: { kind: 'hose', colour: '#4a4236' }, feet: { kind: 'boots', colour: '#3a2a1c' }, gloves: { colour: '#3a2a1c' }, armour: O.armour, hat: O.hat ? { kind: O.hat } : undefined } }; };
+  const people = [...new Set(rows.filter(r => r !== 'models').map(r => r.split(':')[0]))];
+  const t0 = performance.now(); await gs.models.human.ready(people.map(who)); info.push(`sculpted in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  const VIEW = { side: [1, .12, .05], three: [.8, .3, .75], front: [.05, .15, 1], back: [-.6, .25, -.9], top: [.02, 1, .2], left: [-1, .12, .05] };
+  const world = new T.Group(); v.scene.add(world);
+  const floor = new T.Mesh(new T.BoxGeometry(30, .4, 30), gs.hd.pbr('#6f7466', { rough: .9 })); floor.position.y = -.2; floor.receiveShadow = true; world.add(floor);
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r], hold = new T.Group(); world.add(hold); let aim = new T.Vector3(0, 1, 0), dist = 4.4;
+    if (row === 'models') {
+      // every weapon of the old world, standing in a row, grips at the same height
+      const kinds = ['sword', 'longsword', 'dagger', 'axe', 'mace', 'spear', 'staff', ['shield', { style: 'round' }], ['shield', { style: 'heater' }], ['shield', { style: 'kite', finish: '#24406a' }], 'bow', 'quiver', 'arrow'];
+      kinds.forEach((k, i) => {
+        const [kind, o] = Array.isArray(k) ? k : [k, {}], w = gs.models.weapon(kind, o), x = (i - (kinds.length - 1) / 2) * .4;
+        if (kind === 'arrow') { w.rotation.x = Math.PI / 2; w.position.set(x, .2, 0); } else if (kind === 'spear' || kind === 'staff') w.position.set(x, .64, 0); else w.position.set(x, .5, 0);
+        if (kind === 'shield') { w.position.y = .62; } if (kind === 'bow') { w.position.y = .85; w.rotation.y = Math.PI / 2; w.pull(.0); } if (kind === 'quiver') w.position.y = .55;
+        hold.add(w);
+      });
+      aim.set(0, .8, 0); dist = 6.6;
+      info.push('models: ' + kinds.map(k => (Array.isArray(k) ? k[0] + ':' + k[1].style : k)).join(' '));
+    } else {
+      const [outfit, kit, poseAt = 'idle'] = row.split(':'), [pose, ph] = poseAt.split('@'), body = gs.models.human(who(outfit)); hold.add(body);
+      const carry = new gs.characters.Carry(body), things = {};
+      for (const [kind, spot, inHand, o = {}, sheath] of own(KITS, kit) ? KITS[kit] : []) { const w = gs.models.weapon(kind, o); things[kind] = w; carry.add(kind, w, spot, { sheath: !!sheath }); if (inHand) carry.set(kind, 'hand'); }
+      // (x0..x9: a trial pose, joints as JSON over the armed guard: &x0={"armR":[-1.3,0,.7]})
+      if (/^x\d$/.test(pose)) {
+        const raw = JSON.parse(Q.get(pose).replace(/(^|[^\d])\.(\d)/g, "$10.$2")), from = own(body.rig.poses, raw.base) ? raw.base : 'armed', base = body.rig.poses[from].cycle(+raw.at || 0), j = { ...base.j };
+        for (const k of Object.keys(base.j).concat(['hips', 'spine', 'head', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR'])) if (own(raw, k) && Array.isArray(raw[k])) j[k] = raw[k].slice(0, 3).map(Number);
+        body.rig.add(pose, () => ({ ...base, j }));
+      }
+      if (!own(body.rig.poses, pose)) throw new Error('no pose ' + pose);
+      body.rig.steps = false;
+      for (let i = 0; i < 50; i++) { body.rig.play(pose, ph != null ? { at: +ph } : {}); body.rig.update(1 / 60); carry.update(1 / 60); }
+      body.updateMatrixWorld(true);
+      if (things.bow) { const hand = body.bones.handR.getWorldPosition(new T.Vector3()); const arrow = gs.models.weapon('arrow'); things.bow.load?.(arrow); things.bow.pull(0, hand); info.push(`bow drawn ${things.bow.draw.toFixed(2)}`); }
+      const hp = body.rig.parts.hips.getWorldPosition(new T.Vector3()); aim.set(0, Math.max(.6, hp.y * .85 + .1), 0);
+      for (const k in things) { const w = things[k], tip = w.points.muzzle.getWorldPosition(new T.Vector3()); info.push(`${row} ${k}: tip ${tip.toArray().map(n => n.toFixed(2)).join(' ')}`); }
+    }
+    for (let k = 0; k < views.length; k++) {
+      const view = own(VIEW, views[k]) ? VIEW[views[k]] : null; if (!view) throw new Error('no view ' + views[k]);
+      const zoom = Q.get('zoom'), at = zoom === 'upper' && row !== 'models' ? new T.Vector3(0, 1.3, .2) : aim, len = Math.hypot(...view), d = zoom === 'upper' && row !== 'models' ? 2.4 : dist;
+      v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+      v.cam.position.set(at.x + view[0] / len * d, at.y + view[1] / len * d, at.z + view[2] / len * d); v.cam.lookAt(at); v.cam.updateMatrixWorld(); v.cut?.();
+      for (let n = 0; n < (k || r ? 2 : 6); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, k * cw, r * ch);
+      sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${row} ${views[k]}`, k * cw + 4, r * ch + 12);
+    }
+    world.remove(hold);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

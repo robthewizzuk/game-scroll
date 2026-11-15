@@ -15,6 +15,5 @@
 - [ ] It's an original game: no names, characters, art, music or levels copied from an existing game
 - [ ] One file in `src/games/`, and the file name equals the game's `id`
 - [ ] It has a `goal`, a clear `hint`, and works with touch alone (sensors have a touch fallback)
-- [ ] `npm run build:bundled && node scripts/smoke.cjs <id>` passes
-- [ ] `node scripts/fold.cjs <id>` passes (and `node scripts/sweep.cjs <id>` for Console games)
+- [ ] `npm run check <id>` passes (smoke, streamed, fold, sweep for 3D games, lint, types, unique, speed) and its speed warnings are fixed or explained
 - [ ] I agree to the contribution terms in [CONTRIBUTING.md](https://github.com/robthewizzuk/game-scroll/blob/main/CONTRIBUTING.md#licence-of-your-contribution)

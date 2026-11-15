@@ -74,7 +74,7 @@ export class LiveFace extends Face {
     /** How far the upper lids hang at rest, a share of their whole closing (a real face's .14: over the top of the iris, as relaxed lids are; eyeWide lifts them). */
     this.droop = droop;
     this.sides = SIDE.map(S => ({ S, b: S.b.map(n => B[n]), r: S.b.map(n => this.rest[n]) }));
-    this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4(0, 0, 0, 0);
+    this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4(0, 0, 0, 0); this.lines = 0;
   }
   /** One blink now: shut in a twentieth of a second, open again in a little longer. */
   blink() { this.blinking = .2; this.since = 0; return this; }
@@ -185,6 +185,7 @@ export class LiveFace extends Face {
     // as they come down, at the eyes' outer corners in a smile or a squint, and from the nose to the mouth
     const both = i => (A[BOTH[i][0]] + A[BOTH[i][1]]) / 2, sn = both(6);
     this.wr.set(Math.min(1, Math.max(inUp, both(0))), Math.min(1, Math.max(both(1), .7 * sn)), Math.min(1, Math.max(both(2), .7 * both(3))), Math.min(1, Math.max(both(4), sn, .8 * both(5))));
+    if (this.lines) { const L = this.lines; this.wr.set(Math.max(this.wr.x, L), Math.max(this.wr.y, L * .8), Math.max(this.wr.z, L * .7), Math.max(this.wr.w, L * .9)); }   // (older: the lines stay in a little, person.looks age)
     if (this.mesh) this.mesh.userData.gsWrinkle = this.wr;
     return this;
   }

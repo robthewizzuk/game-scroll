@@ -29,7 +29,8 @@ for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); opt[k] = v ?? args[++i]; } else pos.push(a);
 }
-const env = k => process.env['npm_config_' + k];
+// Some npm versions take `--style pocket` as a switch (npm_config_style=true) and pass "pocket" on as a word.
+const env = k => { const v = process.env['npm_config_' + k]; return v === 'true' && pos.length > 1 ? pos.splice(1, 1)[0] : v === 'true' ? undefined : v; };
 const style = String(opt.style || env('style') || 'phone').toLowerCase().replace(/[^a-z]/g, '');
 let id = pos[0];
 

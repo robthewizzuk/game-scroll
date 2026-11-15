@@ -14,7 +14,7 @@ import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
   positionWorld, cameraPosition, instancedBufferAttribute, uv, rtt, depth, ivec2, min, materialEmissive, distance,
-  attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
+  textureSize, attribute, positionViewDirection, vertexColor, normalWorld, normalWorldGeometry, normalViewGeometry, positionLocal, positionGeometry, positionPrevious, modelWorldMatrix, modelWorldMatrixInverse,
   materialColor, materialOpacity, materialRoughness, cos, floor, step, fwidth, dFdx, dFdy, normalize, uniformArray, Loop, int, If, sqrt,
   roughness, specularColor, specularColorBlended, specularF90, diffuseContribution, BRDF_GGX, BRDF_Lambert, F_Schlick,
   modelViewProjection, acos, getParallaxCorrectNormal, perspectiveDepthToViewZ, orthographicDepthToViewZ, sign, getViewPosition, interleavedGradientNoise, Break, cameraViewMatrix, shadow as shadowOf, texture3D, parallaxDirection, normalMap, instanceIndex, sample, packNormalToRGB, unpackRGBToNormal, storageTexture3D, textureStore, diffuseColor, mx_noise_float, uvec3, ivec3,
@@ -91,8 +91,8 @@ import { ClusteredLighting } from 'three/examples/jsm/lighting/ClusteredLighting
 import ClusteredLightsNode from 'three/examples/jsm/tsl/lighting/ClusteredLightsNode.js';
 import { KitLampsNode } from './lamps-gpu.js';
 export { lampAtlas, drawSlot, dropAtlas, lampAtlasInfo } from './lamps-gpu.js';
-import { sunMaskAt, sunMask, gasSunAt } from './sunmask-gpu.js';
-export { sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
+import { sunMaskAt, sunMask, gasSunAt, BUSY } from './sunmask-gpu.js';
+export { BUSY, sunMaskOn, sunMaskOwner, sunCaps, sunMaskInfo, farTiles, farTilesOff, farTilesInfo, sunGas, gasSunAt } from './sunmask-gpu.js';
 import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js';
@@ -120,7 +120,7 @@ export function traceFits(r) {
 }
 import { S2_HOLD, FSR_X, s2Shape } from './sgsr2.js';
 import { netText, netFor } from './gssr-net.js';
-import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
+import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt, sharpStill } from './framegen.js';
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
 const ORG = uniform(ORIGIN);
 
@@ -181,6 +181,30 @@ class FleshModel extends PhysicalLightingModel {
     const spec = BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(.92) }).mul(.8)
       .add(BRDF_GGX({ lightDirection: L, f0: specularColorBlended, f90: specularF90, roughness: roughness.mul(1.4).min(1) }).mul(.2));
     reflectedLight.directSpecular.addAssign(ld.saturate().mul(lightColor).mul(spec).mul(this.multiScatteringCompensation));
+  }
+}
+
+// Hair, strand by strand (gs.models.human's strands: human-strands.js). Lit along the strand, not off a surface: a hair is a thin glassy tube, so
+// what it shows depends on the way it runs (TSL tangentView), as Kajiya and Kay's hair and Marschner's measurements of real hair have it, the
+// model films and the big engines' hair is lit with. Its parts: the light that goes into the hair mass and comes out all ways (wrapped round
+// the strand, deeper in the shade of the hair round it: in the colours, human-strands.js); the shine off the outside of each strand (R: white,
+// tight, tilted toward the tip by the scales on a hair's surface); a second, broader shine in the hair's own colour that has been in and out of
+// the strand (TRT: tilted the other way, so a head of hair has two bands of shine, a white one and a coloured one); and light through it from
+// behind (TT: hair against the sun glows at its edges).
+class HairModel extends PhysicalLightingModel {
+  constructor(m) { super(false, false, false, false, false, false); }
+  direct({ lightDirection: L, lightColor, reflectedLight }) {
+    const t0 = TSL.tangentView, T = t0.div(max(length(t0), 1e-6)), N = normalView, V = positionViewDirection, H = L.add(V).normalize();   // (guarded: a nought-long way would be NaN, and one NaN pixel blooms over the frame)
+    const tl = dot(T, L), sinTL = sqrt(float(1).sub(tl.mul(tl)).max(0)), nl = dot(N, L);
+    // (the side of the head away from the light is in the shade of the head, whichever way a strand there runs)
+    const side = nl.add(.35).div(1.35).saturate(), col = diffuseContribution;
+    reflectedLight.directDiffuse.addAssign(col.mul(lightColor).mul(mix(side, sinTL.mul(side), .45)).mul(1 / Math.PI));
+    const band = (shift, e) => { const t = T.add(N.mul(shift)).normalize(), th = dot(t, H); return pow(sqrt(float(1).sub(th.mul(th)).max(0)), e).mul(smoothstep(-1, 0, th)); };
+    const r = band(-.07, 90).mul(.9), trt = band(.1, 22).mul(.35);
+    reflectedLight.directSpecular.addAssign(lightColor.mul(side).mul(specularColor.mul(r).add(col.mul(trt).mul(1.6))));
+    // (through it: the light from behind, round the outline of the hair)
+    const tt = pow(dot(V, L).negate().saturate(), 4).mul(sinTL).mul(nl.negate().add(.2).saturate());
+    reflectedLight.directDiffuse.addAssign(col.mul(lightColor).mul(tt).mul(.9));
   }
 }
 
@@ -312,6 +336,31 @@ export const gpuMaterials = {
     m.transparent = true; m.depthWrite = false;
     return m;
   },
+  // gs.models.human's hair strands (human-strands.js): each a ribbon along its middle line, its two edges turned square to the way to the
+  // camera here (so a strand always shows its width), at least half a pixel out each way and as see-through as it is thinner than that, as
+  // the hairs above. Further off fewer strands are drawn (the person's mesh.userData.gsKeep: those whose own number, uv's u, is under it),
+  // each as much wider. The lit sculpted hair under them is their dense middle.
+  strands(gm) {
+    const m = new MeshPhysicalNodeMaterial();
+    for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];
+    m.name = gm.name || 'strands'; m.visible = true;
+    const w = attribute('tangent', 'vec4').w, keep = uniform(1).onObjectUpdate(({ object }) => 1 / Math.max(.0625, object?.userData?.gsKeep || 1));
+    const cam = modelWorldMatrixInverse.mul(vec4(cameraPosition, 1)).xyz, along = TSL.tangentLocal.div(max(length(TSL.tangentLocal), 1e-6));
+    // (a strand whose number is over the share kept is drawn as nothing: its ribbon has no width)
+    const a0 = along.cross(cam.sub(positionLocal)), across = a0.div(max(length(a0), 1e-9)), half = abs(w).mul(keep).mul(step(uv().x, float(1).div(keep)));
+    const p11 = uniform(1).onRenderUpdate(({ camera }) => camera?.projectionMatrix?.elements[5] ?? 1);
+    const depth = max(TSL.modelViewMatrix.mul(vec4(positionLocal, 1)).z.negate(), 1e-3), px = half.mul(p11).mul(TSL.screenSize.y).mul(.5).div(depth);
+    const wide = max(float(1), float(HAIR_MIN_PX).div(max(px, 1e-6))).min(HAIR_MOST);
+    m.positionNode = positionLocal.add(across.mul(half.mul(wide).mul(sign(w))));
+    m.opacityNode = materialOpacity.mul(TSL.varying(float(1).div(wide), 'gsStrandCover')).mul(float(1).sub(smoothstep(.8, 1, uv().y).mul(.6)));
+    // (blended, from the innermost strand out, in the order they are listed: hashed see-through, which needs no order, left a dust of dots the
+    // smoothing over frames turned purple at the outline)
+    m.transparent = true; m.depthWrite = false;   // (the corners are laid so a ribbon always faces the camera the front way: one side drawn)
+    m.setupLightingModel = function () { return new HairModel(this); };
+    return m;
+  },
+  // (what is drawn on WebGL alone: a real head of hair's strips, where the strands are drawn on WebGPU)
+  hidden(gm) { const m = new MeshBasicNodeMaterial(); m.name = (gm.name || '') + ' (hidden)'; m.visible = false; return m; },
   // gs.models.human's clothes (userData.grime: 'cloth', 'leather', or 'far' for the plain stand-in further off). Close up each cloth is woven
   // its own way at the size of its threads (the weave in gsThin.x: human.js WEAVES), leather has its grain, and both crease at the inside of
   // an elbow and the back of a knee as far as it is bent (mesh.userData.gsBends: Grime in human-life.js). Each fades to the plain surface as
@@ -805,9 +854,11 @@ export const gpuLooks = {
 // world: is there such a weather on the view now (air.world)? Without one the material gets the game's own wet
 // only, which reads no picture at all: nodes have no branch to skip the weather's three reads a pixel with.
 let NO_PART = null;
-const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
+// (stand-ins are filtered as the pictures they stand in for: a nearest-filtered one is read without a sampler, and a shader
+// written while it was there reads the real picture that way too: ground-paint-gpu.js BLANK)
+const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
 let BLANK_COVER = null;
-const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { needsUpdate: true });   // (one spot at -1000 m: all open)
+const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (one spot at -1000 m: all open)
 export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
   if (!world) {
     const w = frameWide(AIR.gsWet).mul(frameWide(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
@@ -1030,11 +1081,40 @@ export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // every pixel takes the same way, so it costs nothing on the chip and no shader is built again when they change.
 const PCSS_FIND = 8, PCSS_TAPS = 12, GOLDEN = 2.39996323;
 /** Taps (find, filter) a frame and the pattern's turn (0..1): hd3d.js pcssFrame() sets them. */
-export const PCSS = { n: uniform(new Vector2(PCSS_FIND, PCSS_TAPS)), turn: uniform(0), few: [5, 7], on: true };
+export const PCSS = { n: uniform(new Vector2(PCSS_FIND, PCSS_TAPS)), turn: uniform(0), busy: uniform(0), few: [5, 7], on: true };
 /** Called once a frame: history (the upscaler keeps one this frame), frame (a counter). */
 export function pcssFrame(history, frame) {
   const few = history && PCSS.on; PCSS.n.value.set(few ? PCSS.few[0] : PCSS_FIND, few ? PCSS.few[1] : PCSS_TAPS);
   PCSS.turn.value = few ? frame * .6180339887 % 1 : 0;
+  PCSS.busy.value = few && BUSY.on && BUSY.drawn ? 1 : 0;   // (fewer still where the picture is busy: sunmask-gpu.js BUSY)
+}
+// Visual masking (sunmask-gpu.js BUSY): how busy each block of 8 x 8 pixels of the last frame is, as the share of
+// the contact shadow's steps it needs there.
+export function busyMeter(r) {
+  const src = texture(new Texture()), U = { exp: uniform(1), c0: uniform(BUSY.c0), least: uniform(BUSY.least) }, mat = new NodeMaterial(), rt = BUSY.rt;
+  mat.fragmentNode = Fn(() => {
+    // 16 pixels of the block (every other one each way), their brightness as the screen shows it; its spread
+    const o = ivec2(floor(screenCoordinate.xy).mul(8)), top = ivec2(textureSize(src).sub(1)), a = float(0).toVar(), b = float(0).toVar();
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const l = max(dot(src.load(min(o.add(ivec2(x * 2, y * 2)), top)).rgb, vec3(.2126, .7152, .0722)).mul(U.exp), 0), g = pow(l.div(l.add(1)), 1 / 2.2);
+      a.addAssign(g); b.addAssign(g.mul(g));
+    }
+    const c = sqrt(max(b.div(16).sub(a.div(16).mul(a.div(16))), 0));
+    return vec4(clamp(pow(U.c0.div(max(c, 1e-4)), 1.4), U.least, 1), 0, 0, 1);
+  })();
+  const quad = new QuadMesh(mat);
+  return {
+    rt,
+    draw(tex, exposure = 1) {
+      const w = Math.max(1, Math.ceil((tex.image?.width || 8) / 8)), h = Math.max(1, Math.ceil((tex.image?.height || 8) / 8));
+      if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
+      src.value = tex; U.exp.value = exposure; U.c0.value = BUSY.c0; U.least.value = BUSY.least;
+      const was = r.getRenderTarget(); r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      BUSY.drawn = true; BUSY.k.value = BUSY.on ? 1 : 0;
+    },
+    off() { BUSY.drawn = false; BUSY.k.value = 0; },
+    dispose() { this.off(); mat.dispose(); },
+  };
 }
 const disc = (i, n, phi) => { const r = float(i + .5).div(n).sqrt(), a = phi.add(i * GOLDEN); return vec2(cos(a), sin(a)).mul(r); };
 export function pcss(light) {
@@ -1049,7 +1129,9 @@ export function pcss(light) {
     // (the raw depth by texel: the map's sampler is a comparing one, which can't read depths)
     const raw = u => { let t = texture(depthTexture).load(ivec2(u.div(TEXEL))); if (depthTexture.isArrayTexture) t = t.depth(depthLayer); return t.x; };
     const texel = TEXEL, z = shadowCoord.z, phi = fract(interleavedGradientNoise(screenCoordinate.xy).add(PCSS.turn)).mul(6.2831853).toVar();
-    const NF = PCSS.n.x, NT = PCSS.n.y;
+    // (fewer where the picture is busy enough to hide the noise: sunmask-gpu.js BUSY, its block read by position)
+    const bt = texture(BUSY.rt.texture), share = mix(float(1), bt.load(min(ivec2(screenCoordinate.xy.div(8)), ivec2(textureSize(bt)).sub(1))).r, PCSS.busy).toVar();
+    const NF = max(PCSS.n.x.mul(share).round(), min(PCSS.n.x, 3)).toVar(), NT = max(PCSS.n.y.mul(share).round(), min(PCSS.n.y, 4)).toVar();
     // 1: blockers in reach of the widest spread, their average depth
     const sum = float(0).toVar(), n = float(0).toVar();
     for (let i = 0; i < PCSS_FIND; i++) {
@@ -1163,6 +1245,41 @@ export function eyeMeter(r) {
       r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
       return r.readRenderTargetPixelsAsync(rt, 0, 0, 16, 16);
     },
+  };
+}
+// The picture's own detail (detail-size.js): 32 x 32 blocks of 4 x 4 pixels spread over the 3D as drawn, each
+// texel one block's two finest octaves (e1: each pixel against its 2 x 2's average; e2: those averages against the
+// block's), in brightness as the screen shows it (tone mapped, gamma), as 16-bit logs in bytes any phone reads
+// back without stalling (fromPixels decodes them).
+export function detailMeter(r) {
+  const N = 32, src = texture(new Texture()), U = { size: uniform(new Vector2(1, 1)), exp: uniform(1) }, mat = new NodeMaterial(), rt = new RenderTarget(N, N, { depthBuffer: false });
+  mat.fragmentNode = Fn(() => {
+    const o = ivec2(min(floor(uv().mul(U.size).div(4)).mul(4), U.size.sub(4)));
+    const g = []; for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const l = max(dot(src.load(o.add(ivec2(x, y))).rgb, vec3(.2126, .7152, .0722)).mul(U.exp), 0);
+      g.push(pow(l.div(l.add(1)), 1 / 2.2).toVar());
+    }
+    const at = (x, y) => g[y * 4 + x], e1 = float(0).toVar(), m = [];
+    for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
+      const q = [at(bx * 2, by * 2), at(bx * 2 + 1, by * 2), at(bx * 2, by * 2 + 1), at(bx * 2 + 1, by * 2 + 1)], a = q[0].add(q[1]).add(q[2]).add(q[3]).mul(.25).toVar();
+      for (const v of q) e1.addAssign(v.sub(a).mul(v.sub(a)));
+      m.push(a);
+    }
+    const mm = m[0].add(m[1]).add(m[2]).add(m[3]).mul(.25), e2 = float(0).toVar();
+    for (const a of m) e2.addAssign(a.sub(mm).mul(a.sub(mm)));
+    const code = e => clamp(log2(max(e, 2 ** -32)).add(32).div(32), 0, 1).mul(255);
+    const c1 = code(e1.div(16)), c2 = code(e2.div(4));
+    return vec4(floor(c1).div(255), fract(c1), floor(c2).div(255), fract(c2));
+  })();
+  const quad = new QuadMesh(mat);
+  return {
+    async read(tex, exposure = 1) {
+      src.value = tex; U.size.value.set(tex.image?.width || 1, tex.image?.height || 1); U.exp.value = exposure;
+      const was = r.getRenderTarget();
+      r.setRenderTarget(rt); quad.render(r); r.setRenderTarget(was);
+      return r.readRenderTargetPixelsAsync(rt, 0, 0, N, N);
+    },
+    dispose() { rt.dispose(); mat.dispose(); },
   };
 }
 // Occlusion culling's depth meter (occlude.js; the WebGL one is its DepthMeter): the frame's depth boiled
@@ -2183,6 +2300,8 @@ function sgsr1Gpu(src) {
 // Each step is the same as the TSL it was written from, in the same order (the build machine's pictures
 // came out the same); only the smallest number divided by is bigger in half (HEPS).
 const S2_TAPS = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]];
+// GSSR's quick path for still pixels (Rob's pick 13 of 2026-11-15): their history is read once, not five times (framegen.js sharpStill). on: 0 for a test
+export const QS = { on: uniform(1).setGroup(TSL.renderGroup) };
 const S2_SIG = `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32, lockc: f32)`;
 // (everything up to the blend: the same in the hand-written pass and the learned one)
 const S2_HEAD = `  let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
@@ -2437,8 +2556,11 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     // (whether the pixel flickers: the changes picture's z, or the flicker picture's one number)
     const inst = full && flickOn ? sdT.sample(J).level(0).z.mul(U.fsr2.y).mul(float(1).sub(df)) : FL.length ? sdT.sample(J).level(0).x.mul(U.fsr2.y).mul(float(1).sub(df)) : float(0);
     const pu = vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), prevUV = clamp(pu, 0, 1);
-    const hist = tuned ? sharpAt(histT, prevUV, half) : histT.sample(prevUV);
-    const mlen = length(M.mul(U.os)), start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
+    // (a pixel that hasn't moved, as everywhere still under a still camera, reads its history once: framegen.js sharpStill;
+    // QS.on false reads it the long way everywhere, for a test)
+    const mlen = length(M.mul(U.os)), quick = select(mlen.lessThan(1e-3), QS.on, float(0));
+    const hist = tuned ? sharpStill(histT, prevUV, quick, half) : histT.sample(prevUV);
+    const start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
     // where this pixel's centre falls among the small pixels (full precision: a place on the screen), the
     // five nearest small pixels, and the rest of the pass's maths in half where the chip has it (S2_UP)
     const so = vec2(IP).add(.5).sub(U.jit).sub(H.mul(U.rs));
@@ -3298,6 +3420,7 @@ export class GpuChain {
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.madeQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = this.madeQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;
+    this.busyM?.dispose(); this.dsM?.dispose(); this.busyM = this.dsM = null;   // (the visual masking map and the detail meter, hd3d.js)
   }
 }
 const AIM_POSE = newPose(), AIM_HOLD = 150;   // fresh aim: the pose a frame was made for; ms the input counts as turning the camera after it last did

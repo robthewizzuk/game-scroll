@@ -8,6 +8,7 @@
 //   &axles=3 &offroad (lorries)   &colour=%23802020 &trim=...   &detail=.5
 //   &dirt=.6 &wet=1 (wet=w: none of its own, the air's rain instead) &hit (knocked: a door dented, a side window and the screen broken, a lamp) &flakes=1 &noinside
 //   &open (its doors open; &open=.5 half way, &which=driver one of them)
+//   a crash: &crash=.4 (health left: .4 smokes, .2 black smoke, .1 on fire), &blow (blown up), &flat=0,3 (tyres), &loose=doorL &off=doorR,bumperF (parts), &after=2 (seconds on)
 //   views also near (close by its front wheel), in (through the driver's window), screen (at the windscreen), dent (at the knocked door)
 //   a train: train:steam-van-open_tarp-flat_crates-guard_565b5e (a wagon, then _ its load and/or _ its colour), &deflectors, &fuse (fuse: true), &dull (polished: false)
 import gs, { loadParts } from '../../src/gamescroll.js';
@@ -54,7 +55,15 @@ try {
       if (Q.has('pull')) { const sat = gs.models.human({ seed: 3 }); v.scene.add(sat); car.putIn(sat, seat); car.pull(seat, who); } else car.enter(who, { seat });
       for (let i = 0; i < +Q.get('enter') * 60; i++) car.update(1 / 60);
     }
-    v.scene.add(car); const boat = kind === 'boat', plane = kind === 'plane'; ground.visible = !boat; sea.visible = boat; if (plane) car.position.y = car.gear || 0;
+    v.scene.add(car); const boat = kind === 'boat', plane = kind === 'plane';
+    const crashed = !!car.harm && !!(Q.get('crash') || Q.has('blow') || Q.get('flat') || Q.get('loose') || Q.get('off'));
+    if (crashed) {   // a crash: &crash=.4 (health left: .4 smokes, .2 black smoke, .1 on fire), &blow, &flat=0,3, &loose=doorL, &off=doorR,bumperF, &after=2 (seconds on)
+      const list = k => (Q.get(k) || '').split(',').filter(Boolean);
+      for (const n of list('off')) car.detach(n); for (const n of list('loose')) car.loosen(n); for (const i of list('flat')) car.burst(+i);
+      if (Q.get('crash')) while (car.health > +Q.get('crash')) car.harm(.01);
+      if (Q.has('blow')) car.blow();
+      for (let i = 0; i < +(Q.get('after') || 1.5) * 60; i++) car.update(1 / 60);
+    } ground.visible = !boat; sea.visible = boat; if (plane) car.position.y = car.gear || 0;
     let draws = 0; car.traverse(o => { if (o.isMesh) draws++; });
     const S = car.size, big = Math.max(S.length, S.width * 1.3, S.height * 1.6), d = big * 1.25 + 1.2, cy = (plane ? car.position.y : 0) + S.height * (boat ? .25 : .45);
     const VIEWS = { near: [[S.width * 1.5, 1.35, -S.length * .62], 0, [0, .8, -S.length * .2]], in: [[-S.width * 1.25, 1.45, -S.length * .02], 0, [.2, .75, -S.length * .03]], screen: [[-.6, 1.9, -S.length * .75], 0, [0, .95, -S.length * .1]], dent: [[S.width * 1.15, .95, S.length * .12], 0, [0, .55, 0]],
@@ -65,12 +74,12 @@ try {
       if (V[1] && car.along && !car.fused) { const R = 45; car.along(s => { const a = s / R; return { x: R * (1 - Math.cos(a)) - 3, y: 0, z: -R * Math.sin(a) }; }, S.length / 2); }   // (a train: round a curve of 45 m)
       v.cam.fov = 34; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 600; v.cam.updateProjectionMatrix(); if (V[2]) { v.cam.position.set(...V[0]); v.cam.lookAt(...V[2]); } else { v.cam.position.set(V[0][0] / zoom, cy + (V[0][1] - cy) / zoom, V[0][2] / zoom + at); v.cam.lookAt(0, cy, at); } v.cam.updateMatrixWorld();
       v.cut?.(); sun.follow(0, 0, at);
-      for (let n = 0; n < (c || r ? 3 : 10); n++) { v.t = n / 60; v.render(cx, cw, ch); await frame(); }
+      for (let n = 0; n < (c || r ? 3 : 10); n++) { v.t = n / 60; v.render(cx, cw, ch); await frame(); if (crashed) car.update(1e-3); }   // (smoke's dots turned to face this camera)
       sx.drawImage(cell, c * cw, r * ch);
       if (!c) { sx.font = '12px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${show[r]}  ${car.tris} triangles, ${draws} draws`, 5, r * ch + 14); }
     }
     info.push(`${show[r].padEnd(16)} ${String(car.tris).padStart(6)} triangles ${String(draws).padStart(3)} draws  ${S.length.toFixed(2)} x ${S.width.toFixed(2)} x ${S.height.toFixed(2)} m  made in ${ms.toFixed(0)} ms, a copy in ${ms2.toFixed(2)} ms  parts: ${Object.keys(car.parts).join(' ') || '-'}  points: ${Object.keys(car.points).join(' ')}`);
-    v.scene.remove(car);
+    car.mend?.(); v.scene.remove(car);
   }
   window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }
