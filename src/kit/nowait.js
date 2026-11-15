@@ -53,7 +53,7 @@ export function noWait(r) {
   };
   const asIs = (self, a) => { const was = Q.sync; Q.sync = true; try { return direct.apply(self, a); } finally { Q.sync = was; } };
   r._renderObjectDirect = function (object, material, scene, camera, lightsNode, group, clippingContext, passId) {
-    if (!Q.on || !NOWAIT.on || object.isQuadMesh || this._compilationPromises !== null || object.userData?.noHold === 'wait') return asIs(this, arguments);
+    if (!Q.on || !NOWAIT.on || object.isQuadMesh || this._compilationPromises !== null || object.userData?.noHold === 'wait' || (material.isShaderMaterial && !material.isNodeMaterial)) return asIs(this, arguments);   // (a WebGL ShaderMaterial: three has no shader for it to put off)
     const ro = this._objects.get(object, material, scene, camera, lightsNode, this._currentRenderContext, clippingContext, passId);
     if (ro._nodeBuilderState || N.get(ro).nodeBuilderState !== undefined || N.nodeBuilderCache.has(N.getForRenderCacheKey(ro))) return direct.apply(this, arguments);
     const bundle = () => { if (this._currentRenderBundle !== null) this.backend.get(this._currentRenderBundle).version = -1; };   // (a still scenery bundle is recorded again once it's there)
@@ -72,6 +72,7 @@ export function noWait(r) {
 // how many times a thing was put off (NOWAIT.most at most)
 const PUT_OFF = new WeakMap();
 const top = o => { while (o.parent) o = o.parent; return o; };
+const glLook = m => (Array.isArray(m) ? m.some(glLook) : !!m && m.isShaderMaterial === true && !m.isNodeMaterial);
 
 // (names for the frame lab and tests: what was put off, a few dozen kept)
 function name(ro, why) {
@@ -115,7 +116,8 @@ function drain(r) {
       const it = Q.list.shift();
       if (r._isDeviceLost) { Q.list.length = 0; Q.has.clear(); break; }
       // (a thing taken out of what it was drawn in meanwhile: nothing to build for)
-      if (top(it.object) !== it.top) { NOWAIT_STATS.dropped++; Q.has.delete(it.ro); continue; }
+      // (or its material changed since: a kit's WebGL look swapped back in when the view left WebGPU, hd3d.js gpuSwap)
+      if (top(it.object) !== it.top || glLook(it.object.material) || glLook(it.material)) { NOWAIT_STATS.dropped++; Q.has.delete(it.ro); continue; }
       if (performance.now() - t0 >= NOWAIT.ms) { await nextFrame(); t0 = performance.now(); }
       const st = it.state;
       st.item = it; st.materialSide = null; back(r, st);
