@@ -22,6 +22,7 @@
 // Vectors are plain { x, y } or { x, y, z } (three.js vectors work too). 2D games leave out z.
 
 import { linksFor } from './links.js';
+export { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } from './arsenal.js';
 
 const len = v => Math.hypot(v.x, v.y, v.z || 0);
 const norm = v => { const l = len(v) || 1; return { x: v.x / l, y: v.y / l, z: (v.z || 0) / l }; };
@@ -33,13 +34,15 @@ const has3 = v => v.z != null;
  * bloom per shot up to maxSpread, settles back at settle per second); pellets: shots per pull
  * (shotguns); auto: hold to keep firing; recoil: radians of kick up per shot (and a little sideways);
  * range; falloff: [from, to, keep] (full damage up to `from`, down to `keep` x at `to`); head:
- * headshot multiplier; speed: 0 for instant hits, else a flying shot (metres or units a second).
+ * headshot multiplier; speed: 0 for instant hits, else a flying shot (metres or units a second); pouch: a Pouch its
+ * reloads come out of (shared by every gun that takes the same ammo, its kind `ammoType`) instead of its own reserve.
+ * A ready-made one: arm('rifle') (see arsenal.js: ARSENAL).
  */
 export class Gun {
   constructor(o = {}) {
     Object.assign(this, {
       damage: 20, rate: 6, mag: 12, reserve: Infinity, reload: 1.4, spread: .02, bloom: .01, maxSpread: .12, settle: .25,
-      pellets: 1, auto: true, recoil: .04, sideways: .4, recover: 8, range: 100, falloff: null, head: 2, speed: 0, rng: Math.random,
+      pellets: 1, auto: true, recoil: .04, sideways: .4, recover: 8, range: 100, falloff: null, head: 2, speed: 0, rng: Math.random, pouch: null, ammoType: null,
     }, o);
     this.ammo = this.mag; this.cool = 0; this.reloadLeft = 0; this.extra = 0; this.held = false;
     this.kick = { pitch: 0, yaw: 0 }; this.owed = { pitch: 0, yaw: 0 }; this.offset = { pitch: 0, yaw: 0 }; this.justFired = false; this.empty = false;
@@ -48,14 +51,16 @@ export class Gun {
   get reloading() { return this.reloadLeft > 0 ? 1 - this.reloadLeft / this.reload : 0; }
   /** The aim cone right now (radians), for the crosshair. */
   get spreadNow() { return this.spread + this.extra; }
+  /** Spare rounds to reload from: in its pouch (of its ammoType), else its own reserve. */
+  get spare() { return this.pouch ? this.pouch.count(this.ammoType) : this.reserve; }
   /** Starts a reload (if there's room and spare rounds). */
-  startReload() { if (this.reloadLeft > 0 || this.ammo >= this.mag || this.reserve <= 0) return false; this.reloadLeft = this.reload; return true; }
+  startReload() { if (this.reloadLeft > 0 || this.ammo >= this.mag || this.spare <= 0) return false; this.reloadLeft = this.reload; return true; }
   update(dt) {
     this.cool = Math.max(0, this.cool - dt);
     this.extra = Math.max(0, this.extra - this.settle * dt);
     if (this.reloadLeft > 0) {
       this.reloadLeft -= dt;
-      if (this.reloadLeft <= 0) { const n = Math.min(this.mag - this.ammo, this.reserve); this.ammo += n; this.reserve -= n; this.reloadLeft = 0; this.reloaded = true; }
+      if (this.reloadLeft <= 0) { const n = Math.min(this.mag - this.ammo, this.spare); this.ammo += n; if (this.pouch) this.pouch.take(this.ammoType, n); else this.reserve -= n; this.reloadLeft = 0; this.reloaded = true; }
     } else this.reloaded = false;
     // recoil: kick arrives over a few frames and then the aim drifts most of the way back
     const k = Math.min(1, dt * 30), r = Math.min(1, dt * this.recover) * (this.held ? .3 : 1);

@@ -2331,6 +2331,38 @@ arrows) and asks your `hits()` what each one met; `arc` and `lob` give grenade t
 down before dying, and keeps the direction of each hit (`hits[].angle`) for damage arrows.
 `Markers` times hit markers. `Explosives` are barrels and mines that set each other off.
 
+**A ready-made arsenal** (`gs.combat`): `ARSENAL` holds the numbers for every weapon `gs.models.weapon` makes
+(`pistol`, `revolver`, `smg`, `shotgun`, `rifle`, `sniper`, `launcher`, `grenade`, and `bat`, `pipe`, `wrench`, `baton`
+to swing): its `Gun` options, the ammo it takes, the case it throws, a grenade's throw and fuse, a rocket's blast and
+a melee weapon's `{ reach, damage, arc }` for `Melee`. `arm('rifle')` is a `Gun` with those numbers. `Pouch({ pistol: 36 })`
+is ammo by kind with a most of each, and a gun given one (`arm(kind, { pouch })`) reloads out of it, so guns that take
+the same rounds share them. `Loadout({ pouch, health })` is what one person carries, a weapon to each slot (melee, hand,
+long, heavy, throw): `give(kind)` picks one up loaded (another of the same kind gives its rounds; a second long gun
+takes the first's place, which `give` returns to drop), `next()`, `use(kind)` (drawing takes a moment),
+`fire(from, dir, held, { at })` pulls the trigger with the weapon's sound, `reload()`, `save()` / `load()`.
+`Pickups()` lies about the world: `add({ x, y, z, kind: 'shotgun' })`, `{ kind: 'ammo', of: 'shells', amount }`,
+`{ kind: 'health', amount }`, with `respawn` seconds; `drops.collect(dt, hero.feet, arms)` takes what the hero walks
+over and the loadout has room for (each has `spin` and `bob` to draw it turning). `weaponSound(kind, what, at)` is each
+weapon's own report, click when empty, reload, pump or bolt, swing, pin and draw, heard from `at` through the game's
+`gs.sound.Ears` when it made one (muffled behind walls, echoing in the place). A rocket is a flying `Shots` shot that
+lights an `Explosives` charge where it lands; a grenade is a `World3D` ball added to `Explosives` with `body` and lit
+(`ARSENAL.grenade.throw` has its speed and fuse; `arc` draws the throw line).
+
+**Weapons you can see** (`gs.models` and `gs.fx3d`, Next Gen): `gs.models.weapon('rifle')` is one made in code, our own
+designs, a few draws each, with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
+`sight` and `stock`. `weapon.wield(person)` puts it in the hands of a `gs.models.human`, a `gs.poses` person or a figure:
+each frame after `rig.update()`, `held.update(dt, { how, pitch, yaw })` holds it `'aim'` (a long gun's stock in the
+shoulder, a pistol out in both hands, pointing where the body faces, turned about the shoulder by the aim), `'hip'`,
+`'ready'` (pointing down in front), `'low'` (in one hand at the side), `'slung'` (on the back) or `'none'` (put away),
+eased from one to the next, with both hands closed round it; `held.muzzle` and `held.dir` are where shots leave. Things
+to swing are held up over the shoulder at `'ready'` and out in front at `'aim'`. `gs.fx3d.Impacts(view)` shows where shots
+land, by what they hit: `fx.hit(worldRayHit, { from })` throws sparks off metal, dust and chips off stone, splinters off
+wood, glints off glass, a spray of dirt, sand or snow, a splash on water, a puff off cloth and people (no blood) and
+leaves a mark on the surface, with its sound; what was hit is read from the mesh as `Foley` reads it (or
+`{ surface: 'metal' }`). `fx.muzzle(at, dir, { kind })` is a flash that lights the scene and a wisp of smoke;
+`fx.shell(held.gun.points.eject, { kind })` throws a spent case out to the right that bounces on the world with a tinkle.
+`fx.update(dt)` each frame, `fx.clear()` in `reset()`. On WebGPU marks don't show on see-through things (glass).
+
 **Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
 `gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
 out further the further round it points), through the windscreen, out of the back window with `rear: true`; the
