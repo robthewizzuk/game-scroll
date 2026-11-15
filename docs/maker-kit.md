@@ -1295,6 +1295,9 @@ kit.held('R');                                                // 'sword' once it
 Spots: `hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own `{ bone, at, dir,
 face, hand }` (in the person's own space as they stand). `grip`, `along`, `face` say how a thing of your own
 is made; `held` how the hand holds it if the usual grip doesn't suit it; `set(name, 'hand')` with no reach.
+A `gs.models.weapon` brings all that with it: `kit.add('shield', gs.models.weapon('shield', { style: 'heater' }), 'shield')`
+goes to the left hand held by its grip, a bow too, and a spear, a staff or a longsword has the other hand on it once drawn
+(`both: false` for one hand).
 
 ### People who react
 
@@ -2371,8 +2374,20 @@ weapon's own report, click when empty, reload, pump or bolt, swing, pin and draw
 lights an `Explosives` charge where it lands; a grenade is a `World3D` ball added to `Explosives` with `body` and lit
 (`ARSENAL.grenade.throw` has its speed and fuse; `arc` draws the throw line).
 
+**The old world's** (`gs.combat` and `gs.fight`): `ARSENAL` has `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`,
+`staff` (their `melee` is `gs.fight.ARMS[kind]`), `shield` (slot `'off'`: a `Loadout` wears it beside what is out, as
+`arms.off`) and `bow` (`arms.bow` is its `Bow`, its arrows out of the pouch). `new Bow({ pouch })`: each frame
+`bow.update(dt, { pull: held, from: eye, dir: aim, targets: foes })` draws while held (`bow.k` 0..1 over `draw` seconds:
+the longer, the faster and harder it flies; held at full past `tire` seconds the aim shakes), looses on letting go (barely
+drawn, it is let down), nocks the next; arrows drop as they fly, stop in the game's `World3D` (or your `hits` test) or in a
+target (anything with a position, `radius` and `height`; the top tenth is a head shot), stay stuck there and go along with
+who they are in (`stuck`; `gather(at)` picks them up). It returns `{ who, thing, at, dir, damage, head }` for each hit;
+`bow.show(view.scene, () => gs.models.weapon('arrow'))` keeps an arrow model on each. `weaponSound('bow', 'nock' | 'draw' |
+'fire' | 'thunk' | 'flesh')`, and `'clang'`, `'parry'` and `'bash'` for blades and shields.
+
 **Weapons you can see** (`gs.models` and `gs.fx3d`, Next Gen): `gs.models.weapon('rifle')` is one made in code, our own
-designs, a few draws each, with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
+designs, a few draws each (the old world's too: `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`, `staff`,
+`shield` in `style` `'round'`, `'heater'` or `'kite'` painted in `finish`, `bow`, `arrow`, `quiver`; held with `Carry`), with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
 `sight` and `stock`. `weapon.wield(person)` puts it in the hands of a `gs.models.human`, a `gs.poses` person or a figure:
 each frame after `rig.update()`, `held.update(dt, { how, pitch, yaw })` holds it `'aim'` (a long gun's stock in the
 shoulder, a pistol out in both hands, pointing where the body faces, turned about the shoulder by the aim), `'hip'`,
@@ -2433,6 +2448,23 @@ go to `rig.play(m.pose, { at: m.at, fade: .06 })` (gs.poses has `guard`, `jab`, 
 `moves: SWINGS` with `weapon: { reach, damage }` for a bat, a pipe or a stick. `Brawler({ skill })` is a ready-made
 foe: `think(dt, me, foe)` gives `{ walk, face, attack, block, dodge }`: it closes in, circles, throws combos when you
 are open, blocks or steps out of what it sees coming no faster than a person, and backs off when hurt.
+
+Swords, axes, spears and shields: `new Melee(body, { weapon: 'sword', shield: true, armour: 'auto' })`. The weapon
+(`gs.fight.ARMS`: `sword`, `longsword`, `dagger`, `axe`, `mace`, `spear`, `staff`, and the bat and friends) brings its
+move set: `BLADES` (`slash`, `cutBack`, `chop` on light, `thrust` heavy, `lowCut` low), `AXES` (`hack`, `hackBack`,
+`cleave` that puts them down, a `hook` on low that pulls the guard aside), `SPEARS` (quick `thrust`s that keep a foe
+out, a `lunge`, a `sweep` that trips, a shove with the `shaft`), `STAVES`; a dagger's are quicker and shorter. A
+shield's guard covers a wider arc, takes low blows too and lets nothing through, and `'push'` bashes with it, which
+can't be blocked and knocks a guard aside. A guard raised just before a blow lands (`parry` frames, 6; 10 with a
+shield) parries it: no damage, `hit.parried`, events `'parried'` / `'parry'`, and the one who swung is thrown off
+(`stun`) and left `open` a moment. `armour`: 0..1, `{ high, mid, low }`, or `'auto'`, which reads what a `gs.models.human`
+body wears (`body.armour.worn`) where the blow lands: plate takes most of a cut, less of a thrust (`edge: 'point'`) and
+much less of a mace (`'blunt'`); `hit.soaked` says how much. The guard's pose is `m.guardPose` (`armed`, `shieldUp`,
+`spearGuard`); gs.poses also has `slash`, `cutBack`, `chop`, `thrust`, `lowCut`, `bash`, `axeHook`, `spearThrust`,
+`spearLunge`, `spearSweep`, and `bowReady` and `bowDraw` (`{ at: bow.k }`: side on, the bow arm out along the body's
+forward, the string to the jaw). The things in the hands: `gs.models.weapon('sword')` and the rest (below) with a
+`gs.characters.Carry`, whose hand holds them through the poses; a bow model's `pull(bow.k)` draws its string, `load(arrow)`
+puts an arrow on it. A `Brawler` with a shield and skill parries some of what comes.
 
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next
@@ -4366,3 +4398,51 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   feathers and scales are still painted.
 - To look it over: `node scripts/creatures.cjs sheet.png like=dog,cat,person:long:f,person:short:beard:grey
   cols=idle:face,idle:nape cell=480x480 [layers=10] [fur=0] [--webgpu]`.
+
+## Towns that live
+
+`gs.town` is a village or a castle town as rules: a world clock, a layout from a seed, townsfolk who live their
+day by the clock, shops and monsters that come at night. It is plain data, so a 2D game can use it too;
+`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: pass `rep.price` to a
+shop and read `rep.mood(faction)` for how a townsperson meets the hero.
+
+```js
+const { Clock, Folk, Shop, Night } = gs.town, { Town } = gs.city;
+make() {
+  sky = new gs.sky.Sky(view, { physical: true });
+  clock = new Clock({ hour: 8, speed: 1 / 30 });              // a day in 12 minutes; drives the Sky by itself
+  town = new Town(view, { seed: 7, kind: 'castle', houses: 16 });   // solid in the game's World3D by itself
+  folk = new Folk(town.plan, { crowd });                      // a gs.props.Crowd of human() kinds: moved by itself
+  night = new Night(town.plan, { kinds: ['ghoul', { kind: 'wolf', speed: 2.4 }] });
+  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], price: (p, o) => rep.price(p, 'town', { sell: o.selling }) });
+}
+update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt, hero); }
+```
+
+- The clock: `hour`, `day`, `night`, `dark` (0..1 over an hour at dawn and dusk), `part`; `clock.wait(3)` passes
+  three hours over 2.5 seconds (`{ over: 0 }`: at once) and `clock.sleep('dawn')` waits till dawn; both are promises.
+  `clock.every(18, day => ...)` calls each day as the clock passes six in the evening, waiting or not.
+- The plan: `roads` (a main road and lanes that bend), `square`, `buildings` (role `inn`, `smithy`, `store`,
+  `bakery`, `hall`, `home`, `house`, `keep`, `barracks`; each with `door`, `front` (on the road outside) and its
+  `turn`: the door faces `(sin turn, cos turn)`), `props` (the well, market stalls, the anvil...), `walls` and
+  `gates` (castle), `lights` (torches by doors), `fields` (village), `edge` (where the wild begins) and the walking
+  graph; `gs.town.route(plan, from, to)` walks it.
+- Folk: each person has a job (`smith`, `keeper`, `baker`, `innkeeper`, `farmer`, `guard`, `nightwatch`, `elder`,
+  `idler`), a home and a routine (`gs.town.ROUTINES`, or yours: `routines: { smith: [{ from: 6, to: 12, at: 'work',
+  do: 'work' }, ...] }`). Read `doing`, `moving`, `inside` (a building id: indoors), `x`, `z`, `turn`.
+  `folk.hold(person, 6, hero)` stops one to talk, `folk.near(x, z, r)`, `folk.at(building)`, `folk.of(job)`.
+  After a wait everyone is where the clock says.
+- Sleep and wait: `folk.rest('dawn', hero)` gives `{ ok, done }`, or `{ ok: false, why: 'danger' }` with a monster
+  within 30 m. Fade the screen while `clock.waiting`.
+- Shops: `open` by their hours and their keeper (shut while the keeper is away or hiding), `buy(id, n, wallet,
+  inventory)` and `sell(...)` with a wallet `{ money }` and a `gs.items` Inventory, restocked each morning.
+- The night: monsters come in from the edge after dusk, prowl the roads to the square, keep out of the torches'
+  light, hunt the hero inside `sense` metres and go back at dawn; townsfolk go home while any are about. The kit
+  moves them (`steer: false`: you do); the game draws them and decides who is hurt (`night.kill(m)`).
+- Buildings in code: `gs.models.building({ style: 'cottage' | 'timberframe' | 'keep' })` (daub between oak beams
+  under thatch, a timber-framed house under slate, a stone keep with battlements; roofs `thatch` and `battlement`),
+  `gs.models.fort({ kind: 'wall' | 'tower' | 'gate' })` and the props `stall`, `well`, `anvil`, `torch`, `lever`,
+  `bed`, `hay` and `signboard`. All of them come apart in `gs.destruction.Structure` too.
+- Saving: `clock`, `folk`, each `Shop` and `night` have `pack()` / `unpack(d)` (for `WorldSave.keep`).
+- To look it over: `node scripts/town.cjs sheet.png [kind=castle] [views=square,street,cottage,inn,gate,keep,high,map]
+  [times=10,21.5] [seed=7] [--webgpu]` (`map` shows each townsperson where the hour has them).

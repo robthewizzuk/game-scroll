@@ -15,7 +15,9 @@ Follow AGENTS.md at the repo root. In short:
 3. **Write it** in `src/games/<id>.js`. Only `import gs from '../gamescroll.js'`. Use `gs.effects.Feel`
    for game feel, and the other `gs` parts (physics, ai, pixel, controls, moves, math) instead of
    hand-rolled versions. All round state in `reset()`. Touch must work on its own. Set a fair `goal`.
-4. **Check and fix until clean:**
+4. **Check and fix until clean:** `node scripts/check.mjs <id>` runs everything below in one go and gives one
+   report with the line and a fix for each problem; fix, then run it again (`--quick` for the code checks alone).
+   To see how a gs part is used in a real game: `node scripts/examples.mjs <name>`. The checks one by one:
    - `node scripts/game-lint.mjs <id>` (fix what it flags; read its kit hints and take the ones that fit)
    - `node scripts/game-types.mjs <id>`
    - `node scripts/unique.mjs <id>` (its nearest games: if one is a near-twin, change the mechanic, not the names)
