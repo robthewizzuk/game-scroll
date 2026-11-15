@@ -481,6 +481,7 @@ function startGame(s,now=false){
   if(!now&&(s.loading||usesHD(s.def))){getReady(s);return}
   const items=prepRound(s);if(!items)return;
   beginRound(s,items);
+  if(now&&usesHD(s.def)){const rate=tickRate(s.def);try{runTicks(s,rate,rate?1/rate:1/60,h=>s.game.update(h))}catch(e){console.error(s.def.id,e);perf.error(e,s.def.id)}paint(s)}   // (a 3D round is one frame old before its first touch, as after its loading screen: a game that builds its world in its first update() or draw() is ready for it)
   sfx(660,.08,'square',.04,300);
 }
 // A new round, up to and including the game's reset(): gives the boosts used on this run, or null if the game threw.
