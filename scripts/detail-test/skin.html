@@ -220,6 +220,23 @@ try {
     check('a person taken out is no longer posed', P.info.posed < posed, JSON.stringify(P.info));
     S.v.scene.add(f); await shot(S);
     check('put back, they are posed again', P.info.posed === posed, JSON.stringify(P.info));
+    // a mesh that goes out of the pool for a frame and comes back makes its own shaders again and nobody else's, and the
+    // materials it shares with the rest are not marked changed (three makes a material's shadow nodes again when its version
+    // moves: every mesh of that material had its shadow shader written out again, Long Shadow on the Fold, 2026-11-15)
+    {
+      const N = S.v._gpuChain.r._nodes, made = [], get = N.getForRender;
+      N.getForRender = function (ro, ...a) { const n = N.nodeBuilderCache.size, x = get.call(this, ro, ...a); if (N.nodeBuilderCache.size > n) made.push(ro.object); return x; };
+      const m = all.find(o => P.has(o) && o.visible), mats = new Set(); for (const o of all) for (const x of [].concat(o.material)) if (x) mats.add(x);
+      const vers = () => [...mats].map(x => x.version).join();
+      const cycle = async () => { P.drop(m); P.full.add(m); P.fullN++; await draw(S); await draw(S); P.roomAgain(); await draw(S); await draw(S); };   // (out for two frames, drawn by its own shaders, then in again)
+      try {
+        await cycle(); await shot(S);   // (the first time out, its shaders posed in its own vertex stage are new)
+        const v0 = vers(); made.length = 0;
+        await cycle(); await shot(S);
+        const others = made.filter(o => (o.userData?.gsPoseOf || o) !== m);
+        check('a mesh out of the pool for a moment and back: no other mesh\'s shaders are made again, and the materials it shares are not marked changed', m && P.has(m) && others.length === 0 && vers() === v0, `${m?.name}: made for others ${[...new Set(others.map(o => o.name))].join(', ') || 'none'} (${others.length}); versions ${v0 === vers() ? 'kept' : v0 + ' -> ' + vers()}`);
+      } finally { N.getForRender = get; }
+    }
     // a pool with no room left (a chip allows a list only so big; here what is free is held and the list may not grow):
     // a person it cannot take is posed in their own vertex shader as before, everybody is drawn, and once there is
     // room again they come in
