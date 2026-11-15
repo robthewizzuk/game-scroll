@@ -1949,8 +1949,9 @@ range). [Feel words](feel-words.md) says which knob each word moves, and the usu
 
 ## Speed budget
 
-`npm run budget my-game` plays your game for a few seconds with random taps on a CPU slowed to about
-a mid-range phone, and fails it if:
+Making a game run well on phones is the maker's job, so every game gets a speed report. `npm run speed my-game`
+(also the last step of `npm run check my-game`) plays your game for a few seconds with random taps on a CPU slowed
+to about a mid-range phone, and fails it if:
 
 - `update()` + `draw()` take more than three quarters of a 60 fps frame (12.5 ms) on its slowest
   frames (the 95th percentile). For Console, Next Gen and AR games only `update()` counts, with a
@@ -1958,8 +1959,13 @@ a mid-range phone, and fails it if:
 - JavaScript memory keeps growing (more than 40 MB held after the run): something is kept every
   frame or round.
 
-When a game is over budget it lists the functions that took the most time, with their file and
-line. Pull requests that change a game run it automatically.
+Pass or fail, it reports how much of the budget is left, the slowest lines of your file, the garbage
+your code makes each second and where (more than 4 MB a second is a warning: on a phone collections
+show as hitches), memory growth, and for 3D games the draw calls and triangles a frame against low, mid
+and top phones (estimates, a guide) and any shader built after the round started, by material type.
+Each warning says what to do (`docs/testing.md`, "Speed report"). Pull requests that change a game run
+it automatically. A frame lab recording from a phone (its Report file or Copy text) gets the same advice:
+`node scripts/budget.cjs --lab <file>`.
 
 Shared CI machines vary, so the same code can land either side of the line. A game that is only a
 little over (up to 1.5 times the budget) is played twice more and judged on the middle run; the
