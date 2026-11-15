@@ -48,7 +48,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Match-3, 2048 sliding, flood fill on a grid | `gs.board` | [Game kits](#game-kits) |
 | Turn-based fights, items, XP and loot | `gs.battle` | [Game kits](#game-kits) |
 | Buffs, perks, poison over time, mana that refills, cooldowns with charges (real time) | `gs.stats` | [Game kits](#game-kits) |
-| RPG levels, attributes, skill trees, gear that counts; fame, good and evil, factions, bounties | `gs.rpg` | [Game kits](#game-kits) |
+| RPG levels, attributes, skill trees, gear that counts; fame, good and evil, factions, bounties; quests, journal, world flags | `gs.rpg` | [Game kits](#game-kits) |
 | Dungeons, caves, mazes, islands, tile patterns | `gs.gen` (rot.js, WaveFunctionCollapse) | [Game kits](#game-kits) |
 | Drag pieces into slots, reorder a list | `gs.drag` | [Game kits](#game-kits) |
 | Undo and redo moves | `gs.history` | [Game kits](#game-kits) |
@@ -2112,6 +2112,40 @@ way by `share` (.5), allies the same way, named on either side. `mood(f)`: 'arre
 (`fights`), 'avoid', 'ignore', 'stare' (a famous stranger), 'greet', 'bow', 'cheer'; a `timid` faction
 flees a famous villain. `title()`, `done(id)` (times a deed was done), `log`, `update(dt)` (factions and axes
 with `fade` drift back), `vars()` (every number flat for a conversation) and `pack()` / `unpack()`.
+
+**Quests and the journal** (`gs.rpg.Quests`): quests that run side by side, branch, fail and pay out. A quest
+is a table of stages; the first is where it starts, and an `end` stage ends it that way. Your game draws the
+journal, the quest log and the markers; the kit keeps where each quest is.
+
+```js
+const { Quests, Flags } = gs.rpg;
+flags = new Flags();                         // the world's own facts: flags.set('met_mara'), has, get, add('wolves')
+quests = new Quests({
+  key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+    ask:   { text: 'Ask Mara about the gate key', at: maraStall, reach: 2, next: 'mill' },  // walk within 2 m
+    mill:  { text: 'Find the miller', at: mill, when: () => talked.miller, next: 'flour' },
+    flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+    done:  { end: 'helped', text: 'Mara gave you the key.' },
+    lost:  { end: 'failed', text: 'Mara will never trust you now.' } },
+    rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+});
+quests.start('key'); quests.update(dt, player); quests.count('flour'); quests.to('key', 'lost');
+```
+
+A stage: `text` (the journal's line), `at` (where it is: a marker), `reach` (metres from `at` that moves it
+on), `when(t)` (moves it on when true; `t` is the time in the stage), `count` + `of` (moves on once that many
+are counted with `count(what, n)`; no `of` counts anything), `next`, `end`, `hidden`, `icon`. A quest's `needs`
+to start: `'flag:met_mara'`, `'quest:wolves'` (ended any way), `'quest:wolves=done'`, `'!…'` (not) or a
+function; `repeat: true` lets it run again. Rewards go by themselves to the game's `Growth` (`xp`),
+Inventory (`items`; the newest one made, so a game with a shop's Inventory too passes `inv`, or makes the shop's with `link: false`), `Reputation` (`deeds`) and `Flags` (`flags`); the rest (`gold`) comes with the `reward`
+event for your game. `stage(id)`, `is(id, stage)`, `active`, `ended`, `failed`, `can`, `progress(id)`
+(`{ n, of }`), `end(id, way)`, `fail(id)`, `journal` (newest first: `{ quest, name, stage, text, end, t }`),
+`list()` (`active`, `done`, `failed`), `markers` (`{ at, kind: 'quest', text, icon, pinned }`, the shape
+`gs.missions` Jobs gives, so one map draws both; `pin(id)` makes one the waypoint), `vars()` (`quest_key` is
+its stage or how it ended, for a conversation) and `pack()` / `unpack()` (a few hundred bytes: the journal's
+text comes back from the table). Events `start`, `stage`, `count`, `end`, `fail`, `reward`. A `Talk` finds
+the quests and flags too: ink's `EXTERNAL quest(id, stage)` starts or moves a quest, `count(what, n)`
+counts, `flag(name)` sets a flag, and declared `VAR`s named like a flag or `quest_key` are set before each line.
 
 **Made levels** (`gs.gen`, rot.js and WaveFunctionCollapse, loaded on first use: call them in `make()` or
 `reset()`): `dungeon`, `cave`, `maze`, `islands`, `heightmap` and `pattern(sample)` (new maps that look

@@ -32,6 +32,8 @@
 // factions that did). A faction's rivals move the other way by a share, its allies the same way.
 // Use its numbers anywhere: rep.price(), rep.mood(), rep.title(), and rep.vars() for a conversation.
 
+import { linksFor, linked } from './links.js';
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const parseNeed = s => { const m = String(s).match(/^(.*?)(?::(\d+))?$/); return { id: m[1], rank: m[2] ? +m[2] : 1 }; };
 
@@ -49,7 +51,8 @@ export class Growth {
    * skills (skill points a level, 1), most (top of an attribute, 99, or { name: top }), refill (fill the
    * pools on a level up, true), level and xp (to start with).
    */
-  constructor(stats = null, { attributes = {}, derive = {}, tree = {}, curve = {}, cap = 50, points = 3, skills = 1, most = 99, refill = true, level = 1, xp = null } = {}) {
+  constructor(stats = null, { attributes = {}, derive = {}, tree = {}, curve = {}, cap = 50, points = 3, skills = 1, most = 99, refill = true, level = 1, xp = null, link = true } = {}) {
+    linksFor(null, link)?.join('growth', this);
     this.stats = stats; this.derive = derive; this.tree = tree; this.curve = curve; this.cap = cap; this.perLevel = { points, skills };
     this.most = most; this.refill = refill; this.handlers = {}; this.start = { ...attributes };
     for (const [id, n] of Object.entries(tree)) for (const d of n.needs || []) if (!tree[parseNeed(d).id]) throw new Error(`Growth: skill '${id}' needs '${d}', which is not in the tree`);
@@ -192,7 +195,8 @@ export class Reputation {
    * mean those (for mood, price and titles). titles: [{ name, ...axisOrFaction: [low, high] }], first match wins.
    * fade: points a second each axis and faction drifts back to its start (per axis or faction too).
    */
-  constructor({ axes = { good: [-100, 100, 0], fame: [0, 100, 0] }, factions = {}, deeds = {}, share = .5, inner = ['good'], good = 'good', fame = 'fame', titles = [], ranks = RANKS, keep = 40 } = {}) {
+  constructor({ axes = { good: [-100, 100, 0], fame: [0, 100, 0] }, factions = {}, deeds = {}, share = .5, inner = ['good'], good = 'good', fame = 'fame', titles = [], ranks = RANKS, keep = 40, link = true } = {}) {
+    linksFor(null, link)?.join('reputation', this);
     this.axes = {}; for (const [k, v] of Object.entries(axes)) this.axes[k] = axisOf(v);
     this.factions = {}; for (const [k, v] of Object.entries(factions)) { if (k in this.axes) throw new Error(`Reputation: '${k}' is both an axis and a faction`); this.factions[k] = { start: 0, rivals: [], allies: [], ...v }; }
     for (const [k, f] of Object.entries(this.factions)) for (const r of [...f.rivals, ...f.allies]) if (!this.factions[r]) throw new Error(`Reputation: faction '${k}' names '${r}', which is not a faction`);
@@ -302,5 +306,190 @@ export class Reputation {
     for (const [k, v] of Object.entries(d.a || {})) if (k in this.axes) this.now[k] = clamp(v, this.axes[k].min, this.axes[k].max);
     for (const [k, v] of Object.entries(d.f || {})) if (k in this.factions) this.stand[k] = clamp(v, -100, 100);
     this.bounties = { ...(d.b || {}) }; this.counts = { ...(d.c || {}) }; return this;
+  }
+}
+
+/* ---------------------------------------------------------------- Flags: what the world remembers */
+
+/**
+ * The world's own facts, kept by name: who is gone, which chests are open, what the hero was told, the door that
+ * was broken. set('chest-12'), has('chest-12'), get('gold-in-well', 0), add('wolves', 1). Numbers, words and
+ * true; false or null takes one out. pack() / unpack() (a game's gs.missions WorldSave keeps them by itself).
+ */
+export class Flags {
+  constructor(start = {}, { link = true } = {}) { this.v = { ...start }; this.handlers = {}; linksFor(null, link)?.join('flags', this); }
+  on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
+  emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
+  get(name, fallback = null) { return name in this.v ? this.v[name] : fallback; }
+  has(name) { const x = this.v[name]; return x != null && x !== false && x !== 0 && x !== ''; }
+  set(name, value = true) {
+    const was = this.v[name];
+    if (value == null || value === false) delete this.v[name]; else this.v[name] = value;
+    if (was !== this.v[name]) this.emit('change', name, this.v[name] ?? null, was ?? null);
+    return this;
+  }
+  add(name, n = 1) { return this.set(name, (+this.get(name, 0) || 0) + n).get(name, 0); }
+  /** Every name starting with prefix ('chest-'): how many are set. */
+  count(prefix = '') { let n = 0; for (const k in this.v) if (k.startsWith(prefix) && this.has(k)) n++; return n; }
+  get all() { return { ...this.v }; }
+  pack() { return { ...this.v }; }
+  unpack(d) { this.v = { ...(d || {}) }; return this; }
+}
+
+/* ---------------------------------------------------------------- Quests and the journal */
+
+const P3 = p => p == null ? null : { x: p.x ?? p[0] ?? 0, y: p.y ?? p[1] ?? 0, z: p.z ?? p[2] ?? 0 };
+const sayNeeds = (q, need, flags, ends) => {
+  // 'quest:gate' (that quest ended, any way), 'quest:gate=helped' (that way), 'flag:metMara', '!flag:x' (not), or a function
+  if (typeof need === 'function') return !!need();
+  const not = need.startsWith('!'), n = not ? need.slice(1) : need, [kind, rest] = n.includes(':') ? n.split(/:(.*)/s) : ['flag', n];
+  let ok;
+  if (kind === 'quest') { const [id, way] = rest.split('='); ok = way ? ends[id] === way : !!ends[id]; }
+  else ok = !!flags?.has(rest);
+  return not ? !ok : ok;
+};
+
+/**
+ * Quests that run side by side, branch, can fail, and give rewards; the journal that tells their story; markers for
+ * the map. A quest is a table of stages; the game moves it on with to(id, stage), or a stage moves on by itself:
+ *
+ *   quests = new Quests({
+ *     key: { name: 'The Gate Key', stages: {
+ *       ask:   { text: 'Ask Mara about the gate key', at: maraStall, reach: 2, next: 'mill' },   // walk within 2 m
+ *       mill:  { text: 'Find the miller', at: mill, when: () => talkedTo.miller, next: 'flour' },
+ *       flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },   // quests.count('flour')
+ *       done:  { end: 'helped', text: 'Mara gave you the key.' },
+ *       lost:  { end: 'failed', text: 'Mara will never trust you now.' } },
+ *       rewards: { helped: { xp: 50, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true } } },
+ *       needs: ['flag:met_mara'] } });
+ *   quests.start('key'); quests.update(dt, player); quests.to('key', 'lost'); quests.count('flour', 1);
+ *   draw: quests.journal (newest first), quests.markers, quests.list() (active, done, failed)
+ *
+ * A stage: text (the journal's line), at (where: a marker), reach (metres from at that moves it on), when (moves
+ * it on when true), count + of (moves it on when that many of something are counted), next, end (the quest ends
+ * that way: 'failed' or 'fail' counts as failing), hidden (no marker). A quest: name, stages (the first is where it
+ * starts), rewards { end: { xp, items, deeds, flags, ... } } (xp, items, deeds and flags go to the game's Growth,
+ * Inventory, Reputation and Flags; everything else comes with the 'reward' event), needs (to start), repeat.
+ * Events: start, stage, count, end, fail, reward. vars() is every quest's stage for a conversation (quest_key).
+ */
+export class Quests {
+  constructor(table = {}, { rep, grow, inv, flags, link = true, keep = 60 } = {}) {
+    this.table = table; this.keep = keep; this.links = linksFor(null, link); this.links?.join('quests', this);
+    this.given = { rep, grow, inv, flags }; this.handlers = {}; this.pinned = null;
+    for (const [id, q] of Object.entries(table)) {
+      const st = q.stages || {}; if (!Object.keys(st).length) throw new Error(`Quests: '${id}' has no stages`);
+      for (const [k, v] of Object.entries(st)) if (v.next && !st[v.next]) throw new Error(`Quests: '${id}' stage '${k}' goes on to '${v.next}', which is not one of its stages`);
+    }
+    this.restart();
+  }
+  get rep() { return linked(this.given.rep, this.links, 'reputation'); }
+  get grow() { return linked(this.given.grow, this.links, 'growth'); }
+  get inv() { return linked(this.given.inv, this.links, 'inventory'); }
+  get flags() { return linked(this.given.flags, this.links, 'flags'); }
+  on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
+  emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
+  restart() { this.now = {}; this.ends = {}; this.counts = {}; this.journal = []; this.t = 0; this.times = {}; return this; }
+  q(id) { const q = this.table[id]; if (!q) throw new Error(`Quests: no quest '${id}'`); return q; }
+  /** The stage a quest is at ('' before it starts and once it is over). */
+  stage(id) { return this.now[id] ?? ''; }
+  /** At that stage now? */
+  is(id, stage) { return this.now[id] === stage; }
+  /** Running now? */
+  active(id) { return id in this.now; }
+  /** How it ended ('helped', 'failed'...), or null. */
+  ended(id) { return this.ends[id] ?? null; }
+  failed(id) { const e = this.ends[id]; return e === 'failed' || e === 'fail'; }
+  /** Could it start now (not running, not over unless it repeats, its needs met)? */
+  can(id) { const q = this.q(id); if (this.active(id) || (this.ends[id] && !q.repeat)) return false; return (q.needs || []).every(n => sayNeeds(q, n, this.flags, this.ends)); }
+  /** Starts it (at its first stage, or the one given). False if it can't. */
+  start(id, stage = null) {
+    if (!this.can(id)) return false;
+    const q = this.q(id); delete this.ends[id]; this.emit('start', id);
+    this.to(id, stage || Object.keys(q.stages)[0]); return true;
+  }
+  /** Moves a quest to a stage (it starts it if needed). An end stage ends it. */
+  to(id, stage) {
+    const q = this.q(id), st = q.stages[stage]; if (!st) throw new Error(`Quests: '${id}' has no stage '${stage}'`);
+    const was = this.now[id] ?? null; if (was === stage) return this;
+    this.now[id] = stage; this.counts[id] = 0; this.times[id] = 0;
+    this.note(id, stage, st);
+    this.emit('stage', id, stage, was);
+    if (st.end) this.finish(id, st.end);
+    return this;
+  }
+  note(id, stage, st) {
+    if (!st.text) return;
+    this.journal.unshift({ quest: id, name: this.table[id].name ?? id, stage, text: st.text, end: st.end ?? null, t: Math.round(this.t) });
+    if (this.journal.length > this.keep) this.journal.length = this.keep;
+  }
+  finish(id, way) {
+    delete this.now[id]; this.ends[id] = way; if (this.pinned === id) this.pinned = null;
+    const r = this.table[id].rewards?.[way];
+    if (r) {
+      if (r.xp) this.grow?.gain(r.xp, 'quest:' + id);
+      for (const [item, n] of Object.entries(r.items || {})) this.inv?.add(item, n);
+      for (const d of r.deeds || []) this.rep?.did(d);
+      for (const [f, v] of Object.entries(r.flags || {})) this.flags?.set(f, v);
+      this.emit('reward', id, r, way);
+    }
+    this.emit(way === 'failed' || way === 'fail' ? 'fail' : 'end', id, way);
+  }
+  /** Ends a quest that way from wherever it is (fail('key') fails it). */
+  end(id, way = 'done') { if (!this.active(id)) return this; this.note(id, '', { text: this.table[id].stages[this.now[id]]?.failText ?? null, end: way }); this.finish(id, way); return this; }
+  fail(id) { return this.end(id, 'failed'); }
+  /** Counts n of something for every running stage that counts it (of: 'flour'); a stage with no `of` counts anything. Returns how many stages moved on. */
+  count(what, n = 1) {
+    let moved = 0;
+    for (const id of Object.keys(this.now)) {
+      const st = this.q(id).stages[this.now[id]]; if (!st?.count || (st.of && st.of !== what)) continue;
+      this.counts[id] = Math.min(st.count, (this.counts[id] || 0) + n); this.emit('count', id, this.counts[id], st.count);
+      if (this.counts[id] >= st.count && st.next) { this.to(id, st.next); moved++; }
+    }
+    return moved;
+  }
+  /** How far a counting stage is: { n, of } (0 of 0 for one that doesn't count). */
+  progress(id) { const st = this.active(id) ? this.q(id).stages[this.now[id]] : null; return { n: this.counts[id] || 0, of: st?.count || 0 }; }
+  /** Each frame: stages with reach (the player within it of at) or when (true) move on. player: { x, z } or { x, y }. */
+  update(dt, player = null) {
+    this.t += dt; const P = player ? P3(player) : null;
+    for (const id of Object.keys(this.now)) {
+      this.times[id] = (this.times[id] || 0) + dt;
+      const st = this.q(id).stages[this.now[id]]; if (!st?.next) continue;
+      let go = false;
+      if (st.when && st.when(this.times[id])) go = true;
+      if (!go && st.reach != null && P && st.at) { const a = P3(typeof st.at === 'function' ? st.at() : st.at), flat = player.z == null; go = Math.hypot(P.x - a.x, flat ? P.y - a.y : P.z - a.z) <= st.reach; }
+      if (go) this.to(id, st.next);
+    }
+    return this;
+  }
+  /** The quest whose marker is the waypoint (pinned: true on its marker). */
+  pin(id) { this.pinned = id && this.active(id) ? id : null; return this; }
+  /** A marker for each running quest's stage that has a place: [{ at, kind: 'quest', text, icon, pinned, quest }] (the same shape as gs.missions Jobs.markers). */
+  get markers() {
+    const out = [];
+    for (const id of Object.keys(this.now)) {
+      const st = this.q(id).stages[this.now[id]]; if (!st?.at || st.hidden) continue;
+      out.push({ at: P3(typeof st.at === 'function' ? st.at() : st.at), kind: 'quest', text: st.text ?? this.table[id].name ?? id, icon: st.icon ?? this.table[id].icon ?? null, pinned: this.pinned === id, quest: id });
+    }
+    return out;
+  }
+  /** For a quest log: { active: [...], done: [...], failed: [...] } of { id, name, stage, text, end }. */
+  list() {
+    const one = id => ({ id, name: this.table[id].name ?? id, stage: this.now[id] ?? null, text: this.now[id] ? this.table[id].stages[this.now[id]].text ?? '' : this.journal.find(j => j.quest === id)?.text ?? '', end: this.ends[id] ?? null });
+    const ids = Object.keys(this.table);
+    return { active: ids.filter(id => this.active(id)).map(one), done: ids.filter(id => this.ends[id] && !this.failed(id)).map(one), failed: ids.filter(id => this.failed(id)).map(one) };
+  }
+  /** For a conversation: quest_<id> = its stage, or its end once over ('' before it starts). */
+  vars() { const o = {}; for (const id of Object.keys(this.table)) o['quest_' + id] = this.now[id] ?? this.ends[id] ?? ''; return o; }
+  /** A small object for api.save(): stages, ends, counts and the journal's last lines. */
+  pack() { return { s: { ...this.now }, e: { ...this.ends }, c: { ...this.counts }, p: this.pinned, j: this.journal.slice(0, 12).map(j => [j.quest, j.stage, j.end ?? 0, j.t]) }; }
+  unpack(d) {
+    if (!d) return this; this.restart();
+    for (const [id, st] of Object.entries(d.s || {})) if (this.table[id]?.stages[st]) this.now[id] = st;
+    for (const [id, e] of Object.entries(d.e || {})) if (this.table[id]) this.ends[id] = e;
+    this.counts = { ...(d.c || {}) }; this.pinned = d.p && this.now[d.p] ? d.p : null;
+    // the journal's lines come back from the table (its text is not saved)
+    this.journal = (d.j || []).filter(([q, st]) => this.table[q]).map(([q, st, end, t]) => ({ quest: q, name: this.table[q].name ?? q, stage: st, text: this.table[q].stages[st]?.text ?? '', end: end || null, t }));
+    return this;
   }
 }

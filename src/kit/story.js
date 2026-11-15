@@ -41,7 +41,7 @@
 //   * [Leave] -> END`;
 //   reset() {
 //     talk = new Talk(new Story(TALK), { cast: { hero: { person: me }, mara: { person: mara, voice: 'woman', pitch: 1.1 } },
-//       hero: 'hero', camera: view.camera, view, rep, bind: { did: d => rep.did(d) } });
+//       hero: 'hero', camera: view.camera, view });   // (the game's Reputation, Growth, Quests... found by themselves)
 //     talk.on('do', (move, who) => cast[who].rig.play(move)).start();
 //   }
 //   update(dt) { talk.update(dt); }                      // types the line, speaks it, moves the faces and the camera
@@ -51,8 +51,10 @@
 // Tags on a line: #who:id (the cast; none: a narrator), #mood:angry (or 'smile .5'; any face shape),
 // #look:id (who the speaker looks at), #shot:over | close | two | wide | none (the camera), #do:nod (a 'do'
 // event for your game: a gesture, a sound), #wait:1 (moves on by itself after the line and a second).
-// rep (a gs.rpg Reputation), grow (a gs.rpg Growth) and vars (() => ({ name: value })) set the ink's
-// own VARs of those names before each line; bind ({ name: fn }) answers its EXTERNAL functions.
+// The game's gs.rpg Reputation, Growth, Quests and Flags (found by themselves, or passed: rep, grow, quests, flags)
+// and vars (() => ({ name: value })) set the ink's own VARs of those names before each line (town, town_rank, good,
+// fame, level, quest_key, a flag's name); EXTERNAL did(deed), xp(n), quest(id, stage), count(what, n), flag(name),
+// and has, give, take(item, n) (a gs.items Inventory) reach them; bind ({ name: fn }) answers any others.
 //
 // The ink compiler loads the first time a game uses Story (like physics). Ink basics: plain lines
 // are said in order, '*' lines are choices, '== name ==' starts a section and '-> name' jumps to it,
@@ -60,6 +62,7 @@
 
 import { lazy } from './lazy.js';
 import { say as sayOut } from './sound.js';
+import { linksFor, linked } from './links.js';
 
 const lib = lazy('The story engine', () => import('inkjs/full'));
 export const loadStory = () => lib.load();
@@ -143,13 +146,18 @@ export class Talk {
    * letters a second. voices: false keeps it silent (text only). shots: false leaves the camera alone.
    * rep / grow / vars / bind: the game's world as ink VARs and EXTERNAL functions (see the top of this file).
    */
-  constructor(story, { cast = {}, hero = null, camera = null, view = null, speed = 40, voices = true, shots = true, rep = null, grow = null, vars = null, bind = {}, inv = null } = {}) {
-    Object.assign(this, { story, cast, hero, camera, view, voices, shots, rep, grow, varsFn: vars, inv });
+  constructor(story, { cast = {}, hero = null, camera = null, view = null, speed = 40, voices = true, shots = true, rep, grow, quests, flags, inv, vars = null, bind = {}, link = true } = {}) {
+    // (a gs.rpg Reputation, Growth, Quests, Flags and a gs.items Inventory the game made are found by themselves; false: none)
+    const L = linksFor(null, link);
+    rep = linked(rep, L, 'reputation'); grow = linked(grow, L, 'growth'); quests = linked(quests, L, 'quests'); flags = linked(flags, L, 'flags'); inv = linked(inv, L, 'inventory');
+    Object.assign(this, { story, cast, hero, camera, view, voices, shots, rep, grow, quests, flags, varsFn: vars, inv });
     this.tw = new Typewriter('', { speed }); this.handlers = {}; this.line = null; this.mood = {}; this.ended = false; this.started = false;
     this.shot = null; this.shotKind = null; this.side = 0; this.waitT = null; this.said = null;
     const fns = { ...bind };
     if (rep) fns.did ||= deed => { rep.did(String(deed)); return true; };
     if (grow) fns.xp ||= n => grow.gain(+n || 0, 'talk');
+    if (quests) { fns.quest ||= (id, stage) => { id = String(id); if (stage) quests.active(id) ? quests.to(id, String(stage)) : quests.start(id, String(stage)); else quests.start(id); return quests.stage(id); }; fns.count ||= (what, n = 1) => quests.count(String(what), +n || 1); }
+    if (flags) fns.flag ||= (name, v = true) => { flags.set(String(name), v); return true; };
     if (inv) { fns.has ||= (id, n = 1) => inv.has(String(id), +n || 1); fns.give ||= (id, n = 1) => inv.add(String(id), +n || 1) === 0; fns.take ||= (id, n = 1) => inv.take(String(id), +n || 1); }
     // (ink only lets a function be bound once, and only those it declares; others are the game's own business)
     for (const [k, f] of Object.entries(fns)) { try { story.bind(k, (...a) => { const r = f(...a); return r === undefined ? null : r; }); } catch { /* not declared in this story */ } }
@@ -158,7 +166,7 @@ export class Talk {
   emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
   // the game's numbers into the ink's own variables of those names
   push() {
-    const vs = this.story.ink.variablesState, all = { ...(this.rep ? this.rep.vars() : {}), ...(this.grow ? { level: this.grow.level, ...this.grow.attrs } : {}), ...(this.varsFn ? this.varsFn() : {}) };
+    const vs = this.story.ink.variablesState, all = { ...(this.flags ? this.flags.all : {}), ...(this.rep ? this.rep.vars() : {}), ...(this.grow ? { level: this.grow.level, ...this.grow.attrs } : {}), ...(this.quests ? this.quests.vars() : {}), ...(this.varsFn ? this.varsFn() : {}) };
     for (const [k, v] of Object.entries(all)) if (vs.GlobalVariableExistsWithName?.(k)) { try { vs.$(k, v); } catch { /* a type ink won't take */ } }
   }
   /** Starts (at a section of the story, or where it is). */

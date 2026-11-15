@@ -7391,6 +7391,61 @@ console.log('physics ok');
   assert.throws(() => new Reputation({ deeds: { x: { nope: 1 } } }));
   console.log('gs.rpg: levels on a curve, attributes into stats, skill tree needs/excludes/ranks, gear from equip slots, respec, saving; reputation deeds seen and unseen, rivals and allies, bounties, moods, prices, titles ok');
 }
+// gs.rpg Quests and Flags: quests that branch, count, fail and reward; the journal; world flags; a conversation that moves a quest on
+{
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Story, Talk, loadStory } = await import('../src/kit/story.js');
+  const { together } = await import('../src/kit/links.js');
+  await loadStory();
+  const TABLE = { key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+      ask: { text: 'Ask Mara about the gate key', at: { x: 0, z: 10 }, reach: 2, next: 'mill' },
+      mill: { text: 'Find the miller', at: [20, 0, 0], when: t => t > 1, next: 'flour' },
+      flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+      done: { end: 'helped', text: 'Mara gave you the key.' },
+      lost: { end: 'failed', text: 'Mara will never trust you now.' } },
+      rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+    wolves: { name: 'Wolves', stages: { hunt: { text: 'Drive off five wolves', count: 5, next: 'paid' }, paid: { end: 'done', text: 'The farmer paid you.' } } } };
+  let made;
+  together(() => { made = { grow: new Growth(null, { attributes: { might: 1 } }), rep: new Reputation({ factions: { town: {} }, deeds: { helped: { town: 10 } } }), inv: new Inventory({ key: { stack: 1 }, flour: { stack: 9 } }, { slots: 4 }), flags: new Flags(), quests: new Quests(TABLE) }; });
+  const { grow, rep, inv, flags, quests } = made, ev = [];
+  for (const e of ['start', 'stage', 'end', 'fail', 'reward']) quests.on(e, (...a) => ev.push(e + ':' + a[0] + (e === 'stage' ? ':' + a[1] : '')));
+  assert.equal(quests.can('key'), false, 'needs met_mara'); assert.equal(quests.start('key'), false);
+  flags.set('met_mara'); assert.ok(quests.start('key')); assert.equal(quests.stage('key'), 'ask'); assert.ok(quests.start('wolves'));
+  assert.deepEqual(quests.markers.map(m => [m.quest, m.at.z]), [['key', 10]], 'a marker where the stage is');
+  quests.update(.5, { x: 0, z: 5 }); assert.equal(quests.stage('key'), 'ask'); quests.update(.5, { x: 0, y: 0, z: 8.5 }); assert.equal(quests.stage('key'), 'mill', 'reaching it moves on');
+  quests.update(.6); assert.equal(quests.stage('key'), 'mill'); quests.update(.6); assert.equal(quests.stage('key'), 'flour', 'when() moves on');
+  assert.equal(quests.count('wolf'), 0, 'not enough yet to move on'); assert.equal(quests.progress('wolves').n, 1, 'a stage counts what it names');
+  quests.count('flour', 2); assert.equal(quests.progress('key').n, 2); quests.count('flour'); assert.equal(quests.ended('key'), 'helped');
+  assert.ok(grow.level >= 2 && inv.has('key') && rep.with('town') === 10 && flags.has('mara_friend'), 'rewards reached the growth, inventory, reputation and flags it found');
+  assert.ok(ev.includes('reward:key') && ev.includes('end:key'));
+  assert.deepEqual(quests.journal.slice(0, 2).map(j => j.text), ['Mara gave you the key.', 'Bring Mara three sacks of flour']);
+  assert.deepEqual(quests.list().active.map(q => q.id), ['wolves']); assert.deepEqual(quests.list().done.map(q => q.id), ['key']);
+  assert.equal(quests.start('key'), false, 'not again unless it repeats'); assert.deepEqual(quests.vars(), { quest_key: 'helped', quest_wolves: 'hunt' });
+  quests.fail('wolves'); assert.ok(quests.failed('wolves') && ev.includes('fail:wolves'));
+  const saved = JSON.parse(JSON.stringify(quests.pack())); assert.ok(JSON.stringify(saved).length < 400, 'small: ' + JSON.stringify(saved).length);
+  const q2 = new Quests(TABLE, { link: false }).unpack(saved); assert.equal(q2.ended('key'), 'helped'); assert.equal(q2.journal[0].text, quests.journal[0].text);
+  assert.throws(() => new Quests({ x: { stages: { a: { next: 'nope' } } } }), /not one of its stages/);
+  // a conversation finds them all and moves a quest on
+  let talk;
+  together(() => {
+    const f = new Flags(), q = new Quests(TABLE);
+    talk = new Talk(new Story(`
+  EXTERNAL quest(id, stage)
+  EXTERNAL flag(name)
+  VAR quest_key = ""
+  VAR met_mara = false
+  {quest_key == "": Hello, stranger.|Back about the key?} #who:mara
+  ~ flag("met_mara")
+  ~ quest("key", "ask")
+  Ask me about the key, then. #who:mara
+  -> END`), { cast: { mara: {} }, voices: false });
+    talk.start(); assert.equal(talk.text, 'Hello, stranger.'); talk.tap(); talk.tap();
+    assert.ok(f.has('met_mara') && q.is('key', 'ask'), 'the talk set a flag and started the quest it found');
+    assert.equal(talk.text, 'Ask me about the key, then.');
+  });
+  console.log('gs.rpg Quests: stages moved on by reaching, waiting and counting, needs, rewards to the kits it found, the journal, markers, failing, saving; Flags; a Talk that sets a flag and starts a quest ok');
+}
 
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
 {

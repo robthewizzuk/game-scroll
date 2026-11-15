@@ -1407,7 +1407,7 @@ export interface StoryPart {
    * #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide | none). rep / grow / vars set the
    * ink's own VARs of those names before each line; bind (and rep: did, grow: xp, inv: has, give, take) answer its EXTERNAL functions.
    */
-  Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; head?: Loose | (() => P3) }>; hero?: string | null; camera?: Loose; view?: Loose; speed?: number; voices?: boolean; shots?: boolean; rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; vars?: (() => Record<string, Loose>) | null; bind?: Record<string, (...a: Loose[]) => Loose> }) => TalkScene;
+  Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; head?: Loose | (() => P3) }>; hero?: string | null; camera?: Loose; view?: Loose; speed?: number; voices?: boolean; shots?: boolean; rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; quests?: Quests | null; flags?: Flags | null; vars?: (() => Record<string, Loose>) | null; bind?: Record<string, (...a: Loose[]) => Loose>; link?: boolean }) => TalkScene;
 }
 export interface TalkScene {
   on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this;
@@ -2280,6 +2280,34 @@ export interface Reputation {
   title(): string | null; /** Every number flat, for a conversation's variables. */ vars(): Record<string, number | string>;
   log: { id: string; seen: boolean }[]; restart(): this; pack(): Loose; unpack(d: Loose): this;
 }
+export interface Flags {
+  on(ev: 'change', fn: (name: string, value: Loose, was: Loose) => void): this;
+  get(name: string, fallback?: Loose): Loose; /** Set and not false, 0 or ''. */ has(name: string): boolean;
+  /** false or null takes it out. */ set(name: string, value?: Loose): this; /** Adds to a number; returns it. */ add(name: string, n?: number): number;
+  /** How many set flags start with this. */ count(prefix?: string): number; readonly all: Record<string, Loose>;
+  pack(): Record<string, Loose>; unpack(d: Loose): this;
+}
+export interface QuestStage { text?: string; at?: P3 | [number, number, number] | { x: number; z: number } | (() => Loose); reach?: number; when?: (t: number) => boolean; count?: number; of?: string; next?: string; end?: string; hidden?: boolean; icon?: string; failText?: string }
+export interface QuestDef { name?: string; icon?: string; stages: Record<string, QuestStage>; rewards?: Record<string, { xp?: number; items?: Record<string, number>; deeds?: string[]; flags?: Record<string, Loose> } & Record<string, Loose>>; needs?: (string | (() => boolean))[]; repeat?: boolean }
+export interface JournalLine { quest: string; name: string; stage: string; text: string; end: string | null; t: number }
+export interface QuestLine { id: string; name: string; stage: string | null; text: string; end: string | null }
+export interface Quests {
+  on(ev: 'start' | 'stage' | 'count' | 'end' | 'fail' | 'reward', fn: (...a: Loose[]) => void): this;
+  table: Record<string, QuestDef>; journal: JournalLine[]; pinned: string | null;
+  restart(): this; /** Its stage ('' when not running). */ stage(id: string): string; is(id: string, stage: string): boolean;
+  active(id: string): boolean; /** How it ended, or null. */ ended(id: string): string | null; failed(id: string): boolean;
+  /** Not running, not done (unless repeat) and its needs met: 'quest:id', 'quest:id=way', 'flag:name', '!...' or a function. */ can(id: string): boolean;
+  start(id: string, stage?: string | null): boolean; /** Moves it to a stage; an end stage ends it. */ to(id: string, stage: string): this;
+  end(id: string, way?: string): this; fail(id: string): this;
+  /** Counts n of something for each running stage that counts it; returns how many stages moved on. */ count(what: string, n?: number): number;
+  progress(id: string): { n: number; of: number };
+  /** Each frame: stages with reach (near at) or when move on. */ update(dt: number, player?: Loose): this;
+  pin(id: string | null): this; readonly markers: { at: P3; kind: 'quest'; text: string; icon: string | null; pinned: boolean; quest: string }[];
+  list(): { active: QuestLine[]; done: QuestLine[]; failed: QuestLine[] };
+  /** quest_<id>: its stage or end, for a conversation. */ vars(): Record<string, string>;
+  pack(): Loose; unpack(d: Loose): this;
+  readonly rep: Reputation | null; readonly grow: Growth | null; readonly inv: Inventory | null; readonly flags: Flags | null;
+}
 export interface RpgPart {
   /** XP needed in all to reach a level: base * (level - 1)^power (100, 1.5). */
   xpTo(level: number, o?: { base?: number; power?: number }): number;
@@ -2287,6 +2315,10 @@ export interface RpgPart {
   Growth: new (stats?: Stats | null, o?: { attributes?: Record<string, number>; derive?: Record<string, (attrs: Record<string, number>, g: Growth) => number>; tree?: Record<string, GrowthSkill>; curve?: { base?: number; power?: number } | ((level: number) => number); cap?: number; points?: number; skills?: number; most?: number | Record<string, number>; refill?: boolean; level?: number; xp?: number | null }) => Growth;
   /** new Reputation({ axes, factions, deeds, share, inner, good, fame, titles, ranks }) in reset(). */
   Reputation: new (o?: { axes?: Record<string, [number, number, number?] | { min?: number; max?: number; start?: number; fade?: number }>; factions?: Record<string, RepFaction>; deeds?: Record<string, Record<string, number>>; share?: number; inner?: string[]; good?: string; fame?: string; titles?: ({ name: string } & Record<string, Loose>)[]; ranks?: [number, string][]; keep?: number }) => Reputation;
+  /** new Flags({ ...start }) in reset(): the world's own facts by name. */
+  Flags: new (start?: Record<string, Loose>, o?: { link?: boolean }) => Flags;
+  /** new Quests({ id: { name, stages, rewards, needs } }) in reset(); finds the game's Reputation, Growth, Inventory and Flags. */
+  Quests: new (table: Record<string, QuestDef>, o?: { rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; flags?: Flags | null; keep?: number; link?: boolean }) => Quests;
 }
 
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
@@ -2340,7 +2372,7 @@ export interface Recipes {
   timer: { jobs: CraftJob[]; on(ev: 'done', fn: (r: Recipe, over: number) => void): Loose; progress(job: CraftJob): number; update(dt: number): void; clear(): void };
 }
 export interface ItemsPart {
-  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number }) => Inventory;
+  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number; link?: boolean }) => Inventory;
   Recipes: new (defs?: Record<string, ItemDef>) => Recipes;
 }
 export interface AdvSpot { id: string; room: string; x?: number; y?: number; w?: number; h?: number; r?: number; poly?: [number, number][]; z?: number; look?: string | ((s: AdvSpot) => string); take?: boolean | string; took?: string; exit?: string; locked?: string | boolean; talk?: string | ((s: AdvSpot) => string); cant?: string | ((item: string) => string); when?: () => boolean; walk?: [number, number]; [k: string]: Loose }
