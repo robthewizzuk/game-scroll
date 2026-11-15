@@ -2,6 +2,7 @@
 // hold the BLOW button) to send a stream of soap bubbles drifting out. A bubble that lands softly on a bud
 // makes it bloom, and a new bud pops up somewhere else. The breeze changes, and the soap runs low.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds, sfx, notes } = gs.sound;
 const { haptic, want, startMic, stopMic } = gs.device;
 const { Juice } = gs.juice;
@@ -14,10 +15,11 @@ let W = 300, H = 460;
 const PETAL = ['#ff6fa8', '#ffd23f', '#b388ff', '#ff8a4d', '#6fd3ff'];
 
 function make(api) {
+  const ready = new Ready();   // the first touch starts the round and does nothing else
   want('motion');
   const fx = new Juice();
   let v, bubbleGeo, bubbleMat, pool, buds, sparks;
-  let bubbles, score, time, t, soap, wind, windT, holding, mic, asked, started, ended, puffT;
+  let bubbles, score, time, t, soap, wind, windT, holding, mic, asked, ended, puffT;
   const BTN = () => ({ x: W - 136, y: H - 84, w: 124, h: 50 });
   const inBtn = (x, y) => { const b = BTN(); return x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h; };
   const g = new Gestures({ drag: (x, y, dx, dy) => { if (holding == null) v?.drag(-dx, -dy); } });
@@ -67,7 +69,7 @@ function make(api) {
       if (!v) setup();
       v.off(); v.recenter(); stopMic(); mic = null; asked = false;
       for (const b of bubbles || []) b.m.visible = false;
-      bubbles = []; score = 0; time = 90; t = 0; soap = 1; wind = 0; windT = 4; holding = null; started = false; ended = false; puffT = 0;
+      bubbles = []; score = 0; time = 90; t = 0; soap = 1; wind = 0; windT = 4; holding = null; ready.reset(); ended = false; puffT = 0;
       for (const b of buds) placeBud(b);
       sparks.clear(); fx.clear(); g.release();
     },
@@ -76,7 +78,7 @@ function make(api) {
       v.live(); if (v.calibrating) return;   // finding or lining up the floor: the round waits
       fx.update(dt); sparks.update(dt); t += dt;
       for (const b of buds) { b.grow = Math.min(1, (b.grow || 0) + dt * 2); b.grp.scale.setScalar(b.grow); if (b.bloom > 0) { b.bloom += dt; b.petals.scale.setScalar(Math.min(1, b.bloom * 2)); if (b.bloom > 1.4) placeBud(b); } }
-      if (!started || ended) return;
+      if (!ready.playing || ended) return;
       time -= dt;
       windT -= dt; if (windT <= 0) { windT = rnd(4, 8); wind = rnd(-.25, .25); }
       // blowing: the mic (how hard), or the button
@@ -112,21 +114,21 @@ function make(api) {
       c.font = '600 10px Rubik, sans-serif'; c.fillText('SOAP', 108, 44);
       // the blow button
       const b = BTN(); c.fillStyle = holding != null ? '#9fe0ffd0' : '#ffffffb0'; c.beginPath(); c.roundRect(b.x, b.y, b.w, b.h, 25); c.fill();
-      c.fillStyle = '#163050'; c.textAlign = 'center'; c.font = '800 15px Rubik, sans-serif'; c.fillText(started ? 'HOLD TO BLOW' : 'TAP TO START', b.x + b.w / 2, b.y + 30);
-      if (!started || t < 3) { c.fillStyle = '#fff'; c.font = '600 12px Rubik, sans-serif'; c.fillText(mic ? 'Blow on the mic or hold the button' : 'Point at a bud and blow bubbles onto it', W / 2, b.y - 34); }
+      c.fillStyle = '#163050'; c.textAlign = 'center'; c.font = '800 15px Rubik, sans-serif'; c.fillText(ready.playing ? 'HOLD TO BLOW' : 'TAP TO START', b.x + b.w / 2, b.y + 30);
+      if (!ready.playing || t < 3) { c.fillStyle = '#fff'; c.font = '600 12px Rubik, sans-serif'; c.fillText(mic ? 'Blow on the mic or hold the button' : 'Point at a bud and blow bubbles onto it', W / 2, b.y - 34); }
       arNote(c, v, W, H);
     },
     down(x, y, id) {
       if (v?.input?.('down', x, y, id)) return;   // the AR kit's floor panels get touches first
       if (inBtn(x, y)) {
-        if (!started) { started = true; if (!asked) { asked = true; startMic().then(m => { mic = m; }).catch(() => {}); } return; }
+        if (ready.go()) { if (!asked) { asked = true; startMic().then(m => { mic = m; }).catch(() => {}); } return; }
         holding = id; return;
       }
       g.down(x, y, id);
     },
     move: (x, y, p, id) => { if (v?.input?.('move', x, y, id, p)) return; if (id !== holding) g.move(x, y, p, id); },
     up: (x, y, id) => { if (v?.input?.('up', x, y, id)) return; if (id === holding) { holding = null; return; } g.up(x, y, id); },
-    key(k, d) { if (k === ' ') { if (d && !started) started = true; holding = d && started ? 'key' : null; } },
+    key(k, d) { if (k === ' ') { if (d) ready.go(); holding = d && ready.playing ? 'key' : null; } },
   };
 }
 

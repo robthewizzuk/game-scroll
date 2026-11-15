@@ -5,6 +5,7 @@ const { clamp } = gs.util;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const { text } = gs.pixel;
 
 // Is the sum right or wrong? Tap the left half for YES and the right half for NO.
 // Sums get harder and the timer gets shorter. One wrong answer or timeout ends it.
@@ -43,7 +44,7 @@ function make(api) {
       feel.begin(c);
       c.fillStyle = P[0]; c.font = '12px "Press Start 2P", monospace'; c.textAlign = 'center'; if (!ready.waiting) { c.fillText(q.txt, 80, 62); c.fillText(`= ${q.shown}`, 80, 86); }
       c.fillStyle = P[1]; c.fillRect(6, 106, 70, 44); c.fillRect(84, 106, 70, 44);
-      c.fillStyle = P[3]; c.font = '8px "Press Start 2P", monospace'; c.fillText('YES', 41, 132); c.fillText('NO', 119, 132);
+      c.fillStyle = P[3]; c.font = '8px "Press Start 2P", monospace'; text(c, 'YES', 41, 124, { color: P[3], align: 'center', font: 'big' }); text(c, 'NO', 119, 124, { color: P[3], align: 'center', font: 'big' });
       feel.end(c, W, H);
       ready.draw(c, W, H, { pixel: true, color: P[0], y: 70 });
       if (flash) { c.fillStyle = flash.ok ? P[2] : P[0]; c.globalAlpha = .4; c.fillRect(0, 0, W, H); c.globalAlpha = 1; }

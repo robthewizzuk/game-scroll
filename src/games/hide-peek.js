@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { faceDown, want, haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { text } = gs.pixel;
 
 // Raid the cookie jar while the cook isn't looking. Keep the phone face up to grab cookies. When you
 // hear and feel the cook turning round, lay the phone face DOWN to hide. A double buzz means the coast
@@ -45,7 +46,7 @@ function make(api) {
       if (look) { c.fillStyle = P[0]; c.fillRect(120, 36, 3, 3); c.fillRect(127, 36, 3, 3); c.fillRect(121, 41, 8, 1); }
       else if (turn) { c.fillStyle = P[0]; c.fillRect(129, 36, 3, 3); }
       else { c.fillStyle = P[1]; c.fillRect(118, 32, 14, 12); }
-      if (look) { c.fillStyle = P[0]; c.font = '8px "Press Start 2P", monospace'; c.fillText('!', 138, 30); }
+      if (look) { c.fillStyle = P[0]; c.font = '8px "Press Start 2P", monospace'; text(c, '!', 138, 22, { color: P[0], font: 'big' }); }
       // jar + hand
       c.fillStyle = P[1]; c.fillRect(58, 84, 40, 34); c.fillStyle = P[3]; c.fillRect(60, 90, 36, 26); c.fillStyle = P[1]; c.fillRect(56, 80, 44, 6);
       c.fillStyle = P[0]; for (let i = 0; i < Math.min(12, Math.ceil(jar / 2.5)); i++) c.fillRect(63 + (i % 4) * 8, 110 - (i / 4 | 0) * 7, 6, 5);

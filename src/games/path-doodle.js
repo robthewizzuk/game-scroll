@@ -2,6 +2,7 @@
 // Draw ramps, bridges and loops ahead of it; ink fades after a few seconds and the pot runs dry,
 // so roll it through ink drops to refill. Stars are worth a bonus. Drop into the lava and it's over.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Physics } = gs.physics;
 const { Feel } = gs.effects;
 const { C16 } = gs.palettes;
@@ -14,8 +15,9 @@ let W = 160, H = 176;
 const INK = 100, FADE = 4.5, R = 5;
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const feel = new Feel({ pixel: true });
-  let started, phys, ball, segs, cam, ink, score, dist, stars, drops, rocks, last, t, dead, nextX, starsGot, msg;
+  let phys, ball, segs, cam, ink, score, dist, stars, drops, rocks, last, t, dead, nextX, starsGot, msg;
 
   function spawnAhead() {
     while (nextX < cam + W * 2) {
@@ -51,12 +53,12 @@ function make(api) {
       const ledge = phys.line([[0, 60], [70, 74]], { friction: .2 });
       segs.push({ a: [0, 60], b: [70, 74], age: -3, thing: ledge });
       ball = phys.circle(14, 48, R, { bounce: .15, friction: .4, density: 1, tag: 'ball' });
-      msg = 1; started = false; spawnAhead(); feel.clear();
+      msg = 1; ready.reset(); spawnAhead(); feel.clear();
     },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
-      if (!started) return;
+      if (!ready.playing) return;
       t += dt; if (msg > 0) msg -= dt;
       if (dead) { dead += dt; if (dead > .9) api.over(); return; }
       if (ball.vx < 55) ball.force(8, 0);            // it always wants to roll on
@@ -109,9 +111,9 @@ function make(api) {
       // ink pot HUD
       c.fillStyle = C16[0]; c.fillRect(3, 3, 52, 7); c.fillStyle = ink < 20 && (t * 6 | 0) % 2 ? C16[2] : C16[9]; c.fillRect(4, 4, Math.round(50 * ink / INK), 5);
       text(c, 'INK', 58, 4, { color: C16[0] });
-      if (!started || msg > 0) text(c, 'DRAW GROUND!', W / 2, 90, { font: 'big', align: 'center', color: C16[1], outline: C16[0] });
+      if (!ready.playing || msg > 0) text(c, 'DRAW GROUND!', W / 2, 90, { font: 'big', align: 'center', color: C16[1], outline: C16[0] });
     },
-    down(x, y) { started = true; last = null; inkAt(x, y); },
+    down(x, y) { ready.go(); last = null; inkAt(x, y); },
     move(x, y, p) { if (p) inkAt(x, y); },
     up() { last = null; },
   };

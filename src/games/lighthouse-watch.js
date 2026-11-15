@@ -2,6 +2,7 @@
 // can't see. Drag to swing the lighthouse beam. Rocks it sweeps over light up with foam for a few seconds,
 // and boats steer round any rock they can see. Every boat home scores; three wrecks and the harbour shuts.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds, noise, bed } = gs.sound;
 const { haptic } = gs.device;
 const { Juice } = gs.juice;
@@ -54,8 +55,9 @@ function setup() {
 }
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const fx = new Juice();
-  let boats, yaw, want, score, wrecks, t, spawnT, started, ended, rain, storm;
+  let boats, yaw, want, score, wrecks, t, spawnT, ended, rain, storm;
 
   function placeRocks() {
     const n = 10;
@@ -82,7 +84,7 @@ function make(api) {
     reset() {
       if (!v) setup();
       for (const b of boatPool) b.visible = false;
-      rain?.stop(); rain = null; boats = []; yaw = .3; want = .3; score = 0; wrecks = 0; t = 0; spawnT = 1; started = false; ended = false; storm = 0;
+      rain?.stop(); rain = null; boats = []; yaw = .3; want = .3; score = 0; wrecks = 0; t = 0; spawnT = 1; ready.reset(); ended = false; storm = 0;
       placeRocks(); spray.clear(); fx.clear();
     },
     resize(w, h) { W = w; H = h; },
@@ -97,11 +99,11 @@ function make(api) {
       for (const r of rocks) {
         if (!r.on) continue;
         const rx = r.x - LAMP.x, rz = r.z - LAMP.z, d = Math.hypot(rx, rz), cos = (rx * dx + rz * dz) / d;
-        if (cos > Math.cos(.16 + 1.2 / d)) { if (r.lit < .5 && started) sounds.click(); r.lit = SEEN; }
+        if (cos > Math.cos(.16 + 1.2 / d)) { if (r.lit < .5 && ready.playing) sounds.click(); r.lit = SEEN; }
         r.lit = Math.max(0, r.lit - dt);
         r.foam.material.opacity = Math.min(1, r.lit / 1.2) * (.6 + .3 * Math.sin(t * 6 + r.x));
       }
-      if (!started) return;
+      if (!ready.playing) return;
       if (!rain) rain = bed({ vol: .03, from: 2400, filter: 'bandpass' });
       // more boats, and a new rock every so often
       spawnT -= dt;
@@ -151,11 +153,11 @@ function make(api) {
       c.textAlign = 'left'; c.font = '700 12px Rubik, sans-serif';
       for (let i = 0; i < 3; i++) { c.fillStyle = i < 3 - wrecks ? '#ffd070' : '#ffffff25'; c.beginPath(); c.arc(16 + i * 16, 18, 5, 0, 7); c.fill(); }
       c.textAlign = 'center';
-      if (!started) { c.fillStyle = '#000000b0'; c.fillRect(0, H * .62, W, 52); c.fillStyle = '#fff'; c.font = '700 13px Rubik, sans-serif'; c.fillText('Drag to swing the beam', W / 2, H * .62 + 20); c.font = '500 11px Rubik, sans-serif'; c.fillStyle = '#ffe9b0'; c.fillText('Boats steer round rocks you light up', W / 2, H * .62 + 38); }
+      if (!ready.playing) { c.fillStyle = '#000000b0'; c.fillRect(0, H * .62, W, 52); c.fillStyle = '#fff'; c.font = '700 13px Rubik, sans-serif'; c.fillText('Drag to swing the beam', W / 2, H * .62 + 20); c.font = '500 11px Rubik, sans-serif'; c.fillStyle = '#ffe9b0'; c.fillText('Boats steer round rocks you light up', W / 2, H * .62 + 38); }
     },
-    down(x, y) { started = true; aimAt(x, y); haptic('tick'); },
+    down(x, y) { ready.go(); aimAt(x, y); haptic('tick'); },
     move(x, y, pressed) { if (pressed) aimAt(x, y); },
-    key(k, d) { if (!d) return; started = true; if (k === 'ArrowLeft') want += .25; if (k === 'ArrowRight') want -= .25; },
+    key(k, d) { if (!d) return; ready.go(); if (k === 'ArrowLeft') want += .25; if (k === 'ArrowRight') want -= .25; },
   };
 }
 

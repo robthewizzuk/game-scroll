@@ -4,6 +4,7 @@ const { haptic, want } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Particles, pbr, rbox, surface, speckle, THREE } = gs.hd;
 const { ARView, arNote, FLOOR } = gs.ar;
+const { approach } = gs.juice;
 const { Group, Mesh, Vector3, Vector2, Raycaster, Plane, CylinderGeometry, ConeGeometry, SphereGeometry, CapsuleGeometry, BoxGeometry, CircleGeometry, PlaneGeometry, IcosahedronGeometry, DoubleSide } = THREE;
 
 // Table Siege: a tiny castle stands on your real table (or floor) and little toy soldiers march on it
@@ -121,7 +122,7 @@ function make(api) {
     troops = troops.filter(q => q.hp > 0);
     for (const r of rocks) { r.t += dt; const k = Math.min(1, r.t / r.T); r.m.position.lerpVectors(r.from, r.to, k); r.m.position.y = r.from.y * (1 - k) + Math.sin(k * Math.PI) * .25 + .012; if (k >= 1) { land(r.to); board.remove(r.m); r.done = true; } }
     rocks = rocks.filter(r => !r.done);
-    castle.userData.arm.rotation.x += (0 - castle.userData.arm.rotation.x) * Math.min(1, dt * 4); castle.userData.flag.rotation.y = Math.sin(t * 4) * .3;
+    castle.userData.arm.rotation.x = approach(castle.userData.arm.rotation.x, 0, 4, dt); castle.userData.flag.rotation.y = Math.sin(t * 4) * .3;
     if (hp <= 0) { v.off(); sounds.lose(); return api.over(); }
     if (toSpawn === 0 && !troops.length && waveT <= 0) { score += 50 * wave; api.score(score); say(`WAVE ${wave} HELD!`, '#8affdc', 1.4, `+${50 * wave}`); haptic('success'); waveT = 2.2; }
     fx(dt);

@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { text } = gs.pixel;
 
 // Three doors per room. Each door's sign hints at what's behind it, but signs only tell the odds.
 // Skulls hide monsters guarding big hoards, chests can be mimics, hearts heal. Go as deep as you dare.
@@ -49,7 +50,7 @@ function make(api) {
         if (s === 'skull') { c.fillRect(cx - 5, cy - 5, 10, 7); c.fillRect(cx - 3, cy + 2, 6, 3); c.fillStyle = P[3]; c.fillRect(cx - 3, cy - 2, 2, 2); c.fillRect(cx + 1, cy - 2, 2, 2); }
         else if (s === 'chest') { c.fillRect(cx - 6, cy - 3, 12, 8); c.fillStyle = P[2]; c.fillRect(cx - 6, cy - 1, 12, 1); c.fillRect(cx - 1, cy, 2, 2); }
         else if (s === 'heart') { c.fillRect(cx - 5, cy - 4, 4, 3); c.fillRect(cx + 1, cy - 4, 4, 3); c.fillRect(cx - 6, cy - 2, 12, 3); c.fillRect(cx - 4, cy + 1, 8, 2); c.fillRect(cx - 2, cy + 3, 4, 2); }
-        else { c.font = '8px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText('?', cx, cy + 4); }
+        else { c.font = '8px "Press Start 2P", monospace'; c.textAlign = 'center'; text(c, '?', cx, cy + 4 - 8, { color: c.fillStyle, align: 'center', font: 'big' }); }
         if (isOpen && result) {
           c.fillStyle = P[3]; c.font = '6px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(result.txt, x + 18, y + 36);
           if (result.dg) c.fillText(`+${result.dg}`, x + 18, y + 48);
