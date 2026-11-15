@@ -4,6 +4,7 @@ const { haptic } = gs.device;
 const { rnd } = gs.util;
 const { backdrop, box, shadow, glow } = gs.gfx;
 const { brick, BRICK_KEYS } = gs.bricks;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Five kit pieces are hidden inside the brick furniture in this room. Hold and drag your finger
 // around to use the detector: the meter climbs, it beeps faster and your phone buzzes harder as
@@ -35,7 +36,7 @@ function make(api) {
       const w = Math.round(rnd(cw * .55, cw * .85)), h = Math.round(rnd(rh * .5, rh * .8));
       objs.push({ x: Math.round(6 + c * cw + (cw - w) / 2 + rnd(-3, 3)), y: Math.round(top + r * rh + (rh - h)), w, h, col: BRICK_KEYS[Math.random() * BRICK_KEYS.length | 0], piece: false, open: 0, heat: null });
     }
-    const idx = objs.map((_, i) => i).sort(() => Math.random() - .5).slice(0, 5); for (const i of idx) objs[i].piece = true;
+    const idx = shuffle(objs.map((_, i) => i)).slice(0, 5); for (const i of idx) objs[i].piece = true;
     swings = Math.max(6, 10 - Math.floor(room / 2)); battery = Math.max(3.5, 7.5 - room * .4); need = room > 4 ? 4 : 3; found = 0; end = 0; streak = 0;
     msg = { txt: `ROOM ${room}: FIND ${need} OF 5`, l: 1.6 }; dirty = true;
   }

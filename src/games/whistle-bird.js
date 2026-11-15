@@ -2,17 +2,20 @@
 // and go quiet to glide down. Thread the gaps in the hedges and sing through the music rings.
 // No mic, or rather not sing? Hold and drag up and down instead.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Feel } = gs.effects;
 const { startMic, stopMic, haptic } = gs.device;
 const { sfx, notes } = gs.sound;
 const { clamp, rnd } = gs.util;
 const { approach } = gs.juice;
+const { icon } = gs.icons;
 
 let W = 360, H = 640;
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const feel = new Feel();
-  let mic, asked, bird, hedges, rings, cam, nextX, score, lives, t, finger, inv, lo, hi, heard, flap, started;
+  let mic, asked, bird, hedges, rings, cam, nextX, score, lives, t, finger, inv, lo, hi, heard, flap;
   const TOP = 70, BOT = () => H - 70;
 
   function more() {
@@ -25,7 +28,7 @@ function make(api) {
   }
 
   return {
-    reset() { stopMic(); mic = null; asked = false; bird = { x: 80, y: H / 2, vy: 0 }; hedges = []; rings = []; cam = 0; nextX = 420; score = 0; lives = 3; t = 0; finger = null; inv = 0; lo = 52; hi = 76; heard = 0; flap = 0; started = false; more(); feel.clear(); },
+    reset() { stopMic(); mic = null; asked = false; bird = { x: 80, y: H / 2, vy: 0 }; hedges = []; rings = []; cam = 0; nextX = 420; score = 0; lives = 3; t = 0; finger = null; inv = 0; lo = 52; hi = 76; heard = 0; flap = 0; ready.reset(); more(); feel.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
@@ -35,13 +38,13 @@ function make(api) {
       let want = null;
       const p = mic && !finger ? mic.pitch() : null;
       if (p && p.clarity > .6 && p.hz > 80) {
-        heard = .3; started = true;
+        heard = .3; ready.go();
         // the range stretches to fit your voice
         lo = Math.min(lo, p.midi + 1); hi = Math.max(hi, p.midi - 1);
         want = BOT() - (clamp((p.midi - lo) / Math.max(8, hi - lo), 0, 1)) * (BOT() - TOP);
       } else heard = Math.max(0, heard - dt);
-      if (finger != null) { want = finger; started = true; }
-      if (!started) { bird.y = H / 2 + Math.sin(t * 3) * 10; return; }
+      if (finger != null) { want = finger; ready.go(); }
+      if (!ready.playing) { bird.y = H / 2 + Math.sin(t * 3) * 10; return; }
       if (want != null) { bird.y = approach(bird.y, want, 380, dt); bird.vy = 0; flap += dt * 14; }
       else if (!heard) { bird.vy = Math.min(140, bird.vy + 200 * dt); bird.y += bird.vy * dt; flap += dt * 4; }
       bird.y = clamp(bird.y, TOP, BOT());
@@ -70,7 +73,7 @@ function make(api) {
         c.beginPath(); c.roundRect(h.x, h.gy + h.gap / 2, h.w, H, 14); c.fill();
         c.fillStyle = '#55a630'; for (let y = h.gy + h.gap / 2 + 12; y < H; y += 22) c.fillRect(h.x + 8, y, 6, 6); for (let y = h.gy - h.gap / 2 - 18; y > 0; y -= 22) c.fillRect(h.x + 26, y, 6, 6);
       }
-      for (const r of rings) if (!r.got) { c.strokeStyle = '#ffd60a'; c.lineWidth = 4; c.beginPath(); c.arc(r.x, r.y, 18, 0, 7); c.stroke(); c.fillStyle = '#ffd60a'; c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('♪', r.x, r.y + 6); }
+      for (const r of rings) if (!r.got) { c.strokeStyle = '#ffd60a'; c.lineWidth = 4; c.beginPath(); c.arc(r.x, r.y, 18, 0, 7); c.stroke(); icon(c, 'music', r.x, r.y, 18, { color: '#ffd60a' }); }
       // the bird
       if (!inv || Math.floor(t * 12) % 2) {
         const x = bird.x, y = bird.y, wing = Math.sin(flap) * 8;
@@ -78,12 +81,12 @@ function make(api) {
         c.fillStyle = '#fb5607'; c.beginPath(); c.moveTo(x + 14, y - 2); c.lineTo(x + 24, y + 1); c.lineTo(x + 14, y + 4); c.fill();
         c.fillStyle = '#fff'; c.beginPath(); c.arc(x + 7, y - 4, 4, 0, 7); c.fill(); c.fillStyle = '#000'; c.beginPath(); c.arc(x + 8, y - 4, 2, 0, 7); c.fill();
         c.fillStyle = '#c9184a'; c.beginPath(); c.ellipse(x - 4, y + wing * .3, 10, 5, -.4 + wing * .04, 0, 7); c.fill();
-        if (heard) { c.fillStyle = '#7209b7'; c.font = '700 14px Rubik, sans-serif'; c.fillText('♫', x + 20, y - 18 - Math.sin(t * 8) * 3); }
+        if (heard) icon(c, 'musical-notes', x + 20, y - 23 - Math.sin(t * 8) * 3, 16, { color: '#7209b7' });
       }
       c.restore();
       feel.end(c, W, H);
       c.textAlign = 'left'; for (let i = 0; i < 3; i++) { c.fillStyle = i < lives ? '#ff006e' : '#ffffff70'; c.beginPath(); c.arc(22 + i * 22, H - 28, 7, 0, 7); c.fill(); }
-      if (!started || t < 4) { c.textAlign = 'center'; c.fillStyle = '#3a0ca3'; c.font = '700 17px Rubik, sans-serif'; c.fillText(mic ? 'Hum low, whistle high!' : 'Hold and drag to fly', W / 2, H * .82); c.font = '500 14px Rubik, sans-serif'; c.fillText(mic ? 'Or hold and drag up and down' : 'Fly through the gaps', W / 2, H * .82 + 22); }
+      if (!ready.playing || t < 4) { c.textAlign = 'center'; c.fillStyle = '#3a0ca3'; c.font = '700 17px Rubik, sans-serif'; c.fillText(mic ? 'Hum low, whistle high!' : 'Hold and drag to fly', W / 2, H * .82); c.font = '500 14px Rubik, sans-serif'; c.fillText(mic ? 'Or hold and drag up and down' : 'Fly through the gaps', W / 2, H * .82 + 22); }
     },
     down(x, y) { finger = clamp(y, TOP, BOT()); },
     move(x, y, pr) { if (pr && finger != null) finger = clamp(y, TOP, BOT()); },

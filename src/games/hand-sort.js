@@ -6,6 +6,7 @@ const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
 const { Drag } = gs.drag;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 360, H = 640;
 const SUITS = [['#e63946', '●'], ['#1d3557', '▲'], ['#2a9d8f', '■'], ['#f4a261', '★']];
@@ -30,7 +31,7 @@ function make(api) {
     const used = new Set(); hand = [];
     while (hand.length < n) { const v = 1 + Math.random() * 12 | 0, s = Math.random() * (rule.needSuits ? 3 : 4) | 0, k = v + ',' + s; if (used.has(k)) continue; used.add(k); hand.push({ v, s }); }
     // make sure it starts unsorted
-    hand.sort(() => Math.random() - .5);
+    hand = shuffle(hand);
     for (const c of hand) drag.piece({ ...c, x: W / 2, y: 150, w: cw, h: ch });
     if (ordered()) { const ps = drag.order; [ps[0].index, ps[1].index] = [ps[1].index, ps[0].index]; drag.layout(); }
     drags = 0; tmax = time = 8 + n * 2.4;

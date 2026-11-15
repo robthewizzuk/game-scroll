@@ -3350,6 +3350,8 @@ console.log('physics ok');
   const sp = await import('../src/kit/speed.js');
   const ng = { id: 'kt-ng', era: 'nextgen', fps: 60 }, flat = { id: 'kt-2d', fps: 30 };
   assert.equal(sp.screenWant(ng), 0, 'no rates known (the web): no wish');
+  // (Auto filling to the screen's rate, 60 made on 120 Hz, is a computer's now: a phone's Auto is checked further down)
+  sp.speed.desktop = true;
   screen.rates = [60, 120]; screen.top = 120; sp.speed.gpu = true;
   assert.equal(sp.screenWant(ng), 120, 'a 60 fps 3D game with frame generation holds 120 Hz');
   assert.equal(sp.screenWant(flat), 60, 'a 30 fps 2D game asks for 60');
@@ -3471,7 +3473,45 @@ console.log('physics ok');
   sp.setFrameGenPick('nonsense'); assert.equal(sp.frameGenPick(), 'auto', 'an unknown pick is Auto');
   for (let i = 0, t = 40000; i < 80; i++) sp.tick(t += 1000 / 120);
   assert.equal(sp.screenHz(), 120, 'back to 120 Hz');
-  sp.speed.game = null; sp.speed.gpu = false;
+  sp.speed.game = null; sp.speed.gpu = false; sp.speed.desktop = false;
+  // Auto on a phone (Rob, 2026-11-15: "aim for 60fps without frame gen but drop to 30 fps using frame gen to hit 60 where
+  // needed"): 60 drawn and nothing made; where a game can't hold 60, 30 drawn and 30 made, 30 → 60's way
+  {
+    const { power: pw } = await import('../src/kit/power.js'), saving0 = pw.saving; pw.saving = false;
+    sp.speed.gpu = true; sp.speed.klass = 'top'; sp.setFrameGenPick('auto');
+    for (let i = 0, t = 100000; i < 80; i++) sp.tick(t += 1000 / 60);
+    const ph = { id: 'kt-phone60', era: 'nextgen' };
+    assert.equal(sp.autoFps(ph), 60, 'a top phone: 60 for a 3D game, not 120');
+    assert.equal(sp.fpsFor(ph), 60, 'drawn at 60');
+    assert.equal(sp.frameGenFor(ph), false, 'and Auto makes none');
+    assert.match(sp.frameGenStatus(ph), /draws 60 frames a second itself here, so Auto makes none/, 'Settings says so');
+    assert.equal(sp.frameGenReady(ph), true, 'but the scene writes its motion, so frames made between can start without a rebuild');
+    screen.rates = [60, 120]; screen.top = 120;
+    assert.equal(sp.screenWant(ph), 60, 'and asks the screen for 60');
+    pw.saving = true; assert.equal(sp.fpsFor(ph), 30, 'saving power (warm, heating up, a low battery): 30 drawn');
+    assert.equal(sp.frameGenFor(ph), 'blend', 'and 30 made'); pw.saving = false;
+    assert.equal(sp.stepDown(ph), true, "it can't hold 60: a step down");
+    assert.equal(sp.fpsFor(ph), 30, '30 drawn');
+    assert.equal(sp.frameGenFor(ph), 'blend', 'and frame generation makes the other 30');
+    assert.equal(sp.frameGenOne(ph), true, 'one made frame between each pair');
+    assert.equal(sp.frameGenPaceOf(ph, 2), 'early', 'each real frame given two refreshes');
+    assert.equal(sp.screenWant(ph), 60, 'the screen still at 60');
+    assert.match(sp.frameGenStatus(ph), /draws 30 frames a second and makes 30 more \(blend, each real frame given two refreshes of the graphics chip, it couldn’t hold 60 here\)/, 'Settings says why');
+    sp.speed.game = ph; sp.frameGenFailed(ph.id, 'x');
+    assert.equal(sp.fpsFor(ph), 60, 'the frames between didn\'t come: back to 60, for the other steps to take over');
+    assert.equal(sp.frameGenCould(ph, 30), false, 'and no more frames between for it this session');
+    const hv = { id: 'kt-phone-heavy', era: 'nextgen' }; sp.speed.game = hv;
+    for (let i = 0; i < 3; i++) sp.chipCost(hv.id, 18, 6);
+    assert.equal(sp.frameGenCould(hv, 30), true, 'an 18 ms real frame and a 6 ms made one fit two 60 Hz refreshes');
+    for (let i = 0; i < 6; i++) sp.chipCost(hv.id, 30, 9);
+    assert.equal(sp.frameGenCould(hv, 30), false, 'one that would leave a made frame no room: none');
+    sp.speed.klass = 'low'; const lo = { id: 'kt-phone-low', era: 'board' };
+    assert.equal(sp.fpsFor(lo), 30, 'a low phone draws its 3D at 30');
+    assert.equal(sp.frameGenFor(lo), 'blend', 'with the other 30 made');
+    sp.setFrameGenPick('off'); assert.equal(sp.frameGenFor(lo), false, 'unless frame generation is off in Settings'); sp.setFrameGenPick('auto');
+    sp.speed.gpu = false; assert.equal(sp.frameGenFor(lo), false, 'or the game draws with WebGL');
+    screen.rates = []; screen.top = 0; sp.speed.klass = null; sp.speed.game = null; pw.saving = saving0;
+  }
   // drop a made frame that would come late, never a real one (hd3d-gpu.js GpuChain): the chip still on the real frame
   const { GpuChain } = await import('../src/kit/hd3d-gpu.js');
   const late = (d, c, now) => GpuChain.prototype.late.call({ realDone: d, cost: c }, now);

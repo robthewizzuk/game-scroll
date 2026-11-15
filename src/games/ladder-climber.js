@@ -8,6 +8,7 @@ const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx, sounds, music } = gs.sound;
 const { Keys } = gs.controls;
+const { approach } = gs.juice;
 
 const R = PAL.moss;
 let W = 160, H = 160;
@@ -57,7 +58,7 @@ function make(api) {
       if (slip > 0) slip -= dt;
       flood += dt * (.8 + t / 22);                       // rungs per second the water rises
       if (flood > height + .3) { dead = .01; feel.lose(); haptic('error'); tune?.stop(); }
-      climbY += (height - climbY) * Math.min(1, dt * 14);
+      climbY = approach(climbY, height, 16, dt);
       tune?.speed(1 + Math.min(.6, t / 90));
     },
     draw(c) {

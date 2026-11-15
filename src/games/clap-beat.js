@@ -2,6 +2,7 @@ import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { startMic, stopMic, haptic } = gs.device;
 const { Feel } = gs.effects;
+const { approach } = gs.juice;
 
 // Call and response. Listen to the beat, then clap it back (the mic hears real claps) or tap it.
 // Your first clap sets the timing; the rest must land with it. Patterns grow longer. Three flops and you're out.
@@ -32,7 +33,7 @@ function make(api) {
     update(dt) {
       feel.update(dt); t += dt; cool -= dt; for (const p of pulses) p.l -= dt; pulses = pulses.filter(p => p.l > 0);
       if (!asked) { asked = true; startMic().then(m => { mic = m; }); }
-      if (mic) { const lv = mic.level(); if (lv > avg + .35 && lv > .4 && cool <= 0) { cool = .12; clap('mic'); } avg += (lv - avg) * Math.min(1, dt * 4); }
+      if (mic) { const lv = mic.level(); if (lv > avg + .35 && lv > .4 && cool <= 0) { cool = .12; clap('mic'); } avg = approach(avg, lv, 4, dt); }
       if (phase === 'listen') {
         timer += dt;
         while (played < pat.length && timer >= pat[played] * STEP) { played++; sfx(180, .1, 'square', .06, -100); sfx(2400, .03, 'sawtooth', .02, -1800); haptic('medium'); pulses.push({ l: .3, src: 'demo' }); }

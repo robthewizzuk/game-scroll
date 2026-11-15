@@ -120,9 +120,12 @@ That picks where 3D games start and how fast they run:
 
 | Class | Starts on | 3D frame rate | Other games |
 | --- | --- | --- | --- |
-| top (Fold 8, recent iPhone Pro, desktops) | high | 120 fps (where the screen does 120 Hz) | screen rate |
-| mid | high | 60 fps | screen rate |
-| low | medium | 30 fps | 60 fps |
+| top (Fold 8, recent iPhone Pro) | high | 60 fps | screen rate |
+| mid (Pixel 10a's Mali-G715) | medium, climbs to high where frames show room | 60 fps | screen rate |
+| low | medium | 30 fps, with 30 more made (WebGPU) | 60 fps |
+
+A phone's 3D game that can't hold 60 draws 30 and frame generation makes the other 30 (see Frame
+generation); a computer runs 3D at its screen's rate (see `src/kit/speed.js`).
 
 Play never climbs above **high**: on ultra the Fold 8 got hot and throttled within a minute in every
 3D game, and then stuttered (frame lab reports, 2026-11-10). Ultra is still there for `HD.force = 3`
@@ -1094,11 +1097,20 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   how with `v.aimNow(cam => { cam.rotation.y = lookAngle; })`: point the camera from the input the
   game has already taken (a look angle a finger moved), without moving the game on. The camera is put
   back straight after.
-- **When:** Settings › Frame generation (on devices with WebGPU). Auto (the default) makes frames for a
-  game that can't reach the screen's rate (the 3D kit stepped it down), and for every 3D game while the
-  phone is warm, in battery saver, or under 20% battery and not charging (`src/kit/power.js` asks the
-  phone every 15 seconds; it holds a minute after the reason goes); then the game draws half the
-  frames, which keeps the phone cooler. Always does that all the time; Off. A pinned frame rate turns it off.
+- **When:** Settings › Frame generation (on devices with WebGPU). **Auto** (the default) on a phone: a 3D game
+  draws 60 frames a second and none are made (Rob, 2026-11-15: "aim for 60fps without frame gen but drop to
+  30 fps using frame gen to hit 60 where needed"). Where it can't hold 60, it draws 30 and a made frame goes
+  between each pair, 30 → 60's way (below): the 3D kit takes that step for a game held up by the processor at
+  once, and for one held up by the graphics chip once an effect and the picture are a step smaller, before a
+  lower tier or a smaller picture still, where the real frame and the made one fit two refreshes
+  (`frameGenCould`, `speed.js thirtyFor`). A low phone starts there, and so does any 3D game while the phone
+  is warm, heating up, in battery saver, or under 20% battery and not charging (`src/kit/power.js`; it holds a
+  minute after the reason goes). It goes back to 60 drawn once the chip's times show a real frame under eight
+  tenths of a 60 Hz refresh, and to 60 at once if the frames made between don't come (then the other steps
+  take over). Auto never fills above 60 on a phone. (Before, Auto only filled screens of 90 Hz and up where a
+  real frame and a made one each fit one refresh at the screen's top rate, 7.5 ms at 120 Hz, which no Next Gen
+  game's real frame does on the Fold 8: so it never came on there.) On a computer Auto fills to the screen's
+  rate as before. Always draws half the screen's rate and makes the rest; Off. A pinned frame rate turns it off.
   **30 → 60** plays 3D games the way consoles do: about 30 real frames a second (a whole number of
   refreshes apart: 28.8 on a 144 Hz screen) and a made frame between each pair, on a 60 Hz screen too
   (the only pick that fills one), and a faster screen is asked for 60 Hz. Each real frame is given two
@@ -1140,7 +1152,7 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   for a real frame's code (the made frame's refresh needs the main thread too). Unknown times start on first. A made
   frame that can't be ready for the next refresh (the chip is still on the real frame) is dropped, so it
   never holds up the next real frame; a real frame is never dropped.
-- **Only where it fits:** Auto makes frames only where a real frame and a made frame each fit a refresh
+- **Only where it fits** (a computer's Auto; a phone's goes by two 60 Hz refreshes, above): Auto makes frames only where a real frame and a made frame each fit a refresh
   by the chip's times (`frameGenFits`; 8.3 ms at 120 Hz), so it can't rescue a game whose real frames
   take the chip longer than that; it helps one held back by the phone's processor, and saves power and
   heat. Unknown times are tried. A game at 120 that slows down steps to 60 with frames made between

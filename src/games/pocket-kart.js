@@ -3,6 +3,8 @@ const { Timers } = gs.math;
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, disc } = gs.util;
+const { approach } = gs.juice;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Pocket Kart: a flat-plane scaling kart racer in the style of early-2000s handhelds. Two laps
 // against five rival drivers on one of four hand-laid tracks, each with its own scenery and
@@ -133,9 +135,9 @@ export function buildTrack(th) {
     if (free(x, y, 28)) { const k = pick(); add(k, x, y); made++;
       if (k === 'tree' || k === 'pine' || k === 'palm') for (let m = 0; m < 3; m++) { const a = R() * 6.3, r = 16 + R() * 20, xx = x + Math.cos(a) * r, yy = y + Math.sin(a) * r; if (free(xx, yy, 28)) { add(k, xx, yy); made++; } } } }
   // the same colours packed as 32-bit pixels (ABGR, the byte order of ImageData on phones) for drawing
-  const col32 = new Uint32Array(N * N), O = C(th.outer);
+  const col32 = new Int32Array(N * N), O = C(th.outer);
   for (let k = 0; k < N * N; k++) col32[k] = 0xff000000 | col[k * 3 + 2] << 16 | col[k * 3 + 1] << 8 | col[k * 3];
-  return { th, line, len, seg, off, vlim, tex, col, col32, outer32: (0xff000000 | O[2] << 16 | O[1] << 8 | O[0]) >>> 0, grid, props, name: th.name };
+  return { th, line, len, seg, off, vlim, tex, col, col32, outer32: 0xff000000 | O[2] << 16 | O[1] << 8 | O[0], grid, props, name: th.name };
 }
 
 /* ---------- pixel sprites ---------- */
@@ -237,17 +239,64 @@ function pano(th) {
   PANO.set(th.name, cv); return cv;
 }
 
+// the ground plane: one packed 32-bit colour per pixel, stepping through the map in tile units. Its own small
+// function, on signed 32-bit pixels (Int32Array, not Uint32Array), so the browser keeps every number unboxed: no garbage
+function paintGround(out, col, outer, haze, gh, camH, f, cx, cy, ca, sa) {
+  const FOG = 10;
+  for (let sy = 0; sy < gh; sy++) {
+    const rd = camH * f / (sy + 1), sc2 = rd / f / CELL; let u = (cx + ca * rd) / CELL + sa * (W / 2) * sc2, v = (cy + sa * rd) / CELL - ca * (W / 2) * sc2; const su = -sa * sc2, sv = ca * sc2;
+    let o = sy * W; const end = o + W;
+    if (sy >= FOG) {
+      for (; o < end; o++, u += su, v += sv) out[o] = u >= 0 && v >= 0 && u < N && v < N ? col[(v | 0) * N + (u | 0)] : outer;
+    } else {   // the far rows fade into the haze
+      const fog = 1 - sy / FOG;
+      for (; o < end; o++, u += su, v += sv) {
+        const p = u >= 0 && v >= 0 && u < N && v < N ? col[(v | 0) * N + (u | 0)] : outer, r = p & 255, gg = p >> 8 & 255, b = p >> 16 & 255;
+        out[o] = 0xff000000 | (b + (haze[2] - b) * fog) << 16 | (gg + (haze[1] - gg) * fog) << 8 | (r + (haze[0] - r) * fog);
+      }
+    }
+  }
+}
+
 /* ---------- the game ---------- */
 function make(api) {
+  // how your kart handles: a tap nudges, a hold turns hard, holding through a bend drifts, letting go fires a turbo
+  const K = gs.tweak('Feel', {
+    full: [.45, .1, .9, 'how far out from the middle (of half the screen) a thumb steers at full lock'],
+    middle: [.05, 0, .2, 'the strip in the middle that steers straight'],
+    nudge: [.35, 0, 1, 'how much a quick tap steers (full lock is 1)'],
+    ramp: [.3, .05, 1, 'seconds of holding to reach full lock'],
+    turn: [1, .6, 1.5, 'how fast the kart turns at full lock'],
+    snap: [110, 10, 150, 'how fast the wheel follows your finger, and comes back when you let go'],
+    assist: [1.4, 0, 4, 'how gently the kart lines up with the road while you are not steering'],
+    grip: [36, 6, 50, 'how hard your tyres hold on tarmac (lower slides more)'],
+    scrub: [.1, 0, .4, 'speed lost turning at full lock, so a held hairpin slows you a little'],
+    driftAfter: [.35, .1, 1, 'seconds of full lock at speed before the kart hops into a drift'],
+    driftSpeed: [100, 40, 160, 'the slowest a kart can drift'],
+    driftTurn: [1.15, 1, 2, 'how much tighter a drift turns than full lock'],
+    driftWide: [.7, .3, 1, 'how much a drift still turns with your thumb slid in towards the middle'],
+    driftAngle: [.45, 0, .8, 'how far the tail swings out in a drift (the look; the line is set by driftTurn)'],
+    blue: [.35, .2, 2, 'seconds of drifting for a blue spark turbo'],
+    orange: [.9, .5, 3, 'seconds of drifting for an orange spark turbo (twice as long)'],
+    turbo: [.5, .2, 1.5, 'seconds a blue spark turbo lasts'],
+  });
+  let side = 0, holdT = 0;
+  // where your thumb is sets how hard you steer: the outer part of each side is full lock, sliding in towards the middle eases off
+  const wheel = px => { const d = (px - W / 2) / (W / 2), m = Math.abs(d); return { s: m < K.middle ? 0 : Math.sign(d), amt: clamp((m - K.middle) / (K.full - K.middle), .25, 1) }; };
   const timers = new Timers(), later = (fn, ms) => timers.after(ms / 1000, fn);   // game-time delays: they pause with the game
   let trk, karts, me, t, raceT, go, msg, held, flash, shake, finished, endT, results, camA, parts, wrongT, lastPlace, themeI = Math.random() * THEMES.length | 0;
   let img = null, img32 = null, mini = null, best = {}, draftT = 0;
+  let skyG = null;
+  const VIS = [], POOL = [], PJ = [0, 0], GATE = [[0, 0], [0, 0]], farFirst = (a, b) => b.fw - a.fw, CAM = { cx: 0, cy: 0, ca: 1, sa: 0, n: 0 };
+  const proj = (x, y, out) => { const rx = x - CAM.cx, ry = y - CAM.cy; out[0] = rx * CAM.ca + ry * CAM.sa; out[1] = -rx * CAM.sa + ry * CAM.ca; return out; };
+  const add = (fw, lt, o, k, gate) => { const e = POOL[CAM.n] || (POOL[CAM.n] = {}); e.fw = fw; e.lt = lt; e.o = o; e.k = k; e.gate = gate; VIS[CAM.n++] = e; };
   const at = (x, y) => { const cx = x / CELL | 0, cy = y / CELL | 0; return cx < 0 || cy < 0 || cx >= N || cy >= N ? GROUND : trk.tex[cy * N + cx]; };
   const P = i => trk.line[((i % PTS) + PTS) % PTS];
   function nearest(x, y, from) { let best = from, bd = 1e12; for (let k = -14; k <= 14; k++) { const i = (from + k + PTS) % PTS, p = trk.line[i], d = (p.x - x) ** 2 + (p.y - y) ** 2; if (d < bd) { bd = d; best = i; } } return best; }
   const prog = k => k.lap * PTS + k.idx + k.frac;
   const latOf = k => { const p = P(k.idx); return (k.x - p.x) * p.nx + (k.y - p.y) * p.ny; };
-  function order() { return [...karts].sort((a, b) => (b.done ? 1e9 - b.doneT : prog(b)) - (a.done ? 1e9 - a.doneT : prog(a))); }
+  const ORD = [], byPlace = (a, b) => (b.done ? 1e9 - b.doneT : prog(b)) - (a.done ? 1e9 - a.doneT : prog(a));
+  function order() { ORD.length = 0; for (const k of karts) ORD.push(k); return ORD.sort(byPlace); }   // one list, reused
   function say(txt, l = 1.2, col = '#f8d838') { msg = { txt, l, col }; }
 
   function drive(k, steer, cap, dt) {
@@ -256,14 +305,16 @@ function make(api) {
     const g = at(k.x, k.y);
     if (g === WATER) { k.sink = .9; k.v = 0; if (k === me) { haptic('heavy'); sfx(300, .4, 'triangle', .05, -240); say('SPLASH!', 1, '#88c8f8'); } return; }
     if (g === BOOST && k.boost < .6) { k.boost = 1; if (k === me) { haptic('medium'); sfx(520, .3, 'sawtooth', .04, 600); } }
-    let top = SURF[g][0] * k.d.top * (k.band || 1) * (k.draft || 1); if (k.boost) top = Math.max(top, 196); top = Math.min(top, cap);
+    let top = SURF[g][0] * k.d.top * (k.band || 1) * (k.draft || 1);
+    if (k === me && !k.dr) top *= 1 - K.scrub * Math.max(0, Math.abs(k.st) - .6) / .4;   // full lock scrubs a little speed
+    if (k.boost) top = Math.max(top, 196); top = Math.min(top, cap);
     k.v += (k.v < top ? (k.boost ? 220 : 72) : -170) * dt; k.v = clamp(k.v, 0, 200);
-    k.st += (steer - k.st) * Math.min(1, dt * 10);
-    k.a += k.st * dt * (1.4 + k.v / 120) * .9;
-    k.md += angDiff(k.a, k.md) * Math.min(1, SURF[g][1] * dt);
+    k.st = approach(k.st, steer, k === me ? K.snap : 11, dt);
+    k.a += k.st * dt * (1.4 + k.v / 120) * .9 * (k === me ? K.turn : 1);
+    k.md += angDiff(k.a, k.md) * Math.min(1, SURF[g][1] * (k === me ? K.grip / 14 : 1) * dt);
     k.x = clamp(k.x + Math.cos(k.md) * k.v * dt, 4, WORLD - 4); k.y = clamp(k.y + Math.sin(k.md) * k.v * dt, 4, WORLD - 4);
     k.rough = g === GROUND || g === RUNOFF ? 1 : g === KERB ? .5 : 0;
-    for (const o of trk.solid) { const dx = k.x - o.x, dy = k.y - o.y, rr = o.r + 5; if (dx * dx + dy * dy < rr * rr) { const d = Math.hypot(dx, dy) || 1; k.x = o.x + dx / d * rr; k.y = o.y + dy / d * rr; if (k.v > 40) { k.v *= .35; if (k === me) { haptic('heavy'); sfx(110, .15, 'square', .06, -40); shake = .25; } } } }
+    for (let i = 0; i < trk.solid.length; i++) { const o = trk.solid[i], dx = k.x - o.x, dy = k.y - o.y, rr = o.r + 5; if (dx * dx + dy * dy < rr * rr) { const d = Math.hypot(dx, dy) || 1; k.x = o.x + dx / d * rr; k.y = o.y + dy / d * rr; if (k.v > 40) { k.v *= .35; if (k === me) { haptic('heavy'); sfx(110, .15, 'square', .06, -40); shake = .25; } } } }
     const ni = nearest(k.x, k.y, k.idx);
     if (k.idx > PTS * .8 && ni < PTS * .2) lapDone(k); else if (ni > PTS * .8 && k.idx < PTS * .2) k.lap--;
     k.idx = ni; const p = P(ni); k.frac = clamp(((k.x - p.x) * p.tx + (k.y - p.y) * p.ty) / trk.seg, -.5, .5);
@@ -274,7 +325,7 @@ function make(api) {
     else if (k === me && k.lap > 0) { if (k.lap === LAPS - 1) { say('FINAL LAP!', 1.6, '#f86868'); sfx(660, .15, 'square', .05); later(() => sfx(990, .25, 'square', .05), 140); } else say(`LAP ${k.lap + 1}`, 1.2); haptic('success'); }
   }
   function finish(crossed) {
-    finished = true; endT = 3.6; const place = order().indexOf(me) + 1, pts = POINTS[place - 1];
+    finished = true; endT = 3.6; me.dr = 0; const place = order().indexOf(me) + 1, pts = POINTS[place - 1];
     newBest = false; const was = best[trk.name];
     if (crossed && (!was || raceT < was)) { best[trk.name] = +raceT.toFixed(2); newBest = !!was; api.save({ best }); }
     say(place === 1 ? 'YOU WIN!' : `${place}${SUFFIX[place - 1]} PLACE`, 3, place <= 3 ? '#f8d838' : '#f8f8f0');
@@ -306,12 +357,38 @@ function make(api) {
       if ((a === me || b === me) && !me.bumpT) { me.bumpT = .3; haptic('medium'); sfx(150, .08, 'square', .05); shake = .15; } }
     me.bumpT = Math.max(0, (me.bumpT || 0) - 1 / 60);
   }
+  // your kart: steering that builds while you hold, drifts with spark turbos, and a light hand on the wheel when you let go
+  // particles come from a pool and go back to it: none made afresh each frame
+  const FREE = [], part = (x, y, vx, vy, l, c, sp = 0) => { const p = FREE.pop() || {}; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.l = l; p.c = c; p.sp = sp; parts.push(p); };
+  function pilot(dt) {
+    const k = me, s = held ? held.s : 0, g = at(k.x, k.y), rough = g === GROUND || g === RUNOFF || g === WATER;
+    if (s !== side) { side = s; holdT = 0; } else holdT += dt;
+    const amt = held ? held.amt : 0;
+    let steer = s ? s * amt * (K.nudge + (1 - K.nudge) * Math.min(1, holdT / K.ramp)) : 0;
+    if (!k.dr) {
+      if (s && amt > .8 && holdT >= K.driftAfter && k.v > K.driftSpeed && !rough && !k.sink) { k.dr = s; k.drT = 0; k.tier = 0; k.hop = .18; sfx(240, .08, 'square', .04, 120); haptic('light'); }
+    } else {
+      k.drT += dt;
+      const tier = k.drT >= K.orange ? 2 : k.drT >= K.blue ? 1 : 0;
+      if (tier > k.tier) { k.tier = tier; haptic('light'); sfx(tier === 2 ? 990 : 660, .08, 'square', .04); }
+      if (s !== k.dr || k.v < 60 || rough || k.sink) {   // let go (or switch sides) to end it
+        // only a drift you end yourself fires its turbo (not one cut short by a crash or the grass)
+        if (tier && s !== k.dr && k.v >= 60 && !rough && !k.sink) { k.boost = Math.max(k.boost, K.turbo * tier); haptic('medium'); sfx(520, .3, 'sawtooth', .04, 600); if (tier === 2 && !msg) say('TURBO!', .6, '#f8a030'); }
+        k.dr = 0; k.tier = 0;
+      } else steer = k.dr * (K.driftWide + (K.driftTurn - K.driftWide) * clamp((amt - .25) / .6, 0, 1));   // slide in to widen it
+    }
+    // not steering: the nose eases towards the road's direction, so a straight needs no tapping
+    if (!s && !k.dr && k.v > 30 && !rough && !k.sink) { const p = P(k.idx + 3), e = angDiff(Math.atan2(p.ty, p.tx), k.a); if (Math.abs(e) < .6) k.a += e * Math.min(1, K.assist * dt); }
+    k.hop = Math.max(0, (k.hop || 0) - dt);
+    k.slip = (k.slip || 0) + ((k.dr || 0) * K.driftAngle - (k.slip || 0)) * Math.min(1, dt * 9);   // the tail swings out, and back after
+    drive(k, steer, 999, dt);
+  }
   let live = true, newBest = false;
   const clock = s => `${s / 60 | 0}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   function step(dt, auto) {
     raceT += dt;
     for (const k of karts) if (k === me && !auto) {
-      const target = held ? held.s : 0; drive(k, target, 999, dt);
+      pilot(dt);
     } else ai(k, dt);
     bumps();
     // slipstream: tuck in right behind a rival for a moment and you pull up to them faster
@@ -320,11 +397,12 @@ function make(api) {
       draftT = behind && me.v > 90 ? draftT + dt : Math.max(0, draftT - dt * 2);
       const was = me.draft > 1; me.draft = draftT > .5 ? 1.1 : 1;
       if (me.draft > 1 && !was) { sfx(300, .25, 'sawtooth', .025, 200); haptic('light'); }
-      if (me.draft > 1 && Math.random() < .5) parts.push({ x: (Math.random() - .5) * 30, y: -10 - Math.random() * 10, vx: 0, vy: 40, l: .25, c: '#f8f8f0a0' });
+      if (me.draft > 1 && Math.random() < .5) part((Math.random() - .5) * 30, -10 - Math.random() * 10, 0, 40, .25, '#f8f8f0a0');
     }
     if (me.rough && me.v > 50 && (raceT * 20 | 0) % 3 === 0 && !auto) haptic('tick');
-    if (me.rough || me.boost) for (let n = 0; n < 2; n++) parts.push({ x: (Math.random() - .5) * 18, y: 0, vx: (Math.random() - .5) * 30, vy: -10 - Math.random() * 20, l: .4, c: me.boost ? (Math.random() < .5 ? '#f8d030' : '#f86020') : me.rough === .5 ? '#f0f0f0' : trk.th.run });
-    for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 60 * dt; p.l -= dt; } parts = parts.filter(p => p.l > 0);
+    if (me.dr && !auto) for (let sx = -14; sx <= 14; sx += 28) if (Math.random() < .8) part(sx + (Math.random() - .5) * 3, 0, sx * 3 + (Math.random() - .5) * 20, -20 - Math.random() * 30, .22, me.tier === 2 ? (Math.random() < .5 ? '#f89830' : '#f8e050') : me.tier === 1 ? (Math.random() < .5 ? '#58b8f8' : '#c8f0f8') : '#f8f8f0', 1);
+    if (me.rough || me.boost) for (let n = 0; n < 2; n++) part((Math.random() - .5) * 18, 0, (Math.random() - .5) * 30, -10 - Math.random() * 20, .4, me.boost ? (Math.random() < .5 ? '#f8d030' : '#f86020') : me.rough === .5 ? '#f0f0f0' : trk.th.run);
+    for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 60 * dt; p.l -= dt; } { let n = 0; for (const p of parts) if (p.l > 0) parts[n++] = p; else FREE.push(p); parts.length = n; }
     // wrong way and overtakes
     const p = P(me.idx); wrongT = Math.cos(me.a) * p.tx + Math.sin(me.a) * p.ty < -.3 && me.v > 15 ? wrongT + dt : 0;
     const place = order().indexOf(me) + 1;
@@ -336,10 +414,12 @@ function make(api) {
     reset() { timers.clear();
       themeI = (themeI + 1) % THEMES.length; const th = THEMES[themeI];
       if (!trk || trk.th !== th) { trk = buildTrack(th); trk.solid = trk.props.filter(o => KINDS[o.kind][1]).map(o => ({ x: o.x, y: o.y, r: KINDS[o.kind][1] })); img = null; mini = null; }
-      const lineup = [...DRIVERS].sort(() => Math.random() - .5);
-      karts = [...lineup, YOU].map((d, j) => { const g = trk.grid[j]; return { d, x: g.x, y: g.y, a: g.a, md: g.a, v: 0, st: 0, idx: g.idx, frac: 0, lap: -1, lat: (j & 1 ? 1 : -1) * 13, boost: 0, sink: 0, wob: 0, passT: 0, done: false, si: [...DRIVERS, YOU].indexOf(d) }; });
+      const lineup = shuffle([...DRIVERS]);
+      karts = [...lineup, YOU].map((d, j) => { const g = trk.grid[j]; return { d, x: g.x, y: g.y, a: g.a, md: g.a, v: 0, st: 0, idx: g.idx, frac: 0, lap: -1, lat: (j & 1 ? 1 : -1) * 13, boost: 0, sink: 0, wob: 0, passT: 0, done: false, si: [...DRIVERS, YOU].indexOf(d),
+        // every field set from the start, so a kart keeps one shape (and its numbers aren't boxed afresh each frame)
+        passLat: 0, doneT: 0, ghost: 0, rough: 0, band: 1, draft: 1, bumpT: 0, dr: 0, drT: 0, tier: 0, slip: 0, hop: 0 }; });
       for (const k of karts) k.d = { ...k.d, bias: k.d === YOU ? 0 : (Math.random() - .5) * 8 };
-      me = karts[5]; best = api.load({ best: {} }).best || {}; draftT = 0; newBest = false; t = 0; raceT = 0; go = 3.2; msg = null; held = null; flash = 0; shake = 0; finished = false; endT = 0; results = null; camA = me.a; parts = []; wrongT = 0; lastPlace = 6; live = true;
+      me = karts[5]; best = api.load({ best: {} }).best || {}; draftT = 0; side = 0; holdT = 0; newBest = false; t = 0; raceT = 0; go = 3.2; msg = null; held = null; flash = 0; shake = 0; finished = false; endT = 0; results = null; camA = me.a; parts = []; wrongT = 0; lastPlace = 6; live = true;
     },
     resize(w, h) { W = w; H = h; img = null; },
     update(dt) { timers.update(dt);
@@ -360,45 +440,35 @@ function make(api) {
       const ox = shake ? (Math.random() - .5) * 3 : 0, ca = Math.cos(camA), sa = Math.sin(camA), cx = me.x - ca * d, cy = me.y - sa * d;
       c.save(); c.translate(ox | 0, 0);
       // sky and the panorama that wraps all the way round
-      const g = c.createLinearGradient(0, 0, 0, hy); g.addColorStop(0, th.sky[0]); g.addColorStop(1, th.sky[1]); c.fillStyle = g; c.fillRect(-4, 0, W + 8, hy);
+      if (!skyG || skyG.th !== th || skyG.hy !== hy) { skyG = { th, hy, g: c.createLinearGradient(0, 0, 0, hy) }; skyG.g.addColorStop(0, th.sky[0]); skyG.g.addColorStop(1, th.sky[1]); }
+      c.fillStyle = skyG.g; c.fillRect(-4, 0, W + 8, hy);
       const pv = pano(th), srcW = 1024 * 2 * Math.atan(W / 2 / f) / (Math.PI * 2), sc = W / srcW, ph = 56 * sc, px0 = (((camA / (Math.PI * 2)) * 1024 - srcW / 2) % 1024 + 1024) % 1024;
       const seg1 = Math.min(srcW, 1024 - px0); c.drawImage(pv, px0, 0, seg1, 56, 0, hy - ph, seg1 * sc, ph); if (seg1 < srcW) c.drawImage(pv, 0, 0, srcW - seg1, 56, seg1 * sc, hy - ph, (srcW - seg1) * sc + 1, ph);
       // ground plane
-      // ground plane: one packed 32-bit colour per pixel, stepping through the map in tile units
-      const gh = H - hy; if (!img || img.width !== W || img.height !== gh) { img = c.createImageData(W, gh); img32 = new Uint32Array(img.data.buffer); }
-      const out = img32, col = trk.col32, haze = hex(th.haze), outer = trk.outer32, FOG = 10;
-      for (let sy = 0; sy < gh; sy++) {
-        const rd = camH * f / (sy + 1), sc2 = rd / f / CELL; let u = (cx + ca * rd) / CELL + sa * (W / 2) * sc2, v = (cy + sa * rd) / CELL - ca * (W / 2) * sc2; const su = -sa * sc2, sv = ca * sc2;
-        let o = sy * W; const end = o + W;
-        if (sy >= FOG) {
-          for (; o < end; o++, u += su, v += sv) out[o] = u >= 0 && v >= 0 && u < N && v < N ? col[(v | 0) * N + (u | 0)] : outer;
-        } else {   // the far rows fade into the haze
-          const fog = 1 - sy / FOG;
-          for (; o < end; o++, u += su, v += sv) {
-            const p = u >= 0 && v >= 0 && u < N && v < N ? col[(v | 0) * N + (u | 0)] : outer, r = p & 255, gg = p >> 8 & 255, b = p >> 16 & 255;
-            out[o] = 0xff000000 | (b + (haze[2] - b) * fog) << 16 | (gg + (haze[1] - gg) * fog) << 8 | (r + (haze[0] - r) * fog);
-          }
-        }
-      }
+      const gh = H - hy; if (!img || img.width !== W || img.height !== gh) { img = c.createImageData(W, gh); img32 = new Int32Array(img.data.buffer); }
+      paintGround(img32, trk.col32, trk.outer32, th.hazeRGB || (th.hazeRGB = hex(th.haze)), gh, camH, f, cx, cy, ca, sa);
       c.putImageData(img, ox | 0, hy);
       // billboards: scenery, landmarks, the start gantry and every kart, far to near
-      const vis = [], proj = (x, y) => { const rx = x - cx, ry = y - cy; return [rx * ca + ry * sa, -rx * sa + ry * ca]; };
-      for (const o of trk.props) { const [fw, lt] = proj(o.x, o.y); if (fw < 6 || fw > 760) continue; const s = f / fw, sx = W / 2 + lt * s; if (sx < -200 * s || sx > W + 200 * s) continue; vis.push({ fw, lt, o }); }
-      for (const k of karts) { const [fw, lt] = proj(k.x, k.y); if (fw > 4 && fw < 760) vis.push({ fw, lt, k }); }
-      const s0p = P(0), gA = proj(s0p.x + s0p.nx * (HALF + 6), s0p.y + s0p.ny * (HALF + 6)), gB = proj(s0p.x - s0p.nx * (HALF + 6), s0p.y - s0p.ny * (HALF + 6));
-      if (gA[0] > 6 && gB[0] > 6) vis.push({ fw: (gA[0] + gB[0]) / 2, gate: [gA, gB] });
-      vis.sort((a, b) => b.fw - a.fw);
+      // (the list and its entries are reused every frame: no garbage)
+      const vis = VIS; CAM.cx = cx; CAM.cy = cy; CAM.ca = ca; CAM.sa = sa; CAM.n = 0;
+      for (const o of trk.props) { proj(o.x, o.y, PJ); const fw = PJ[0], lt = PJ[1]; if (fw < 6 || fw > 760) continue; const s = f / fw, sx = W / 2 + lt * s; if (sx < -200 * s || sx > W + 200 * s) continue; add(fw, lt, o, null, null); }
+      for (const k of karts) { proj(k.x, k.y, PJ); const fw = PJ[0], lt = PJ[1]; if (fw > 4 && fw < 760) add(fw, lt, null, k, null); }
+      const s0p = P(0), gA = proj(s0p.x + s0p.nx * (HALF + 6), s0p.y + s0p.ny * (HALF + 6), GATE[0]), gB = proj(s0p.x - s0p.nx * (HALF + 6), s0p.y - s0p.ny * (HALF + 6), GATE[1]);
+      if (gA[0] > 6 && gB[0] > 6) add((gA[0] + gB[0]) / 2, 0, null, null, GATE);
+      vis.length = CAM.n; vis.sort(farFirst);
       for (const v of vis) {
-        if (v.gate) { const [[fa, la], [fb, lb]] = v.gate, sA = f / fa, sB = f / fb, xa = W / 2 + la * sA, xb = W / 2 + lb * sB, ya = hy + camH * sA, yb = hy + camH * sB, hA = 34 * sA, hB = 34 * sB;
+        if (v.gate) { const fa = v.gate[0][0], la = v.gate[0][1], fb = v.gate[1][0], lb = v.gate[1][1], sA = f / fa, sB = f / fb, xa = W / 2 + la * sA, xb = W / 2 + lb * sB, ya = hy + camH * sA, yb = hy + camH * sB, hA = 34 * sA, hB = 34 * sB;
           c.fillStyle = '#d0d0d8'; c.fillRect(xa - 1.5 * sA, ya - hA, Math.max(1, 3 * sA), hA); c.fillRect(xb - 1.5 * sB, yb - hB, Math.max(1, 3 * sB), hB);
           const n = 12; for (let i = 0; i < n; i++) { const u0 = i / n, u1 = (i + 1) / n, X0 = xa + (xb - xa) * u0, X1 = xa + (xb - xa) * u1, T0 = (ya - hA) + ((yb - hB) - (ya - hA)) * u0, T1 = (ya - hA) + ((yb - hB) - (ya - hA)) * u1, bh0 = 8 * (sA + (sB - sA) * u0);
             c.fillStyle = i % 2 ? '#202028' : '#f4f4ec'; c.beginPath(); c.moveTo(X0, T0); c.lineTo(X1, T1); c.lineTo(X1, T1 + bh0); c.lineTo(X0, T0 + bh0); c.fill(); }
           continue; }
         const s = f / v.fw, sx = W / 2 + v.lt * s, sy = hy + camH * s;
         if (v.k) { const k = v.k; if (k.sink > 0 && (t * 10 | 0) % 2) continue; if (k.ghost && (t * 12 | 0) % 2) continue;
-          const rel = angDiff(k.a, camA) + k.st * .25, fr = rel < -.22 ? 0 : rel > .22 ? 2 : 1, im = SPR.karts[k.si][fr], w = KW * s * 26 / 24, h = w * 22 / 26, bob = k.rough && (t * 16 | 0) % 2 ? 1 : 0;
-          if (k === me && parts.length) for (const p of parts) { c.fillStyle = p.c; c.fillRect(sx + p.x * s / 3, sy - 2 + p.y * s / 4, Math.max(1, s * .5), Math.max(1, s * .5)); }
+          const rel = angDiff(k.a, camA) + k.st * .25 + (k.slip || 0), fr = rel < -.22 ? 0 : rel > .22 ? 2 : 1, im = SPR.karts[k.si][fr], w = KW * s * 26 / 24, h = w * 22 / 26, bob = (k.rough && (t * 16 | 0) % 2 ? 1 : 0) + (k.hop ? Math.round(Math.sin(k.hop / .18 * Math.PI) * 3) : 0);
+          if (k === me && parts.length) for (const p of parts) if (!p.sp) { c.fillStyle = p.c; c.fillRect(sx + p.x * s / 3, sy - 2 + p.y * s / 4, Math.max(1, s * .5), Math.max(1, s * .5)); }
           c.drawImage(im, Math.round(sx - w / 2), Math.round(sy - h - bob), Math.round(w), Math.round(h));
+          // drift sparks fly from the rear wheels, in front of the kart
+          if (k === me && me.dr) { const z = Math.max(2, Math.round(s * .8)); for (const p of parts) if (p.sp) { c.fillStyle = p.c; c.fillRect(Math.round(sx + p.x * s / 3 - z / 2), Math.round(sy - 2 + p.y * s / 4), z, z); } }
           if (k.boost > 0 && (t * 20 | 0) % 2) { c.fillStyle = '#f8d030'; c.fillRect(sx - w * .2, sy - h * .15, w * .1, h * .2); c.fillRect(sx + w * .1, sy - h * .15, w * .1, h * .2); }
           if (k !== me && w > 9 && v.fw < 260) { c.font = '6px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillStyle = '#101018c0'; const tw = k.d.name.length * 6 + 2; c.fillRect(Math.round(sx - tw / 2), Math.round(sy - h - 10), tw, 8); c.fillStyle = k.d.col; c.fillText(k.d.name, Math.round(sx), Math.round(sy - h - 3)); }
           continue; }
@@ -409,13 +479,14 @@ function make(api) {
       if (flash) { c.fillStyle = '#ffffff60'; c.fillRect(0, 0, W, H); }
       hud(c);
     },
-    down(px) { held = { s: px < W / 2 ? -1 : 1 }; },
-    move(px, py, p) { if (p && held) held.s = px < W / 2 ? -1 : 1; },
+    down(px) { held = wheel(px); },
+    move(px, py, p) { if (p && held) held = wheel(px); },
     up() { held = null; },
-    key(k, d) { if (k === 'ArrowLeft' || k === 'ArrowRight') held = d ? { s: k === 'ArrowLeft' ? -1 : 1 } : null; },
+    key(k, d) { if (k === 'ArrowLeft' || k === 'ArrowRight') held = d ? { s: k === 'ArrowLeft' ? -1 : 1, amt: 1 } : null; },
   };
 
-  function text(c, s, x, y, col, size = 6, align = 'left') { c.font = `${size}px "Press Start 2P", monospace`; c.textAlign = align; c.fillStyle = '#101018'; c.fillText(s, x + 1, y + 1); c.fillStyle = col; c.fillText(s, x, y); }
+  const FONTS = {}, fontOf = size => FONTS[size] || (FONTS[size] = `${size}px "Press Start 2P", monospace`);   // made once a size
+  function text(c, s, x, y, col, size = 6, align = 'left') { c.font = fontOf(size); c.textAlign = align; c.fillStyle = '#101018'; c.fillText(s, x + 1, y + 1); c.fillStyle = col; c.fillText(s, x, y); }
   function hud(c) {
     const ord = order(), place = ord.indexOf(me) + 1;
     // place and lap
@@ -425,7 +496,7 @@ function make(api) {
     // who is just ahead and just behind, with a time gap
     const ahead = ord[place - 2], behind = ord[place];
     const gap = (a, b) => Math.abs(prog(a) - prog(b)) * trk.seg / Math.max(70, me.v);
-    let gy = 50; for (const [o, sign] of [[ahead, '-'], [behind, '+']]) { if (!o || go > 0 || finished) continue; c.fillStyle = '#10101890'; c.fillRect(2, gy - 7, 70, 9); c.fillStyle = o.d.col; c.fillRect(4, gy - 5, 4, 5); text(c, `${o.d.name.slice(0, 5)}`, 10, gy, '#f8f8f0'); text(c, `${sign}${o.done ? '--' : gap(o, me).toFixed(1)}`, 71, gy, sign === '-' ? '#f8a868' : '#b8f878', 6, 'right'); gy += 10; }
+    let gy = 50; for (let n = 0; n < 2; n++) { const o = n ? behind : ahead, sign = n ? '+' : '-'; if (!o || go > 0 || finished) continue; c.fillStyle = '#10101890'; c.fillRect(2, gy - 7, 70, 9); c.fillStyle = o.d.col; c.fillRect(4, gy - 5, 4, 5); text(c, `${o.d.name.slice(0, 5)}`, 10, gy, '#f8f8f0'); text(c, `${sign}${o.done ? '--' : gap(o, me).toFixed(1)}`, 71, gy, sign === '-' ? '#f8a868' : '#b8f878', 6, 'right'); gy += 10; }
     // minimap
     const M = Math.round(clamp(W * .27, 40, 64)), mx = W - M - 3, my = 3;
     if (!mini || mini.width !== M) mini = mk(M, M, (mc) => { mc.fillStyle = '#101018a0'; mc.fillRect(0, 0, M, M); const sc = (M - 6) / WORLD; mc.strokeStyle = '#f8f8f0'; mc.lineWidth = 2.5; mc.beginPath(); trk.line.forEach((p, i) => i ? mc.lineTo(3 + p.x * sc, 3 + p.y * sc) : mc.moveTo(3 + p.x * sc, 3 + p.y * sc)); mc.closePath(); mc.stroke(); mc.strokeStyle = trk.th.road; mc.lineWidth = 1.2; mc.stroke(); const p0 = trk.line[0]; mc.fillStyle = '#f8d838'; mc.fillRect(2 + p0.x * sc, 2 + p0.y * sc, 2, 2); });
@@ -436,7 +507,7 @@ function make(api) {
     if (go > 0) { const n = Math.ceil(go); c.fillStyle = '#101018c0'; c.fillRect(W / 2 - 22, H * .36, 44, 14);
       for (let i = 0; i < 3; i++) { c.fillStyle = 3 - i >= n && n <= 3 ? '#f83838' : '#402020'; disc(c, W / 2 - 13 + i * 13, H * .36 + 7, 4); }
       c.fillStyle = '#101018c0'; c.fillRect(0, H * .36 - 16, W, 11); text(c, trk.name, W / 2, H * .36 - 8, '#f8f8f0', 6, 'center');
-      if (go > 1.2) { c.fillStyle = '#101018c0'; c.fillRect(0, H - 22, W, 11); text(c, 'HOLD LEFT / RIGHT', W / 2, H - 14, '#f8d838', 6, 'center'); } }
+      if (go > .4) { c.fillStyle = '#101018c0'; c.fillRect(0, H - 22, W, 11); text(c, go > 1.8 ? 'HOLD LEFT / RIGHT' : 'HOLD IN BENDS: DRIFT', W / 2, H - 14, '#f8d838', 6, 'center'); } }
     if (me.draft > 1 && !finished) text(c, 'SLIPSTREAM', W / 2, H - 6, (t * 8 | 0) % 2 ? '#88d8f8' : '#f8f8f0', 6, 'center');
     if (wrongT > .6 && (t * 3 | 0) % 2) text(c, 'WRONG WAY', W / 2, H * .45, '#f84848', 8, 'center');
     if (msg) text(c, msg.txt, W / 2, H * .42, msg.col, msg.txt.length > 9 ? 8 : 12, 'center');
@@ -450,6 +521,6 @@ function make(api) {
 
 export default {
   id: 'pocket-kart', title: 'Pocket Kart', tag: 'Advance · Racing', retro: true, era: 'advance', pal: 'grape', w: 160, h: 160, maxW: 240, maxH: 280, goal: 6,
-  hint: 'Two laps against five rivals; you start at the back. Hold the left or right side to steer. Stay on the road, hit the orange boost pads, tuck in behind a rival to slipstream, and watch the chevrons for sharp bends. Finish on the podium to win.',
+  hint: 'Two laps against five rivals; you start at the back. Hold the left or right side to steer, sliding your thumb towards the middle to steer gently. Hold through a bend to drift, and let go for a spark turbo. Stay on the road, hit the orange boost pads, tuck in behind a rival to slipstream, and watch the chevrons for sharp bends. Finish on the podium to win.',
   make,
 };

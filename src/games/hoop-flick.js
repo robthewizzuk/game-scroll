@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { clamp, rnd, flickTracker } = gs.util;
 const { haptic } = gs.device;
 const { Feel } = gs.effects;
+const { icon } = gs.icons;
 
 // Flick the ball up into the hoop. After a few baskets the hoop starts sliding. One miss ends the run.
 const W = 360, H = 640, G = 1500, BR = 20, RIM = 46, START = { x: W / 2, y: H - 90 };
@@ -62,7 +63,7 @@ function make(api) {
       if (!ballBehind) drawBall();
       feel.end(c, W, H);
       if (!ball.live && !dead) { c.fillStyle = '#ffffff55'; c.font = '600 14px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('flick up ↑', W / 2, H - 20 - (t * 2 % 1) * 6); }
-      c.font = '20px sans-serif'; c.textAlign = 'left'; for (let i = 0; i < 3; i++) { c.fillStyle = i < lives ? '#ff4d6d' : '#ffffff22'; c.fillText('♥', 14 + i * 24, H - 14); }
+      for (let i = 0; i < 3; i++) icon(c, 'heart', 24 + i * 24, H - 21, 20, { color: i < lives ? '#ff4d6d' : '#ffffff22' });
       if (msg && msg.life > 0) { c.globalAlpha = clamp(msg.life * 2, 0, 1); c.fillStyle = '#ffd34a'; c.font = '400 16px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(msg.txt, hoop.x, hoop.y - 110); c.globalAlpha = 1; }
     },
     down(x, y) { if (ball.live) return; held = true; flick.start(x, y); },

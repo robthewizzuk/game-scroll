@@ -5,6 +5,7 @@ const { clamp, rnd } = gs.util;
 const { backdrop, glow } = gs.gfx;
 const { brick, stud, brick3d, stud3d, BRICK } = gs.bricks;
 const { View, G, part, grp, blob } = gs.toon;
+const { approach } = gs.juice;
 
 // Build a brick car, then race it. Pick a body in the garage: the zippy Racer, the tough Truck or
 // the grippy Buggy. Drag to steer down the track. Smash brick piles your armour can handle for
@@ -44,7 +45,7 @@ function make(api) {
       time -= dt; if (time <= 0) { time = 0; dead = .01; msg = { txt: 'OUT OF TIME', l: 9 }; haptic('error'); sfx(140, .5, 'square', .05, -60); return; }
       const R = road(), top = 110 + car.speed * 16 + Math.min(60, cp * 6); speed += (top - speed) * dt * .8;
       const offroad = x < R.l || x > R.r; if (offroad) speed = Math.min(speed, top * .5);
-      const grip = 3 + car.grip * 2.2; x += (tx - x) * Math.min(1, dt * grip); x = clamp(x, 8, W - 8);
+      const grip = 3 + car.grip * 2.2; x = approach(x, tx, grip, dt); x = clamp(x, 8, W - 8);
       const dy = speed * dt; dist += dy;
       nextObj -= dy; if (nextObj <= 0) { spawn(); nextObj = rnd(40, 75) - Math.min(20, dist / 600); }
       for (const o of objs) { o.y += dy * (o.k === 'car' ? 1 - o.sp : 1); if (o.k === 'car') o.x = clamp(o.x + Math.sin(t + o.drift) * 12 * dt, R.l + 8, R.r - 8); }

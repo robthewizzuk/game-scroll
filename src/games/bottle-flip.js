@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects;
+const { approach } = gs.juice;
 
 // Pull down and let go to toss the bottle onto the next table. It spins at a steady rate,
 // so the toss height decides how it lands: upright scores 1, on its cap scores 3, anything else tips over.
@@ -31,7 +32,7 @@ function make(api) {
       bottle = { x: 100, y: 470, a: 0, air: false, vx: 0, vy: 0, from: 0, cap: false };
     },
     update(dt) {
-      feel.update(dt); t += dt; cam += (camTo - cam) * Math.min(1, dt * 5); water += (Math.sin(t * 3) * .1 - water) * dt * 2;
+      feel.update(dt); t += dt; cam = approach(cam, camTo, 5, dt); water += (Math.sin(t * 3) * .1 - water) * dt * 2;
       if (msg) msg.life -= dt;
       if (!bottle.air) return;
       const nxt = plats[cur + 1];
