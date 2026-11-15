@@ -12,7 +12,7 @@
 // userData.weapon: { kind, hands: 1 | 2, long (sits in the shoulder), length (metres), melee (swung) }.
 // weapon.wield(person) (gs.models.human, gs.poses person or figure) then puts it in their hands each frame.
 // Kit use only: games reach it as gs.models.weapon.
-import { Group, Mesh, MeshStandardMaterial, Object3D, Quaternion, Vector3, Matrix4, Euler } from 'three';
+import { Group, Mesh, MeshStandardMaterial, Object3D, Quaternion, Vector3, Matrix4, Euler, CylinderGeometry, ExtrudeGeometry, Shape } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Build, boxUV, rngOf } from './props.js';
 import { material } from './materials.js';
@@ -26,11 +26,16 @@ const LOOKS = {
   wood: ['wood', { colour: '#8a5a32' }], walnut: ['wood', { colour: '#6a3f22' }], ash: ['wood', { colour: '#c7a274' }],
   grip: ['leather', { colour: '#1d1c1b' }], tape: ['fabric', { colour: '#2c2c30' }], brass: ['metal', { colour: '#b8913a' }], red: ['paint', { colour: '#a8322a', under: '#a8322a' }],
   glass: ['metal', { colour: '#0c1016' }],
+  // the old world's: polished blades, forged iron, bronze fittings, oak and ash hafts, hide, linen string, goose feathers, a shield's paint
+  blade: ['metal', { colour: '#b4b9bf' }], iron: ['metal', { colour: '#55595e' }], bronze: ['metal', { colour: '#9a7038' }], oak: ['wood', { colour: '#7a5530' }],
+  yew: ['wood', { colour: '#a0632e' }], hide: ['leather', { colour: '#5a3a22' }], string: ['fabric', { colour: '#d8cfb4' }], feather: ['fabric', { colour: '#e6e0d2' }],
+  field: ['plain', { colour: '#7a1f1f' }], charge: ['plain', { colour: '#d8b445' }],   // (a shield's paint: flat, no chips of bare metal)
 };
 const shared = new Map();
 // (where there is no page to paint the materials' pictures on, a worker or a test: plain ones in their colours)
 const matOf = (look, finish) => {
-  const [name, o] = LOOKS[look], key = look + (finish || ''), opt = { ...o, ...(finish && look === 'poly' ? { colour: finish, under: finish } : {}) };
+  const [name, o] = LOOKS[look], key = look + (finish || ''), opt = { ...o, ...(finish && (look === 'poly' || look === 'field') ? { colour: finish, under: finish } : {}) };
+  if (!shared.has(key) && name === 'plain') shared.set(key, new MeshStandardMaterial({ color: opt.colour, roughness: .62, metalness: 0, name: look }));
   if (!shared.has(key)) shared.set(key, typeof document === 'undefined' ? new MeshStandardMaterial({ color: opt.colour, metalness: name === 'metal' ? .9 : 0, roughness: .5, name: look }) : material(name, opt));
   return shared.get(key);
 };
@@ -147,7 +152,138 @@ const KINDS = {
     b.cyl('poly', .011, .011, .11, [.0, .02, -.055], [Z, 0, 0], 10);                          // the side handle
     return { grip: [0, 0, 0], fore: null, muzzle: [0, .48, 0], eject: null, sight: [0, 0, 0], length: .6, upright: true };
   } },
+  // ---- the old world's, all upright (the grip at the origin, the business end up +y, a blade's flat facing +z)
+  sword: { hands: 1, melee: true, make(b) {                                                      // a one-handed arming sword
+    blade(b, .046, .74, .08); hilt(b, { grip: .1, guard: .2 });
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, .82, 0], eject: null, sight: [0, 0, 0], length: .95, upright: true };
+  } },
+  longsword: { hands: 2, melee: true, make(b) {                                                  // hand and a half: the right hand by the guard, the left by the pommel
+    blade(b, .05, .9, .14); hilt(b, { grip: .24, guard: .26, at: .04 });
+    return { grip: [0, .04, 0], fore: [0, -.07, 0], muzzle: [0, 1.0, 0], eject: null, sight: [0, 0, 0], length: 1.2, upright: true };
+  } },
+  dagger: { hands: 1, melee: true, make(b) {
+    blade(b, .034, .24, .07, .2); hilt(b, { grip: .09, guard: .1, pommel: .016 });
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, .3, 0], eject: null, sight: [0, 0, 0], length: .38, upright: true };
+  } },
+  axe: { hands: 1, melee: true, make(b) {
+    b.cyl('oak', .015, .017, .74, [0, .25, 0], 0, 10);                                          // the haft, a little thicker at the hand
+    b.box('hide', .036, .1, .036, [0, 0, 0], 0, .012);                                          // its wrap
+    const head = new Shape(); head.moveTo(0, -.03); head.lineTo(.06, -.02); head.quadraticCurveTo(.12, -.05, .15, -.09); head.quadraticCurveTo(.175, .02, .155, .1);
+    head.quadraticCurveTo(.1, .06, .06, .045); head.lineTo(0, .045); head.lineTo(-.03, .03); head.lineTo(-.03, -.02); head.closePath();   // a bearded head and its poll
+    b.add('iron', flat(head, .016, .004), [-.01, .5, 0], [0, 0, 0]);
+    b.add('blade', flat(edge(head), .006, .002), [-.01, .5, 0]);                                  // the bright, ground edge
+    return { grip: [0, 0, 0], fore: null, muzzle: [.14, .5, 0], eject: null, sight: [0, 0, 0], length: .76, upright: true };
+  } },
+  mace: { hands: 1, melee: true, make(b) {
+    b.cyl('iron', .013, .015, .5, [0, .19, 0], 0, 10); b.cyl('hide', .018, .018, .12, [0, 0, 0], 0, 10); b.ball('iron', .02, [0, -.07, 0]);
+    b.ball('iron', .03, [0, .48, 0]);
+    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; b.box('iron', .006, .12, .046, [Math.sin(a) * .03, .47, Math.cos(a) * .03], [0, a, 0], .002); }   // the flanges
+    b.cyl('iron', .0, .016, .04, [0, .555, 0], 0, 8);
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, .48, 0], eject: null, sight: [0, 0, 0], length: .62, upright: true };
+  } },
+  spear: { hands: 2, melee: true, make(b) {
+    b.cyl('ash', .014, .016, 2.0, [0, .4, 0], 0, 10);                                            // the shaft, from behind the hand to the head
+    b.cyl('iron', .016, .018, .1, [0, 1.42, 0], 0, 10); b.cyl('iron', .012, .016, .05, [0, -.62, 0], 0, 8);   // the socket and the butt cap
+    b.add('blade', new CylinderGeometry(.0, .032, .2, 4), [0, 1.57, 0], [0, 0, 0], [1, 1, .16]);  // a leaf head, flat
+    b.add('blade', new CylinderGeometry(.032, .012, .06, 4), [0, 1.44, 0], [0, 0, 0], [1, 1, .16]);
+    return { grip: [0, 0, 0], fore: [0, .5, 0], muzzle: [0, 1.62, 0], eject: null, sight: [0, 0, 0], length: 2.3, upright: true };
+  } },
+  staff: { hands: 2, melee: true, make(b) {
+    b.cyl('oak', .018, .02, 1.8, [0, .25, 0], 0, 10); b.cyl('iron', .022, .022, .06, [0, 1.12, 0], 0, 10); b.cyl('iron', .022, .02, .06, [0, -.62, 0], 0, 10);
+    b.ball('oak', .034, [0, 1.17, 0]);
+    return { grip: [0, 0, 0], fore: [0, .45, 0], muzzle: [0, 1.15, 0], eject: null, sight: [0, 0, 0], length: 1.8, upright: true };
+  } },
+  // a shield (style 'round' | 'heater' | 'kite'): held on the left arm, its face +z, its top +y; the grip (behind it) at the origin
+  // (held in the fist by a grip behind the middle, the knuckles towards its face, its top on the thumb's side)
+  shield: { hands: 1, melee: true, side: 'L', held: { L: { at: [-.03, -.104, .012], dir: [0, 0, 1], face: [0, -1, 0] } }, make(b, r, style = 'heater') {
+    const S = new Shape();
+    if (style === 'round') S.absarc(0, 0, .38, 0, Math.PI * 2);
+    else if (style === 'kite') { S.moveTo(-.24, .42); S.quadraticCurveTo(0, .52, .24, .42); S.quadraticCurveTo(.26, -.05, 0, -.62); S.quadraticCurveTo(-.26, -.05, -.24, .42); }
+    else { S.moveTo(-.29, .34); S.lineTo(.29, .34); S.lineTo(.29, .08); S.quadraticCurveTo(.27, -.32, 0, -.46); S.quadraticCurveTo(-.27, -.32, -.29, .08); S.closePath(); }
+    const lift = style === 'round' ? 0 : .12;                                                  // (held a little below its middle, the arm through its straps)
+    b.add('oak', flat(S, .016, .004), [0, lift, .035]);                                          // the boards
+    b.add('field', flat(S, .002, 0), [0, lift, .052], 0, [.96, .96, 1]);                         // painted on its face
+    b.add('iron', rim(S, .012), [0, lift, .045]);                                                 // an iron rim
+    if (style === 'round') { b.ball('iron', .07, [0, 0, .05], [1, 1, .6]); }                     // the boss
+    else { b.add('charge', flat(chevron(), .002, 0), [0, lift + .03, .055]); for (const x of [-.1, .1]) b.box('hide', .03, .16, .012, [x * .9, 0, .02]); }   // a chevron; the straps
+    b.box('hide', .03, .11, .02, [0, 0, .016], 0, .006);                                         // the grip
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, lift, .06], eject: null, sight: [0, 0, 0], length: style === 'kite' ? 1.1 : style === 'round' ? .76 : .8, upright: true };
+  } },
+  // a bow: its grip at the origin, the limbs up and down +y, the string towards +z (the archer); pull(k) draws it
+  bow: { hands: 1, melee: false, side: 'L', held: { L: { at: [-.03, -.104, .012], dir: [0, 0, 1], face: [0, 1, 0] } }, make(b) {
+    b.box('yew', .03, .2, .034, [0, 0, 0], 0, .01); b.box('hide', .034, .1, .038, [0, 0, 0], 0, .012);   // the riser and its grip
+    b.box('yew', .006, .03, .01, [-.016, .06, .0], 0, .002);                                    // the arrow shelf
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, .06, -.02], eject: null, sight: [0, 0, 0], length: 1.6, upright: true, live: bowLive };
+  } },
+  arrow: { hands: 1, make(b) {                                                                   // its nock at the origin, its point at -z
+    b.cyl('ash', .0042, .0042, .74, [0, 0, -.37], [Z, 0, 0], 6); b.cyl('iron', .0, .007, .045, [0, 0, -.76], [-Z, 0, 0], 4);   // shaft, bodkin head
+    for (let i = 0; i < 3; i++) { const a = i / 3 * Math.PI * 2; b.box('feather', .0008, .014, .1, [Math.sin(a) * .009, Math.cos(a) * .009, -.07], [0, 0, -a]); }
+    b.cyl('string', .0048, .0048, .012, [0, 0, -.006], [Z, 0, 0], 6);
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, 0, -.78], eject: null, sight: [0, 0, 0], length: .78 };
+  } },
+  quiver: { hands: 1, make(b) {                                                                  // a leather quiver and the arrows in it, its strap's ring at the origin
+    b.cyl('hide', .045, .038, .55, [0, -.2, 0], 0, 12); b.cyl('hide', .049, .049, .03, [0, .06, 0], 0, 12); b.cyl('hide', .043, .043, .03, [0, -.47, 0], 0, 12);
+    for (let i = 0; i < 9; i++) { const a = i * 2.4, rr = .012 + (i % 3) * .01, x = Math.sin(a) * rr, z = Math.cos(a) * rr;
+      b.cyl('ash', .0042, .0042, .2, [x, .14, z], [z * 1.5, 0, -x * 1.5], 6);
+      for (let j = 0; j < 3; j++) { const f = j / 3 * Math.PI * 2 + a; b.box('feather', .0008, .1, .014, [x + Math.sin(f) * .008, .19, z + Math.cos(f) * .008], [0, f, 0]); } }
+    return { grip: [0, 0, 0], fore: null, muzzle: [0, .25, 0], eject: null, sight: [0, 0, 0], length: .7, upright: true };
+  } },
 };
+// a blade up +y from the guard: a flat diamond section (w wide at the guard, narrowing to the point), a fuller down the middle of its flats
+function blade(b, w, len, tip, fuller = .6) {
+  b.add('blade', new CylinderGeometry(w * .36, w / 2, len - tip, 4, 1), [0, .07 + (len - tip) / 2, 0], [0, Math.PI / 4, 0], [1, 1, .13]);
+  b.add('blade', new CylinderGeometry(0, w * .36, tip, 4, 1), [0, .07 + len - tip / 2, 0], [0, Math.PI / 4, 0], [1, 1, .13]);
+  if (fuller) for (const z of [-1, 1]) b.box('iron', w * .18, len * fuller, .0015, [0, .07 + len * fuller / 2 + .02, z * w * .028]);
+}
+// a hilt: the grip below the origin and above it, a cross guard, a wheel pommel
+function hilt(b, { grip = .1, guard = .2, pommel = .022, at = 0 } = {}) {
+  b.cyl('hide', .014, .016, grip, [0, at, 0], 0, 10);
+  b.box('iron', guard, .018, .022, [0, at + grip / 2 + .012, 0], 0, .005);
+  b.cyl('iron', pommel, pommel, .02, [0, at - grip / 2 - pommel * .7, 0], [Z, 0, 0], 14);
+}
+// a flat plate cut to an outline (in xy), d thick along z, its edges rounded by r
+function flat(shape, d, r) {
+  const g = new ExtrudeGeometry(shape, { depth: d, bevelEnabled: r > 0, bevelThickness: r, bevelSize: r, bevelSegments: 1, curveSegments: 14 });
+  g.translate(0, 0, -d / 2); return g;
+}
+// a rim along an outline: its points, a little out
+function rim(shape, t) {
+  const pts = shape.getSpacedPoints(48), S = new Shape(pts.map(p => p.clone().multiplyScalar(1.03))), hole = new Shape(pts.map(p => p.clone().multiplyScalar(.97)).reverse());
+  S.holes.push(hole); return flat(S, .03, t * .3);
+}
+// an axe head's bit: the outline's far side, a narrow strip
+function edge(shape) { const pts = shape.getSpacedPoints(60).filter(p => p.x > .1); const S = new Shape(pts.concat(pts.slice().reverse().map(p => p.clone().setX(p.x - .018)))); return S; }
+function chevron() { const S = new Shape(); S.moveTo(-.22, -.06); S.lineTo(0, .14); S.lineTo(.22, -.06); S.lineTo(.22, -.15); S.lineTo(0, .05); S.lineTo(-.22, -.15); S.closePath(); return S; }
+
+// a bow's limbs and string, its own on each bow (they bend): pull(k) draws it (0 at rest, 1 at full draw), the string to an
+// arrow's length back; or pull(k, point) puts the string's middle at a point in the world (the drawing hand)
+const LIMB = new CylinderGeometry(.006, .015, .66, 6), STRING = new CylinderGeometry(.0016, .0016, 1, 4);
+LIMB.translate(0, .33, 0); STRING.translate(0, .5, 0);
+function bowLive(out, mat) {
+  const limbs = [1, -1].map(s => { const m = new Mesh(LIMB, mat('yew')); m.scale.set(1.6, 1, .8); m.position.set(0, .09 * s, 0); if (s < 0) m.rotation.z = Math.PI; m.castShadow = true; out.add(m); return { m, s }; });
+  const strings = [0, 1].map(() => { const m = new Mesh(STRING, mat('string')); out.add(m); return m; });
+  const nock = new Object3D(); nock.name = 'nock'; out.add(nock); out.points.nock = nock;
+  const tip = new Vector3(), mid = new Vector3(), d = new Vector3(), up = new Vector3(0, 1, 0), fwd = new Vector3(0, 0, -1), rest = new Vector3(-.012, .065, -.01);
+  out.draw = 0; out.arrow = null;
+  /** Puts an arrow on the string (a gs.models.weapon('arrow')), or takes it off (null): it rides the string as it is drawn. */
+  out.load = (arrow = null) => { if (out.arrow && out.arrow !== arrow) out.remove(out.arrow); out.arrow = arrow; if (arrow) { out.add(arrow); out.pull(out.draw); } return out; };
+  out.pull = (k = 0, point = null) => {
+    k = Math.max(0, Math.min(1, k));
+    if (point) { mid.copy(point); out.worldToLocal(mid); k = Math.max(0, Math.min(1, (mid.z - .14) / .6)); }
+    else mid.set(0, .03, .14 + k * .6);
+    out.draw = k;
+    for (const { m, s } of limbs) m.rotation.x = s * (.1 + .3 * k);   // (braced, the tips lean to the archer, and come back further as it is drawn)
+    out.updateMatrix(); for (const { m } of limbs) m.updateMatrix();
+    strings.forEach((st, i) => {
+      const L = limbs[i]; tip.set(0, .66, 0).applyMatrix4(L.m.matrix);
+      d.subVectors(mid, tip); st.position.copy(tip); st.scale.set(1, d.length(), 1); st.quaternion.setFromUnitVectors(up, d.normalize());
+    });
+    nock.position.copy(mid);
+    if (out.arrow) { out.arrow.position.copy(mid); out.arrow.quaternion.setFromUnitVectors(fwd, d.subVectors(rest, mid).normalize()); }
+    return out;
+  };
+  out.pull(0);
+}
 /** The weapons there are. */
 export const WEAPON_KINDS = Object.keys(KINDS);
 
@@ -157,12 +293,12 @@ const made = new Map();
  * 'bat' | 'pipe' | 'wrench' | 'baton'. Options: finish (the colour of its polymer parts), seed. The same weapon asked
  * for again shares its shapes and materials. Returns a Group with points (see the top) and wield(person).
  */
-export function weapon(kind = 'pistol', { finish = null, seed = 0, shadows = true } = {}) {
+export function weapon(kind = 'pistol', { finish = null, seed = 0, shadows = true, style = null } = {}) {
   const K = KINDS[kind]; if (!K) throw new Error(`gs.models.weapon: no weapon '${kind}' (try ${WEAPON_KINDS.join(', ')})`);
-  const key = JSON.stringify([kind, finish, seed]);
+  const key = JSON.stringify([kind, finish, seed, style]);
   let m = made.get(key);
   if (!m) {
-    const b = new Build(), pts = K.make(b, rngOf(seed + 1)), parts = [];
+    const b = new Build(), pts = K.make(b, rngOf(seed + 1), style || undefined), parts = [];
     for (const [slot, geos] of b.slots) { const g = boxUV(mergeGeometries(geos, false), .25); for (const x of geos) x.dispose(); parts.push({ geo: g, mat: matOf(slot, finish), slot }); }
     made.set(key, m = { parts, pts });
   }
@@ -173,7 +309,8 @@ export function weapon(kind = 'pistol', { finish = null, seed = 0, shadows = tru
     const at = m.pts[name]; if (!at) { out.points[name] = null; continue; }
     const o = new Object3D(); o.name = name; o.position.set(...at); out.add(o); out.points[name] = o;
   }
-  out.userData.weapon = { kind, hands: K.hands, long: !!K.long, melee: !!K.melee, length: m.pts.length, upright: !!m.pts.upright };
+  out.userData.weapon = { kind, hands: K.hands, long: !!K.long, melee: !!K.melee, length: m.pts.length, upright: !!m.pts.upright, side: K.side || 'R', held: K.held || null, style: style || null };
+  if (m.pts.live) m.pts.live(out, look => matOf(look, finish));
   out.wield = person => new Wield(person, out);
   return out;
 }

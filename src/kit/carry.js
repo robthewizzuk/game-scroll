@@ -44,7 +44,9 @@ const ease = t => t * t * (3 - 2 * t);
 
 /**
  * new Carry(person, { spots, time }): person is a gs.models.human, or a gs.poses person or figure (anything with a rig).
- * add(name, thing, spot, { grip, along, face, hand, held, sheath }) puts a thing at a spot (one of SPOTS, or { bone, at, dir, face, hand });
+ * add(name, thing, spot, { grip, along, face, hand, held, sheath, both, fore }) puts a thing at a spot (one of SPOTS, or { bone, at, dir, face, hand });
+ * a gs.models.weapon brings its own grip, hand and hold (a shield and a bow go to the left hand), and one made for two hands
+ * (a spear, a staff, a longsword) has the other hand on it (at fore) once drawn: both: false for one hand;
  * held: { at, dir, face } in the hand's own space, if the default grip doesn't suit it; sheath: true or { length, radius, colour }
  * hangs a scabbard there that stays when the thing is drawn.
  * draw(name, { time }) and sheathe(name): the hand goes to it, takes it and brings it round (time: seconds, .55); events
@@ -62,8 +64,12 @@ export class Carry {
   emit(ev, e) { for (const f of this.ons[ev] || []) f(e); }
   add(name, thing, spot, o = {}) {
     const S = typeof spot === 'string' ? this.spots[spot] : spot; if (!S) throw new Error(`gs.characters.Carry: no spot '${spot}' (${Object.keys(this.spots).join(', ')})`);
-    const bone = this.bone(S.bone), rest = restOf(bone, this.person), hand = o.hand || S.hand || 'R';
-    const t = { name, thing, spot: S, bone, hand, grip: v3(o.grip || [0, 0, 0]), along: o.along || [0, 1, 0], face: o.face || [0, 0, 1], held: o.held || null, where: 'spot', sheath: null };
+    // (a gs.models.weapon knows its own grip, which way it runs, which hand holds it and how, and where a second hand goes)
+    const W = thing.userData?.weapon, P = thing.points || {};
+    const bone = this.bone(S.bone), rest = restOf(bone, this.person), hand = o.hand || (W?.side === 'L' ? 'L' : W ? 'R' : null) || S.hand || 'R';
+    const grip = o.grip || (P.grip ? P.grip.position.toArray() : [0, 0, 0]), along = o.along || (W && !W.upright ? [0, 0, -1] : [0, 1, 0]);
+    const both = o.both ?? (W?.hands === 2 && !!P.fore), fore = o.fore || (P.fore ? P.fore.position.toArray() : null);
+    const t = { name, thing, spot: S, bone, hand, grip: v3(grip), along, face: o.face || (W && !W.upright ? [0, 1, 0] : [0, 0, 1]), held: o.held || W?.held?.[hand] || null, where: 'spot', sheath: null, both: both && !!fore, fore: fore && v3(fore) };
     // where it rests on its bone: the grip at the spot, its length along the spot's
     t.restQ = turnOnto(t.along, t.face, S.dir, S.face); t.restP = v3(S.at).sub(rest).sub(t.grip.clone().applyQuaternion(t.restQ));
     if (o.sheath) t.sheath = this.sheathOf(t, o.sheath === true ? {} : o.sheath, rest);
@@ -105,6 +111,7 @@ export class Carry {
     this.moves.push({ t, to, time: Math.max(.1, time), at: 0, grabbed: false, from: null }); return true;
   }
   update(dt) {
+    this.second();
     if (!this.moves.length) return;
     const P = this.person; P.updateMatrixWorld(true);
     for (const m of this.moves.slice()) {
@@ -127,8 +134,16 @@ export class Carry {
       if (u >= 1) { this.moves.splice(this.moves.indexOf(m), 1); if (m.from) { t.thing.quaternion.copy(m.from.q1); t.thing.position.copy(m.from.p1); } this.emit(m.to === 'hand' ? 'drawn' : 'stowed', { name: t.name }); }
     }
   }
-  reachTo(sd, point, w) {
-    this.aim = point.clone();
+  // a thing held in both hands (a spear, a staff, a longsword): the other hand onto it, each frame
+  second() {
+    let any = null; for (const k in this.things) { const t = this.things[k]; if (t.both && t.where === 'hand' && !this.moves.some(m => m.t === t)) { any = t; break; } }
+    if (!any) return;
+    this.person.updateMatrixWorld(true);
+    const p = any.fore.clone(); any.thing.localToWorld(p);
+    this.reachTo(any.hand === 'R' ? 'L' : 'R', p, 1, true);
+  }
+  reachTo(sd, point, w, keep = false) {
+    if (!keep) this.aim = point.clone();
     if (w <= 0) return;
     const P = this.person;
     if (this.human) { P.touch({ ['hand' + sd]: point }, { blend: w }); return; }
