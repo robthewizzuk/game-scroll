@@ -4388,6 +4388,12 @@ export interface CityPart {
   routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };
   /** The nearest point in a lane of a plan's roads: as City.road(). */
   roadOn(plan: CityPlan, x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };
+  /**
+   * Finding the way round a City or a Metro: a route to where the player is going that follows them (worked out again when
+   * they leave it), the next turn, markers (a game's own, and those of anything watched, such as gs.missions Jobs), a minimap
+   * that turns with the player, a full map to pan, zoom and tap for a waypoint, and the way shown on the road in 3D.
+   */
+  Gps: new (city: CityWorld | CityMetro, o?: { /** Metres off the route before it is worked out again (18). */ off?: number; /** Seconds between routes worked out anyway (0). */ every?: number; /** Metres a target moves before it is (25). */ moved?: number; /** Metres from the end that count as there (14). */ arrive?: number; /** Degrees that count as a turn (30). */ turn?: number; /** Draws a marker's icon: gs.icons.icon. */ icon?: ((c: CanvasRenderingContext2D, name: string, x: number, y: number, size: number, o?: Loose) => void) | null; colour?: string }) => CityGps;
   /** Where a big city's districts go, as plain numbers (no view). */
   metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number } };
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
@@ -4421,6 +4427,28 @@ export interface CityMetro {
   /** Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). */ solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water' | 'land', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
+  dispose(): void;
+}
+/** Something to find: at (a point, or a thing that moves, read each frame), kind ('target', 'waypoint', 'job', 'shop', 'danger', 'friend', 'home', or your own), text, icon (a gs.icons name), pinned (held at the minimap's edge when off it; the first pinned one is where the route goes with nothing else set). */
+export interface CityMarker { at: { x: number; y?: number; z?: number }; kind?: string; text?: string; icon?: string; pinned?: boolean; colour?: string; [k: string]: Loose }
+export interface CityGps {
+  route: { points: [number, number][]; path: Loose; length: number; at: number[]; turns: { s: number; x: number; z: number; turn: 'left' | 'right'; angle: number }[]; to: { x: number; z: number } } | null;
+  /** Metres to go along the route; how far along it the player is (s); there yet. */ left: number; s: number; arrived: boolean;
+  /** The next thing to do: turn left or right, keep on to the end, or arrived; in metres, and where. */ next: { turn: 'left' | 'right' | 'arrive'; in: number; at: { x: number; z: number } } | null;
+  /** The player's own waypoint (set by tap() on the full map), or null. */ waypoint: CityMarker | null; markers: CityMarker[]; readonly target: { x: number; z?: number; y?: number } | null; readonly opened: boolean;
+  /** How many routes it has worked out. */ routes: number;
+  to(target: { x: number; z?: number; y?: number } | null): CityGps; add(m: CityMarker): CityMarker; remove(m: CityMarker): CityGps; clear(): CityGps;
+  /** Also shows the markers of something else, read each frame: an array, or anything with .markers (gs.missions Mission or Jobs). */ watch(source: CityMarker[] | { markers: CityMarker[] }): CityGps; unwatch(source: Loose): CityGps; all(out?: CityMarker[]): CityMarker[];
+  reroute(): void;
+  /** Once a frame: player { x, z } (or a car's x, y) and its heading (radians, atan2(dx, dz)) to turn the minimap. */ update(dt: number, player: { x: number; z?: number; y?: number; heading?: number }, heading?: number): CityGps;
+  /** The point d metres along the route ahead of the player (an arrow over the car). */ ahead(d?: number, out?: Loose): { x: number; z: number } | null;
+  /** The minimap: streets round the player in a circle that turns with them, the route, markers (pinned ones held at the edge), the player's arrow. */
+  mini(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { range?: number; turn?: 'heading' | 'north' | number; round?: boolean; route?: boolean; colours?: Record<string, string> }): Loose;
+  /** The full map, north up: open() (it starts on the player), then map() each frame; pan(dx, dy), zoom(f, x, y) from your gestures, tap(x, y) for a waypoint (again on it clears it). */
+  open(range?: number): CityGps; close(): CityGps; map(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { colours?: Record<string, string> }): Loose;
+  pan(dx: number, dy: number): CityGps; zoom(f: number, x?: number, y?: number): CityGps; tap(x: number, y: number): CityMarker | null; pointAt(x: number, y: number): { x: number; z: number } | null;
+  /** Draws one marker at a canvas point. */ mark(c: CanvasRenderingContext2D, m: CityMarker, x: number, y: number, size: number): void;
+  /** The way on the road ahead in a view, as glowing arrows; hide() takes it away. */ show(view: Loose, o?: { reach?: number; width?: number; colour?: string; opacity?: number }): CityGps; hide(): CityGps;
   dispose(): void;
 }
 export interface CityWorld {

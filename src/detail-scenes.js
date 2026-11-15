@@ -1347,12 +1347,12 @@ function opencity({ gs, HD, size }) {
   const blocks = size < .15 ? 2 : size < .3 ? 3 : Math.max(4, Math.round(10 * Math.sqrt(k))), busy = 1.3 * k, SPEED = 16, BACK = [12, 21, 30];
   const car = vehicle('car', { style: 'sports', seed: 11, colour: '#c8321e' }), chasers = BACK.map((_, i) => vehicle('car', { style: 'saloon', seed: 40 + i, colour: '#e8e8ea' }));
   v.scene.add(car); for (const c of chasers) { c.visible = false; v.scene.add(c); }
-  let city = null, weather = null, world = null, body = null, path = null, mode = '', ready = false, crates = [];
+  let city = null, weather = null, world = null, body = null, path = null, mode = '', ready = false, crates = [], gps = null;
   const crateGeo = new T.BoxGeometry(.8, .8, .8), crateMat = gs.hd.pbr('#8a6a44', { rough: .8 });
   const sum = { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, heading: 0, scare: 0, hits: 0, making: 0, made: 0 }, P = {}, Q = {}, ahead = new T.Vector3();
   // the whole city: four districts side by side with land and roads between, each made as the drive comes near it (gs.city Metro)
   const DISTRICTS = [['downtown', 6], ['oldtown', 5], ['suburb', 5], ['harbour', [5, 3]]].map(([style, b]) => ({ style, blocks: size < .15 ? 2 : Array.isArray(b) ? b.map(n => Math.max(2, Math.round(n * Math.sqrt(k)))) : Math.max(2, Math.round(b * Math.sqrt(k))) }));
-  const drop = () => { for (const m of crates) m.removeFromParent(); crates = []; weather?.dispose(); weather = null; world?.dispose?.(); world = body = null; city?.dispose(); city = null; if (v.drops) v.drops.on = false; };
+  const drop = () => { gps?.dispose(); gps = null; for (const m of crates) m.removeFromParent(); crates = []; weather?.dispose(); weather = null; world?.dispose?.(); world = body = null; city?.dispose(); city = null; if (v.drops) v.drops.on = false; };
   const enter = key => async draw => {
     const t0 = performance.now(), night = key === 'night' || key === 'chase';
     const opts = { seed: 23, blocks, style: 'downtown', sky, traffic: busy, people: busy, sound: false, far: true };
@@ -1369,6 +1369,7 @@ function opencity({ gs, HD, size }) {
       city = new Metro(v, { seed: 23, districts: DISTRICTS, sky, traffic: busy, people: busy, sound: false, far: true });
       const a = city.districts[0].rect, h = city.districts.find(d => d.harbour).rect;
       lo = { x: (a.x0 + a.x1) / 2, z: (a.z0 + a.z1) / 2 }; hi = { x: (h.x0 + h.x1) / 2, z: h.z1 - 20 };
+      gps = new gs.city.Gps(city); gps.to(hi); gps.show(v);   // the way to the harbour, on the road ahead
       city.prepare(lo);   // (what a game's loading screen makes: the districts near the start; the harbour is made on the way, a step at a time, in a full-size city)
     } else {
       const plan = gs.city.layout(opts), xs = plan.nodes.map(n => n.x), zs = plan.nodes.map(n => n.z);
@@ -1425,6 +1426,7 @@ function opencity({ gs, HD, size }) {
         city.avoid(car.position, 1.2); for (const c of chasers) city.avoid(c.position, 1.2);
         if ((sum.scare -= dt) <= 0) { city.people.scare(car.position, 14, 3); sum.scare = 1; }
       }
+      gps?.update(dt, { x: P.x, z: P.z, heading: sum.heading });
       const making = !!city.making; t0 = performance.now(); city.update(dt, car.position); const took = performance.now() - t0; sum.city += took;
       if (making) sum.making = Math.max(sum.making, took);
       if (weather) { t0 = performance.now(); weather.update(dt); sum.weather += performance.now() - t0; }
@@ -1442,6 +1444,7 @@ function opencity({ gs, HD, size }) {
       const parts = [`the city's code ${ms(sum.city)} ms`, `sky ${ms(sum.sky)} ms`];
       if (weather) parts.push(`rain and wet ${ms(sum.weather)} ms`);
       if (world) parts.push(`physics ${ms(sum.physics)} ms (${num(sum.hits)} hits)`);
+      if (gps) parts.push(`the way ${num(gps.left)} m to go, worked out ${gps.routes} times`);
       if (city.districts) parts.push(`${all.length} of ${city.districts.length} districts made` + (sum.making ? `, the city's code at most ${sum.making.toFixed(1)} ms a frame while making one` : ''));
       parts.push(`${built} of ${chunks} city chunks built, ${num(freed)} let go`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
       if (heap) parts.push(`heap ${(heap / 1048576).toFixed(0)} MB`);

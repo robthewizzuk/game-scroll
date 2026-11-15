@@ -1503,3 +1503,5 @@ timed(City.prototype, 'update', 'city');
 
 // one big city of districts streamed in and out round the player (city-metro.js)
 export { Metro, metroPlan } from './city-metro.js';
+// finding the way: a route that follows the player, markers, a minimap and a full map, the way on the road (city-gps.js)
+export { Gps } from './city-gps.js';

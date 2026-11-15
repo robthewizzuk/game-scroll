@@ -131,6 +131,33 @@ update(dt) { metro.avoid(player, 1.2); metro.update(dt, player); }
   `gs.city.metroPlan({ seed, districts })` places them without any 3D.
 - The traffic keeps to each district's own streets for now; the roads between are for the player.
 
+## Finding the way: `Gps`
+
+```js
+const { Gps } = gs.city;
+const gps = new Gps(city, { icon: gs.icons.icon });   // a City or a Metro
+gps.to(target);                                       // where the game sends the player (a thing that moves is followed)
+gps.watch(jobs);                                      // gs.missions Jobs or Mission: their markers on the maps
+gps.show(view);                                       // the way on the road ahead, as glowing arrows
+update(dt) { gps.update(dt, { x: car.x, z: car.y, heading: car.angle }); }
+draw(c) {
+  gps.mini(c, W - 96, 10, 86, 86);                    // the minimap, turning with the player
+  if (gps.next) say(gps.next.turn, gps.next.in);      // 'left' | 'right' | 'arrive', in metres
+  if (gps.opened) gps.map(c, 0, 0, W, H);             // the full map (gps.open() from a button)
+}
+down(x, y) { if (gps.opened) gps.tap(x, y); }         // a waypoint on the nearest road (tap it again to clear it)
+```
+
+- The route keeps to the driving side and is worked out again when the player is more than `off` metres (18) off it, or
+  the target moves `moved` metres (25). `gps.left` is the metres to go, `gps.arrived` true within `arrive` metres (14),
+  `gps.next` the next turn and how far, `gps.ahead(12)` a point along the way for an arrow over the car.
+- Where it goes: the game's `to()`, else the player's waypoint, else the first `pinned` marker.
+- Markers are `{ at, kind, text, icon, pinned }`. Each kind has a plain shape and colour (`target`, `waypoint`, `job`,
+  `shop`, `danger`, `friend`, `home`); with `icon` and `Gps({ icon: gs.icons.icon })` the icon is drawn instead. On the
+  minimap a pinned one off the map is held at its edge, in its direction.
+- The full map pans with `gps.pan(dx, dy)` and zooms with `gps.zoom(f, x, y)` from your own gestures (`gs.controls.TwoFingers`).
+- `gps.show(view)` draws the way 220 m ahead on the road (one mesh, made again every couple of metres driven).
+
 ## How it stays quick on a phone
 
 - Buildings are merged into a handful of meshes for each 2 × 2 blocks, so a whole city is a few

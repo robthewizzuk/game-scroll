@@ -799,8 +799,8 @@ async function scenes(b) {
     'the works yard is drawn with effects that light nothing and then with fire, sparks and blasts that light it', JSON.stringify(sby.embers));
   // the open city: everything an open-city game asks for at once, each system's time a frame and the city's memory told
   const ocDay = M('opencity', 'day').tell || '', ocChase = M('opencity', 'chase').tell || '', ocMetro = M('opencity', 'metro').tell || '', ocMade = /(\d+) of 4 districts made/.exec(ocMetro);
-  check(/^the city's code [\d.]+ ms · sky [\d.]+ ms · \d+ of \d+ city chunks built, \d+ let go · meshes [\d.]+ MB/.test(ocDay) && /rain and wet [\d.]+ ms · physics [\d.]+ ms \(\d+ hits\)/.test(ocChase) && ocMade && +ocMade[1] >= 2 && !/rain/.test(ocMetro),
-    'the open city is driven through at midday, at night in the rain, in a chase and across a whole city of districts, each made as the drive comes near, and says what each system took and what the city holds', JSON.stringify({ ocDay, ocChase, ocMetro }));
+  check(/^the city's code [\d.]+ ms · sky [\d.]+ ms · \d+ of \d+ city chunks built, \d+ let go · meshes [\d.]+ MB/.test(ocDay) && /rain and wet [\d.]+ ms · physics [\d.]+ ms \(\d+ hits\)/.test(ocChase) && ocMade && +ocMade[1] >= 2 && !/rain/.test(ocMetro) && /the way [\d,]+ m to go, worked out \d+ times/.test(ocMetro),
+    'the open city is driven through at midday, at night in the rain, in a chase and across a whole city of districts, each made as the drive comes near, with the way shown, and says what each system took and what the city holds', JSON.stringify({ ocDay, ocChase, ocMetro }));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));
   check(sc.seen.stage && sc.seen.cards === 0 && sc.seen.awake && sc.seen.force === (/ low class/.test(sc.text) ? 1 : 2) && sc.steps.some(t => /Valley: making the scene$/.test(t)) && sc.steps.some(t => /Forest · detail levels: getting ready$/.test(t)),

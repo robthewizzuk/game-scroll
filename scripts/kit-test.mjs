@@ -2523,6 +2523,34 @@ console.log('physics ok');
   assert.ok(fromRoad.legs[0].road === r0 && fromRoad.legs.at(-1).district === r0.b, 'a route from the road between districts starts along it');
   console.log('a big city of districts: placed apart, joined by roads, routes across them ok');
 }
+// finding the way round a city (city-gps.js): a route that follows the player and is worked out again when they leave it, the
+// next turn, arriving, where the route goes (the game's, the player's waypoint, a pinned marker), and the maps' sums
+{
+  const { Gps } = await import('../src/kit/city-gps.js'), { layout, routeOn, roadOn } = await import('../src/kit/city.js');
+  const P = layout({ seed: 5, blocks: 5 }), city = { plan: P, start: { x: 0, z: 0 }, route: (a, b) => routeOn(P, a, b), road: (x, z) => roadOn(P, x, z) };
+  const gps = new Gps(city), n = P.nodes, a = roadOn(P, n[1].x + 20, n[1].z), b = roadOn(P, n.at(-2).x - 20, n.at(-2).z);
+  assert.ok(gps.target === null && gps.update(.1, a).next === null, 'nowhere to go: no route');
+  gps.to(b); gps.update(.1, { x: a.x, z: a.z, heading: a.heading });
+  const r = gps.route; assert.ok(r && r.turns.length >= 1 && r.turns.every(t => t.turn === 'left' || t.turn === 'right') && Math.abs(gps.left - r.length) < 3 && gps.next.in > 0, `a route of ${r.length.toFixed(0)} m with ${r.turns.length} turns`);
+  const made = gps.routes; let lastLeft = Infinity, down = true, turns = new Set();
+  for (let s = 0; s <= r.path.length; s += 3) { const p = r.path.at(s); gps.update(.1, { x: p.x + .8, z: p.z }); down &&= gps.left <= lastLeft + .01; lastLeft = gps.left; turns.add(gps.next.turn); }
+  assert.ok(gps.routes === made && down && gps.arrived && gps.next.turn === 'arrive' && turns.has('arrive'), `driven along it: never worked out again, metres to go only fall, arrived (${[...turns].join(', ')})`);
+  const off = { x: a.x + 45, z: a.z + 45 }; for (let i = 0; i < 6; i++) gps.update(.1, off);
+  assert.ok(gps.routes === made + 1 && Math.hypot(gps.route.points[0][0] - off.x, gps.route.points[0][1] - off.z) < 40, 'off the route: it is worked out again from where the player is');
+  const ahead = gps.ahead(12); assert.ok(ahead && Math.hypot(ahead.x - off.x, ahead.z - off.z) < 60, 'a point ahead along it, for an arrow');
+  // where it goes: the game's to(), else the waypoint, else the first pinned marker (a watched list, read each frame)
+  const job = { at: { x: n[7].x, y: 0, z: n[7].z }, kind: 'job', pinned: true }, jobs = { markers: [{ at: { x: 1, y: 0, z: 2 }, kind: 'job' }, job] };
+  gps.to(null); gps.watch(jobs); assert.ok(gps.target === job.at && gps.all().length === 2, 'with nowhere set it goes to the pinned marker of what it watches');
+  gps.waypoint = { at: { x: n[3].x, z: n[3].z }, kind: 'waypoint', pinned: true }; assert.ok(gps.target === gps.waypoint.at && gps.all().length === 3, 'the player\'s waypoint before that');
+  gps.to(b); assert.ok(gps.target === b, 'and the game\'s own before both');
+  const moving = { x: n[2].x, z: n[2].z }; gps.to(moving); gps.update(.1, a); const before = gps.routes; moving.x += 60; gps.update(.1, a);
+  assert.ok(gps.routes === before + 1, 'a target that moves far is followed');
+  // the maps' sums: a city point to the canvas and back, turned
+  const M = { cx: 50, cy: 60, s: .5, turn: .7, at: { x: 10, z: -20 } }, q = gps.toMap(M, 130, 40), back = gps.fromMap(M, q[0], q[1]);
+  assert.ok(Math.abs(back.x - 130) < 1e-9 && Math.abs(back.z - 40) < 1e-9, 'a point on the map and back');
+  gps.clear(); assert.ok(gps.target === null && !gps.all().length, 'cleared');
+  console.log('finding the way: a route that follows the player, turns, arriving, waypoints and markers ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {
