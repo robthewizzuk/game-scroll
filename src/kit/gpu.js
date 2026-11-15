@@ -9,6 +9,7 @@
 // Not for games: they get 3D through gs.toon, gs.hd and gs.ar.
 import { installPack } from './pack.js';
 import { watchDevice } from './pipes.js';
+import { noWait } from './nowait.js';
 import { STEER } from './steering.js';
 import { holdSubmits, watchSubmits, flushGPU } from './submit.js';
 
@@ -233,6 +234,7 @@ export function prepareGPU() {
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
       freeUnbuilt(r); sendChanged(r); oneWrite(r);
+      noWait(r);   // (no frame of a view waits for a shader: built in the background, the thing shown once it's there, nowait.js)
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
       fx.aoInShading(r);   // ambient occlusion on the light that bounces only, in each thing's own shading (hd3d-gpu.js)
