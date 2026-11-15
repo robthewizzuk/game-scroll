@@ -120,7 +120,7 @@ export function traceFits(r) {
 }
 import { S2_HOLD, FSR_X, s2Shape } from './sgsr2.js';
 import { netText, netFor } from './gssr-net.js';
-import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt } from './framegen.js';
+import { FrameGen, StillCheck, frameGenMRT, seeThrough, fgPrevVP, newPose, copyPose, homography, warpUV, refreshesSince, sharpAt, sharpStill } from './framegen.js';
 // where the drawing's centre is in the world (origin.js): patterns made from where a point is add it back
 const ORG = uniform(ORIGIN);
 
@@ -2300,6 +2300,8 @@ function sgsr1Gpu(src) {
 // Each step is the same as the TSL it was written from, in the same order (the build machine's pictures
 // came out the same); only the smallest number divided by is bigger in half (HEPS).
 const S2_TAPS = [[0, 1], [1, 0], [-1, 0], [0, 0], [0, -1]];
+// GSSR's quick path for still pixels (Rob's pick 13 of 2026-11-15): their history is read once, not five times (framegen.js sharpStill). on: 0 for a test
+export const QS = { on: uniform(1).setGroup(TSL.renderGroup) };
 const S2_SIG = `(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>, c3: vec3<f32>, c4: vec3<f32>, so: vec2<f32>, hist: vec4<f32>, m: vec4<f32>, sr: vec2<f32>, see: f32, tuned: f32, lockc: f32)`;
 // (everything up to the blend: the same in the hand-written pass and the learned one)
 const S2_HEAD = `  let mlen = hf(min(m.x, 1e4)); let df = hf(m.y); let start = hf(m.z); let reset = hf(m.w);
@@ -2554,8 +2556,11 @@ function sgsr2Gpu(fin, depthT, mo = null, tuned = true, net = null, shape = s2Sh
     // (whether the pixel flickers: the changes picture's z, or the flicker picture's one number)
     const inst = full && flickOn ? sdT.sample(J).level(0).z.mul(U.fsr2.y).mul(float(1).sub(df)) : FL.length ? sdT.sample(J).level(0).x.mul(U.fsr2.y).mul(float(1).sub(df)) : float(0);
     const pu = vec2(M.x.mul(-.5).add(H.x), M.y.mul(.5).add(H.y)), prevUV = clamp(pu, 0, 1);
-    const hist = tuned ? sharpAt(histT, prevUV, half) : histT.sample(prevUV);
-    const mlen = length(M.mul(U.os)), start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
+    // (a pixel that hasn't moved, as everywhere still under a still camera, reads its history once: framegen.js sharpStill;
+    // QS.on false reads it the long way everywhere, for a test)
+    const mlen = length(M.mul(U.os)), quick = select(mlen.lessThan(1e-3), QS.on, float(0));
+    const hist = tuned ? sharpStill(histT, prevUV, quick, half) : histT.sample(prevUV);
+    const start = select(abs(M.x).add(abs(M.y)).greaterThan(1e-6), float(0), U.minLerp);
     // where this pixel's centre falls among the small pixels (full precision: a place on the screen), the
     // five nearest small pixels, and the rest of the pass's maths in half where the chip has it (S2_UP)
     const so = vec2(IP).add(.5).sub(U.jit).sub(H.mul(U.rs));
