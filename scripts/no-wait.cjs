@@ -1,8 +1,8 @@
 // No frame of a view waits for a shader (src/kit/nowait.js), on WebGPU. Draws scripts/no-wait/ twice: with the
 // deferral (the default) and without (three builds in the frame), the kit's own builds ahead off in both, and
 // checks that with it:
-//  - no shader text is written and no pipeline made at once in a frame, for a thing added, a thing switched on, and
-//    every lit thing after a light is added;
+//  - no shader text is written and no pipeline made at once in a frame, for a thing added and a thing switched on;
+//  - a light added (every lit shader new at once) is built in its frame as three does: the scene never goes;
 //  - each of them still shows (a few frames later), and no pipeline is refused (a build for the wrong picture);
 //  - once everything is built the picture is the one drawn without it.
 // Without it the same steps must write shader text in their frames (or the page shows nothing).
@@ -28,6 +28,7 @@ const path = require('path');
   if (!on.error && !off.error) {
     for (const k of Object.keys(on.phases)) {
       const a = on.phases[k], z = off.phases[k];
+      if (k === 'a light added') { say(a.shownAt === 0, `${k}: built in its frame as three does (a change of lights is every lit shader at once): the ground still drawn in that frame (${a.shownAt}), ${a.text.length} shader texts in it (without: ${z.text.length})`); console.log(`     ${k}: longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without`); continue; }
       say(a.text.length === 0 && a.pipes.length === 0, `${k}: in the frames, with it: shader text ${a.text.length}, pipelines made at once ${a.pipes.length} (${[...a.text, ...a.pipes].slice(0, 4).join(', ') || 'none'}); without: ${z.text.length} and ${z.pipes.length}`);
       if (a.shownAt !== undefined && k !== 'a light added') say(a.shownAt >= 0, `${k}: shows ${a.shownAt} frames after (without it: ${z.shownAt}); longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without`);
       else console.log(`     ${k}: longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without, settled in ${a.frames} frames (${z.frames} without)`);

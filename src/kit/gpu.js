@@ -233,7 +233,7 @@ export function prepareGPU() {
       if (STEER.submit !== false) holdSubmits(r.backend.device);   // (a frame's passes go to the chip in one submit: submit.js)
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
-      freeUnbuilt(r); sendChanged(r); oneWrite(r);
+      freeUnbuilt(r); sendChanged(r); oneWrite(r); sameText(r);
       noWait(r);   // (no frame of a view waits for a shader: built in the background, the thing shown once it's there, nowait.js)
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
@@ -261,6 +261,34 @@ function freeUnbuilt(r) {
   const G = r._geometries, free = G?.deleteNodeAttributes;
   if (typeof free !== 'function') return;
   G.deleteNodeAttributes = function (ro) { if (ro.attributes == null && !ro._nodeBuilderState) return; return free.call(this, ro); };
+}
+// The same shader text on every launch. three puts the values that many shaders share (the camera's matrices, the
+// lights' grid: the 'render' group) in one block, ordered by each value's node id, a count of nodes made so far in
+// this run: which kit or game made its nodes first decides it, and that differs from launch to launch. So the same
+// material's shader text came out with the block's members in another order (Frost Line: 27 of some 80 shaders, in
+// two fresh launches on the build machine), and the phone's driver, which keeps the pipelines it compiled between
+// launches by their text, and our own notes of what a round built (pipes.js), found nothing to reuse. Here the
+// block is ordered by the value's own name first (three's are named: cameraProjectionMatrix, clusteredCameraNear...;
+// the kit names its own), then its kind, and the node id only between unnamed values of one kind. Every shader that
+// shares the block gets the same order, as before (the order is the block's, not the shader's: a shader written with
+// its own order of the same values read the wrong ones, which is why sorting by the name each shader gives a value
+// failed in 2026-11-14's try).
+const byName = (a, b) => {
+  const x = a.nodeUniform.node, y = b.nodeUniform.node, nx = x.name || '', ny = y.name || '';
+  if (nx !== ny) return nx < ny ? -1 : 1;
+  const tx = a.nodeUniform.type || '', ty = b.nodeUniform.type || '';
+  if (tx !== ty) return tx < ty ? -1 : 1;
+  return x.id - y.id;
+};
+function stableSort() { return Array.prototype.sort.call(this, byName); }
+function sameText(r) {
+  const B = r._bindings, P = B && Object.getPrototypeOf(B), f = P?.getSharedBindGroup;
+  if (typeof f !== 'function' || f.gsSame) return;
+  P.getSharedBindGroup = function (group, ...a) {
+    for (const b of group.bindings) if (b.isNodeUniformsGroup && b.uniforms.sort !== stableSort) Object.defineProperty(b.uniforms, 'sort', { value: stableSort, configurable: true, writable: true });
+    return f.call(this, group, ...a);
+  };
+  P.getSharedBindGroup.gsSame = true;
 }
 // HDR output: on screens that report a high dynamic range, unless a test turned it off or on (setHdr)
 let hdrPick = null;

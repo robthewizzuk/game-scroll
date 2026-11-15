@@ -21,6 +21,9 @@
 // Not deferred: the effects' full-screen passes (a QuadMesh: left out, the picture would be wrong, not late), a card's
 // picture (baking: drawn once), anything drawn outside the view's frame (a bake, a cube map, an impostor, a test
 // that renders by hand: drawn once and kept), things marked userData.noHold === 'wait', and NOWAIT.on = false.
+// Nor a view's first frame (hd3d.js), nor a render whose lights, sky or fog changed since that camera's last one
+// (every lit shader is new at once: left out, the whole scene would go for a while, which is worse than a late frame;
+// tiers change between rounds, under the loading screen, for the same reason).
 // The builds share the renderer's one build queue with the kit's other background builds (r.gsCompiling, hd3d.js
 // compileGPU: three keeps a build's state in one field of the renderer), and count in r.gsBuilding, which the
 // loading screen waits on, so a round still starts with everything its first frames draw.
@@ -28,8 +31,8 @@
 
 /** on: false draws as three does (builds in the frame). ms: main-thread time a turn of the queue takes before the next frame. most: times one thing is put off before it is drawn as three does. */
 export const NOWAIT = { on: true, ms: 6, most: 12 };
-/** Counts (tests, the frame lab): texts and pipelines put off from a frame, and the queued builds done and failed. */
-export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 0, frames: 0, names: [] };
+/** Counts (tests, the frame lab): texts and pipelines put off from a frame, the queued builds done and failed, and draws built in the frame for a change of lights, sky or fog (env). */
+export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 0, frames: 0, env: 0, names: [] };
 
 /**
  * Installs the deferral on a WebGPU renderer (gpu.js, once it is made). It acts only between r.gsNoWait.begin() and
@@ -37,7 +40,7 @@ export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 
  */
 export function noWait(r) {
   if (!r || r.gsNoWait || typeof r._renderObjectDirect !== 'function' || !r._nodes || !r._pipelines) return;
-  const Q = r.gsNoWait = { on: 0, list: [], has: new Set(), sink: null, sync: false, running: false, inflight: 0, done: 0,
+  const Q = r.gsNoWait = { on: 0, list: [], has: new Set(), sink: null, sync: false, env: new WeakMap(), frame: 0, running: false, inflight: 0, done: 0,
     begin() { this.on++; }, end() { this.on = Math.max(0, this.on - 1); },
     /** things put off and not drawable yet (their text or pipeline still on its way) */
     get pending() { return this.list.length + this.inflight + (this.running ? 1 : 0); } };
@@ -54,6 +57,14 @@ export function noWait(r) {
   const asIs = (self, a) => { const was = Q.sync; Q.sync = true; try { return direct.apply(self, a); } finally { Q.sync = was; } };
   r._renderObjectDirect = function (object, material, scene, camera, lightsNode, group, clippingContext, passId) {
     if (!Q.on || !NOWAIT.on || object.isQuadMesh || this._compilationPromises !== null || object.userData?.noHold === 'wait' || (material.isShaderMaterial && !material.isNodeMaterial)) return asIs(this, arguments);   // (a WebGL ShaderMaterial: three has no shader for it to put off)
+    // (the scene's lights, sky or fog changed since this camera's last frame: every lit shader is new at once, and left
+    // out it would be the whole scene gone for a while, not one thing late: that frame builds as three does, as before.
+    // Per camera and per frame of the view, not per render: three draws the shadow maps inside the scene's render, and
+    // the kit draws the same camera more than once a frame)
+    let ek = null; try { ek = N.getCacheKey(scene, lightsNode); } catch (_) { /* (no key: taken as unchanged) */ }
+    const e = Q.env.get(camera);
+    if (!e) Q.env.set(camera, { k: ek, at: -1 }); else if (ek !== null && e.k !== ek) { e.k = ek; e.at = Q.frame; }
+    if (e && e.at === Q.frame) { NOWAIT_STATS.env++; return asIs(this, arguments); }
     const ro = this._objects.get(object, material, scene, camera, lightsNode, this._currentRenderContext, clippingContext, passId);
     if (ro._nodeBuilderState || N.get(ro).nodeBuilderState !== undefined || N.nodeBuilderCache.has(N.getForRenderCacheKey(ro))) return direct.apply(this, arguments);
     const bundle = () => { if (this._currentRenderBundle !== null) this.backend.get(this._currentRenderBundle).version = -1; };   // (a still scenery bundle is recorded again once it's there)
@@ -84,6 +95,7 @@ function name(ro, why) {
 /** hd3d.js, after the view's frame: the pipelines it asked for in the background are let go of (three keeps them). */
 export function noWaitFrame(r) {
   const Q = r?.gsNoWait; if (!Q) return;
+  Q.frame++;
   if (Q.sink?.length) {
     const s = Q.sink; Q.sink = null;
     r.gsBuilding = (r.gsBuilding || 0) + 1; NOWAIT_STATS.frames++; Q.inflight += s.length;

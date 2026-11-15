@@ -515,6 +515,8 @@ export const HD = {
   info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '', gssrNet: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
+  /** WebGPU: a shader the view's frame would build is left out of that frame and built in the background (nowait.js). Unset: on while hold is; true / false: on / off whatever hold says. Never on a view's first frame. */
+  noWait: undefined,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
   get pack() { return packing.on; }, set pack(v) { packing.on = v !== false; }, get packed() { return { textures: packing.packed, savedMB: +(packing.saved / 1048576).toFixed(1), failed: packing.failed }; },
   /**
@@ -2434,7 +2436,7 @@ export class HDView {
   newRenderer() {
     if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     this.shJobs?.clear(); this._fadeFrames = 0; this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
-    this.holdBase = false; this.warmed = false; this.aheadAgain = true;
+    this.holdBase = false; this.warmed = false; this.aheadAgain = true; this._nwSeen = false;
   }
   /**
    * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
@@ -3078,6 +3080,7 @@ export class HDView {
     if (this.gi || this.rooms?.length) this.bakeExtras(G, r);
     if (this.probes.length > 1) this.blendProbes();
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
+    const first = !this._nwSeen; if (!baking && !off) this._nwSeen = true;   // (the view's first frame, or the first with a new renderer: what's there draws at once, below)
     this.holdNew(r, baking || off, now);
     // (the frame lab's CPU by part, prof.js: each piece of the frame on its own while the lab is open)
     const pm = PROF.on ? mark() : -1;
@@ -3206,9 +3209,11 @@ export class HDView {
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
     let shAhead = null;
     // (a shader put off from a frame (nowait.js) and built since: the shadow maps it was left out of are drawn again)
-    const nwq = r.gsNoWait, nw = !baking && !off && nwq;
+    // (as holdNew: not on the view's first frame, and not with the hold off (HD.hold = false: the test pages that draw a
+    // few frames and take the picture, each built in its frame), unless HD.noWait says so)
+    const nwq = r.gsNoWait, nw = !baking && !off && !first && (HD.noWait ?? HD.hold !== false) && nwq;
     if (nwq && nwq.done !== this._nwDone) { if (this._nwDone !== undefined) this.shadowsDirty(); this._nwDone = nwq.done; }
-    if (nw) { NOWAIT.on = HD.noWait !== false; nw.begin(); }   // (from here to the end of the scene pass no shader is built in the frame: nowait.js)
+    if (nw) nw.begin();   // (from here to the end of the scene pass no shader is built in the frame: nowait.js)
     try {
     if (T.shadow > 0) {
       if (pm >= 0) enter('3D: shadows');
