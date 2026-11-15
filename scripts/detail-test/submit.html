@@ -5,13 +5,16 @@
 //    picture that a held pass uses sends the held passes first (the pass sees what was there when it was made); so do
 //    a read back, a buffer freed, and a buffer reached through a bind group, a vertex buffer or a render bundle; an
 //    upload to something no held pass uses sends nothing; whatever is left goes by itself when the code ends.
+//    Sends put off past the refresh (deferSends, frame generation's 'early' pace): what is held then goes at once,
+//    what comes after waits for a task after the frame; an upload to a buffer a waiting pass uses waits its turn (with
+//    the data as it was when asked), and so do a read back and onSubmittedWorkDone; flushGPU sends it all, in order.
 // 2. A scene with a sun's shadows, a lamp's, moving and see-through things, walked for some frames with each pass sent
 //    by itself (as three does) and with the frame's passes sent together: the same picture every frame, in far
 //    fewer sends.
 //   ?gpu  ?tier=2  ?w=240&h=320
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
-import { ONE_SUBMIT, flushGPU } from '../../src/kit/submit.js';
+import { ONE_SUBMIT, flushGPU, deferSends, deferring, sendEarly } from '../../src/kit/submit.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -84,6 +87,27 @@ try {
     check('and the upload is what the picture holds afterwards', c[0] === 9, c.join(','));
     copyLeft: { const A = buf(U.COPY_SRC | U.COPY_DST, f32(5, 5, 5, 5)), B2 = buf(U.COPY_DST | U.MAP_READ); copy(A, B2); const n1 = sent(); await frame(); check('what is still held when the code ends goes by itself', held() === 0 && sent() === n1 + 1, `${held()} held, ${sent() - n1} sent`); const v = await read(B2); check('and was run', v[0] === 5, v.join(',')); A.destroy(); B2.destroy(); }
     Vb.destroy(); B.destroy(); tex.destroy();
+  }
+  // sends put off past the refresh (30 → 60's early pace)
+  {
+    const A = buf(U.COPY_SRC | U.COPY_DST, f32(1, 1, 1, 1)), B = buf(U.COPY_DST | U.MAP_READ), B2 = buf(U.COPY_DST | U.MAP_READ);
+    await frame(); copy(A, B2); const n0 = sent();
+    check('put off: what is held already goes at once', deferSends() && held() === 0 && sent() === n0 + 1, `${held()} held, ${sent() - n0} sent`);
+    copy(A, B); const data = f32(2, 2, 2, 2); q.writeBuffer(A, 0, data); data.fill(7); copy(A, B2);
+    sendEarly('test');
+    await Promise.resolve(); await Promise.resolve();
+    check('put off: the end of the frame\'s code sends nothing, nor do early sends or an upload a waiting pass uses', deferring() && sent() === n0 + 1, `${sent() - n0 - 1} sent after deferring`);
+    let doneAt = 0; const done = q.onSubmittedWorkDone().then(() => { doneAt = sent(); });
+    const b2 = read(B2), b = read(B);
+    await frame();
+    check('put off: a task after the frame sends it all', !deferring() && held() === 0 && sent() >= n0 + 3, `${sent() - n0} sent in all`);
+    const [v1, v2] = await Promise.all([b, b2]); await done;
+    check('put off: the first pass copied what was there before the upload, the second the upload as it was asked for', v1[0] === 1 && v2[0] === 2, `${v1[0]}, ${v2[0]} (7 would be the array changed after it was asked)`);
+    check('put off: onSubmittedWorkDone waited for the passes', doneAt >= n0 + 3, `${doneAt - n0}`);
+    deferSends(); copy(A, B); const n1 = sent(); flushGPU('test');
+    check('put off: flushGPU sends what waits at once', !deferring() && sent() === n1 + 1, `${sent() - n1} sent`);
+    const v3 = await read(B); check('and it ran', v3[0] === 2, v3.join(','));
+    A.destroy(); B.destroy(); B2.destroy();
   }
   {
     HD.oneSubmit = false; ONE_SUBMIT.on = false;
