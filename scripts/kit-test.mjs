@@ -878,6 +878,89 @@ console.log('physics ok');
   console.log('brains 4: two kinds of spot for one move, "not this", recalled, saved, minds ok');
 }
 
+// Tiny Brains memory (opts.memory): which move made things exciting in which kind of spot, learned at once from feel()
+// (the positive "density bank" of Rob's compression research in real numbers, its block erase, and trust per kind of
+// disagreement with the teacher). Made-up game: the exciting move differs from the teacher's in 30% of spots.
+{
+  const { Brain, Wave } = await import('../src/kit/brains.js');
+  const rngOf = seed => { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; };
+  const gauss = r => Math.sqrt(-2 * Math.log(r() || 1e-9)) * Math.cos(6.283185 * r());
+  const teacher = s => (s[0] > 0 ? 1 : 0) + (s[1] > 0 ? 2 : 0);
+  const exciting = (s, shift = 1) => (s[2] > .4 ? (teacher(s) + shift) % 4 : teacher(s));
+  const quiet = { profile: false, share: false, fun: false };
+  let uid = 0;
+  // a delta rule on the same pairs (the control the bank is measured against)
+  const delta = mem => {
+    mem.write = function (c, x, r, wt = 1) { let f = 0, xx = 0; for (let i = 0; i < this.N; i++) { f += c.w[i] * x[i]; xx += x[i] * x[i]; } const e = r - f; for (let i = 0; i < this.N; i++) c.w[i] += wt * .05 * e * x[i] / (1 + xx) * 4; if (wt >= 1) { c.n++; c.slow += (Math.abs(e) - c.slow) * .02; } };
+    mem.read = function (c, x) { let f = 0; for (let i = 0; i < this.N; i++) f += c.w[i] * x[i]; this.f = f; this.unseen = c.n < 8 ? 1 : 0; this.sd = Math.max(c.slow, this.size * .3) / Math.sqrt(Math.max(1, c.n)); return this; };
+    mem.eraseOn = false;
+  };
+  const play = (b, seed, steps, { change = 0, from = 0, feel = true } = {}) => {
+    const r = rngOf(seed * 9973 + 1), part = []; let right = 0;
+    for (let i = 0; i < steps; i++) {
+      const s = [r() * 2 - 1, r() * 2 - 1, r() * 2 - 1, r() * 2 - 1], good = exciting(s, change && i >= change ? 3 : 1), ok = b.act(s, 1) === good;
+      if (i >= from) right += ok;
+      if (feel) b.feel(Math.max(-2, Math.min(2, (ok ? 1 : -.3) + gauss(r) * .5)));
+      if ((i + 1) % 500 === 0) { part.push(right / 500); right = 0; }
+    }
+    return part;
+  };
+  const make = (memory, extra = {}) => new Brain(null, { name: 'mem' + uid++, inputs: 4, actions: 4, teacher, ...quiet, memory, ...extra });
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const plain = make(false); assert.ok(plain.mem === null && plain.remembered === null, 'memory is off by default');
+  const runs = { today: [], memory: [], delta: [] };
+  for (let seed = 1; seed <= 6; seed++) for (const k in runs) { const b = make(k !== 'today'); if (k === 'delta') delta(b.mem); runs[k].push(avg(play(b, seed, 2000).slice(2))); }
+  const [t, m, d] = [avg(runs.today), avg(runs.memory), avg(runs.delta)];
+  assert.ok(m > t + .08, `memory: right moves ${m.toFixed(3)} by 1,000 to 2,000 decisions, the teacher alone ${t.toFixed(3)}`);
+  assert.ok(m > d + .03, `memory beats a delta rule of the same size: ${m.toFixed(3)} against ${d.toFixed(3)}`);
+  // it says when it changed a move, and keeps to the brain's rules
+  const shown = make(true); play(shown, 7, 1500); let said = 0, kept = true;
+  shown.rules = (s, a) => (a === 3 ? 0 : a);
+  const r7 = rngOf(77); for (let i = 0; i < 300; i++) { const s = [r7() * 2 - 1, r7() * 2 - 1, .8, r7() * 2 - 1]; const a = shown.act(s, 1); if (shown.remembered) said++; if (a === 3) kept = false; }
+  assert.ok(said > 100 && kept, `brain.remembered says when memory changed the move (${said} of 300), and the game's rules still win`);
+  assert.ok(typeof make(true).remembered === 'object', 'remembered is null before any decision');
+  // the block erase: the exciting move changes, and it follows the player again
+  const back = []; for (let seed = 1; seed <= 4; seed++) { const b = make(true); const p = play(b, seed, 6000, { change: 3000 }); back.push([avg(p.slice(3, 6)), avg(p.slice(10, 12)), b.mem.erased]); }
+  const [before, after, wiped] = [avg(back.map(x => x[0])), avg(back.map(x => x[1])), avg(back.map(x => x[2]))];
+  assert.ok(wiped >= 1 && after > before - .05, `it follows a player who changes: ${before.toFixed(3)} before, ${after.toFixed(3)} 2,000 decisions after (${wiped} wipes)`);
+  // saved with the brain, and what it remembers is used at once by the next one of that name
+  const slots = new Map(), api = { brains: { load: k => slots.get(k) ?? null, save: (k, v) => { slots.set(k, v); return true; } } };
+  const first = new Brain(api, { name: 'kept', inputs: 4, actions: 4, teacher, ...quiet, memory: true }); play(first, 3, 1500); first.persist();
+  assert.ok(/"m":/.test(slots.get('kept')) && slots.get('kept').length < 4096, 'the memory is saved with the brain, inside its slot: ' + slots.get('kept').length);
+  const again = new Brain(api, { name: 'kept', inputs: 4, actions: 4, teacher, ...quiet, memory: true });
+  assert.ok(again.mem.cells.size > 0, 'and comes back');
+  const fresh = new Brain(null, { name: 'kept-fresh', inputs: 4, actions: 4, teacher, ...quiet, memory: true });
+  const [ra, rf] = [avg(play(again, 9, 500, { feel: false })), avg(play(fresh, 9, 500, { feel: false }))];
+  assert.ok(ra > rf + .08, `a brain that comes back plays what it remembered, before any feel(): ${ra.toFixed(3)} against ${rf.toFixed(3)}`);
+  const full = new Map(), fapi = { brains: { load: k => full.get(k) ?? null, save: (k, v) => (v.includes('"m":') ? false : (full.set(k, v), true)) } };
+  const tight = new Brain(fapi, { name: 'tight', inputs: 4, actions: 4, teacher, ...quiet, memory: true }); play(tight, 4, 300); tight.persist();
+  assert.ok(full.get('tight') && !full.get('tight').includes('"m":'), 'a full slot keeps the brain and drops the memory');
+  // reset() forgets it
+  first.reset(); assert.equal(first.mem.cells.size, 0, 'reset() forgets what it remembered');
+  // every enemy of a wave remembers its own moments in the one memory
+  const wb = make(true), wave = new Wave(wb), rw = rngOf(5);
+  for (let k = 0; k < 20; k++) { const minds = [wave.mind(), wave.mind()]; for (let i = 0; i < 60; i++) for (const mind of minds) { const s = [rw() * 2 - 1, rw() * 2 - 1, rw() * 2 - 1, rw() * 2 - 1]; const a = mind.act(s, 1); mind.feel(a === exciting(s) ? 1 : -.3); } for (const mind of minds) mind.done(); }
+  assert.ok(wb.mem.cells.size > 4 && wb.net.w.every(Number.isFinite), 'wave minds write to the brain\'s memory');
+  // trust per kind of disagreement: a starting brain better than the teacher in one kind of spot and worse in another
+  const mixed = s => (s[2] > .4 ? (teacher(s) + 1) % 4 : s[3] > .4 ? (teacher(s) + 2) % 4 : teacher(s));
+  const maker = new Brain(null, { name: 'mem-maker', inputs: 4, actions: 4, hidden: [16], ...quiet }), rm = rngOf(11);
+  for (let i = 0; i < 30000; i++) { const s = [rm() * 2 - 1, rm() * 2 - 1, rm() * 2 - 1, rm() * 2 - 1]; maker.watch(s, mixed(s), .05); }
+  const start = maker.pack(), mix = {};
+  for (const k of ['today', 'trust']) {
+    mix[k] = [];
+    for (let seed = 1; seed <= 3; seed++) {
+      const b = new Brain(null, { name: 'mem-mix' + uid++, inputs: 4, actions: 4, hidden: [16], teacher, start, learn: 0, ...quiet, memory: k === 'trust' ? { margin: 99 } : false });
+      b.steps = 2001; b.trust = .5; b.agree = .9;
+      mix[k].push(avg(play(b, seed, 3000).slice(2)));
+    }
+  }
+  assert.ok(avg(mix.trust) > avg(mix.today) + .08, `trust kept per kind of disagreement: ${avg(mix.trust).toFixed(3)} against ${avg(mix.today).toFixed(3)}`);
+  // what a decision costs
+  const cost = make(true); play(cost, 2, 600); const t0 = performance.now(), rc = rngOf(3); for (let i = 0; i < 4000; i++) { cost.act([rc() * 2 - 1, rc() * 2 - 1, rc() * 2 - 1, rc() * 2 - 1], 1); cost.feel(rc()); }
+  const us = (performance.now() - t0) / 4000 * 1000; assert.ok(us < 200, 'a decision and a feel() with memory: ' + us.toFixed(1) + ' microseconds');
+  console.log(`brains 8: memory ${m.toFixed(2)} vs teacher ${t.toFixed(2)} vs delta ${d.toFixed(2)}, follows a change, remembered, saved, wave minds, trust per kind ${avg(mix.trust).toFixed(2)} vs ${avg(mix.today).toFixed(2)}, ${us.toFixed(0)} µs ok`);
+}
+
 // ---- Tiny Brains: a dial for opponents that aren't brains
 {
   const { Dial, Player } = await import('../src/kit/brains.js');

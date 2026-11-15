@@ -407,6 +407,128 @@ function leanOn(p, t) {
   for (let j = 0; j < p.length; j++) p[j] /= z;
 }
 
+// ---------------------------------------------------------------- memory (opts.memory)
+
+// A brain's memory of which move went best in which kind of spot, learned at once from feel(). It is the
+// "density bank" of Rob's compression research (2026-11-15) in its real-number form: for each pair (the
+// move the brain would have made, the move it made) a positive matrix P of the spots it has met there and a
+// line w through the feel() they got. A write is a block write (recursive least squares, old writes fading),
+// so a few moments are enough; x'Px says how new a spot is ("seen before?"), and the brain only leans on a
+// pair it has seen spots like this one in. When a pair keeps being wrong the same way for a while (its recent
+// misses all leaning one way, by more than it usually misses) the moves after that choice are wiped back to "never seen" (a block erase: the
+// positive form of Kraus's), so a player who changes is followed in a few hundred decisions.
+// It also keeps the brain's trust in its network per kind of disagreement with its teacher (which move the
+// teacher wanted, which the network): the experts' agreement as the key of a mixer. Only moments where the
+// two disagree can say which is better, so only those move it.
+// Measured (kit-test, "brains memory", and the trial in /mnt/project-files/quantum-ideas): a made-up game
+// whose exciting move differs from the teacher's in 30% of spots, feel() on every decision: about 84% right
+// moves by 1,000 decisions, against 64% without and 68% for a delta rule of the same size; with feel() on
+// one decision in five, a few points over. With feel() rare, late, or only good news it adds little.
+const MEM_FADE = .9995;     // how much of the old a write keeps (old writes fade, so the newest count most)
+const MEM_RING = 4;         // decisions a feel() may still reach (the newest counts most)
+const MEM_SEEN = .5;        // a pair is only leaned on where a spot like this one is less new than this
+const MEM_TRIP = 1.4;       // a pair whose recent misses all lean one way, by this many of its usual misses (and more), wipes the choice's pairs
+const MEM_Z = .5;           // how sure a better move must be: its lead over the usual move, less this many of how far both guesses may be off
+const MEM_QUICK = .15;      // how quickly a pair's recent lean follows (about the last seven writes)
+const MEM_MIN = 40;         // writes a pair needs before it can be found wrong
+const MEM_BYTES = 1500;     // the most a brain's saved memory takes, as text
+const TRUST_SHARED = 3, TRUST_KIND = 4;   // how much faster trust moves when only disagreements count
+
+class Memory {
+  constructor(n, acts, { margin = .2, curious = 0, erase = true } = {}) {
+    this.n = n; this.N = n + 1; this.acts = acts;
+    this.margin = margin; this.curious = clamp(+curious || 0, 0, .5); this.eraseOn = erase !== false;
+    this.x = new Float64Array(this.N); this.px = new Float64Array(this.N);
+    this.clear();
+  }
+  clear() { this.cells = new Map(); this.kinds = new Map(); this.size = .5; this.erased = 0; }
+  key(see) { const x = this.x; x[0] = 1; for (let i = 0; i < this.n; i++) x[i + 1] = clamp(+see[i] || 0, -4, 4); return x; }
+  cell(b, a, make = true) {
+    const k = b * this.acts + a; let c = this.cells.get(k);
+    if (!c && make) { const N = this.N; c = { P: new Float64Array(N * N), w: new Float64Array(N), n: 0, slow: 0, bias: 0 }; for (let i = 0; i < N; i++) c.P[i * N + i] = 1; this.cells.set(k, c); }
+    return c;
+  }
+  // the feel() to expect, and how new the spot is (1 never met .. towards 0 met often)
+  read(c, x) {
+    const N = this.N, P = c.P; let f = 0, u = 0, xx = 0;
+    for (let i = 0; i < N; i++) { f += c.w[i] * x[i]; xx += x[i] * x[i]; let q = 0; for (let j = 0; j < N; j++) q += P[i * N + j] * x[j]; u += x[i] * q; }
+    // how far off that may be: its usual miss, scaled by how new the spot is (no fewer than a third of a typical feel())
+    this.f = f; this.unseen = clamp(u / xx, 0, 1); this.sd = Math.max(c.n > 4 ? c.slow : this.size, this.size * .3) * Math.sqrt(Math.max(0, u));
+    return this;
+  }
+  write(c, x, r, wt = 1) {
+    const N = this.N, P = c.P, Px = this.px, q = Math.sqrt(wt); let xPx = 0, f = 0;
+    for (let i = 0; i < N; i++) { let s = 0; for (let j = 0; j < N; j++) s += P[i * N + j] * x[j]; Px[i] = s * q; xPx += x[i] * s * wt; f += c.w[i] * x[i]; }
+    const g = 1 / (MEM_FADE + xPx), e = r - f;
+    for (let i = 0; i < N; i++) c.w[i] += Px[i] * g * e * q;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) P[i * N + j] = (P[i * N + j] - Px[i] * Px[j] * g) / MEM_FADE;
+    // P stays positive and never more unsure than "never met"
+    for (let i = 0; i < N; i++) if (P[i * N + i] > 1) { const k = 1 / Math.sqrt(P[i * N + i]); for (let j = 0; j < N; j++) { P[i * N + j] *= k; P[j * N + i] *= k; } }
+    if (wt >= 1) { const m = Math.abs(e); c.n++; c.slow = c.n === 1 ? m : c.slow + (m - c.slow) * .02; c.bias += (e - c.bias) * MEM_QUICK; }
+  }
+  // the block erase: every move after choice b back to "never met"
+  wipe(b) { for (let a = 0; a < this.acts; a++) this.cells.delete(b * this.acts + a); this.erased++; }
+  /** A spot as the memory keeps it (a copy: 1, then the inputs). */
+  spot(see) { return Float64Array.from(this.key(see)); }
+  /** After a moment: x the spot (from spot()), b what the brain would have made, a what it made, r the feel(), wt how much it counts. */
+  learn(x, b, a, r, wt = 1) {
+    const c = this.cell(b, a);
+    if (wt >= 1) this.size += (Math.abs(r) - this.size) * .02;
+    this.write(c, x, r, wt);
+    if (this.eraseOn && wt >= 1 && c.n > MEM_MIN && Math.abs(c.bias) > c.slow * MEM_TRIP + .1 * this.size) this.wipe(b);
+  }
+  /**
+   * The move to make instead of the one it would make (b), or -1. dir: which way pressure should go (the
+   * win-rate rail): above 0 it seeks the most exciting move, below 0 the calmest that isn't unfair.
+   */
+  pick(see, b, dir, r) {
+    this.better = 0;
+    if (!(Math.abs(dir) > .1)) return -1;
+    const x = this.key(see), s = dir > 0 ? 1 : -1, cb = this.cell(b, b, false);
+    // a move counts as better only by more than the margin and than both guesses could be off (a lower bound)
+    const fb = cb ? s * this.read(cb, x).f : 0, sb = cb ? this.sd : this.size, need = this.margin * this.size;
+    let top = -Infinity, at = -1, un = 0, ua = -1;
+    for (let a = 0; a < this.acts; a++) {
+      if (a === b) continue;
+      const c = this.cell(b, a, false); if (!c) { if (1 > un) { un = 1; ua = a; } continue; }
+      this.read(c, x);
+      const gain = s * this.f - fb - need - MEM_Z * Math.hypot(this.sd, sb);
+      if (this.unseen < MEM_SEEN && gain > 0 && gain > top && (s > 0 || this.f > -.2)) { top = gain; at = a; }
+      if (this.unseen > un) { un = this.unseen; ua = a; }
+    }
+    if (at >= 0) { this.better = (top + need) / Math.max(.05, this.size); return at; }
+    // curious, a little: a move it has never tried in a spot like this one
+    if (s > 0 && this.curious && ua >= 0 && un > MEM_SEEN && r() < this.curious) return ua;
+    return -1;
+  }
+  // trust per kind of disagreement: an offset on the brain's own trust
+  kind(k) { let c = this.kinds.get(k); if (!c) this.kinds.set(k, c = { n: 0, t: 0, off: 0 }); return c; }
+  /** As short text: each pair's line and how sure it is (its diagonal), 1 byte a number, and the trust offsets. */
+  pack() {
+    if (!this.cells.size && !this.kinds.size) return null;
+    let m = 1e-6; for (const c of this.cells.values()) for (const v of c.w) m = Math.max(m, Math.abs(v));
+    const scale = m / 127, N = this.N, per = 3 + N * 2, rows = [...this.cells].sort((p, q) => q[1].n - p[1].n).slice(0, Math.floor(MEM_BYTES * 3 / 4 / per));
+    let bin = '';
+    for (const [k, c] of rows) {
+      bin += String.fromCharCode(k >> 8 & 255, k & 255, Math.min(255, c.n));
+      for (let i = 0; i < N; i++) bin += String.fromCharCode((Math.round(c.w[i] / scale) + 256) & 255);
+      for (let i = 0; i < N; i++) bin += String.fromCharCode(Math.round(clamp(c.P[i * N + i], 0, 1) * 255));
+    }
+    return { n: this.n, a: this.acts, s: +scale.toPrecision(4), d: btoa(bin), k: [...this.kinds].map(([k, c]) => [k, +c.off.toFixed(2)]) };
+  }
+  unpack(d) {
+    if (!d || d.n !== this.n || d.a !== this.acts || !(d.s > 0)) return;
+    let bin; try { bin = atob(String(d.d || '')); } catch (_) { return; }
+    const N = this.N, per = 3 + N * 2; if (bin.length % per) return;
+    for (let o = 0; o < bin.length; o += per) {
+      const k = bin.charCodeAt(o) << 8 | bin.charCodeAt(o + 1); if (k >= this.acts * this.acts) continue;
+      const c = this.cell(k / this.acts | 0, k % this.acts); c.n = bin.charCodeAt(o + 2); c.P.fill(0);
+      for (let i = 0; i < N; i++) { const q = bin.charCodeAt(o + 3 + i); c.w[i] = (q > 127 ? q - 256 : q) * d.s; c.P[i * N + i] = Math.max(1e-4, bin.charCodeAt(o + 3 + N + i) / 255); }
+    }
+    if (Array.isArray(d.k)) for (const e of d.k) if (Array.isArray(e) && e[0] >= 0 && e[0] < this.acts * this.acts) this.kind(e[0] | 0).off = clamp(+e[1] || 0, -.9, .9);
+  }
+}
+
 // ---------------------------------------------------------------- Brain
 
 /**
@@ -441,6 +563,12 @@ function leanOn(p, t) {
  *   corrections the maker's own corrections, [[see, action], ...]: spots where the right move is known,
  *               or [see, action, false] where a move is wrong (kept through reset(); brain.correct()
  *               and brain.avoid() add more while the game runs)
+ *   memory      remember which move made things exciting in which kind of spot, learned at once from
+ *               feel(), and lean on it (false). true, or { margin: how much better a move must have gone
+ *               before it counts, in typical feel()s (.33), curious: share of decisions it tries a move it
+ *               has never made in a spot like this (0), erase: forget a choice's moves when they keep
+ *               being wrong (true) }. For games that call feel() often (most decisions); brain.remembered
+ *               says when it changed a move. It also keeps the trust per kind of disagreement with the teacher.
  */
 export class Brain {
   constructor(api, opts = {}) {
@@ -463,6 +591,8 @@ export class Brain {
     if (this.styles) { this.net = new Net([(opts.inputs | 0 || 1) + this.styles.length, ...(opts.hidden || [12]), nAct], hashName(this.name)); this.sv = new Float32Array(this.styles.length); this.sv[0] = 1; this.styleName = this.styles[0]; }
     this.xbuf = null;
     this.fix = new Fixes(opts.inputs | 0 || 1, nAct); this.lastSee = null;
+    this.mem = opts.memory ? new Memory(opts.inputs | 0 || 1, nAct, opts.memory === true ? {} : opts.memory) : null;
+    this.memRecent = []; this.memKind = -1; this.memAt = -1; this.memBetter = 0;
     this.recallA = -1; this.recallT = 0;
     this.logOf = e => { const p = this.net.run(this.input(e)), z = new Float32Array(p.length); let m = 0; for (const v of p) if (v > m) m = v; for (let j = 0; j < p.length; j++) z[j] = Math.log(capped(p[j], m)); return z; };
     for (const c of Array.isArray(opts.corrections) ? opts.corrections : []) if (c && c[0]) this.fix.add(c[0], this.which(c[1]), c[2] === false, true);
@@ -514,6 +644,7 @@ export class Brain {
     this.tellNext = -1; this.tellLeft = 0; this.tellLen = 0;
     this.started = false;
     this.fix.clear();             // corrections given while running (the maker's own stay)
+    if (this.mem) { this.mem.clear(); this.memRecent = []; this.memKind = -1; this.memAt = -1; }
     // a starting brain from the maker's own play
     const st = this.opts.start ? Net.unpack(this.opts.start) : null;
     if (st && st.shape === this.net.shape) { this.net = st; this.net.even = this.even; this.anchor = st.copy(); this.trust = this.teacher ? .6 : 1; this.started = true; }
@@ -568,6 +699,14 @@ export class Brain {
   get recalled() {
     if (this.recallA < 0) return null;
     return { action: this.names ? this.names[this.recallA] : this.recallA, not: this.recallT < 0, like: clamp(Math.abs(this.recallT) / 8, 0, 1) };
+  }
+  /**
+   * After act(), with opts.memory: the move its memory chose over the one it would have made, as
+   * { action, better } (better: how much more exciting it expects it to be, in typical feel()s), or null.
+   */
+  get remembered() {
+    if (this.memAt < 0) return null;
+    return { action: this.names ? this.names[this.memAt] : this.memAt, better: +this.memBetter.toFixed(2) };
   }
   // an action's number, or -1 for one it doesn't have (index() takes those as the first)
   which(a) { return typeof a === 'number' ? a | 0 : this.names ? this.names.indexOf(a) : -1; }
@@ -626,6 +765,9 @@ export class Brain {
       net.learn(see, teach, copy, true);
       net.run(see);
     }
+    // what it would do by itself, and whether that is what the teacher would (memory: trust per kind of disagreement)
+    const mine = this.mem ? argmax(p) : -1, base = teach >= 0 ? teach : mine;
+    this.memKind = this.mem && teach >= 0 && mine !== teach ? teach * p.length + mine : -1;
     // corrections: lean towards the action whose examples this spot looks like
     const fix = this.fix; fix.note(raw);
     if (!this.lastSee) this.lastSee = new Float32Array(fix.n);
@@ -639,7 +781,10 @@ export class Brain {
     this.recallA = -1;
     if (lean) { let top = 0; for (let j = 0; j < lean.length; j++) if (Math.abs(lean[j]) > top) { top = Math.abs(lean[j]); this.recallA = j; this.recallT = lean[j] / fix.trust; } }
     // choose: the teacher or the brain, then a little randomness, then the game's rules
-    this.ledByNet = this.r() < this.trust;
+    // (with memory, once it has its own brain: where it agrees with the teacher the teacher leads, and where
+    // they differ its trust for that kind of difference)
+    const trust = this.mem && this.anchor && teach >= 0 ? (this.memKind < 0 ? 0 : clamp(this.trust + this.mem.kind(this.memKind).off, .05, .95)) : this.trust;
+    this.ledByNet = this.r() < trust;
     let a = this.ledByNet || teach < 0 ? sample(p, this.r, 1.6 - this.skill * 1.2) : teach;
     // the teacher's choice counts for as much as a sure brain's: a correction that outweighs it wins
     // (and where the teacher's choice is one it was told not to make, the brain makes its next best)
@@ -647,6 +792,9 @@ export class Brain {
       if (lean[teach] <= -FIX_GAP) a = sample(p, this.r, 1.6 - this.skill * 1.2);
       else { let top = FIX_GAP + lean[teach]; for (let j = 0; j < lean.length; j++) if (lean[j] > top) { top = lean[j]; a = j; } }
     }
+    // memory: a move that went better than this one in spots like this (not where a correction spoke)
+    this.memAt = -1;
+    if (this.mem && !lean) { const m = this.mem.pick(raw, base, this.push(), this.r); if (m >= 0) { a = m; this.memAt = m; this.memBetter = this.mem.better; } }
     const noise = Math.max(this.limits.minNoise, (1 - this.skill) * .25);
     if (this.r() < noise) a = Math.floor(this.r() * p.length);
     if (this.rules) a = this.index(this.rules(raw, this.names ? this.names[a] : a, this.styleName) ?? a);
@@ -663,6 +811,11 @@ export class Brain {
       this.last = a;
     }
     this.trace.push([Array.from(see), a, net]); if (this.trace.length > 12) this.trace.shift();
+    if (this.mem) {
+      // the newest decisions wait for a feel(); one that leaves with none was a moment where nothing happened
+      const R = this.memRecent; R.push({ x: this.mem.spot(raw), b: base, a: this.tellNext >= 0 ? this.tellNext : a, kind: this.memKind, got: false });
+      if (R.length > MEM_RING) { const o = R.shift(); if (!o.got) this.mem.learn(o.x, o.b, o.a, 0, .5); }
+    }
     this.steps++;
     this.guard(net);
     if (--this.saveIn <= 0) { this.saveIn = 300; this.persist(); }
@@ -676,7 +829,13 @@ export class Brain {
   feel(x = 1) {
     x = clamp(+x || 0, -2, 2);
     this.mood += (x - this.mood) * .05; this.rSum += x; this.rN++;
-    if (this.ledByNet) this.byNet += (x - this.byNet) * .05; else this.byTeacher += (x - this.byTeacher) * .05;
+    // memory: the newest decision gets it in full, the two before less
+    const keyed = this.mem && this.anchor && this.teacher, kind = keyed ? this.memKind : -1;
+    if (this.mem) { const R = this.memRecent; for (let i = R.length - 1, wt = 1; i >= 0 && i >= R.length - 3; i--, wt *= .5) { const d = R[i]; d.got = true; this.mem.learn(d.x, d.b, d.a, x, wt); } }
+    if (keyed) {
+      // only a moment where the teacher and the brain disagree says which of them is better
+      if (kind >= 0) { const k = this.mem.kind(kind); if (this.ledByNet) { this.byNet += (x - this.byNet) * .05; k.n += (x - k.n) * .05; } else { this.byTeacher += (x - this.byTeacher) * .05; k.t += (x - k.t) * .05; } k.off = clamp(k.off + (k.n >= k.t ? .004 : -.006) * TRUST_KIND, -.9, .9); }
+    } else if (this.ledByNet) this.byNet += (x - this.byNet) * .05; else this.byTeacher += (x - this.byTeacher) * .05;
     // the win-rate guard rail turns the signal: pressure is good while the player wins too easily, and
     // something to back off from while they lose too often
     const dir = this.push();
@@ -689,7 +848,7 @@ export class Brain {
       // once it copies the teacher well it keeps that as its starting brain, and gets a share of the
       // decisions to show what it can do (never less than 10%, so it can keep earning trust)
       if (ready && !this.anchor) { this.anchor = this.net.copy(); this.trust = Math.max(this.trust, .15); this.byNet = this.byTeacher; }
-      const step = ready ? (this.byNet >= this.byTeacher ? .004 : -.006) : 0;
+      const step = !ready ? 0 : keyed ? (kind >= 0 ? (this.byNet >= this.byTeacher ? .004 : -.006) * TRUST_SHARED : 0) : this.byNet >= this.byTeacher ? .004 : -.006;
       this.trust = clamp(this.trust + step, ready ? .1 : 0, ready ? .95 : .2);
     }
     this.guard(this.net);
@@ -755,10 +914,15 @@ export class Brain {
   persist() {
     const s = JSON.stringify({ w: this.net.pack(), a: this.anchor ? this.anchor.pack() : '', t: +this.trust.toFixed(3), k: +this.skill.toFixed(3),
       r: +this.winRate.toFixed(3), g: +this.agree.toFixed(3), n: this.steps, q: this.rounds, f: +this.lean.toFixed(3), ...(this.useOdds ? { o: Array.from(this.odds, v => +v.toFixed(2)) } : {}) });
-    // corrections ride along when there is room: a full slot keeps the brain and drops them
-    const c = this.fix.pack(); let ok;
-    try { ok = this.slot.save(c ? s.slice(0, -1) + ',' + JSON.stringify({ c, u: this.fix.usual() }).slice(1) : s); } catch (_) { ok = false; }
-    if (ok === false && c) { try { this.slot.save(s); } catch (_) {} }
+    // corrections and memory ride along when there is room: a full slot keeps the brain and drops the
+    // memory first, then the corrections
+    const c = this.fix.pack(), m = this.mem ? this.mem.pack() : null;
+    const tries = [{ ...(c ? { c, u: this.fix.usual() } : {}), ...(m ? { m } : {}) }, c ? { c, u: this.fix.usual() } : null, {}];
+    for (const extra of tries) {
+      if (!extra || (extra !== tries[2] && !Object.keys(extra).length)) continue;
+      let ok; try { ok = this.slot.save(Object.keys(extra).length ? s.slice(0, -1) + ',' + JSON.stringify(extra).slice(1) : s); } catch (_) { ok = false; }
+      if (ok !== false) break;
+    }
   }
   restore(text) {
     if (!text) return;
@@ -771,6 +935,7 @@ export class Brain {
     this.net.even = this.even;
     if (Array.isArray(d.o) && d.o.length === this.odds.length) d.o.forEach((v, i) => { this.odds[i] = clamp(+v || 0, 0, 1e4); });
     if (d.c) this.fix.unpack(d.c, d.u);
+    if (d.m && this.mem) this.mem.unpack(d.m);
   }
   adoptShared(text) {
     if (!text || this.steps >= 200) return;
@@ -1158,7 +1323,7 @@ export class Wave {
     let total = 0, time = 0, alive = true;
     // each mind keeps its own reaction timer and last choice, so a squad of enemies that all act in
     // the same frame each decide for themselves (rather than getting whatever the last one chose)
-    const own = { wait: 0, since: 1, last: -1, tellNext: -1, tellLeft: 0, tellLen: 0, unsure: 0, lastSee: null, recallA: -1, recallT: 0 };
+    const own = { wait: 0, since: 1, last: -1, tellNext: -1, tellLeft: 0, tellLen: 0, unsure: 0, lastSee: null, recallA: -1, recallT: 0, memRecent: [], memKind: -1, memAt: -1, memBetter: 0 };
     if (b.styles) { const keep = [b.sv.slice(), b.styleName]; b.style = style ?? b.styleName; own.sv = b.sv.slice(); own.styleName = b.styleName; b.sv.set(keep[0]); b.styleName = keep[1]; }
     const swap = () => { for (const k in own) [own[k], b[k]] = [b[k], own[k]]; };
     const self = this; this.live.add(net);
@@ -1170,9 +1335,10 @@ export class Wave {
       correct(action) { swap(); try { b.correct(action); } finally { swap(); } return this; },
       avoid(action) { swap(); try { action === undefined ? b.avoid() : b.avoid(action); } finally { swap(); } return this; },
       get recalled() { swap(); try { return b.recalled; } finally { swap(); } },
+      get remembered() { swap(); try { return b.remembered; } finally { swap(); } },
       get unsure() { return own.unsure; },
       get style() { return own.styleName; },
-      feel(x = 1) { total += clamp(+x || 0, -2, 2); b.feel(x); },
+      feel(x = 1) { total += clamp(+x || 0, -2, 2); if (b.mem) { swap(); try { b.feel(x); } finally { swap(); } } else b.feel(x); },   // (memory: about this mind's own last decisions)
       done() {
         if (!alive) return; alive = false; self.live.delete(net);
         pair.score[sign > 0 ? 0 : 1] = total / Math.max(1, time);
