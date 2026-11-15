@@ -692,6 +692,7 @@ export function summary(R = lastRec) {
   const lines = [
     `Frame lab · ${R.title || R.game} · ${phoneLabel()} · build ${BUILD} · ${secs.toFixed(0)} s · ${c.view} (${c.form})`,
     c.tier ? `${c.backend} · ${c.tier} · 3D ${c.rw}x${c.rh} → ${c.ow}x${c.oh} (${c.ow ? Math.round(100 * c.rw / c.ow) : '?'}%) · upscaler ${UPN[c.upscaler] || c.upscaler} · GSFG ${c.fg || 'off'}${c.fx ? ` · effects smaller: ${c.fx}` : ''}${c1.tier !== c.tier || c1.rw !== c.rw || c1.fx !== c.fx ? ` · ended ${c1.tier} 3D ${c1.rw}x${c1.rh}${c1.fx ? ` (smaller: ${c1.fx})` : ''}` : ''}` : `${c.backend} · canvas ${c.rw}x${c.rh}${c.lite ? ' (eased)' : ''}`,
+    !c.fg && !c1.fg && c1.fgWhy && c1.fgWhy !== 'Off.' ? `GSFG: ${c1.fgWhy}` : '',
     `screen ${c.hz} Hz${c.rates ? ` (offers ${c.rates}, asked ${c.asked || 'none'})` : ''} · game ${c.fps} fps · phone class ${c.cls} · ${c.gpu || 'gpu ?'}`,
     m ? `avg ${m.fps.toFixed(1)} fps · 1% low ${m.low1.toFixed(0)} · 0.1% low ${m.low01 ? m.low01.toFixed(0) : '–'} · worst ${m.worst.toFixed(0)} ms · pacing ${(m.pacing * 100).toFixed(0)}% on the beat · ${m.stutters} stutters (${(m.stutters / Math.max(1, m.secs)).toFixed(2)}/s) · ${m.skipped} refreshes skipped${m.made ? ` · ${m.made} made + ${m.real} real` : ''}${fz.length ? ` · ${fz.length} freeze${fz.length > 1 ? 's' : ''} of ${PAUSE_GAP} ms or more (worst ${Math.max(...fz.map(e => e.ms)).toFixed(0)} ms; not in the numbers before)` : ''}` : 'not enough frames in play',
     cpuLine(R),
