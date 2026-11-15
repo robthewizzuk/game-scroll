@@ -15,8 +15,10 @@ export const row = (y, w, zf, zb, zc, pf = 2.2, pb = pf, xc = 0) => [y, w, zf - 
 export const over = (L, y, out, at = y) => { const s = L.sec(y); return [at, s[0] + out, s[1] + out, s[2], s[3], 2 + 2 * s[4], s[6] + out, 2 + 2 * s[7]]; };
 
 // how thick and loose each kind of top is over a shirt, and how far it bridges the hollow of the back
-export const easeOf = kind => kind === 'smock' ? .016 : kind === 'shirt' ? 0 : .007;
-const hangOf = kind => kind === 'smock' ? .016 : kind === 'shirt' ? .003 : .009;
+export const easeOf = kind => kind === 'gambeson' ? .02 : kind === 'smock' ? .016 : kind === 'shirt' ? 0 : .007;
+const hangOf = kind => kind === 'gambeson' ? .018 : kind === 'smock' ? .016 : kind === 'shirt' ? .003 : .009;
+// a padded coat's quilting (a fold function: the cloth puffed between rows of stitching that run down it and round the arms)
+export const quilt = (x, y, z, cx = 0, cz = 0, n = 9) => .0032 * (1 - Math.abs(Math.sin(Math.atan2(x - cx, z - cz) * n)) ** 10) - .0012;
 
 /**
  * The trunk in its top, from below the belt to the neck. b: the build ({ shoulders, chest, waist, hips, bust, neck }: 1 a man's; belly: 0 none .. 1 a big one,
@@ -124,6 +126,14 @@ export function legRows(b, fl, low) {
     row(.62, .08 * TH * fl, .087 * TH, -.098 * TH, -.004, 2.25, 2.25, .0965), row(.74, .088 * TH * fl, .097 * TH, -.112 * TH, -.006, 2.3, 2.3, .0955),
     row(.84, .0935 * TH * fl, .1 * TH, -.124 * TH, -.01, 2.3, 2.3, .094), row(.93, .085, .088, -.118, -.012, 2.3, 2.4, .088), row(1.0, .07, .08, -.1, -.008, 2.2, 2.2, .086)];
 }
+// hose: a leg in close-fitting cloth (as worn under armour): the trouser leg's slices taken in from the calf to the thigh, the
+// foot and the top of the thigh as they were (so it still meets the boot and the seat)
+const HOSE = [[0, .7], [.22, .74], [.36, .87], [.47, .94], [.53, .96], [.62, .9], [.84, .91], [.93, 1]];
+export const hoseRows = rows => rows.map(r => {
+  const y = r[0]; let i = 0; while (i < HOSE.length - 2 && y > HOSE[i + 1][0]) i++;
+  const [y0, k0] = HOSE[i], [y1, k1] = HOSE[i + 1], k = k0 + (k1 - k0) * ss(y0, y1, y); if (k > .999) return r;
+  r = r.slice(); r[1] *= k; r[2] *= k; r[6] *= k; return r;
+});
 export function lowRows(b, kind) {
   const LM = b.limbs;
   if (kind === 'tall') return [row(.4, .046 * LM, .038 * LM, -.064 * LM, -.012, 2.1, 2.1, .0975), row(.452, .049 * LM, .044 * LM, -.067 * LM, -.01, 2.1, 2.1, .0975), row(.478, .0615 * LM, .063 * LM, -.08 * LM, -.007, 2.2, 2.2, .097)];   // (inside the boot below its rim)   // into a tall boot
@@ -148,4 +158,4 @@ export const FOOT = [
   { ball: [.039, .028, .045], at: [.103, .033, .152], rot: [0, .06, 0] },
 ];
 // everything above as it stands, for the number that names saved pieces
-export const BODY_STAMP = [row, over, easeOf, hangOf, torsoOf, shoulderRows, neckRows, neckOpening, EGG, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify(FOOT);
+export const BODY_STAMP = [row, over, easeOf, hangOf, quilt, torsoOf, shoulderRows, neckRows, neckOpening, EGG, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, hoseRows, lowRows, shaftRows, gaiterRows].map(String).join('') + JSON.stringify([FOOT, HOSE]);
