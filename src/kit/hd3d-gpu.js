@@ -854,9 +854,11 @@ export const gpuLooks = {
 // world: is there such a weather on the view now (air.world)? Without one the material gets the game's own wet
 // only, which reads no picture at all: nodes have no branch to skip the weather's three reads a pixel with.
 let NO_PART = null;
-const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
+// (stand-ins are filtered as the pictures they stand in for: a nearest-filtered one is read without a sampler, and a shader
+// written while it was there reads the real picture that way too: ground-paint-gpu.js BLANK)
+const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
 let BLANK_COVER = null;
-const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { needsUpdate: true });   // (one spot at -1000 m: all open)
+const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (one spot at -1000 m: all open)
 export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
   if (!world) {
     const w = frameWide(AIR.gsWet).mul(frameWide(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
