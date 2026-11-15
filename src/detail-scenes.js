@@ -1344,7 +1344,7 @@ function opencity({ gs, HD, size }) {
   const sun = gs.hd.sun('#fff0d8', 2.6, 70, [-.5, .8, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
   v.air({ haze: .0006, colour: '#9aa6bc' });
   const sky = new gs.sky.Sky(v, { time: 13, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
-  const blocks = size < .3 ? 3 : Math.max(4, Math.round(10 * Math.sqrt(k))), busy = 1.3 * k, SPEED = 16, BACK = [12, 21, 30];
+  const blocks = size < .15 ? 2 : size < .3 ? 3 : Math.max(4, Math.round(10 * Math.sqrt(k))), busy = 1.3 * k, SPEED = 16, BACK = [12, 21, 30];
   const car = vehicle('car', { style: 'sports', seed: 11, colour: '#c8321e' }), chasers = BACK.map((_, i) => vehicle('car', { style: 'saloon', seed: 40 + i, colour: '#e8e8ea' }));
   v.scene.add(car); for (const c of chasers) { c.visible = false; v.scene.add(c); }
   let city = null, weather = null, world = null, body = null, path = null, mode = '', ready = false, crates = [];
