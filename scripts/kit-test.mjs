@@ -8935,5 +8935,42 @@ console.log('physics ok');
   console.log('town: clock, plans, folk, shops and the night');
 }
 
+{
+  // gs.dungeon's rules (dungeon.js: no three.js): a gs.gen map dressed, then played through by its rules
+  const { layout, DungeonRules } = await import('../src/kit/dungeon.js');
+  const { dungeon: dig, loadGen } = await import('../src/kit/gen.js'); await loadGen();
+  for (const seed of [1, 2, 3, 42]) {
+    const map = dig(40, 30, { seed }), L = layout(map, { seed }), R = new DungeonRules(L), k = t => L.things.filter(x => x.kind === t);
+    assert.ok(L.start && L.exit && k('gate').length === 1 && k('locked').length === 1 && k('lever').length >= 1 && k('torch').length > 5, 'dressed ' + seed);
+    assert.deepEqual(layout(map, { seed }).things.map(t => t.kind + t.col + ',' + t.row), L.things.map(t => t.kind + t.col + ',' + t.row), 'the same seed, the same dungeon');
+    const reach = () => { const seen = new Set([L.start.col + ',' + L.start.row]), q = [[L.start.col, L.start.row]]; while (q.length) { const [c, r] = q.pop(); for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) { const a = c + dx, b = r + dz; if (!seen.has(a + ',' + b) && R.open(a, b)) { seen.add(a + ',' + b); q.push([a, b]); } } } return seen; };
+    for (const t of k('door')) R.use(t);
+    const lk = k('locked')[0], gate = k('gate')[0], chest = L.things.find(t => t.kind === 'chest' && t.loot?.[0]?.id === lk.key), first = reach();
+    assert.ok(chest && first.has(chest.col + ',' + chest.row), 'the key is reachable before its door ' + seed);
+    for (const lv of k('lever')) assert.ok(first.has((lv.col + lv.face[0]) + ',' + (lv.row + lv.face[1])), 'a lever is reachable before its gate');
+    const bag = new Map(), inv = { has: i => bag.get(i) > 0, take: (i, n) => bag.set(i, bag.get(i) - n), add: (i, n) => bag.set(i, (bag.get(i) || 0) + n) };
+    assert.equal(R.use(lk, { inventory: inv }).why, 'locked');
+    assert.ok(R.use(chest, { inventory: inv }).ok && inv.has(lk.key) && R.use(lk, { inventory: inv }).ok && lk.open && !inv.has(lk.key), 'the key opens its door');
+    let solved = 0; R.on('solved', () => solved++);
+    for (const lv of k('lever')) if (lv.on !== lv.want) R.use(lv);
+    assert.ok(gate.open && solved === 1, 'the levers set right open the gate');
+    if (k('lever').length) { const lv = k('lever')[0]; R.use(lv); assert.ok(!gate.open, 'and a wrong one shuts it'); R.use(lv); }
+    assert.ok(reach().has(L.exit.col + ',' + L.exit.row), 'the exit can be reached ' + seed);
+    const sec = k('secret')[0]; if (sec) { assert.ok(!R.open(sec.col, sec.row)); R.use(sec); assert.ok(R.open(sec.col, sec.row), 'a found secret wall opens'); }
+    const saved = JSON.parse(JSON.stringify(R.pack())), L2 = layout(map, { seed }), R2 = new DungeonRules(L2).unpack(saved);
+    assert.ok(L2.things.every((t, i) => t.kind === L.things[i].kind && !!t.open === !!L.things[i].open && !!t.on === !!L.things[i].on), 'pack / unpack');
+  }
+  {
+    // traps fire once, wait, and arm again; plates press and let up; the map fills in where feet go
+    const L = layout('#######\n#S.X.O#\n#..G.E#\n#######', { dress: false }), R = new DungeonRules(L, { trapRearm: 1 });
+    const trap = L.things.find(t => t.kind === 'trap'), plate = L.things.find(t => t.kind === 'plate'), gate = L.things.find(t => t.kind === 'gate');
+    let fired = 0; R.on('trap', () => fired++);
+    R.step(.1, [trap]); R.step(.1, [trap]); assert.equal(fired, 1, 'once while stood on'); R.step(1.2, []); R.step(.1, [trap]); assert.equal(fired, 2, 'armed again');
+    assert.ok(plate.group === gate.group && !gate.open); R.step(.1, [plate]); assert.ok(plate.down && gate.open, 'a plate opens its gate'); R.step(.1, []); assert.ok(!gate.open);
+    assert.ok(R.seen.some(Boolean));
+  }
+  console.log('dungeon: maps dressed, keys, levers, gates, traps, plates, secrets, saves');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

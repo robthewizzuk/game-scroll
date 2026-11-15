@@ -4436,3 +4436,40 @@ update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt
 - Saving: `clock`, `folk`, each `Shop` and `night` have `pack()` / `unpack(d)` (for `WorldSave.keep`).
 - To look it over: `node scripts/town.cjs sheet.png [kind=castle] [views=square,street,cottage,inn,gate,keep,high,map]
   [times=10,21.5] [seed=7] [--webgpu]` (`map` shows each townsperson where the hour has them).
+
+## Dungeons
+
+`gs.dungeon.Dungeon` builds a dungeon map in a Next Gen view and makes it work. The map is gs.gen's `dungeon()`,
+`cave()` or `maze()` (or your own text), and from a seed it is dressed with doors, one locked door whose key lies in
+a chest you can reach first, an iron gate that lifts while its levers are all set right (in front of the exit where
+one corridor leads there), spike traps in the corridors, chests, a secret wall that shortens the way, torches,
+pillars in the big rooms, and barrels and crates to push. It is solid in the game's `World3D` (found by itself): a
+shut door is a wall, an open one is not.
+
+```js
+const { Dungeon } = gs.dungeon, { dungeon } = gs.gen;
+reset() {
+  dg = new Dungeon(view, { map: dungeon(40, 30, { seed }), seed });   // in reset(): under the loading screen
+  hero.at(dg.start);
+  dg.on('trap', (t, who) => hurt(10)).on('loot', (t, loot) => feel.coin()).on('solved', () => feel.win());
+}
+update(dt) { dg.update(dt, hero.position); }            // plates, traps, the map filling in, doors swinging
+down() { const r = dg.use(hero.position, { inventory }); if (r.why === 'locked') say('Locked. There must be a key.'); }
+draw(c) { dg.drawMap(c, 250, 10, 100, 80, { at: hero.position, turn }); }   // only what has been seen
+```
+
+- Letters a map may use (`gs.dungeon.LEGEND`): `D` door, `K` locked door, `G` gate, `V` lever, `O` pressure plate,
+  `C` chest, `X` spike trap, `H` secret wall, `T` torch, `P` pillar, `B` barrel, `R` crate, `S` start, `E` exit; any
+  other letter is a mark (`find('A')`). Levers and plates within 8 cells of a map's gate work it. `dress: false`
+  keeps to what the map says.
+- `use(what, { inventory })` opens and shuts doors, unlocks with the key (any inventory with `has`, `take` and `add`:
+  `gs.items.Inventory` fits), pulls levers, loots chests (`loot: chest => [{ id, n }]`, else some gold) and finds the
+  secret wall. `near(position)` lists what is in reach, to show a prompt.
+- A lamp on each lever, and over the gate, lights while that lever is right (`hints: false` for none).
+- `update(dt, [hero, companion])`: anyone heavy presses plates and sets off traps, and the barrels and crates press
+  plates too. The trap's harm is yours: `on('trap', (t, who) => ...)`.
+- `ceiling: false` for a camera from above. `at: { x, y, z }` puts it anywhere (under a town, or as a `gs.regions`
+  part: build it in the part's make and `remove()` it when the part goes).
+- `pack()` / `unpack(data)` keep what is open, found and looted, and the map, for `api.save()`.
+- `gs.dungeon.layout(map, { seed })` and `DungeonRules` are the same rules with no 3D, for a 2D game.
+

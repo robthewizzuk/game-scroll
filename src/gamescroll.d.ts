@@ -2521,6 +2521,46 @@ export interface Town3D {
   update(dt?: number): Town3D; open(k?: number): Town3D; buildingAt(x: number, z: number): (TownBuilding & { mesh: Loose }) | null;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number }; range?: number; turn?: number; colours?: Record<string, string> }): void; remove(): void;
 }
+export type DungeonKind = 'door' | 'locked' | 'gate' | 'lever' | 'plate' | 'chest' | 'trap' | 'secret' | 'torch' | 'pillar' | 'barrel' | 'crate';
+export interface DungeonThing {
+  id: number; kind: DungeonKind; col: number; row: number; x: number; z: number; axis?: 'x' | 'z'; face?: [number, number]; key?: string; group?: string; want?: boolean;
+  on?: boolean; open?: boolean; found?: boolean; down?: boolean; armed?: boolean; fired?: number; loot?: { id: string; n: number }[]; mesh?: Loose;
+}
+export interface DungeonLayout {
+  cols: number; rows: number; size: number; x0: number; z0: number; grid: string[]; rooms: { id: number; col: number; row: number; cols: number; rows: number; x: number; z: number }[];
+  start: { col: number; row: number; x: number; z: number } | null; exit: { col: number; row: number; x: number; z: number } | null; marks: Record<string, { col: number; row: number; x: number; z: number }[]>; things: DungeonThing[];
+}
+export type DungeonEvent = 'open' | 'shut' | 'unlock' | 'lever' | 'solved' | 'press' | 'release' | 'trap' | 'loot' | 'secret';
+export interface DungeonInventory { has(id: string): boolean; take?(id: string, n: number): unknown; add(id: string, n: number): unknown }
+export interface DungeonUse { ok: boolean; thing?: DungeonThing; why?: 'locked' | 'nothing' | 'blocked'; loot?: { id: string; n: number }[] }
+export interface DungeonRulesT {
+  L: DungeonLayout; things: DungeonThing[]; seen: Uint8Array; solved: Set<string>;
+  on(ev: DungeonEvent, fn: (thing: DungeonThing, more?: Loose) => void): DungeonRulesT; cellAt(x: number, z: number): { col: number; row: number; ch: string } | null; open(col: number, row: number): boolean;
+  near(x: number, z: number, r?: number): DungeonThing[]; spot(t: DungeonThing): { x: number; z: number }; use(what: DungeonThing | { x: number; z: number }, o?: { inventory?: DungeonInventory | null }): DungeonUse;
+  check(group: string): void; step(dt: number, feet?: { x: number; z: number }[]): void; see(x: number, z: number): void; find(mark: string): { col: number; row: number; x: number; z: number }[];
+  pack(): Loose; unpack(d: Loose): DungeonRulesT;
+}
+export interface Dungeon3D {
+  layout: DungeonLayout; rules: DungeonRulesT; things: DungeonThing[]; group: Loose; start: { x: number; y: number; z: number }; exit: { x: number; y: number; z: number } | null; solid: Loose;
+  on(ev: DungeonEvent, fn: (thing: DungeonThing, more?: Loose) => void): Dungeon3D;
+  /** Each frame: the hero's position (or several: companions, anything heavy) presses plates, fires traps and fills in the map; doors, gates and lids move to match. */
+  update(dt?: number, hero?: { x: number; z: number } | { position: { x: number; z: number } } | ({ x: number; z: number })[] | null): Dungeon3D;
+  use(what: DungeonThing | { x: number; z: number } | { position: { x: number; z: number } }, o?: { inventory?: DungeonInventory | null }): DungeonUse;
+  near(p: { x: number; z: number } | { position: { x: number; z: number } }, r?: number): DungeonThing[]; cellAt(p: { x: number; z: number }): { col: number; row: number; ch: string } | null;
+  spot(t: DungeonThing | { col: number; row: number }): { x: number; y: number; z: number }; find(mark: string): { x: number; y: number; z: number }[];
+  drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z: number } | null; turn?: number; all?: boolean; colours?: Record<string, string> }): void;
+  settle(dt: number): void; pack(): Loose; unpack(d: Loose): Dungeon3D; remove(): void;
+}
+export interface DungeonPart {
+  /** A dungeon map (gs.gen's dungeon(), cave() or maze(), or text) built in a Next Gen view: walls, doors, a locked door and its key, a lever gate, plates, traps, chests, a secret wall, torches; solid in the World3D. */
+  Dungeon: new (view: Loose, o: { map: string | { text: string; rooms?: Loose[] }; seed?: number; size?: number; height?: number; dress?: boolean; ceiling?: boolean; at?: { x?: number; y?: number; z?: number }; world?: Loose | false; lamps?: boolean; hints?: boolean; loot?: (chest: DungeonThing) => { id: string; n: number }[]; trapRearm?: number; materials?: { wall?: Loose; floor?: Loose; ceiling?: Loose; trim?: Loose; wood?: Loose; iron?: Loose }; link?: boolean }) => Dungeon3D;
+  /** The map read and dressed, as plain data (no 3D). */
+  layout(map: string | { text: string; rooms?: Loose[] }, o?: { size?: number; seed?: number; dress?: boolean }): DungeonLayout;
+  /** The rules alone (what is open, found and taken): for a 2D game or a test. */
+  DungeonRules: new (layout: DungeonLayout, o?: { loot?: (chest: DungeonThing) => { id: string; n: number }[]; trapRearm?: number }) => DungeonRulesT;
+  /** The map letters: D door, K locked, G gate, V lever, O plate, C chest, X trap, H secret, T torch, P pillar, B barrel, R crate. */
+  LEGEND: Record<string, DungeonKind>;
+}
 export interface TownPart {
   /** The world's time of day: hour, day, night, dark (0..1), wait()/sleep() to pass time, every(hour, fn). Drives the game's Sky by itself. */
   Clock: new (o?: { hour?: number; day?: number; speed?: number; dawn?: number; dusk?: number; sky?: Loose | false; link?: boolean }) => WorldClock;
@@ -4843,7 +4883,7 @@ export interface GS {
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
-  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
+  outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; dungeon: DungeonPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
   toon: ToonPart; hd: HdPart; ar: ArPart; bricks: BricksPart; physics3d: Physics3dPart; fx3d: Fx3dPart;
