@@ -68,6 +68,7 @@ const p95 = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - 
   const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
   const p = await ctx.newPage(), cdp = await ctx.newCDPSession(p);
   await p.goto('http://localhost:4186/'); await p.waitForFunction(() => window.__gs, null, { timeout: 180000 }); await p.waitForTimeout(400);
+  await p.addStyleTag({ content: '.lil-gui { display: none !important }' });   // the dev sliders: random taps must reach the game
   const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
   const ids = args.length ? args : await p.evaluate(() => __gs.GAMES.map(g => g.id));
   await cdp.send('Profiler.enable'); await cdp.send('HeapProfiler.enable');

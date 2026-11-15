@@ -123,3 +123,22 @@ export function writeKnobs(src, changes) {
   for (const [a, b, t] of edits.sort((x, y) => y[0] - x[0])) src = src.slice(0, a) + t + src.slice(b);
   return { src, changed, missing };
 }
+
+/** Changes asked for as text: 'Folder.knob=value' or 'knob*factor' (a number knob scaled, kept in its range).
+ *  Returns { changes: { name: value }, bad: [text it couldn't read] }. */
+export function parseChanges(knobs, args) {
+  const changes = {}, bad = [];
+  for (const a of args) {
+    const m = a.match(/^([\w$]+(?:\.[\w$]+)?)\s*([=*])\s*(.+)$/); if (!m) { bad.push(a); continue; }
+    const [, name, op, raw] = m;
+    if (op === '*') {
+      const [f, k] = name.includes('.') ? name.split('.') : [null, name];
+      const hit = knobs.find(x => x.key === k && (!f || x.folder === f) && x.kind === 'number');
+      if (!hit || !Number.isFinite(+raw)) { bad.push(a); continue; }
+      let v = hit.value * +raw; if (hit.min != null) v = Math.max(hit.min, Math.min(hit.max, v));
+      changes[name] = +v.toFixed(4); continue;
+    }
+    changes[name] = raw === 'true' ? true : raw === 'false' ? false : Number.isFinite(+raw) && raw.trim() !== '' ? +raw : raw.replace(/^['"]|['"]$/g, '');
+  }
+  return { changes, bad };
+}
