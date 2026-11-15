@@ -8858,6 +8858,79 @@ console.log('physics ok');
   a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
   console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
 }
+// baked light (bake-trace.js, bake-grid.js; v.bakeLight({ ... }) in bake-light.js): the level's still triangles in one tree,
+// walked on the CPU. Every ray has to find what three-mesh-bvh's own ray caster finds; probes have to see the open sky as the
+// hemisphere light gives it, take colour from a sunlit wall, go dark under a roof and be filled in when inside something; the
+// grid's packing has to read back the way three's LightProbeGrid shader reads it; the ground's light map has to darken the
+// foot of a wall and nothing in the open.
+{
+  const THREE = await import('three');
+  const { MeshBVH } = await import('three-mesh-bvh');
+  const { buildScene, Rays, bakeReady, bakeProbes, bakeTexels, mapTexels, TRI } = await import('../src/kit/bake-trace.js');
+  const { gridOver, probeAt, fillIn, combine, hemisphereSH, shIrradiance, PROBE, packAtlas, atlasSize, aoBytes } = await import('../src/kit/bake-grid.js');
+  await bakeReady;
+  const I = Float32Array.from(new THREE.Matrix4().elements), at = (x, y, z, s = 1, sy = s) => Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(s, sy, s)).elements);
+  const geo = g => ({ pos: g.attributes.position.array, idx: g.index ? Uint32Array.from(g.index.array) : null, col: null });
+  // rolling ground and a few hundred boxes, against three-mesh-bvh
+  const land = new THREE.PlaneGeometry(200, 200, 64, 64).rotateX(-Math.PI / 2); { const P = land.attributes.position; for (let i = 0; i < P.count; i++) P.setY(i, 4 * Math.sin(P.getX(i) * .05) * Math.cos(P.getZ(i) * .04)); }
+  const cube = new THREE.BoxGeometry(1, 1, 1), R0 = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+  const ms = Array.from({ length: 300 }, () => at((R0() - .5) * 180, 2, (R0() - .5) * 180, 1 + R0() * 3, 1 + R0() * 6));
+  const sc = buildScene({ shapes: [geo(land), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.4, .5, .3] }, { shape: 1, ms, rgb: [.6, .5, .4] }] });
+  assert.equal(sc.n, 64 * 64 * 2 + 300 * 12, 'every triangle of every copy is in: ' + sc.n);
+  const rays = new Rays(sc), ref = (() => { const P = new Float32Array(sc.n * 9); for (let k = 0; k < sc.n; k++) for (let j = 0; j < 3; j++) { const o = k * TRI; P[k * 9 + j] = sc.T[o + j]; P[k * 9 + 3 + j] = sc.T[o + j] + sc.T[o + 3 + j]; P[k * 9 + 6 + j] = sc.T[o + j] + sc.T[o + 6 + j]; } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(P, 3)); return new MeshBVH(g); })();
+  const ray = new THREE.Ray(); let same = 0, hits = 0;
+  for (let i = 0; i < 4000; i++) {
+    const o = [(R0() - .5) * 160, 1 + R0() * 10, (R0() - .5) * 160], u = R0() * 2 - 1, a = R0() * 6.283, s = Math.sqrt(1 - u * u), d = [s * Math.cos(a), u, s * Math.sin(a)];
+    ray.origin.set(...o); ray.direction.set(...d); const h = ref.raycastFirst(ray, THREE.DoubleSide, 0, 60), t = rays.first(...o, ...d, 60);
+    if (h) hits++; if (h ? Math.abs(h.distance - t) < 1e-3 : t > 60) same++;
+  }
+  assert.ok(same === 4000 && hits > 800, `the flat walk finds what three-mesh-bvh finds: ${same}/4000 (${hits} hits)`);
+  // a probe in the open, one beside a red wall the sun shines on, one under a roof, one inside a box
+  const quad = new THREE.PlaneGeometry(1, 1), wallM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(0, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0)), new THREE.Vector3(20, 6, 1)).elements);
+  const roofM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(30, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)), new THREE.Vector3(10, 10, 1)).elements);
+  const flat = new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2);
+  const room = buildScene({ shapes: [geo(flat), geo(quad), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.5, .5, .5] }, { shape: 1, ms: [wallM], rgb: [.8, .05, .05] }, { shape: 1, ms: [roofM], rgb: [.5, .5, .5], both: true }, { shape: 2, ms: [at(-30, 2, 0, 4)], rgb: [.5, .5, .5] }] });
+  const rr = new Rays(room), sun = [Math.SQRT1_2, Math.SQRT1_2, 0];
+  const P = bakeProbes(rr, { at: new Float32Array([-60, 2, 40, .6, 1.5, 0, 30, 1.2, 0, -30, 2, 0]), rays: 256, sun, reach: 150 });
+  const up = (p, part = 0) => shIrradiance(P, p * PROBE + part, 1, 0, 1, 0) / Math.PI, toward = (p, ch, x) => shIrradiance(P, p * PROBE + 36 + ch * 9, 1, x, 0, 0);
+  assert.ok(Math.abs(up(0) - 1) < .04 && P[63] === 0, 'in the open a probe sees all the sky overhead: ' + up(0).toFixed(3));
+  assert.ok(toward(1, 0, -1) > 4 * toward(1, 1, -1) && toward(1, 0, -1) > .8, `beside a sunlit red wall the bounce is red: r ${toward(1, 0, -1).toFixed(2)} g ${toward(1, 1, -1).toFixed(2)}`);
+  assert.ok(up(2) < .2 && P[2 * PROBE + 63] < .05, 'under a two-sided roof little sky, and no backs seen: ' + up(2).toFixed(3));
+  assert.ok(P[3 * PROBE + 63] > .75, 'inside a box most rays hit a back: ' + P[3 * PROBE + 63].toFixed(2));
+  assert.deepEqual(Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), 'the same probe bakes the same twice');
+  // put together: an open probe lights an upward face as the hemisphere light it stands in for did
+  const C = [.3, .35, .4], G0 = [.1, .08, .05], hs = hemisphereSH(C, G0), comb = combine(P, 4, C, [2, 2, 2]);
+  const lit = shIrradiance(comb, 0, 1, 0, 1, 0), hemi = shIrradiance(hs, 0, 1, 0, 1, 0);
+  assert.ok(Math.abs(lit - .3) < .02 && Math.abs(hemi - .3) < .01, `an open probe's light on an upward face is the sky's (C): ${lit.toFixed(3)}, the hemisphere's SH ${hemi.toFixed(3)}`);
+  assert.ok(shIrradiance(combine(P, 4, C, [2, 2, 2], { openSky: false }), 0, 1, 0, 1, 0) < .02, 'with the sky left to the hemisphere light, only bounce is left facing up');
+  // a grid: a probe inside the ground is filled from the one above it
+  const g = gridOver({ min: [-10, -1, -10], max: [10, 9, 10] }, [5, 2, 5]);
+  assert.deepEqual(g.res, [4, 5, 4], 'a probe every spacing: ' + g.res);
+  assert.deepEqual(probeAt(g, 0), [-7.5, 0, -7.5], 'probes in the middle of their cells, as three puts them');
+  const data = new Float32Array(g.count * PROBE); for (let p = 0; p < g.count; p++) { data[p * PROBE] = p >= 16 ? 2 : 0; data[p * PROBE + 63] = p < 16 ? .9 : 0; }
+  fillIn(g, data); assert.ok([...Array(16).keys()].every(p => data[p * PROBE] === 2), 'probes under the ground take the light of those above');
+  assert.ok(gridOver({ min: [0, 0, 0], max: [1000, 50, 1000] }, 5, 6000).count <= 6000, 'a grid spreads out to stay under its count');
+  // the atlas read back as three's LightProbeGridNode reads it (seven sub-volumes, a padding slice either side)
+  const g2 = gridOver({ min: [0, 0, 0], max: [3, 2, 2] }, 1), sh = Float32Array.from({ length: g2.count * 27 }, (_, i) => (i % 97) / 10 - 4), [w, h, d] = atlasSize(g2), A = packAtlas(g2, sh, new Uint16Array(w * h * d * 4));
+  const F = THREE.DataUtils.fromHalfFloat, texel = (x, y, z) => [0, 1, 2, 3].map(c => F(A[((z * h + y) * w + x) * 4 + c])), pad = g2.res[2] + 2;
+  let packed = true;
+  for (let p = 0; p < g2.count; p++) {
+    const ix = p % 3, iy = (p / 3 | 0) % 2, iz = p / 6 | 0, s = [0, 1, 2, 3, 4, 5, 6].map(t => texel(ix, iy, t * pad + 1 + iz));
+    const c = [[s[0][0], s[0][1], s[0][2]], [s[0][3], s[1][0], s[1][1]], [s[1][2], s[1][3], s[2][0]], [s[2][1], s[2][2], s[2][3]], [s[3][0], s[3][1], s[3][2]], [s[3][3], s[4][0], s[4][1]], [s[4][2], s[4][3], s[5][0]], [s[5][1], s[5][2], s[5][3]], [s[6][0], s[6][1], s[6][2]]];
+    for (let k = 0; k < 9; k++) for (let ch = 0; ch < 3; ch++) if (Math.abs(c[k][ch] - sh[p * 27 + ch * 9 + k]) > .01) packed = false;
+    if (iz === 0 && texel(ix, iy, 0).join() !== texel(ix, iy, 1).join()) packed = false;
+  }
+  assert.ok(packed, 'the atlas holds each probe\'s nine colours where three\'s shader reads them, padding copied');
+  // the ground's light map: dark at the foot of the wall, open ground left alone
+  const T = mapTexels({ pos: flat.attributes.position.array, nrm: flat.attributes.normal.array, uv: flat.attributes.uv.array, idx: Uint32Array.from(flat.index.array) }, I, 200);
+  assert.equal(T.at.length, 200 * 200, 'every texel of the ground found');
+  const near = [], far = []; for (let i = 0; i < T.at.length; i++) { const x = T.pos[i * 3], z = T.pos[i * 3 + 2]; if (Math.abs(x) < 1.2 && Math.abs(z) < 5) near.push(i); if (Math.hypot(x + 100, z - 100) < 3) far.push(i); }
+  const sel = idx => ({ pos: Float32Array.from(idx.flatMap(i => [...T.pos.subarray(i * 3, i * 3 + 3)])), nrm: Float32Array.from(idx.flatMap(i => [...T.nrm.subarray(i * 3, i * 3 + 3)])) });
+  const vN = bakeTexels(rr, { ...sel(near), rays: 32 }), vF = bakeTexels(rr, { ...sel(far), rays: 32 }), avg = a => a.reduce((s, x) => s + x, 0) / a.length;
+  assert.ok(avg(vN) < .8 && avg(vF) === 1, `the foot of a wall sees less sky (${avg(vN).toFixed(2)}), open ground all of it (${avg(vF)})`);
+  assert.ok(aoBytes(vF).every(x => x === 255) && aoBytes(vN).some(x => x < 200), 'the light map: open ground left alone, the foot of the wall darker');
+  console.log(`baked light: the flat walk matches three-mesh-bvh on 4,000 rays, open sky ${up(0).toFixed(2)}, red bounce by a sunlit wall, ${up(2).toFixed(2)} of the sky under a roof, probes inside things filled in, the atlas as three reads it, the foot of a wall ${avg(vN).toFixed(2)} of the sky`);
+}
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
