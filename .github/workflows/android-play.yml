@@ -2,7 +2,8 @@
 # testing track. Setup, and the parts only Rob can do in Play Console: docs/google-play.md.
 #
 # - Pull requests build the bundle unsigned, so a broken store build (R8 shrinking, native libraries)
-#   shows up before merging. The upload key never goes near pull request code.
+#   shows up before merging, and stop there: no upload key, no bundle kept, nothing sent to Play (that
+#   waits for the merge). The upload key never goes near pull request code.
 # - Pushes to main build it signed with the upload key and send it to the internal testing track.
 # - "Run workflow" (Actions tab) does the same on demand, with a choice of track and status.
 #   Run on any other branch, it builds the signed bundle to download but doesn't upload it.
@@ -82,6 +83,7 @@ jobs:
       # GitHub counts up by one each run (pull request runs included, so numbers get skipped; that's fine).
       - name: Upload key
         id: key
+        if: github.event_name != 'pull_request'
         env:
           KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && secrets.PLAY_UPLOAD_KEYSTORE_BASE64 || '' }}
         run: |
@@ -112,7 +114,7 @@ jobs:
           cp android/app/build/outputs/mapping/release/mapping.txt mapping.txt
           ls -l game-scroll.aab
           echo "### App bundle" >> "$GITHUB_STEP_SUMMARY"
-          echo "Version code **${GITHUB_RUN_NUMBER}**, $(du -m game-scroll.aab | cut -f1) MB, signed: **${{ steps.key.outputs.signed }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version code **${GITHUB_RUN_NUMBER}**, $(du -m game-scroll.aab | cut -f1) MB, signed: **${{ steps.key.outputs.signed || 'false' }}**" >> "$GITHUB_STEP_SUMMARY"
 
       # Qualcomm's NPU libraries (QNN) are only in the on-demand module android/qnn (as files the app copies
       # out and checks), which Play sends to a phone only when the app asks (plugins/npu QnnRuntime.java),
@@ -146,7 +148,10 @@ jobs:
           echo "Checked $n 64-bit native libraries"
           exit $bad
 
+      # (kept for the upload job and to download from a main or hand-started run; a pull request's bundle is
+      # unsigned and goes nowhere, so its build and checks are all it needs)
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: game-scroll-aab
           path: |
