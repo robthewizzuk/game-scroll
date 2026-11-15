@@ -219,4 +219,77 @@ export function plane(o = {}) {
   const bx = b.bounds();
   return { kind: 'plane', style, body: b, parts, wheels, points, size: { length: bx.l, width: bx.w, height: bx.hi[1] + m.gear }, gear: m.gear, sit: m.sit, props: m.props, radius: wheels[0]?.geo.r || 0 };
 }
-export const CRAFT = { boat: Object.keys(BOATS), plane: Object.keys(PLANES) };
+
+// helicopters: a pod with its glass, a boom out to the tail, skids under it, a rotor over it on its mast and one on the
+// tail (parts rotor and tail, which spin with move()'s power). Its origin is on the ground under its skids, as a car's.
+const HELIS = {
+  // a light helicopter: two seats in a bubble of glass, a thin boom, two blades
+  light(b, o, parts, points) { return heli(b, parts, points, { zN: -1.75, zE: 1.15, a: .66, bt: .72, bb: .5, cy: 1.22, boom: 4.7, R: 4.2, blades: 2, glassTo: .2, e: 1 }); },
+  // the same in a police livery, with a searchlight under its chin and lamps that flash
+  police(b, o, parts, points) {
+    const m = heli(b, parts, points, { zN: -1.75, zE: 1.15, a: .66, bt: .72, bb: .5, cy: 1.22, boom: 4.7, R: 4.2, blades: 2, glassTo: .2, e: 1, band: true });
+    b.box('dark', .16, .16, .2, [0, .58, -1.2], 0, .03).cyl('iron', .14, .14, .24, [0, .5, -1.32], [PI / 2 - .3, 0, 0], 16).cyl('lamp', .12, .12, .02, [0, .46, -1.45], [PI / 2 - .3, 0, 0], 16);
+    points.spot = [0, .45, -1.47];
+    m.beacons = [{ at: [0, 2.08, 1.1], slot: 'beaconA' }, { at: [0, .64, .7], slot: 'beaconB' }];
+    b.box('beaconA', .1, .07, .14, [0, 2.08, 1.1], 0, .03).box('beaconB', .1, .07, .14, [0, .64, .7], 0, .03);
+    return m;
+  },
+  // an air ambulance: a bigger cabin with windows and a sliding door each side, four blades, a winch over the door
+  medic(b, o, parts, points) {
+    const m = heli(b, parts, points, { zN: -2.5, zE: 2.3, a: .9, bt: .82, bb: .62, cy: 1.35, boom: 6.2, R: 5.4, blades: 4, glassTo: -.95, e: .62, band: true, windows: true });
+    b.bar('steel', [.9, 2.05, .2], [1.22, 2.1, .2], .04, 8).box('iron', .16, .2, .2, [1.26, 1.98, .2], 0, .03);
+    points.winch = [1.26, 1.86, .2];
+    m.beacons = [{ at: [0, 2.32, 1.9], slot: 'beaconA' }, { at: [0, .66, 1.2], slot: 'beaconB' }];
+    b.box('beaconA', .1, .07, .14, [0, 2.32, 1.9], 0, .03).box('beaconB', .1, .07, .14, [0, .66, 1.2], 0, .03);
+    return m;
+  },
+};
+function heli(b, parts, points, { zN, zE, a, bt, bb, cy, boom, R, blades, glassTo, e, band = false, windows = false }) {
+  // the pod: round at the nose, glass over the front and down to the chin, the sides closed behind (windows: a row of them)
+  const prof = z => { const u = (z - zN) / (zE - zN), k = u < .3 ? .35 + .65 * sin(u / .3 * PI / 2) ** .7 : u < .75 ? 1 : 1 - ((u - .75) / .25) ** 1.4 * .45; return { a: a * k, bt: bt * k, bb: bb * (u < .3 ? .6 + .4 * u / .3 : 1), c: cy + (u < .3 ? -(1 - u / .3) * .12 : 0), e }; };
+  const win = z => windows && z > -.4 && z < 1.4 && !(z > .45 && z < .55);
+  body(b, stations(zN, zE, .2, windows ? [-.4, 1.4, .45, .55, glassTo] : [glassTo]), prof, (z, t) => {
+    const up = t > PI * .08 && t < PI * .92, side = abs(t - PI * .5) > PI * .2;
+    if (z < glassTo && (up || (z < zN + .55 && t > PI * 1.15 && t < PI * 1.85) || abs(t - PI) < .5 || t < .5 || t > PI * 1.85)) return 'screen';
+    if (win(z) && up && side && abs(sin(t)) < .62 && cos(t) * cos(t) > .3) return 'glass';
+    return band && sin(t) < -.05 && sin(t) > -.42 ? 'paint2' : 'paint';
+  }, 24, ['paint', 'paint']);
+  // the boom out to the tail, a fin and a tailplane, a guard under the tail rotor
+  const bz0 = zE - .35, bz1 = zE + boom, bp = z => { const u = (z - bz0) / (bz1 - bz0); return { a: lerp(.36, .1, u), bt: lerp(.34, .12, u), bb: lerp(.3, .1, u), c: lerp(cy + .2, cy + .5, u) }; };
+  body(b, stations(bz0, bz1, .45), bp, band ? (z, t) => sin(t) < -.1 && sin(t) > -.6 ? 'paint2' : 'paint' : 'paint', 12, [null, 'paint']);
+  const ty = cy + .5;
+  wing(b, 'paint', [0, ty, bz1 - .55], [0, ty + 1.05, bz1 + .05], .9, .45, .1, [1, 0, 0]);
+  for (const s of [-1, 1]) wing(b, 'paint', [s * .1, ty - .15, bz1 - 1.6], [s * (.85 + a * .3), ty - .12, bz1 - 1.45], .6, .38, .1);
+  b.bar('steel', [0, ty - .1, bz1 - .3], [0, ty - .65, bz1 + .25], .02, 6);
+  // the engine over the cabin, the mast and the hub
+  const top = cy + bt * .97, hz = (zN + zE) / 2 + .35;
+  b.box('paint2', a * 1.1, .42, (zE - zN) * .5, [0, top + .12, hz + .25], 0, .14).box('dark', a * .7, .1, .3, [0, top + .2, hz + .95], [.3, 0, 0], .04);
+  for (const s of [-1, 1]) b.box('dark', .02, .16, .4, [s * a * .55, top + .14, hz + .3]);
+  b.cyl('steel', .07, .09, .5, [0, top + .5, hz], 0, 12);
+  // the skids: two tubes turned up at the front, on bent legs
+  const sx = a + .25, s0 = zN + .35, s1 = zE + .1;
+  for (const s of [-1, 1]) {
+    b.bar('steel', [s * sx, .045, s0 + .2], [s * sx, .045, s1], .04, 8).bar('steel', [s * sx, .045, s0 + .2], [s * sx, .18, s0 - .05], .04, 8);
+    for (const z of [s0 + .55, s1 - .45]) b.bar('steel', [s * sx, .05, z], [s * (sx - .12), .4, z], .035, 8).bar('steel', [s * (sx - .12), .4, z], [s * a * .55, cy - bb * .8, z], .035, 8);
+  }
+  // inside the glass: seats, a console, the sticks
+  const fy = cy - bb * .72;
+  b.box('carpet', a * 1.5, .04, (glassTo - zN) + .6, [0, fy, (zN + glassTo) / 2 + .2]);
+  for (const s of [-1, 1]) b.box('seat', .42, .1, .44, [s * a * .42, fy + .4, glassTo + .1], 0, .04).box('seat', .42, .58, .1, [s * a * .42, fy + .7, glassTo + .36], [.15, 0, 0], .04).bar('dark', [s * a * .42, fy + .05, glassTo - .3], [s * a * .42, fy + .55, glassTo - .38], .015, 6);
+  b.box('dash', a * 1.3, .26, .3, [0, fy + .58, zN + .62], [-.4, 0, 0], .05).box('dials', a * 1.1, .14, .01, [0, fy + .66, zN + .78], [-.4, 0, 0]);
+  // the rotors
+  const hub = [0, top + .78, hz], P = propeller(new Shape(), blades, R, 'prop', blades > 2 ? .045 : .055);
+  P.cyl('steel', .14, .14, .16, [0, 0, 0], [PI / 2, 0, 0], 12).cyl('steel', .05, .05, .3, [0, 0, -.1], [PI / 2, 0, 0], 8);
+  parts.rotor = { shape: P, at: hub, rot: [-PI / 2, 0, 0] };
+  parts.tail = { shape: propeller(new Shape(), 2, blades > 2 ? .8 : .62, 'prop', .14), at: [.16, ty + .25, bz1 - .05], rot: [0, PI / 2, 0] };
+  Object.assign(points, { pilot: [a * .42, fy + .45, glassTo + .12], copilot: [-a * .42, fy + .45, glassTo + .12], door: [a + .55, 0, glassTo + .15], cabin: [0, fy + .1, glassTo + .9], hook: [0, .2, hz], tailRotor: [.16, ty + .25, bz1 - .05], smoke: [0, top + .3, hz + 1.1] });
+  return { props: ['rotor', 'tail'], rotor: R };
+}
+/** A helicopter: light, police, medic. */
+export function helicopter(o = {}) {
+  const style = HELIS[o.style] ? o.style : 'light', b = new Shape(), parts = {}, points = {}, m = HELIS[style](b, o, parts, points);
+  (m.beacons || []).forEach((q, i) => { points['beacon' + i] = q.at; });
+  const bx = b.bounds();
+  return { kind: 'helicopter', style, body: b, parts, wheels: [], points, beacons: m.beacons || [], size: { length: max(bx.l, m.rotor * 2), width: max(bx.w, m.rotor * 2), height: bx.hi[1] + .4 }, gear: 0, props: m.props, rotor: m.rotor, radius: 0 };
+}
+export const CRAFT = { boat: Object.keys(BOATS), plane: Object.keys(PLANES), helicopter: Object.keys(HELIS) };

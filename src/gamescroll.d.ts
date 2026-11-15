@@ -286,7 +286,7 @@ export interface SoundPart {
 /** What a thing is made of, for gs.sound.Foley's knocks and steps. */
 export type FoleyMaterial = 'wood' | 'metal' | 'stone' | 'glass' | 'plastic' | 'rubber' | 'cloth' | 'body' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'leaves' | 'carpet';
 /** An engine for gs.sound.Foley.watch(vehicle, { engine }) (read from a gs.models.vehicle's kind and style by itself). */
-export type FoleyEngine = 'petrol' | 'sports' | 'van' | 'jeep' | 'kart' | 'diesel' | 'tank' | 'rail diesel' | 'steam' | 'rail' | 'outboard' | 'boat diesel' | 'rowboat' | 'prop' | 'jet' | 'electric';
+export type FoleyEngine = 'petrol' | 'sports' | 'van' | 'jeep' | 'kart' | 'diesel' | 'tank' | 'rail diesel' | 'steam' | 'rail' | 'outboard' | 'boat diesel' | 'rowboat' | 'prop' | 'jet' | 'electric' | 'bike' | 'scooter' | 'dirt' | 'bus' | 'rotor';
 export interface Foley {
   /** The World3D whose knocks sound by themselves (set it again for a new world). */
   world: Loose;
@@ -2954,7 +2954,8 @@ export interface ArenaPart {
 /** What gs.models.vehicle takes. Colours are '#rrggbb'. */
 export interface VehicleOptions {
   /**
-   * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep'; a truck 'flat' | 'canvas' | 'box' | 'tanker';
+   * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep' | 'police' | 'taxi' | 'ambulance'; a truck 'flat' | 'canvas' | 'box' | 'fire' (a fire engine with a ladder on a turntable: aim(turn, lift)) | 'tanker';
+   * a bus 'city' | 'double' (a double decker) | 'coach'; a motorbike ('bike') 'road' | 'sport' | 'scooter' | 'dirt'; a helicopter 'light' | 'police' (a searchlight) | 'medic';
    * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'guard' (a guard's van) | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
    */
   style?: string;
@@ -2992,6 +2993,8 @@ export interface VehicleOptions {
    * A seven-car goods train is 16 draws where it was 58, the same triangles and the same picture. It rolls, moves, lights and twins as before and its cars keep their `points`; along() throws, as its cars are one shape.
    */
   fuse?: boolean;
+  /** A bus: the side its doors are on, 'right' (where the kerb is when you drive on the right) or 'left'. */
+  side?: 'right' | 'left';
 }
 /** One wagon of a train, when a name is not enough: `cars: ['van', { style: 'open', load: 'coal', colour: '#565c50' }, 'guard']`. */
 export interface WagonOptions {
@@ -3006,16 +3009,16 @@ export interface WagonOptions {
 }
 /** What gs.models.vehicle gives back: a Group, its nose along -z and +x its right side, in metres. A road vehicle and a train stand on y = 0, a boat floats with its waterline there, a plane's origin is on its centre line. */
 export type VehicleT = Loose & {
-  kind: 'car' | 'truck' | 'tank' | 'train' | 'boat' | 'plane'; style: string;
+  kind: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'train' | 'boat' | 'plane' | 'helicopter'; style: string;
   /** Its body (a Group): everything but the wheels. */
   shell: Loose;
   /** Its wheels' pivots: front left, front right, back left, back right (then a third axle's); each has `radius`, `width` and `steers`. A tank's and a train's are drawn as copies and are not here. */
   wheels: Loose[];
   /** A tank: where its two caterpillar tracks run (x: metres either side of its middle) and how wide each is. gs.outdoors.Marks lays their marks. */
   belts?: { x: number; width: number };
-  /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
+  /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a helicopter's `rotor` and `tail`; a fire engine's `turntable` and `ladder`; a motorbike's `fork` (its bars and front wheel turn with it); a steam engine's `rods`, `mainRods`. */
   parts: Record<string, Loose>;
-  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
+  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`; a bus's `door` (and `door0`, `door1`...), `aisle`; a motorbike's `rider`, `pillion`, `pegL`, `pegR`, `barL`, `barR`, `stand`; a helicopter's `pilot`, `copilot`, `door`, `cabin`, `hook`, `tailRotor` (a police one's `spot`); a fire engine's `tip` (the ladder's end), `hose`, `crewL`, `crewR`; a car or truck with lights on its roof `beacon0`, `beacon1`... as its kind has them. */
   points: Record<string, Loose>;
   /** Metres over everything that does not turn. */
   size: { length: number; width: number; height: number };
@@ -3035,16 +3038,24 @@ export type VehicleT = Loose & {
    * The easy way to keep it alive each frame: rolls its wheels (or tracks) for its speed in metres a second, eases its front wheels to `steer` (-1..1, + right; lock: radians at 1), rolls its body outwards in a turn and rocks it with its speeding up and
    * slowing down (sway: how much, 1), spins its propellers up to a blur (power 0..1), turns a boat's motor and radar. A tank: `turn` -1..1 runs one track ahead of the other, `aim` [turn, lift] eases its turret and gun there. ground: false keeps a plane's wheels still in the air.
    */
-  move(dt: number, speed?: number, o?: { steer?: number; lock?: number; sway?: number; turn?: number; aim?: [number, number] | null; power?: number; ground?: boolean }): VehicleT;
+  move(dt: number, speed?: number, o?: { steer?: number; lock?: number; sway?: number; turn?: number; aim?: [number, number] | null; power?: number; ground?: boolean; /** A motorbike: lean this far (radians, + right) instead of what the turn asks. */ lean?: number }): VehicleT;
   /**
    * Cars and trucks, for gs.physics3d: `world.vehicle(car, car.chassis({ power: 14 }))` gives it springs and grip. It returns what World3D.vehicle wants (w, h, l, radius, rest, travel and its four wheels, plus anything you pass) and moves the body so its
    * origin is the middle of the chassis and not on the road. Call it once; a third axle's wheels follow the second's.
+   * A motorbike: `world.vehicle(bike, bike.chassis())` (it says bike: true): its rider keeps it upright and it leans into turns by itself, until it hits something at 8 m/s or more (fall) and goes over (`fallen`; rightUp() stands it again).
    */
   chassis?(o?: Record<string, Loose>): Record<string, Loose>;
-  /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops). */
+  /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops); a fire engine's turntable and ladder (up to 1.25). */
   aim(turn?: number, lift?: number): VehicleT;
-  /** Its lamps on or off. */
+  /** Its lamps on or off (a taxi's roof sign too). */
   lights(on?: boolean): VehicleT;
+  /** A police car, an ambulance, a fire engine, a police helicopter: its flashing lights, each its own lamp you can light a scene with (point: where it is, colour '#rrggbb', on: lit this frame). Empty on anything else. */
+  beacons: { point: Loose; colour: string; slot: string; on: boolean }[];
+  /** Its flashing lights on or off (they flash in bursts, one side then the other, in update(dt) or move()). No sound: play your own. */
+  siren(on?: boolean): VehicleT;
+  readonly sirenOn: boolean;
+  /** A motorbike: how far it leans now, radians, + to its right (move() leans it into a turn for its speed, or to o.lean). */
+  readonly lean: number;
   /** A car's and a truck's: how dirty, 0 clean .. 1 caked (road grime low down and behind, dust on top, a film on the glass the wipers cleared). With no number, how dirty it is. This car only (its twins keep theirs). */
   dirt?(v?: number): VehicleT;
   /** How wet of its own, 0..1: beading on its paint and glass (a car just out of the wash or the rain). In the rain the view's air beads it by itself (gs.sky.Weather), so this is for when the air is dry. */
@@ -4007,15 +4018,15 @@ export interface ModelsPart {
   };
   /**
    * A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots.
-   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
+   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep, police, taxi, ambulance), 'truck' (flat, canvas, box, fire, tanker), 'tank' (medium, light, heavy), 'bus' (city, double, coach), 'bike' (road, sport, scooter, dirt), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet), 'helicopter' (light, police, medic).
    * Its nose points along -z, as gs.vehicles, gs.craft and World3D.vehicle push things. Each frame: move(dt, speed, { steer }) (wheels roll and steer, the body rocks on its springs, tracks run, propellers spin); or roll(d), steer(a), aim(turn, lift) yourself.
-   * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car or a truck; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
+   * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car, a truck, a bus or a motorbike; a helicopter flies on a gs.craft.Hover; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
    * A train: vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }) is the whole train; along(track, d) lays it on your rails, or fuse: true makes one that keeps to a straight line in a third of the draws.
    * 3,000 to 21,000 triangles and 4 to 24 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
    */
   vehicle: {
     (kind: 'train', o?: VehicleOptions): TrainT;
-    (kind?: 'car' | 'truck' | 'tank' | 'boat' | 'plane', o?: VehicleOptions): VehicleT;
+    (kind?: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'boat' | 'plane' | 'helicopter', o?: VehicleOptions): VehicleT;
     /** Every kind and its styles: { car: ['saloon', ...], truck: [...], tank, train, boat, plane }. */
     readonly kinds: Readonly<Record<string, readonly string[]>>;
   };

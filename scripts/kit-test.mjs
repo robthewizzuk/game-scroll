@@ -6360,7 +6360,7 @@ console.log('physics ok');
 
 // vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
 {
-  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
+  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js'), B = await import('../src/kit/models/vehicle-bike.js');
   const { vehicle } = await import('../src/kit/models/vehicles.js');
   // what a shape's triangles say: its volume (triangles facing out make it positive), its box, edges that are not shared by two triangles, corners that are not numbers
   const facts = geos => {
@@ -6415,13 +6415,17 @@ console.log('physics ok');
     const plans = [], t0 = performance.now();
     for (const st of S.KINDS.car) plans.push(S.car({ style: st })); for (const st of S.KINDS.truck) plans.push(S.truck({ style: st })); plans.push(S.truck({ style: 'flat', axles: 3 }));
     for (const st of S.KINDS.tank) plans.push(S.tank({ style: st })); for (const st of R.RAIL) plans.push(R.railcar(st)); for (const st of C.CRAFT.boat) plans.push(C.boat({ style: st })); for (const st of C.CRAFT.plane) plans.push(C.plane({ style: st }));
+    for (const st of S.KINDS.bus) plans.push(S.bus({ style: st })); for (const st of B.BIKE_KINDS) plans.push(B.bike({ style: st })); for (const st of C.CRAFT.helicopter) plans.push(C.helicopter({ style: st }));
     const ms = performance.now() - t0; let tris = 0;
     for (const p of plans) {
       const name = p.kind + ' ' + p.style, f = facts(all(p.body)); tris += f.tris;
       assert.ok(f.bad === 0 && f.tris > 800, name + ': ' + f.tris + ' triangles, all real numbers'); assert.ok(f.facing > .97, name + ': faces out (' + f.facing.toFixed(3) + ')');
-      assert.ok(near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');
+      assert.ok((p.kind === 'bike' ? f.hi[2] - f.lo[2] < p.size.length && f.hi[2] - f.lo[2] > p.wheelbase * .8 : near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4)) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');   // (a bike's size is over its wheels)
       for (const q of Object.values(p.parts || {})) assert.equal(facts(all(q.shape)).bad, 0);
-      for (const w of p.wheels) { assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(w.at[1] - w.geo.r, -p.gear, .01) || w.at[2] > 3 : near(w.at[1], w.geo.r, 1e-9)), name + ': wheels on the ground'); }
+      for (const w of p.wheels) {   // (a bike's front wheel is on its forks: where the forks put it)
+        const at = w.on ? new THREE.Vector3(...w.at).applyEuler(new THREE.Euler(...(p.parts[w.on].rot || [0, 0, 0]))).add(new THREE.Vector3(...p.parts[w.on].at)).toArray() : w.at;
+        assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(at[1] - w.geo.r, -p.gear, .01) || at[2] > 3 : near(at[1], w.geo.r, 1e-6)), name + ': wheels on the ground');
+      }
       for (const pt of Object.values(p.points)) assert.ok((Array.isArray(pt) ? pt : pt.at).every(Number.isFinite));
     }
     const car = plans[0], jeep = plans.find(p => p.style === 'jeep'), lorry = plans.find(p => p.kind === 'truck'), six = plans.find(p => p.kind === 'truck' && p.wheels.length === 6);
@@ -6450,6 +6454,15 @@ console.log('physics ok');
     assert.equal(JSON.stringify(tender.sets[0].geo), JSON.stringify(van.sets[0].geo), 'a tender on the wagons\' wheels (one shape, so one draw in a fused train)');
     for (const bt of plans.filter(p => p.kind === 'boat')) { const f = facts(all(bt.body)); assert.ok(near(f.lo[1], -bt.draft, .02) && f.hi[1] > .3, bt.style + ' floats: ' + f.lo[1].toFixed(2) + ' m below the water'); const bow = facts(all(bt.body).map(g => { const a = g.attributes.position.array, keep = []; for (let i = 0; i < a.length; i += 9) if (Math.max(a[i + 2], a[i + 5], a[i + 8]) < f.lo[2] + .25) keep.push(...a.subarray(i, i + 9)); const o = new THREE.BufferGeometry(); o.setAttribute('position', new THREE.BufferAttribute(new Float32Array(keep), 3)); o.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(keep.length), 3)); return o; }).filter(g => g.attributes.position.count)); assert.ok(bow.hi[0] - bow.lo[0] < bt.size.width * .45, bt.style + ': a bow at -z'); }
     for (const pl of plans.filter(p => p.kind === 'plane')) { const f = facts(all(pl.body)); assert.ok(near(f.hi[0] - f.lo[0], pl.size.width, pl.size.width * .1) && pl.props.every(n => pl.parts[n].shape.slots.has('blur')) && pl.gear > 1 && pl.points.pilot, pl.style + ': wings as wide as it says'); }
+    // the working vehicles: liveries and flashing lamps, a fire engine's ladder; buses; bikes on their forks; helicopters' rotors
+    const pol = plans.find(p => p.style === 'police'), amb = plans.find(p => p.style === 'ambulance'), taxi = plans.find(p => p.style === 'taxi'), fire = plans.find(p => p.style === 'fire');
+    for (const w of [pol, amb, fire]) assert.ok(w.beacons.length >= 2 && w.beacons.every((q, i) => q.slot && w.points['beacon' + i] === q.at) && w.body.slots.has('beaconA') && w.body.slots.has('beaconB') && cut(w, 'paint2') > 50, w.style + ': a livery and lamps that flash');
+    assert.ok(cut(taxi, 'sign') > 0 && !taxi.beacons.length && amb.size.height > 2.4 && pol.size.length < 5.3, 'a taxi\'s sign; an ambulance stands tall');
+    assert.ok(fire.parts.turntable && fire.parts.ladder.on === 'turntable' && fire.points.tip.on === 'ladder' && fire.aim.turn === 'turntable' && fire.wheels.length === 6 && fire.points.crewL, 'a fire engine: a ladder on a turntable, crew seats, three axles');
+    for (const bu of plans.filter(p => p.kind === 'bus')) assert.ok(bu.size.length > 10 && bu.wheels.length === 4 && bu.wheels[2].geo.dual && cut(bu, 'glass') > 400 && bu.points.door0 && bu.points.door0[0] > 1, bu.style + ': a bus, its doors on the kerb side');
+    assert.ok(plans.find(p => p.style === 'double').size.height > 4.2 && S.bus({ side: 'left' }).points.door0[0] < -1, 'a double decker is tall; side: left puts the doors on the left');
+    for (const bk of plans.filter(p => p.kind === 'bike')) assert.ok(bk.wheels.length === 2 && bk.wheels[0].on === 'fork' && bk.steer === 'fork' && bk.lean && bk.rake > .2 && bk.rake < .5 && bk.points.rider[1] > .7 && bk.points.barL.on === 'fork' && bk.size.width < 1, bk.style + ': a bike, its front wheel on raked forks');
+    for (const h of plans.filter(p => p.kind === 'helicopter')) assert.ok(h.props.every(n => h.parts[n].shape.slots.has('blur')) && h.parts.rotor.rot[0] === -Math.PI / 2 && h.rotor > 3.5 && h.points.pilot[1] > .5 && h.gear === 0, h.style + ': a helicopter, its rotor level over it');
     assert.ok(ms < 4000, 'every plan in ' + ms.toFixed(0) + ' ms');
     // the made vehicle: its parts move as asked; a copy shares its shapes
     const v = vehicle('car', { style: 'saloon', seed: 3 }), w = v.twin();
@@ -6471,7 +6484,31 @@ console.log('physics ok');
       assert.doesNotThrow(() => pw.free(), 'a world with a car in it can be freed');
     }
     let bad = null; try { vehicle('car', { style: 'hovercraft' }); } catch (e) { bad = e; } assert.ok(/no car called 'hovercraft'/.test(bad?.message)); bad = null; try { vehicle('sled'); } catch (e) { bad = e; } assert.ok(/no vehicle 'sled'/.test(bad?.message), 'what it does not know is an error that names what it does');
-    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'train', 'boat', 'plane']);
+    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'bus', 'bike', 'train', 'boat', 'plane', 'helicopter']);
+    // a bike: its forks steer, it leans into a turn with the speed, and on gs.physics3d springs it stays upright and leans as it turns
+    {
+      const bk = vehicle('bike', { style: 'road' }); bk.steer(.2); assert.ok(bk.parts.fork.rotation.y === -.2 && bk.wheels[0].parent === bk.parts.fork && bk.wheels[1].parent === bk.shell, 'a bike: the front wheel turns with the forks');
+      for (let i = 0; i < 90; i++) bk.move(1 / 60, 12, { steer: .3 }); assert.ok(bk.lean > .3 && bk.shell.rotation.z < -.3 && near(bk.shell.rotation.z, -bk.lean, 1e-9), 'and leans into a right turn: ' + bk.lean.toFixed(2));
+      for (let i = 0; i < 90; i++) bk.move(1 / 60, 2, { steer: .3 }); assert.ok(bk.lean < .2, 'less, slowly: ' + bk.lean.toFixed(2));
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const mb = vehicle('bike', { style: 'sport' }), hold = new THREE.Scene(); hold.add(mb);
+      const ride = pw.vehicle(mb, mb.chassis({ at: { x: 0, y: 1, z: 0 }, power: 8 })); for (let i = 0; i < 60; i++) pw.step(1 / 60);
+      assert.ok(ride.bike && ride.grounded && !ride.fallen, 'a bike on springs stands');
+      for (let i = 0; i < 180; i++) { ride.drive(1, i > 90 ? .5 : 0); pw.step(1 / 60); }
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(mb.quaternion);
+      assert.ok(ride.speed > 6 && !ride.fallen && up.y > .95 && mb.lean > .15 && Math.abs(mb.position.x) > .5, 'and rides, turns and leans into the turn: ' + ride.speed.toFixed(1) + ' m/s, leaning ' + mb.lean.toFixed(2) + ', upright ' + up.y.toFixed(3));
+      pw.box(null, 4, 3, 1, { at: { x: mb.position.x - Math.sin(mb.rotation.y) * 4, y: 1.5, z: mb.position.z - Math.cos(mb.rotation.y) * 4 }, fixed: true });
+      ride.fallAt = 2; for (let i = 0; i < 120; i++) { ride.drive(1, 0); pw.step(1 / 60); } assert.ok(ride.fallen, 'into a wall: it goes over');
+      ride.rightUp(); assert.ok(!ride.fallen, 'rightUp() stands it up again'); pw.free();
+      // a police car's lamps flash in turn, its own; a fire engine's ladder lifts within its stops
+      const pc = vehicle('car', { style: 'police' }), twin = pc.twin(), lens = (v, n) => v.shell.children.find(m => m.name === n).material;
+      assert.ok(pc.beacons.length === 2 && !pc.sirenOn && lens(pc, 'beaconA') !== lens(twin, 'beaconA') && lens(pc, 'beaconA').emissiveIntensity < .1, 'a police car: its own lamps, dark');
+      pc.siren(true); const seen = { A: 0, B: 0, both: 0 }; for (let i = 0; i < 96; i++) { pc.update(1 / 60); const a = pc.beacons[0].on, b = pc.beacons[1].on; if (a) seen.A++; if (b) seen.B++; if (a && b) seen.both++; }
+      assert.ok(seen.A > 10 && seen.B > 10 && seen.both === 0 && lens(twin, 'beaconA').emissiveIntensity < .1, 'siren(): blue, then red, never both: ' + JSON.stringify(seen));
+      pc.siren(false); assert.ok(!pc.beacons.some(q => q.on) && lens(pc, 'beaconB').emissiveIntensity < .1, 'and off');
+      const fe = vehicle('truck', { style: 'fire' }); fe.aim(.6, 3); assert.ok(fe.parts.turntable.rotation.y === .6 && fe.parts.ladder.rotation.x === 1.25 && fe.beacons.length === 4, 'a fire engine\'s ladder turns and lifts, to its stop');
+      const hc = vehicle('helicopter', { style: 'medic' }); for (let i = 0; i < 120; i++) hc.move(1 / 60, 0, { power: 1 }); assert.ok(hc.parts.rotor.rotation.z > 20 && hc.parts.tail.rotation.z > 20 && hc.parts.rotor.children.find(m => m.name === 'blur').visible, 'a helicopter\'s rotors spin up into a blur');
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
