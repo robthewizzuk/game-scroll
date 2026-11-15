@@ -932,7 +932,15 @@ export const SHADOW_16 = { on: true };
 const shadowTarget = ShadowNode.prototype.setupRenderTarget;
 ShadowNode.prototype.setupRenderTarget = function (shadow, builder) {
   const o = shadowTarget.call(this, shadow, builder), map = o.shadowMap;
-  if (SHADOW_DEPTH.on && builder.renderer.shadowMap.transmitted !== true && !map.isCubeRenderTarget && map.textures.length === 1 && map.depthTexture) map.textures.length = 0;
+  if (SHADOW_DEPTH.on && builder.renderer.shadowMap.transmitted !== true && !map.isCubeRenderTarget && map.textures.length === 1 && map.depthTexture) {
+    map.textures.length = 0;
+    // (three gives a picture of depth alone the size of its depth picture (Textures.updateRenderTarget), and a resize sets the
+    // sizes of the colour pictures only (RenderTarget.setSize): a map asked for another size, a view stepping its quality, kept
+    // its old size on the chip while the kit and three's shaders took it for the new. A sun's parts were then drawn with
+    // rectangles outside the map and its kept copy copied from a map of another size: both refused, every frame)
+    const setSize = map.setSize;
+    map.setSize = function (w, h, d = 1) { const z = this.depthTexture?.image; if (z && (z.width !== w || z.height !== h)) { z.width = w; z.height = h; this.depthTexture.needsUpdate = true; } return setSize.call(this, w, h, d); };
+  }
   if (SHADOW_16.on && !map.isCubeRenderTarget && map.depthTexture && shadow.camera?.isOrthographicCamera) map.depthTexture.type = UnsignedShortType;
   return o;
 };
