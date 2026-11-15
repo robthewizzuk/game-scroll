@@ -2168,6 +2168,20 @@ console.log('physics ok');
   const t = performance.now(), big = new Swarm({ count: 2000, w: 600, h: 600, gpu: false }); for (let f = 0; f < 30; f++) big.update(1 / 60);
   console.log(`swarm: flocks, pulls, pushes, obstacles, edges, kill and revive ok (2000 on the CPU: ${((performance.now() - t) / 30).toFixed(1)} ms a frame here)`);
 }
+// glowing 2D light (look2d Lights glow: true): enough cascades to cross the field, sizes for the phone, and
+// with no WebGL2 (here) the canvas lights still answer
+{
+  const { cascadesFor, glowRes } = await import('../src/kit/glow2d.js');
+  for (const [w, h] of [[64, 64], [288, 512], [320, 320], [900, 1600]]) {
+    const n = cascadesFor(w, h), reach = (4 ** n - 1) / 3;
+    assert.ok(reach >= Math.hypot(w, h) && (4 ** (n - 1) - 1) / 3 < Math.hypot(w, h), `glow: ${n} cascades just cover ${w}x${h}`);
+  }
+  assert.equal(glowRes(360, 640, 1.5), 1.5, 'glow: res given wins');
+  const r = glowRes(360, 640); assert.ok(r >= .4 && r <= 2 && 640 * r <= 520 + 1, 'glow: res for a phone game ' + r);
+  assert.ok(glowRes(160, 160) >= 2 - 1e-9 || 160 * glowRes(160, 160) <= 520, 'glow: a Pocket game is worked out finer');
+  console.log('glow: cascades and sizes ok');
+}
+
 
 // gs.city layout: the same seed gives the same city; buildings stay inside their blocks and never overlap; the roads join up
 {
