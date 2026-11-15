@@ -4,10 +4,10 @@
 // passes writing one point; a few of those passes a small step make up for what Gauss-Seidel on the CPU does in one.
 // Nothing is copied back: the cloth is for looking at. Kit use only (hd3d-gpu.js exports it as gpuCloth).
 import { BufferAttribute, Mesh, MeshStandardNodeMaterial, DoubleSide, Vector4 } from 'three/webgpu';
-import { Fn, instancedArray, instanceIndex, uniform, uniformArray, Loop, If, int, float, vec3, vec4, max, min, mix, select, normalize, cross, length, dot, attribute, varying, transformNormalToView, positionPrevious, sin, faceDirection } from 'three/tsl';
+import { Fn, instancedArray, instanceIndex, uniform, uniformArray, Loop, If, int, float, vec3, vec4, max, min, mix, select, normalize, cross, length, dot, abs, sign, attribute, varying, transformNormalToView, positionPrevious, sin, faceDirection } from 'three/tsl';
 import { CLOTH, PIECES_MAX, SOLIDS_MAX } from './cloth.js';
 
-const LINKS = 16, ITER = 4, SOLIDS = SOLIDS_MAX, OMEGA = 1.5;
+const LINKS = 16, ITER = 4, SOLIDS = SOLIDS_MAX, OMEGA = 1.5, FN = CLOTH.FLOOR_N, FG = CLOTH.FLOOR_G;
 
 export function gpuCloth(cloth) {
   const { N, P, V, W, A, AR, PI, NB, L } = cloth;
@@ -35,6 +35,23 @@ export function gpuCloth(cloth) {
   // (solid things now and when it last stepped, each small step taking them part of the way: fr)
   const solidRows = Array.from({ length: SOLIDS * 2 }, () => new Vector4()), Sd = uniformArray(solidRows, 'vec4'), solidWas = Array.from({ length: SOLIDS * 2 }, () => new Vector4()), Sp = uniformArray(solidWas, 'vec4'), ns = uniform(0, 'int');
   const h = uniform(1 / 240), t = uniform(0), damp = uniform(1), floorY = uniform(-1e9), fr = uniform(1), fr0 = uniform(0);
+  // (the ground under it as grids of heights (cloth.floorNow), FG at most: for each its corner, a cell's size and whether there is one; the
+  // highest of those a point is in)
+  const Fb = instancedArray(FG * FN * FN, 'float'), floorG = Array.from({ length: FG }, () => uniform(new Vector4(0, 0, 1, 0))); let floorV = -1;
+  const floorAt = p => {
+    let y = float(-1e9);
+    floorG.forEach((G, q) => {
+      const u = p.x.sub(G.x).div(G.z), v = p.z.sub(G.y).div(G.z), on = G.w.greaterThan(.5).and(u.greaterThanEqual(0)).and(v.greaterThanEqual(0)).and(u.lessThanEqual(FN - 1)).and(v.lessThanEqual(FN - 1));
+      const uc = min(max(u, 0), FN - 1.001), vc = min(max(v, 0), FN - 1.001), i = int(uc), j = int(vc), a = uc.sub(float(i)), b = vc.sub(float(j)), o = j.mul(FN).add(i).add(q * FN * FN);
+      const h00 = Fb.element(o), h10 = Fb.element(o.add(1)), h01 = Fb.element(o.add(FN)), h11 = Fb.element(o.add(FN + 1));
+      const lin = mix(mix(h00, h10, a), mix(h01, h11, a), b), near = Fb.element(int(vc.add(.5)).mul(FN).add(int(uc.add(.5))).add(q * FN * FN));
+      y = max(y, select(on, select(min(min(h00, h10), min(h01, h11)).lessThan(-1e8), near, lin), float(-1e9)));
+    });
+    return y.add(CLOTH.FLOOR_LIFT);
+  };
+  // (a direction turned by a quaternion, and back)
+  const rotQ = (q, v) => { const tt = cross(q.xyz, v).mul(2); return v.add(tt.mul(q.w)).add(cross(q.xyz, tt)); };
+  const unrotQ = (q, v) => { const n = q.xyz.negate(), tt = cross(n, v).mul(2); return v.add(tt.mul(q.w)).add(cross(n, tt)); };
 
   const facing = (pos, i) => { const nb = Nb.element(i), u = pos.element(int(nb.y)).xyz.sub(pos.element(int(nb.x)).xyz), v = pos.element(int(nb.w)).xyz.sub(pos.element(int(nb.z)).xyz); return cross(u, v); };
   // a small step: the wind's push and gravity, then on (the sheet's facing as it was at the frame's start: this pass moves the points it would read)
@@ -75,6 +92,17 @@ export function gpuCloth(cloth) {
       If(th.x.greaterThan(-.5), () => { const o = Pb.element(int(th.x)).xyz, e = pos.sub(o), l = length(e); If(l.greaterThan(th.y), () => { pos.assign(o.add(e.mul(th.y.div(l)))); }); });   // (no further from its hold than it was made)
       Loop({ start: int(0), end: ns, type: 'int' }, ({ i: k }) => {
         const a0 = Sp.element(k.mul(2)), a1 = Sd.element(k.mul(2)), b0 = Sp.element(k.mul(2).add(1)), b1 = Sd.element(k.mul(2).add(1));
+        If(b0.w.greaterThan(.5), () => {   // a box that stands still: its middle and half across in a1, its turn in b1, its half up and deep in a0 (cloth.js pushBox)
+          const c = a1.xyz, he = vec3(a1.w, a0.x, a0.y).add(.01), l = unrotQ(b1, pos.sub(c)).toVar(), w = unrotQ(b1, q.xyz.sub(c)), d = he.sub(abs(l));
+          If(d.x.greaterThan(0).and(d.y.greaterThan(0)).and(d.z.greaterThan(0)), () => {
+            // (out the face it came in by, where it was a small step ago; else the nearest)
+            const out = abs(w).sub(he), came = max(out.x, max(out.y, out.z)).greaterThan(0), sc = select(came, out, d.negate());
+            const sx = sc.x.greaterThanEqual(sc.y).and(sc.x.greaterThanEqual(sc.z)), sy = sx.not().and(sc.y.greaterThanEqual(sc.z));
+            const sg = select(came, sign(w), sign(l)), s1 = vec3(select(sg.x.lessThan(0), -1, 1), select(sg.y.lessThan(0), -1, 1), select(sg.z.lessThan(0), -1, 1));
+            const ax = vec3(select(sx, 1, 0), select(sy, 1, 0), select(sx.or(sy), 0, 1)), held = l.sub(l.sub(w).mul(CLOTH.GRIP));
+            pos.assign(rotQ(b1, mix(held, s1.mul(he), ax)).add(c));
+          });
+        }).Else(() => {
         const a = mix(a0, a1, fr), b = mix(b0, b1, fr), ab = b.xyz.sub(a.xyz), ap = pos.sub(a.xyz), bb = max(dot(ab, ab), 1e-12);
         const tt = min(max(dot(ap, ab).div(bb), 0), 1), dd = ap.sub(ab.mul(tt)), dl = length(dd), r = mix(a1.w, b1.w, tt).add(.01);   // (a rod may narrow: a thigh to the knee)
         If(dl.lessThan(r).and(dl.greaterThan(1e-9)).and(a0.w.lessThan(.5).or(a0.w.greaterThan(x.w.add(.5)))), () => {   // (a0.w: an arm rod, 1 a forearm, 2 an upper arm; x.w: those it goes through)
@@ -82,8 +110,10 @@ export function gpuCloth(cloth) {
           // (held by its grip on it, against its own surface's going this small step: a swinging leg carries the skirt on it along)
           const sv = mix(a.xyz.sub(mix(a0, a1, fr0).xyz), b.xyz.sub(mix(b0, b1, fr0).xyz), tt), n = dd.div(dl), m = pos.sub(q.xyz).sub(sv); pos.subAssign(m.sub(n.mul(dot(m, n))).mul(CLOTH.GRIP));
         });
+        });
       });
-      If(pos.y.lessThan(floorY.add(.01)), () => { pos.y.assign(floorY.add(.01)); pos.x.subAssign(pos.x.sub(q.x).mul(CLOTH.GRIP)); pos.z.subAssign(pos.z.sub(q.z).mul(CLOTH.GRIP)); });
+      const fy = max(floorY, floorAt(pos));
+      If(pos.y.lessThan(fy.add(.01)), () => { pos.y.assign(fy.add(.01)); pos.x.subAssign(pos.x.sub(q.x).mul(CLOTH.GRIP)); pos.z.subAssign(pos.z.sub(q.z).mul(CLOTH.GRIP)); });
       Pb.element(i).assign(vec4(pos, 0)); Vb.element(i).assign(vec4(pos.sub(q.xyz).div(h), 0));
     });
   })().compute(N, [64]);
@@ -127,8 +157,9 @@ export function gpuCloth(cloth) {
       }
       cloth.pieces.slice(0, PIECES_MAX).forEach((p, k) => winds[k].set(p.wind[0], p.wind[1], p.wind[2], p.wind[3]));
       const S = cloth.solids.slice(0, SOLIDS); ns.value = S.length;
-      S.forEach((s, k) => { const pa = s.pa || s.a, pb = s.pb || s.b; solidRows[k * 2].set(s.a[0], s.a[1], s.a[2], s.r); solidRows[k * 2 + 1].set(s.b[0], s.b[1], s.b[2], s.rb ?? s.r); solidWas[k * 2].set(pa[0], pa[1], pa[2], s.arm || 0); solidWas[k * 2 + 1].set(pb[0], pb[1], pb[2], 0); });
+      S.forEach((s, k) => { if (s.box) { const e = s.half; solidRows[k * 2].set(s.a[0], s.a[1], s.a[2], e[0]); solidRows[k * 2 + 1].set(s.q.x, s.q.y, s.q.z, s.q.w); solidWas[k * 2].set(e[1], e[2], 0, 0); solidWas[k * 2 + 1].set(0, 0, 0, 1); return; } const pa = s.pa || s.a, pb = s.pb || s.b; solidRows[k * 2].set(s.a[0], s.a[1], s.a[2], s.r); solidRows[k * 2 + 1].set(s.b[0], s.b[1], s.b[2], s.rb ?? s.r); solidWas[k * 2].set(pa[0], pa[1], pa[2], s.arm || 0); solidWas[k * 2 + 1].set(pb[0], pb[1], pb[2], 0); });
       floorY.value = typeof cloth.ground === 'number' ? cloth.ground : -1e9;
+      const f = cloth.floor; if (!f) { floorV = -1; for (const G of floorG) G.value.w = 0; } else if (f.version !== floorV) { floorV = f.version; Fb.value.array.set(f.h); Fb.value.needsUpdate = true; floorG.forEach((G, q) => { const g = f.grids[q]; if (g) G.value.set(g.x0, g.z0, g.cell, 1); else G.value.w = 0; }); }
       const hh = Math.min(dt, 1 / 20) / steps; h.value = hh; damp.value = Math.exp(-hh * .6); t.value = cloth.t;
       if (cloth.carries?.length) {
         for (const [k, D] of cloth.carries) { if (k < 0 || k >= PIECES_MAX) continue; const e = D.elements; carryRows[k * 4].set(e[0], e[4], e[8], e[12]); carryRows[k * 4 + 1].set(e[1], e[5], e[9], e[13]); carryRows[k * 4 + 2].set(e[2], e[6], e[10], e[14]); carryRows[k * 4 + 3].set(1, 0, 0, 0); }
@@ -141,6 +172,6 @@ export function gpuCloth(cloth) {
       const list = lists[pairs] ||= [predict, ...Array.from({ length: pairs * 2 }, (_, i) => i % 2 ? solveB : solveA), finish];
       for (let s = 0; s < steps; s++) { fr.value = (s + 1) / steps; fr0.value = s / steps; r.compute(list); }
     },
-    dispose() { m.dispose(); g.deleteAttribute('clothAt'); for (const b of [Pb, P2, Qb, Vb, Ab, A0b, Lb, Kb, Cb, Nb, Xb, Tb]) b.value?.dispose?.(); },
+    dispose() { m.dispose(); g.deleteAttribute('clothAt'); for (const b of [Pb, P2, Qb, Vb, Ab, A0b, Lb, Kb, Cb, Nb, Xb, Tb, Fb]) b.value?.dispose?.(); },
   };
 }

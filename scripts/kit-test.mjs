@@ -8277,6 +8277,64 @@ console.log('physics ok');
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
 }
 
+// nothing goes through what is solid: cloth goes round the still things of the world (walls as boxes, posts, the ground as a mesh or a
+// grid of heights), and gs.characters.Solid keeps a posed body out of walls, finds the way with room to fall and keeps a held gun out of
+// its holder (src/kit/cloth.js, cloth-gpu.js, solid-body.js; weapon.wield uses it)
+{
+  const t0 = performance.now(), THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Cloth } = await import('../src/kit/cloth.js'), { Solid } = await import('../src/kit/solid-body.js'), { person, figure } = await import('../src/kit/poses.js');
+  const run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // a banner blown at a wall beside it stops at the wall's face (with the world; without it, it flies out through it)
+  const flies = [];
+  for (const world of [false, true]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .5 } }]);
+    const c = new Cloth(null, { wind: { x: 0, z: 6 }, world: world ? w : false }), b = c.banner({ from: [-1, 2.8, 0], to: [1, 2.8, 0], drop: 2.5 });
+    let most = -9; run(w, 200, () => { c.update(1 / 60); for (let k = b.base; k < b.base + b.cols * b.rows; k++) most = Math.max(most, c.P[k * 3 + 2]); });
+    flies.push(most); if (world) assert.ok(c.still.size === 1 && c.floor?.world, 'the wall is a box the cloth goes round, and the floor a grid of heights under it');
+  }
+  assert.ok(flies[0] > 1.5 && flies[1] < .36, 'a banner in the wind goes through a wall beside it with no world, and stops at its face (z .35) with one: ' + flies.map(v => v.toFixed(3)));
+  // a turned box of its own; a sheet dropped on a slope made of a grid of heights lies on it
+  { const c = new Cloth(null, { wind: { x: 0, z: 0 } }), s = c.sheet({ cols: 9, rows: 9, place: (i, j) => [-.6 + i * .15, 1.4, -.6 + j * .15] }); c.box({ at: [0, .5, 0], size: [.8, 1, .8], turn: .6 });
+    for (let i = 0; i < 180; i++) c.update(1 / 60);
+    let inside = 0; const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -.6);
+    for (let k = 0; k < c.N; k++) { const v = new THREE.Vector3(c.P[k * 3], c.P[k * 3 + 1] - .5, c.P[k * 3 + 2]).applyQuaternion(q); if (Math.abs(v.x) < .39 && Math.abs(v.y) < .49 && Math.abs(v.z) < .39) inside++; }
+    assert.ok(inside === 0 && c.P[(4 * 9 + 4) * 3 + 1] > .99, 'a sheet drapes over a turned box and none of it is inside: ' + inside); }
+  { const w = new World3D({ gravity: -9.8 }), n = 8, data = []; for (let r = 0; r <= n; r++) for (let q = 0; q <= n; q++) data.push(q * .5);
+    w.heights({ data, cols: n, rows: n, x: -4, z: -4, width: 8 });
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.sheet({ cols: 8, rows: 8, place: (i, j) => [-.5 + i / 7, 4, -.5 + j / 7] }); run(w, 240, () => c.update(1 / 60));
+    let under = 0; for (let k = 0; k < c.N; k++) if (c.P[k * 3 + 1] < (c.P[k * 3] + 4) * .5 - .02) under++;
+    assert.ok(under === 0 && c.P[1] < 2.2, 'a sheet lies on sloping ground made of a grid of heights, none of it under: ' + under); }
+  // a sheet dropped on a hill (a mesh made solid) lies on it, though another piece of the same cloth hangs 12 m away: each has its own grid
+  { const w = new World3D({ gravity: -9.8 }), hg = new THREE.PlaneGeometry(4, 4, 24, 24); hg.rotateX(-Math.PI / 2); const hp = hg.attributes.position, hill = (x, z) => .9 * Math.exp(-(x * x + z * z) / 1.6);
+    for (let i = 0; i < hp.count; i++) hp.setY(i, hill(hp.getX(i), hp.getZ(i))); w.ground(new THREE.Mesh(hg)); w.floor(0);
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.banner({ from: [-13, 3, 0], to: [-11, 3, 0], drop: 2 }); c.sheet({ cols: 11, rows: 11, place: (i, j) => [-.8 + i * .16, 1.4, -.8 + j * .16] });
+    run(w, 200, () => c.update(1 / 60)); let under = 0; const s = c.pieces[1];
+    for (let k = s.base; k < s.base + s.cols * s.rows; k++) if (c.P[k * 3 + 1] < hill(c.P[k * 3], c.P[k * 3 + 2]) - .05) under++;
+    assert.ok(under === 0 && c.floor.grids.length === 2 && c.P[(s.base + 60) * 3 + 1] > .85, 'a sheet lies over a hill with a banner far off, none of it under: ' + under + ', grids ' + c.floor.grids.length + ', top ' + c.P[(s.base + 60) * 3 + 1].toFixed(2)); }
+  // a person standing into a wall is put back to its face; the way with room to go down in
+  for (const make of [figure, person]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .2 } }]);
+    const scene = new THREE.Scene(), f = make(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const s = new Solid(f, { world: w }), p = s.keepOut(); s.update();
+    assert.ok(p && p.z < -.05 && Math.abs(p.y) < 1e-6 && s.bounds().hi.z < .06 && f.position.z === p.z, make.name + ': standing into a wall, it is put back out of it (only along the ground): ' + JSON.stringify(p));
+    assert.ok(s.keepOut() === null, 'and then it is clear');
+    assert.ok(s.room({ x: 0, z: 1 }) < .1 && s.room({ x: 0, z: -1 }) > 1.7 && s.room([1, 0]) > 1.7, 'no room to fall into the wall, room the other ways');
+    // a stick held out through both thighs is turned out of them about its grip (its end, out at the side)
+    const stick = new THREE.Mesh(new THREE.BoxGeometry(.04, .04, 1)); scene.add(stick); stick.position.set(f.position.x, .7, f.position.z); stick.rotation.y = Math.PI / 2;
+    const turned = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false }), again = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false });
+    assert.ok(turned > .1 && again < .01, make.name + ': a stick held into the thighs is turned out (' + turned.toFixed(2) + ' rad), and then is clear');
+  }
+  // a held thing pointed at a wall is turned off it about the grip, and stays where the hand holds it
+  { const w = new World3D({ gravity: -9.8 }); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .9 } }]);
+    const scene = new THREE.Scene(), f = person(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(.05, .08, 1)); scene.add(gun); gun.position.set(.2, 1.3, .25); gun.updateMatrixWorld(true);
+    const s = new Solid(f, { world: w }), grip = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld), t = s.keepOff(gun, { pivot: grip, ahead: true });
+    const tip = new THREE.Vector3(0, 0, .5).applyMatrix4(gun.matrixWorld), held = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld);
+    assert.ok(t > .2 && tip.z < .74 && held.distanceTo(grip) < 1e-6, 'a gun pointed into a wall is turned off it about the grip: ' + t.toFixed(2) + ' rad, its end at z ' + tip.z.toFixed(3)); }
+  console.log('nothing through what is solid: cloth stops at walls, drapes on boxes and lies on ground made of heights; bodies kept out of walls, room to fall, held things kept out of the holder and of walls ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // no kit is a physics engine of its own: the simple 2D World, where an arena's ball goes and 3D soft things all ask Rapier
 // (physics2d.js, arena.js predict(), soft.js in 3D; World3D sweep(), around(), outOf())
 {

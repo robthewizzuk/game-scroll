@@ -1299,6 +1299,26 @@ A `gs.models.weapon` brings all that with it: `kit.add('shield', gs.models.weapo
 goes to the left hand held by its grip, a bow too, and a spear, a staff or a longsword has the other hand on it once drawn
 (`both: false` for one hand).
 
+### A body that stays out of walls
+
+`const { Solid } = gs.characters;` The body of a posed person (a `gs.models.human`, a `gs.poses` person or a figure)
+as rods on the trunk, thighs, seat, shins and arms and a ball for the head, that follow the bones, for a body your
+game poses or plays clips on (a fall acted from a clip, a man leaning on a wall) rather than one a ragdoll moves:
+
+```js
+body = new Solid(man);                                   // finds the game's World3D, or { world }
+body.room({ x: 0, z: -1 }, 1.8);                         // how far he can go down that way before a wall, a kerb, a cart (0..1.8)
+update(dt) { man.rig.update(dt); const k = body.keepOut({ up: false, most: .12 }); if (k) { x += k.x; z += k.z; } }   // moved out of the walls
+body.keepOff(rifle, { pivot: grip, local: true });       // a thing he holds turned about its grip until it is out of his body
+```
+
+`keepOut()` looks at each rod against the world's still things and moves the whole body out of them by the
+smallest move (it never pushes down; `up: false` keeps it on the ground; `most` is the most it moves in one go) and
+gives back the move it made, or null. `room(dir, length)` sweeps a ball at shin and hip height from the hips that
+way. `keepOff(thing, { pivot, local, ahead })` turns something held about the pivot until it is clear of the
+body's rods and of the world's walls (`walls: false`: the body alone; `ahead: true`: only the longer side of the
+pivot, so a stock in the shoulder may touch); `weapon.wield()` does this by itself.
+
 ### People who react
 
 `const { Reactions } = gs.characters;` One for each character with a rig. It decides nothing about your
@@ -2400,6 +2420,10 @@ leaves a mark on the surface, with its sound; what was hit is read from the mesh
 `{ surface: 'metal' }`). `fx.muzzle(at, dir, { kind })` is a flash that lights the scene and a wisp of smoke;
 `fx.shell(held.gun.points.eject, { kind })` throws a spent case out to the right that bounces on the world with a tinkle.
 `fx.update(dt)` each frame, `fx.clear()` in `reset()`. On WebGPU marks don't show on see-through things (glass).
+A held weapon never goes through the one holding it: each `held.update()` turns it about the grip, as little as it
+takes, until it is clear of the holder's body (and of the walls of the game's `World3D`, when there is one), so a rifle
+held across a man who turns lies along him rather than through his chest (`held.turned`: how far it was turned this
+frame; `keep: false` to hold it exactly as posed).
 
 **Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
 `gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
@@ -4009,7 +4033,16 @@ update(dt) { wind.update(dt); cloth.update(dt); }        // after whatever its p
   hangs by the pole: cloth hardly stretches but shears and folds easily.
 - **Solid things.** `cloth.ball({ x, y, z, r })` and `cloth.capsule({ a, b, r })` (a leg, a post, a
   mast) push cloth out, and it grips them, so a sheet thrown over something stays on it; `set()` moves
-  one, `remove()` takes it away. `ground` (a height, or `(x, z) => height`) is what cloth lies on.
+  one, `remove()` takes it away. `cloth.box({ at, size: [w, h, d], turn })` is a box it drapes over
+  (a crate, a table; `turn` about the up axis, or a quaternion as `q`). `ground` (a height, or
+  `(x, z) => height`) is what cloth lies on.
+- **The world's still things.** With a `gs.physics3d` `World3D` (the game's own is found by itself), cloth
+  goes round what stands still in it as well as round its moving bodies: walls, posts and crates made with
+  `shape()` or `shapes()` (boxes, balls and capsules: the nearest to each piece, looked for again as it
+  moves) stop a banner blown at a wall and hold up a sheet dropped on them, and the world's ground (a mesh
+  made solid with `ground()`, a grid of `heights()`, a `floor()`) is what it lies on, read as a grid of
+  heights round each piece (16 a side, a metre and a half spare, four grids at most), so a sheet on a hill
+  lies on the hill. Nothing to call; `world: false` for none.
 - **Pins that move.** `piece.ride(object3D)` keeps its pins in their place on a moving thing (a flag
   on a boat, a pennant on a lance); `piece.move(dx, dy, dz)` moves them by hand. Put somewhere else at
   once (half a metre or a fifth of a turn in a frame: a round starting, a cut), a piece goes with it
