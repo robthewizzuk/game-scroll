@@ -3090,7 +3090,9 @@ tactics and learns this player), officers on foot, searches, busted or escaped. 
 roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
 bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
 that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
-road. The full guide is [docs/city.md](city.md).
+road. `new Interiors(city)` opens the city's front doors onto rooms: walk up to a shop, a diner, a bar, a home, a lobby
+or a warehouse and its room is made, the door swings open and you walk straight in (`room.spots` for a keeper, the counter and
+seats). The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and

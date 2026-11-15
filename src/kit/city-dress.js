@@ -137,19 +137,20 @@ function ring(q, p, o, y0, y1, col) {
  * (Run twice with the same random numbers: for the bits when the city is made, for the geometry when
  * the building's chunk is.)
  */
-export function dressBuilding(b, F, D, base, CELLS, bits = null) {
+// (hole: the building's doorway when it has one, gs.city doors: nothing is hung across it)
+export function dressBuilding(b, F, D, base, CELLS, bits = null, hole = null) {
   const R = rng(b.id * 7919 + 17), pq = D('plain'), mq = D('metal'), Ff = F.floor, trim = shade(F.trim || '#888', .92), p0 = b.parts[0];
   const storeys = (p, y0) => { const out = []; for (let f = 0; ; f++) { const y = base + f * Ff; if (y + Ff > p.y1 + .01) break; if (y >= y0 - .01) out.push([f, y]); } return out; };
   b.parts.forEach((p, k) => {
     const y0 = k === 0 ? base : p.y0;
     if (F.kind === 'punched' && b.facade !== 'concrete') {
       // a stone ledge along every storey at its sills
-      for (const [, y] of storeys(p, y0)) ring(pq, p, .09, y + Ff * .145, y + Ff * .215, trim);
+      for (const [f, y] of storeys(p, y0)) if (!(hole && k === 0 && f === 0 && y < hole.y + hole.h)) ring(pq, p, .09, y + Ff * .145, y + Ff * .215, trim);
     } else if (F.kind === 'curtain' && b.facade !== 'dark') {
       // fins between the bays, the height of the part
       for (let s = 0; s < 4; s++) { const w = side(p, s), n = Math.max(1, Math.round(w.L / F.win)); for (let i = 1; i < n; i++) { const t = i * w.L / n; wbox(pq, w, t - .06, t + .06, 0, .32, y0, p.y1, trim, false); } }
     } else if (b.facade === 'dark') {
-      for (const [, y] of storeys(p, y0)) ring(pq, p, .16, y + Ff * .17, y + Ff * .22, trim);
+      for (const [f, y] of storeys(p, y0)) if (!(hole && k === 0 && f === 0 && y < hole.y + hole.h)) ring(pq, p, .16, y + Ff * .17, y + Ff * .22, trim);
     }
   });
   // sills under a house's windows (where its picture has one: facadeTex leaves some cells blank)
@@ -157,6 +158,7 @@ export function dressBuilding(b, F, D, base, CELLS, bits = null) {
     const w = side(p0, s), n = Math.max(1, Math.round(w.L / F.win)), bw = w.L / n;
     for (const [f, y] of storeys(p0, base)) for (let i = 0; i < n; i++) {
       const cx = (b.u + s * 3 + i) % CELLS, cy = (b.v + f) % CELLS; if ((cx * 7 + cy * 3) % 5 > 2) continue;
+      if (hole && s === hole.s && f === 0 && (i + .73) * bw > hole.t0 && (i + .27) * bw < hole.t1) continue;
       wbox(pq, w, (i + .27) * bw, (i + .73) * bw, 0, .13, y + Ff * .2, y + Ff * .25, C('#f2f0ea'));
     }
   }

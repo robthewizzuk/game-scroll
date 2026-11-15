@@ -4451,6 +4451,31 @@ export interface CityBuilding {
   roof: 'flat' | 'gable'; colour: string | null; door: CitySpot; fire?: boolean; bits: { kind: string; x: number; y: number; z: number; s: number; rot?: number }[];
   /** The sides of it that face a street (0 north, 1 east, 2 south, 3 west; a corner building has two), when the city is dressed. */
   streets?: number[];
+  /** Its own front door in its street wall, as plain numbers (made by the City whatever its options): s the wall (0 -z, 1 +x, 2 +z, 3 -x), t0..t1 along it from its first corner (ax, az; tx, tz the way along), x, z the middle of the hole on the wall's face, nx, nz out of the wall, w, h, y (its sill), glass (a shop's or an office's), shed (a warehouse's wide one), storey (the ground storey's height). */
+  doorway?: CityDoorway | null;
+  /** The room behind the door while gs.city Interiors has it made, else null. */
+  room?: CityRoom | null;
+}
+export interface CityDoorway { s: 0 | 1 | 2 | 3; t0: number; t1: number; x: number; z: number; ax: number; az: number; tx: number; tz: number; nx: number; nz: number; w: number; h: number; y: number; glass: boolean; shed: boolean; storey: number }
+/** A spot in a room: where to stand or sit, and which way to face (turn, radians, as a person's rotation.y). */
+export interface CityRoomSpot { x: number; y: number; z: number; turn: number }
+/** A room behind a front door (gs.city roomPlan, and Interiors once made). */
+export interface CityRoomPlan {
+  kind: 'store' | 'diner' | 'bar' | 'home' | 'lobby' | 'warehouse' | string; building: number;
+  /** Its floor (world), the floor's height and the ceiling's. */ x0: number; z0: number; x1: number; z1: number; y: number; top: number;
+  /** Where it stands for the building in city.collide(): the floor and its doorway. */ area: { x0: number; z0: number; x1: number; z1: number };
+  /** What is solid in it: walls and furniture. */ boxes: { x0: number; z0: number; x1: number; z1: number; y0: number; y1: number }[];
+  /** The shut door's box. */ doorBox: { x0: number; z0: number; x1: number; z1: number; y0: number; y1: number };
+  /** What is drawn: { m: material name, box: [x0, y0, z0, x1, y1, z1], col } or { m, prism: [x, z, r, y0, y1, sides], col }. */ pieces: Loose[];
+  /** In its street wall: the door and the windows onto the street. */ holes: Loose[];
+  /** Its ceiling lamps (lit through the city's lamps by day and by night). */ lamps: { x: number; y: number; z: number; col: string; i: number; reach: number }[];
+  /** keeper: where the one who works there stands; counter: where a customer stands to be served; seats; stand (places to stand about); door (just inside); exit (just outside). */
+  spots: { keeper?: CityRoomSpot; counter?: CityRoomSpot; seats: CityRoomSpot[]; stand: CityRoomSpot[]; door: CityRoomSpot; exit: CityRoomSpot };
+}
+export interface CityRoom extends CityRoomPlan {
+  name: string; city: CityWorld; door: CityDoorway; /** False once let go of. */ live: boolean; /** Its door is (mostly) shut. */ shut: boolean; group: Loose;
+  /** Is p on its floor? */ inside(p: { x: number; z?: number; y?: number }): boolean;
+  /** Is there room for a body of radius r at x, z (in it and clear of its walls and furniture)? */ free(x: number, z: number, r?: number): boolean;
 }
 /** A parked car (City option parked): where it is, which way it faces and its box. */
 export interface CityParkedCar { parked: true; x: number; y: number; z: number; heading: number; style: number; colour: string; len: number; wid: number; x0: number; x1: number; z0: number; z1: number }
@@ -4674,7 +4699,7 @@ export interface CityPart {
    */
   City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: 'right' | 'left';
     traffic?: number; people?: number; night?: number; /** A gs.sky.Sky: the city lights up as it darkens. Left out (and no night given): the Sky the game made. */ sky?: Loose; link?: boolean; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
-    /** Rooms behind every window (default true). */ rooms?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
+    /** Rooms behind every window (default true). */ rooms?: boolean; /** Every building's own front door in its street wall, shut, that city.door() swings and gs.city Interiors opens onto a room (default true). */ doors?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
     /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
     /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;
     /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
@@ -4734,6 +4759,22 @@ export interface CityPart {
   }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown> };
   /** How bad each crime is, in heat (stars at 1, 4, 9, 16 and 26 heat). */
   CRIMES: Record<string, number>;
+  /**
+   * The rooms behind the city's front doors (a City, or every district of a Metro): walk up to one and the room behind it is
+   * made, a few pieces a frame (a corner shop, a diner, a bar, a front room, an office lobby, a warehouse); once it is made the
+   * door swings open as the player comes to it and they walk straight in, with no loading and no cut. city.collide() keeps a
+   * walker inside it, and with a World3D its walls and furniture are bodies. Make it in make() (its materials are made then),
+   * update(dt, player) each frame after the city's update.
+   */
+  Interiors: new (city: CityWorld | CityMetro, o?: { /** A World3D for the rooms' bodies (the game's own, if left out; false for none). */ world?: Loose | false | null; /** Metres from a door within which the room behind it is made (22). */ reach?: number;
+    /** Which room is behind a door: a name from INSIDE_KINDS, or null for a door that stays shut (default roomKind). */ kinds?: ((b: CityBuilding) => string | null) | null;
+    /** The doors open by themselves as the player comes to a made room (true; false: the game opens them with city.door(b, 1)). */ auto?: boolean; /** ms a frame for making a room (2). */ budget?: number; seed?: number; link?: boolean }) => CityInteriors;
+  /** The plan of the room behind building b's door, as plain numbers (no view); the same every time for a building. */
+  roomPlan(b: CityBuilding, o?: { kind?: string | null; seed?: number }): CityRoomPlan | null;
+  /** The kind of room behind a door when none is chosen: shops a store, a diner or a bar, houses a home, sheds a warehouse, the rest a lobby. */
+  roomKind(b: CityBuilding): string;
+  /** The room kinds and their most [width, depth] in metres. */
+  INSIDE_KINDS: Record<string, [number, number]>;
   /** What a police car can do: chase, ram, cutoff, block, hang. */
   TACTICS: string[];
   /**
@@ -4762,6 +4803,7 @@ export interface CityMetro {
   /** The highway round the city (null with highway: false), and the slip roads up to it. */ ring: CityRoad | null; ramps: CityRoad[];
   /** The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). */
   ways: { river: Loose; roads: CityRoad[]; landAt(x: number, z: number): number; natural(x: number, z: number): number; hills(x: number, z: number): number; near(x: number, z: number, reach?: number): { d: number; road: CityRoad; s: number; x: number; y: number; z: number; lateral: number } | null; traffic: { list: Loose[] } | null };
+  /** Lamp spots lit by day and by night in every district (gs.city Interiors sets them). */ indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null;
   /** The made districts. */ readonly cities: CityWorld[]; /** The made district the player is in, or null on the roads between. */ readonly city: CityWorld | null;
   /** The district being made a step at a time, or null. */ making: CityDistrict | null;
   /** The traffic and people of every made district. */ cars: CityWorld['cars']; people: CityWorld['people'];
@@ -4806,6 +4848,16 @@ export interface CityGps {
   pan(dx: number, dy: number): CityGps; zoom(f: number, x?: number, y?: number): CityGps; tap(x: number, y: number): CityMarker | null; pointAt(x: number, y: number): { x: number; z: number } | null;
   /** Draws one marker at a canvas point. */ mark(c: CanvasRenderingContext2D, m: CityMarker, x: number, y: number, size: number): void;
   /** The way on the road ahead in a view, as glowing arrows; hide() takes it away. */ show(view: Loose, o?: { reach?: number; width?: number; colour?: string; opacity?: number }): CityGps; hide(): CityGps;
+  dispose(): void;
+}
+export interface CityInteriors {
+  /** The room the player is in, or null. */ room: CityRoom | null; /** True on the frame the player came in / went out. */ entered: boolean; left: boolean;
+  /** Made rooms, by name. */ rooms: Map<string, CityRoom>;
+  /** The nearest front door to p within r (6): its building, door, city, and room once made (ready). */
+  near(p: { x: number; z?: number; y?: number }, r?: number): { building: CityBuilding; door: CityDoorway; city: CityWorld; room: CityRoom | null; ready: boolean } | null;
+  /** The made room p is in, or null. */ at(p: { x: number; z?: number; y?: number }): CityRoom | null;
+  /** Once a frame, after the city's update: makes the room behind the nearest door, opens and shuts the doors, says where the player is. */
+  update(dt: number, player: { x: number; z?: number; y?: number }): this;
   dispose(): void;
 }
 export interface CityWorld {
@@ -4860,6 +4912,12 @@ export interface CityWorld {
   ground(x: number, z: number): number;
   /** Pushes a circle out of the buildings and parked cars (changes p); the building (or parked car) touched, or null. */
   collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | CityParkedCar | null;
+  /** Opens (1 or true) or shuts (0) building b's front door: it swings over the next frames, and after solid(world) it stops being solid while open. Returns how far open it is now, 0..1. (gs.city Interiors does this by itself.) */
+  door(b: CityBuilding, open?: number | boolean): number;
+  /** Every building's front door (null with { doors: false }): open(b) says how far open, 0..1. */
+  doors: { open(b: CityBuilding): number; set(b: CityBuilding, want: number): void } | null;
+  /** Lamp spots lit by day and by night along with the street's (gs.city Interiors sets them for the rooms near the player). */
+  indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null;
   /** The parked cars (empty without the parked option). */
   parked: CityParkedCar[];
   ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; dist: number; building: CityBuilding } | null;

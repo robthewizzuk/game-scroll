@@ -54,6 +54,7 @@ import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
 import { pause, built } from './slices.js';
 import { rooms, ROOMS } from './city-rooms.js';
+import { Doors, DOOR_DEEP } from './city-doors.js';
 import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js';
 import { byEdge, laneCar, laneMove, chaseCar, looseCar, meet } from './city-drive.js';
 import { addMoves, lifeStep, ambient, dangers, dodge, react, cower, witness, report, fromCar, promote, demote, fullStep, toRing } from './city-life.js';
@@ -243,11 +244,28 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
       const n = [[0, -1], [1, 0], [0, 1], [-1, 0]][lot.face], fx = n[0] ? (n[0] > 0 ? x1 : x0) : (x0 + x1) / 2, fz = n[1] ? (n[1] > 0 ? z1 : z0) : (z0 + z1) / 2;
       const out = S.houses ? 0 : 1.2, door = { x: fx + n[0] * out, y: KERB, z: fz + n[1] * out, nx: n[0], nz: n[1], building: bld.id };
       if (S.houses) { door.x = n[0] ? (n[0] > 0 ? b.x1 - sw / 2 : b.x0 + sw / 2) : fx; door.z = n[1] ? (n[1] > 0 ? b.z1 - sw / 2 : b.z0 + sw / 2) : fz; }
-      bld.door = door; plan.spots.door.push(door);
+      bld.door = door; plan.spots.door.push(door); bld.doorway = doorwayOf(bld);
     }
   }
   if (S.water === 'south') plan.water = { z: plan.bounds.z1 };
   return plan;
+}
+
+/**
+ * Where a building's own front door is: in the middle of a bay of its street wall, the hole it leaves in the ground
+ * storey (gs.city doors), as plain numbers. s: the wall (its face: 0 -z, 1 +x, 2 +z, 3 -x), t0..t1 along it from its
+ * first corner (tx, tz: the way along), x, z: the middle of the hole on the wall's face, nx, nz: out of the wall, w, h,
+ * y (its sill), glass (a shop's or an office's glass door), shed (a warehouse's wide one), storey (the ground storey's height).
+ */
+export function doorwayOf(b) {
+  const F = FACADES[b.facade], p = b.parts[0], s = b.face, L = s % 2 === 0 ? p.x1 - p.x0 : p.z1 - p.z0;
+  const bays = Math.max(1, Math.round(L / (b.shops ? 5 : F.win))), bay = L / bays, storey = b.shops ? 4.6 : F.floor;
+  const glass = !!b.shops || F.kind === 'curtain', shed = F.kind === 'shed';
+  const w = Math.max(.9, Math.min(bay - .4, shed ? 3 : glass ? 1.8 : 1.15)), h = Math.min(shed ? 3.4 : 2.45, storey - .45);
+  const tm = (Math.floor(bays / 2) + .5) * bay;
+  // (the wall's first corner and the way along it, as Quads.walls draws them)
+  const ax = s === 0 || s === 1 ? p.x1 : p.x0, az = s === 1 || s === 2 ? p.z1 : p.z0, tx = [-1, 0, 1, 0][s], tz = [0, -1, 0, 1][s], [nx, nz] = [[0, -1], [1, 0], [0, 1], [-1, 0]][s];
+  return { s, t0: tm - w / 2, t1: tm + w / 2, x: ax + tx * tm, z: az + tz * tm, ax, az, tx, tz, nx, nz, w, h, y: KERB, glass, shed, storey };
 }
 
 /* ---------- textures, made in code once and shared by every city ---------- */
@@ -398,11 +416,21 @@ export class Quads {
     this.i.push(k, k + 1, k + 2);
   }
   // the four walls of a box from y0 to y1; uvOf(side, length, y0, y1) gives the uvs of each wall
-  walls(x0, z0, x1, z1, y0, y1, uvOf, col = null) {
+  // (hole: a doorway, doorwayOf(), left open in its wall: the facade picture runs on round it)
+  walls(x0, z0, x1, z1, y0, y1, uvOf, col = null, hole = null) {
     for (let s = 0; s < 4; s++) {
       const ax = s === 0 || s === 1 ? x1 : x0, az = s === 1 || s === 2 ? z1 : z0, bx = s === 1 || s === 2 ? x1 : x0, bz = s === 2 || s === 3 ? z1 : z0;
-      this.q12(ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az, uvOf ? uvOf(s, Math.hypot(bx - ax, bz - az), y0, y1) : undefined, col);
+      const uv = uvOf ? uvOf(s, Math.hypot(bx - ax, bz - az), y0, y1) : undefined;
+      if (hole && hole.s === s && hole.y < y1 && hole.y + hole.h > y0) this.holed(ax, az, bx, bz, y0, y1, uv, col, hole);
+      else this.q12(ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az, uv, col);
     }
+  }
+  // one wall from a to b with a hole from t0 to t1 along it, from h.y up h.h: the pieces round it, their uvs cut from the whole wall's
+  holed(ax, az, bx, bz, y0, y1, uv = UV4, col, h) {
+    const L = Math.hypot(bx - ax, bz - az), tx = (bx - ax) / L, tz = (bz - az) / L, lo = Math.max(y0, h.y), hi = Math.min(y1, h.y + h.h);
+    const U = t => uv[0] + (uv[2] - uv[0]) * t / L, V = y => uv[1] + (uv[5] - uv[1]) * (y - y0) / (y1 - y0);
+    const piece = (t0, t1, ya, yb) => { if (t1 - t0 < 1e-4 || yb - ya < 1e-4) return; this.q12(ax + tx * t0, ya, az + tz * t0, ax + tx * t1, ya, az + tz * t1, ax + tx * t1, yb, az + tz * t1, ax + tx * t0, yb, az + tz * t0, [U(t0), V(ya), U(t1), V(ya), U(t1), V(yb), U(t0), V(yb)], col); };
+    piece(0, h.t0, y0, y1); piece(h.t1, L, y0, y1); piece(h.t0, h.t1, hi, y1); piece(h.t0, h.t1, y0, lo);
   }
   top(x0, z0, x1, z1, y, uvScale = 0, col = null) {
     const s = uvScale; this.q12(x0, y, z1, x1, y, z1, x1, y, z0, x0, y, z0, s ? [x0 / s, -z1 / s, x1 / s, -z1 / s, x1 / s, -z0 / s, x0 / s, -z0 / s] : undefined, col);
@@ -429,8 +457,8 @@ const C = hex => new Color(hex);
 
 // One building into the chunk's buffers (by material). d: the detail buffers (shops' awnings,
 // cornices, fire escapes), hidden far away.
-function buildBuilding(b, Q, D, { rooms = true, dress = false } = {}) {
-  const F = FACADES[b.facade], fq = Q('f:' + b.facade), g0 = b.shops ? 4.6 : 0, base = KERB + g0;
+function buildBuilding(b, Q, D, { rooms = true, dress = false, doors = false } = {}) {
+  const F = FACADES[b.facade], fq = Q('f:' + b.facade), g0 = b.shops ? 4.6 : 0, base = KERB + g0, hole = doors ? b.doorway : null;
   const tint = b.colour ? C(b.colour) : null, seed = b.id * 1.618 % 97;
   const facadeUV = (part, s, L, y0, y1) => {
     const n = Math.max(1, Math.round(L / F.win)), u0 = (b.u + s * 3) / CELLS, v0 = b.v / CELLS;
@@ -439,13 +467,13 @@ function buildBuilding(b, Q, D, { rooms = true, dress = false } = {}) {
   };
   b.parts.forEach((p, k) => {
     const y0 = k === 0 ? base : p.y0;
-    fq.walls(p.x0, p.z0, p.x1, p.z1, y0, p.y1, (s, L, a, c) => facadeUV(p, s, L, a, c), tint);
+    fq.walls(p.x0, p.z0, p.x1, p.z1, y0, p.y1, (s, L, a, c) => facadeUV(p, s, L, a, c), tint, k === 0 ? hole : null);
     if (k > 0) Q('roof').top(b.parts[k - 1].x0, b.parts[k - 1].z0, b.parts[k - 1].x1, b.parts[k - 1].z1, p.y0 + .02, 6);   // the ledge each step leaves
   });
   const p0 = b.parts[0], top = b.parts.at(-1);
   if (b.shops) {
     const sq = Q('shop'), u = (b.u % 4) / 4;
-    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); sq.room(L / n, g0, seed + s * 7 + 50, rooms ? 1 : 0); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; });
+    sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); sq.room(L / n, g0, seed + s * 7 + 50, rooms ? 1 : 0); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; }, null, hole);
     // awnings over some shop fronts on the street side
     const R = rng(b.id * 131 + 5), dq = D('plain'), n = [[0, -1], [1, 0], [0, 1], [-1, 0]][b.face];
     const along = b.face % 2 === 0, len = along ? p0.x1 - p0.x0 : p0.z1 - p0.z0, bays = Math.max(1, Math.round(len / 5)), bw = len / bays;
@@ -500,7 +528,20 @@ function buildBuilding(b, Q, D, { rooms = true, dress = false } = {}) {
       box(mid - half + .6, mid - half + .7, .4, .9, y - F.floor + .3, y);   // the ladder down
     }
   }
-  if (dress) dressBuilding(b, F, D, base, CELLS);   // (ledges, fins, balconies, sills: city-dress.js)
+  if (dress) dressBuilding(b, F, D, base, CELLS, null, hole);   // (ledges, fins, balconies, sills: city-dress.js)
+  if (hole) doorFrame(hole, Q('plain'), C(F.kind === 'curtain' || b.shops ? '#2c3034' : F.trim || '#e8e4dc').multiplyScalar(F.kind === 'curtain' || b.shops ? 1 : .8));
+}
+// a doorway's sides, head and step (the wall's thickness, so the hole isn't paper thin) and a frame round it on the street side
+function doorFrame(h, q, col) {
+  const P = (t, n, y) => [h.ax + h.tx * t + h.nx * n, y, h.az + h.tz * t + h.nz * n], top = h.y + h.h, d = -DOOR_DEEP;
+  q.quad(P(h.t0, 0, h.y), P(h.t0, d, h.y), P(h.t0, d, top), P(h.t0, 0, top), undefined, col);   // the sides, facing into the opening
+  q.quad(P(h.t1, d, h.y), P(h.t1, 0, h.y), P(h.t1, 0, top), P(h.t1, d, top), undefined, col);
+  q.quad(P(h.t0, d, top), P(h.t1, d, top), P(h.t1, 0, top), P(h.t0, 0, top), undefined, col);   // the head, facing down
+  const step = C('#a9a49a'); q.quad(P(h.t0, .02, h.y + .01), P(h.t1, .02, h.y + .01), P(h.t1, d, h.y + .01), P(h.t0, d, h.y + .01), undefined, step);
+  // the frame on the face: two posts and a lintel, standing out a little
+  const box = (ta, tb, ya, yb) => { const [x0, , z0] = P(ta, 0, 0), [x1, , z1] = P(tb, .06, 0); q.box(Math.min(x0, x1), ya, Math.min(z0, z1), Math.max(x0, x1), yb, Math.max(z0, z1), col); };
+  const f = h.glass ? .07 : .11;
+  box(h.t0 - f, h.t0, h.y, top + f); box(h.t1, h.t1 + f, h.y, top + f); box(h.t0 - f, h.t1 + f, top, top + f);
 }
 
 // The road paint: centre lines, lane lines, kerb lines, zebra crossings and stop lines (worn here and
@@ -1182,11 +1223,11 @@ export class City {
    */
   static *over(view, o = {}) { const c = new City(view, { ...o, steps: true }); yield* c.steps; c.steps = null; return c; }
   *making(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = null, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, keep = 600, field = true, link = true, steps = false, ...over } = {}) {
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, keep = 600, field = true, link = true, steps = false, doors = true, ...over } = {}) {
     // (links.js: with no night and no sky given, the city follows the Sky the game made, until the game sets city.night itself)
     this.links = linksFor(view, link); this.links?.join('city', this); this.seeksSky = sky == null && night == null && !!this.links; night ??= 0;
     this.view = view; this.seed = seed; this.sky = sky || null; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail; this.keep = keep == null ? Infinity : +keep;
-    this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
+    this.opts = { rooms, doors: !!doors, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
     this.sharedCrowd = crowd instanceof Crowd ? crowd : null; this.sharedPaint = paint instanceof GroundPaint ? paint : null;   // (a big city's districts share one of each: gs.city Metro)
     if (this.opts.crowd && !this.sharedCrowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
@@ -1256,6 +1297,7 @@ export class City {
     this.parkStyles = parkStyles;
     if (this.groundPaint) groundMarks(this.groundPaint, P, this.parked, seed);
     yield; this.props = yield* this.furnishing();
+    this.doors = this.opts.doors ? new Doors(this.group, P.buildings) : null;   // (every building's front door, shut: city-doors.js)
     this.signals = this.makeSignals(); yield;
     this.cars = new Traffic(this, Math.round(70 * traffic * scale * Math.min(1.6, P.nx * P.nz / 36 + .4)));
     this.people = new People(this, Math.round((this.opts.crowd ? 360 : 110) * people * scale));   // (a crowd costs a few draws however many: busier pavements)
@@ -1428,14 +1470,16 @@ export class City {
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
     if (this.bodies) this.solidSync();   // (the bodies of the nearest cars and people, after city.solid(world))
     this.cars.draw(this.night, dt); this.people.draw(dt); this.signalTick();
-    this.parkGlass?.update(this.view.cam.position);
+    this.parkGlass?.update(this.view.cam.position); this.doors?.update(dt);
     if (this.lampsOn === 'shared') this.lampList(f);   // (a big city's districts: the big city lights the nearest of all of them)
-    else if (this.lampsOn && this.view.placeLamps && this.night > .05) {
+    else if (this.lampsOn && this.view.placeLamps && (this.night > .05 || this.indoor?.length)) {
       if (!this.view.lamps?.length) this.view.lampLights(26);
-      const near = this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70);
+      let near = this.night > .05 ? this.lampSpots.filter(s => Math.abs(s.x - f.x) < 70 && Math.abs(s.z - f.z) < 70) : [];
       for (const s of near) s.i = this.night * 9;
       const F = this.cars.fleet;   // (and the headlights of the cars drawn whole: dipped beams that cast shadows)
-      this.view.placeLamps(F?.close.size ? near.concat(F.headlamps(this.night, this._hl ||= [])) : near, f.x, 2, f.z, this.t);
+      if (F?.close.size && this.night > .05) near = near.concat(F.headlamps(this.night, this._hl ||= []));
+      if (this.indoor?.length) near = this.indoor.concat(near);   // (the lamps of a room behind a door, by day too: gs.city Interiors)
+      this.view.placeLamps(near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f); else if (this.hum) { this.hum.stop(); this.hum = null; }
     if (!this.sharedPaint) this.groundPaint?.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
@@ -1507,13 +1551,22 @@ export class City {
    */
   collide(p, r = .4, y = 0) {
     const pz = p.z ?? p.y, key = p.z != null ? 'z' : 'y'; let hit = null, px = p.x, qz = pz;
-    for (let pass = 0; pass < 3; pass++) { let moved = false; for (const b of this.near(px, qz, r)) for (const part of b.parts) {
-      if (y >= part.y1 || y < part.y0 - 2) continue;
-      const cx = Math.max(part.x0, Math.min(px, part.x1)), cz = Math.max(part.z0, Math.min(qz, part.z1)), dx = px - cx, dz = qz - cz, d2 = dx * dx + dz * dz;
-      if (d2 >= r * r) continue;
+    const push = (box, b) => {
+      const cx = Math.max(box.x0, Math.min(px, box.x1)), cz = Math.max(box.z0, Math.min(qz, box.z1)), dx = px - cx, dz = qz - cz, d2 = dx * dx + dz * dz;
+      if (d2 >= r * r) return false;
       if (d2 > 1e-9) { const d = Math.sqrt(d2); px = cx + dx / d * r; qz = cz + dz / d * r; }
-      else { const o = [px - part.x0, part.x1 - px, qz - part.z0, part.z1 - qz], m = Math.min(...o), i = o.indexOf(m); if (i === 0) px = part.x0 - r; else if (i === 1) px = part.x1 + r; else if (i === 2) qz = part.z0 - r; else qz = part.z1 + r; }
-      hit = b; moved = true;
+      else { const o = [px - box.x0, box.x1 - px, qz - box.z0, box.z1 - qz], m = Math.min(...o), i = o.indexOf(m); if (i === 0) px = box.x0 - r; else if (i === 1) px = box.x1 + r; else if (i === 2) qz = box.z0 - r; else qz = box.z1 + r; }
+      hit = b; return true;
+    };
+    for (let pass = 0; pass < 3; pass++) { let moved = false; for (const b of this.near(px, qz, r)) {
+      // (a room behind an open door, gs.city Interiors: in it, or in its doorway, its own walls and furniture stand for the ground storey)
+      const rm = b.room, inRoom = rm?.live && y < rm.top && px >= rm.area.x0 && px <= rm.area.x1 && qz >= rm.area.z0 && qz <= rm.area.z1;
+      for (let k = 0; k < b.parts.length; k++) {
+        const part = b.parts[k];
+        if (y >= part.y1 || y < part.y0 - 2 || (k === 0 && inRoom)) continue;
+        if (push(part, b)) moved = true;
+      }
+      if (inRoom) { for (const box of rm.boxes) if (y < box.y1 && y >= box.y0 - 2 && push(box, b)) moved = true; if (rm.shut && push(rm.doorBox, b)) moved = true; }
     }
     // and out of the parked cars
     for (let gx = Math.floor((px - r - 3) / 32); gx <= Math.floor((px + r + 3) / 32); gx++) for (let gz = Math.floor((qz - r - 3) / 32); gz <= Math.floor((qz + r + 3) / 32); gz++) for (const c of this.pgrid.get(gx + ',' + gz) || []) {
@@ -1629,10 +1682,12 @@ export class City {
   solid(world, { buildings = true, floor = true, furniture = true, parked = true, cars = 10, people = 14, within = 70, knock = true } = {}) {
     const made = this.solids = [];
     if (buildings) {
-      const q = new Quads();
-      for (const b of this.plan.buildings) for (const p of b.parts) q.box(p.x0, p.y0 - .2, p.z0, p.x1, p.y1, p.z1);
+      const q = new Quads(), holes = !!this.doors && !!world.shapes;
+      for (const b of this.plan.buildings) b.parts.forEach((p, k) => { q.walls(p.x0, p.z0, p.x1, p.z1, p.y0 - .2, p.y1, null, null, holes && k === 0 ? b.doorway : null); q.top(p.x0, p.z0, p.x1, p.z1, p.y1); });
       for (const b of this.plan.blocks) q.box(b.x0, -.3, b.z0, b.x1, KERB, b.z1);
       const m = new Mesh(q.geometry()); made.push(world.ground(m, { sound: 'stone' }), floor ? world.floor?.(0) : null);
+      // the doors stand in their holes, solid until they open (city.door)
+      if (holes) { const plugs = this.plugs = world.shapes([], { tag: 'door', sound: 'wood' }); made.push(plugs); for (const b of this.plan.buildings) if (b.doorway && this.doors.open(b) < .5) plugs.add(this.plugOf(b)); }
     }
     if (!world.shapes) return this;   // (an older world: the buildings only)
     if (furniture && this.props) {
@@ -1648,6 +1703,18 @@ export class City {
     for (const t of old?.world === world ? [...old.cars, ...old.people] : []) t.remove();
     this.solidSync();
     return this;
+  }
+  plugOf(b) { const h = b.doorway; return { box: [h.w, h.h, DOOR_DEEP], at: { x: h.x - h.nx * DOOR_DEEP / 2, y: h.y + h.h / 2, z: h.z - h.nz * DOOR_DEEP / 2 }, turn: Math.atan2(-h.tz, h.tx), part: b.id }; }
+  /**
+   * Opens (open 1, or true) or shuts (0) building b's front door: it swings on its hinge over the next frames, and
+   * after city.solid(world) it stops being solid while it is open. gs.city Interiors does this as the player comes to a
+   * door with a room made behind it. Returns how far open it is now (0..1).
+   */
+  door(b, open = 1) {
+    if (!this.doors || !b?.doorway) return 0;
+    const k = +open; this.doors.set(b, k);
+    if (this.plugs) { const has = this.plugs.colliders.has(b.id); if (k >= .5 && has) this.plugs.drop(b.id); else if (k < .5 && !has) this.plugs.add(this.plugOf(b)); }
+    return this.doors.open(b);
   }
   // the bodies of the nearest cars and people follow them (a few of each, round the player)
   solidSync() {
@@ -1733,7 +1800,7 @@ export class City {
     const hits = this.bodies?.world?.hits, h = hits ? hits.indexOf(this._onHit) : -1; if (h >= 0) hits.splice(h, 1);
     if (this.sharedPaint) this.group.traverse(o => { if (o.isMesh) this.sharedPaint.remove(o); });
     for (const t of [...(this.solids || []), ...(this.bodies?.cars || []), ...(this.bodies?.people || [])]) t?.remove?.(); this.solids = null; this.bodies = null;
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people.members || []) this.people.crowd?.remove(m); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.doors?.dispose(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people.members || []) this.people.crowd?.remove(m); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
@@ -1749,3 +1816,5 @@ export { Metro, metroPlan } from './city-metro.js';
 export { Gps } from './city-gps.js';
 // the police and the wanted level (city-police.js)
 export { Wanted, CRIMES, TACTICS } from './city-police.js';
+// rooms behind the doors: shops, diners, bars, homes, lobbies and warehouses to walk into (city-inside.js)
+export { Interiors, roomPlan, roomKind, INSIDE_KINDS } from './city-inside.js';

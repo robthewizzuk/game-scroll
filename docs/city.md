@@ -229,6 +229,43 @@ down(x, y) { if (gps.opened) gps.tap(x, y); }         // a waypoint on the neare
 - The full map pans with `gps.pan(dx, dy)` and zooms with `gps.zoom(f, x, y)` from your own gestures (`gs.controls.TwoFingers`).
 - `gps.show(view)` draws the way 220 m ahead on the road (one mesh, made again every couple of metres driven).
 
+## Rooms behind the doors: `Interiors`
+
+Every building has its own front door in the middle of a bay of its street wall (`b.doorway`: where it is, its size, glass
+for a shop or an office, a wide one for a warehouse), shut. Make `Interiors` and the room behind a door is made as the player
+comes near it: a corner shop with its aisles and counter, a diner, a bar, a front room, an office lobby with its lifts, a
+warehouse of racks. Once it is made, the door swings open as the player comes to it and they walk straight in, with no
+loading and no cut: the street shows through the door and the windows, and the room shows from the street.
+
+```js
+const { City, Interiors } = gs.city;
+const city = new City(view, { seed: 7 }), inside = new Interiors(city, { world });   // in make(): its materials are made under the loading screen
+update(dt) {
+  city.update(dt, me); inside.update(dt, me);              // after the city's update
+  if (inside.entered) say('Welcome to the ' + inside.room.kind);
+  const shop = inside.room;                                // the room the player is in, or null
+  if (shop) keeper.position.set(shop.spots.keeper.x, shop.spots.keeper.y, shop.spots.keeper.z);
+}
+```
+
+- `inside.near(p, 6)` is the nearest front door: `{ building, door, room, ready }` (`room` once it is made).
+- A room's `spots`: `keeper` (where the one who works there stands, and which way they face: `{ x, y, z, turn }`),
+  `counter` (where a customer is served), `seats`, `stand`, `door` (just inside) and `exit` (just outside).
+  `room.free(x, z, r)` says whether a body of radius r fits at a point; `room.inside(p)` whether p is on its floor.
+- Which room is behind a door: `kinds: b => 'diner'` (one of `INSIDE_KINDS`: `store`, `diner`, `bar`, `home`, `lobby`,
+  `warehouse`), or `null` for a door that stays shut. Left out, `roomKind(b)` picks by the building: shops are stores, diners
+  and bars, houses homes, sheds warehouses, the rest lobbies.
+- `auto: false` leaves the doors to the game: `city.door(b, 1)` opens one, `city.door(b, 0)` shuts it (a locked shop,
+  a door that opens with a key). `city.door()` works without `Interiors` too; `city.doors.open(b)` says how far open (0..1).
+- Solid both ways the game's world is: `city.collide()` keeps a walker inside the room's walls and furniture while they are
+  in it or in its doorway, and after `city.solid(world)` its walls and furniture are World3D bodies and the door stops being
+  solid while it is open.
+- Its ceiling lamps light it by day and by night through the city's lamps. A room is made a few pieces a frame as a
+  `gs.regions` part (`budget`, ms a frame, 2) once the player is within `reach` (22 m) of its door, and let go of when well
+  behind them; only the room the player is in and the one behind the nearest door are kept. A plan is plain numbers
+  (`roomPlan(b)`), the same every time for a building, so a game can place its own people and things before it is drawn.
+- Works on a `Metro` the same way: every made district's doors.
+
 ## How it stays quick on a phone
 
 - Buildings are merged into a handful of meshes for each 2 × 2 blocks, so a whole city is a few
