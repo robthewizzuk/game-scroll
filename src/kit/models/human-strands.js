@@ -34,7 +34,7 @@ export function hairStrands(head, { style = 'short', fem = false, curl = 0, budg
   const lines = cards.map(c => {
     const sp = c.spine, L = sp.length, p = [], n = [], cum = [0];
     for (let k = 0; k < L; k++) { p.push(sp[k].p); n.push(sp[k].n); if (k) cum.push(cum[k - 1] + hyp(sp[k].p[0] - sp[k - 1].p[0], sp[k].p[1] - sp[k - 1].p[1], sp[k].p[2] - sp[k - 1].p[2])); }
-    return { c, p, n, cum, len: cum[L - 1], at: sp.map(q => q.at), skin: sp.map(q => !!q.skin), wave: rnd() * PI * 2, lean: rnd() - .5 };
+    return { c, p, n, cum, len: cum[L - 1], at: sp.map(q => q.at), skin: sp.map(q => !!q.skin), lies: !!sp[L - 1].lies, wave: rnd() * PI * 2, lean: rnd() - .5 };
   });
   // a point d along a line (on past its end the way it was going): its place, the way the hair faces, along and across
   const Q = { p: [0, 0, 0], n: [0, 0, 0], t: [0, 0, 0], s: [0, 0, 0], at: 0, skin: false };
@@ -61,7 +61,11 @@ export function hairStrands(head, { style = 'short', fem = false, curl = 0, budg
     for (let j = 0; j < K; j++) {
       const a = (rnd() * 2 - 1), u = edge ? .2 * rnd() : rnd() ** .8, stray = !edge && rnd() < .035, ph = rnd() * PI * 2, cr = CR * (.6 + .8 * rnd()), cp = CP * (.75 + .5 * rnd());
       // (each strand its own length: a lock's strands end at different places, so its end is a soft brush, not a cut)
-      const L = mx(.004, (edge ? l.len * (.5 + .5 * rnd()) : l.len * (.72 + .36 * rnd())) * (stray ? 1.25 : 1) * (coils ? .55 + .45 * rnd() : 1));
+      // (coily hair's first hairs at the hairline short and tight, as it grows: long ones had lain on the forehead as loose squiggles)
+      let L = mx(.004, (edge ? l.len * (.5 + .5 * rnd()) : l.len * (.72 + .36 * rnd())) * (stray ? 1.25 : 1) * (coils ? .55 + .45 * rnd() : 1));
+      if (coils && edge) L = mn(L, .0045 + .002 * rnd());
+      // (a lock whose ends lie on the forehead ends where it does: on past it, the longer strands and the strays had hung over the brow)
+      if (l.lies) L = mn(L, l.len);
       const n = mx(3, mn(28, Math.ceil(L / SEG) + 1)), W = c.wide * (edge ? .6 : .75), pts = [];
       let fx = 0, fy = 0, fz = 0;   // (the wander of a frizzy or stray strand, built up along it)
       for (let k = 0; k < n; k++) {
@@ -70,7 +74,7 @@ export function hairStrands(head, { style = 'short', fem = false, curl = 0, budg
         // (deep in the hair or near its top; a root sinks into the sculpted hair, so where a strand starts never shows. Coily hair stands up off it)
         let lift = edge ? (q.skin ? .00015 : .0004 + .0012 * u) : -.0012 + (.0012 + volume * u) * root;
         if (coils && !edge) lift += volume * .6 * root * (1 - f * .3);
-        const cu = cr * root, ca = ph + d / cp * PI * 2;
+        const cu = cr * root * (coils && edge ? .55 : 1), ca = ph + d / cp * PI * 2;
         if (stray) { lift += .006 * f * f; fx += (rnd() - .5) * .0016 * f; fy += (rnd() - .5) * .0016 * f; fz += (rnd() - .5) * .0016 * f; }
         else if (curl > .3) { const z = .0005 * curl * f; fx += (rnd() - .5) * z; fy += (rnd() - .5) * z; fz += (rnd() - .5) * z; }
         const x = q.p[0] + q.n[0] * lift + q.s[0] * across + (q.s[0] * Math.cos(ca) + q.n[0] * Math.sin(ca)) * cu + fx;

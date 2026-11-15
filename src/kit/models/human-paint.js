@@ -327,6 +327,10 @@ export function paintFace(o) {
         }
         for (const [mx0, my0, mr] of moles) { const d = Math.hypot(x - mx0, hy - my0); if (d < mr * 1.5) { const k = ss(mr, mr * .5, d) * .42; r *= 1 - k * .8; g *= 1 - k; b *= 1 - k * 1.1; } }
       }
+      // (all of it fading out to the skin's own colour over the last centimetre and a half before the picture's outer edge, and at its top and
+      // bottom: what lies past the edge, the side of the head and the neck, is plain, and a face painted to its edge, a few shades redder and
+      // darker, had ended in a line down the cheek in front of the ear)
+      const e = ss(x1, x1 - .016, x) * ss(y0, y0 + .012, hy) * ss(y1, y1 - .01, hy); if (e < 1) { r = 1 + (r - 1) * e; g = 1 + (g - 1) * e; b = 1 + (b - 1) * e; }
       const at = (j * w + i) * 4; px[at + 3] = 255;
       if (r === 1 && g === 1 && b === 1) px[at] = px[at + 1] = px[at + 2] = P;   // (most of a face is its skin's own colour)
       else { px[at] = enc(r * plain); px[at + 1] = enc(g * plain); px[at + 2] = enc(b * plain); }

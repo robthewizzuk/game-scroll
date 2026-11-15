@@ -71,7 +71,7 @@ export class LiveFace extends Face {
     this.breathe = true;
     /** How big the eyeballs are drawn (human.js: a real face's a hair smaller than the lids round them). */
     this.eyeSize = 1;
-    /** How far the upper lids hang at rest, a share of their whole closing (a real face's .14: over the top of the iris, as relaxed lids are; eyeWide lifts them). */
+    /** How far the upper lids hang at rest, a share of their whole closing (a real face's .14: over the top of the iris, as relaxed lids are; a GNM face's -.12: its head's own upper lid lies low over the iris, and lifted by its bone it keeps the lid's own edge; less lifted with age, to none at 75, as lids hang lower; eyeWide lifts them). */
     this.droop = droop;
     this.sides = SIDE.map(S => ({ S, b: S.b.map(n => B[n]), r: S.b.map(n => this.rest[n]) }));
     this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4(0, 0, 0, 0); this.lines = 0;
