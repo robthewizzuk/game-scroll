@@ -459,7 +459,7 @@ export function eyeParts(m, f, hair = {}) {
     // the brow: its hairs one by one in the brow's band (as the paint's, human-paint.js browAt), close over the skin: standing up
     // at the inner end, lying out along the brow toward its tail, the last few turning down; longest over the arch. The paint
     // keeps a fainter brow under them, the skin's own colour where the hairs are few
-    { const B = browOf(so, f), fem = so > .5, x0 = B[0][0], x1 = B[1][0], x2 = B[2][0], full = fem ? .0025 : .0036, nb = Math.round((fem ? 540 : 760) * (1 - .2 * age));   // (as tall and as thick as a real brow: a thinner band of fewer hairs read as a pencil line; and many fine hairs, not a few thick ones)
+    { const B = browOf(so, f), fem = so > .5, x0 = B[0][0], x1 = B[1][0], x2 = B[2][0], full = fem ? .0032 : .0046, nb = Math.round((fem ? 700 : 1000) * (1 - .2 * age));   // (as tall and as thick as a real brow: a thinner band of fewer hairs read as a pencil line; and many fine hairs, not a few thick ones)
       const yc = x => B[0][1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + B[1][1] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2)) + B[2][1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1));
       const skin = []; for (let i = 0; i < m.n; i++) { const ax = abs(MP[i * 3]), hy = MP[i * 3 + 1] - HC[1]; if (ax > x0 - .008 && ax < x2 + .006 && hy > .006 && hy < .045 && MP[i * 3 + 2] - HC[2] > .03 && m.N[i * 3 + 2] > .2) skin.push(i); }
       for (let i = 0, tries = 0; i < nb && tries < nb * 20; tries++) {
