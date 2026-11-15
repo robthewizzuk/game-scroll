@@ -85,7 +85,7 @@ import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadin
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
-import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
+import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenFailed, frameGenReady, frameGenPace, frameGenSlack, frameGenOne, frameGenRoom, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
 import { desktop } from '../desktop.js';
 
 export * as THREE from 'three';
@@ -350,7 +350,7 @@ function chipOff() {
   console.warn('3D: the graphics chip\'s own times don\'t fit its frames here; the quality steps go by frame times');
 }
 // a game making frames between could draw every refresh instead: its real frames take under .8 of a refresh (unknown: try)
-const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < 800 / screenHz();
+const roomUp = () => !frameGenFor(Q.game) || !(speed.cost.real > 0) || speed.cost.id !== Q.game?.id || speed.cost.real < frameGenRoom(Q.game);
 // The quality steps' own record, for the frame lab's report (Rob's MacBook Air M5, 2026-11-14: Long Shadow stuttered
 // for 26 s before anything was stepped down, and the report couldn't say why): each window of frames (performance.now(),
 // its average gap in ms, frames a refresh or more late, the verdict, what was done about it), the last 400, and the
@@ -3373,7 +3373,7 @@ export class HDView {
       // pace: blend's, by the chip's times (speed.js frameGenPaceOf; HD.fgPace for tests); quick: the quick way for easy
       // tiles (HD.fgQuick false: off, for the tour's run as before); parts: frame generation's chip time by step (the tour)
       speed.outMpx = o.fw * o.fh / 1e6;
-      fg = { mode: how, pace: HD.fgPace || frameGenPaceOf(speed.game, steps), quick: HD.fgQuick !== false, parts: !!HD.fgParts, drop: HD.fgDrop !== false, cost: speed.cost,
+      fg = { mode: how, pace: HD.fgPace || frameGenPaceOf(speed.game, steps), quick: HD.fgQuick !== false, parts: !!HD.fgParts, drop: HD.fgDrop !== false, cost: speed.cost, one: frameGenOne(),
         reset: cut || m.jumped || now - (this._fgT || 0) > HD.fgGap, jd: [0, 0], jit: [0, 0], steps, hz: screenHz() }; this._fgT = now;
     } else this._fgCam = null;
     if (s2) { o.s2 = GS2 ||= new SgsrFrame(); o.s2.begin(this.cam, pw, ph, o.fw, o.fh, this, now, cut, true); o.s2.fsr = HD.sgsrFsr || null; }   // WebGPU pictures count rows from the top
@@ -3434,10 +3434,14 @@ export class HDView {
     // them in time): blend's 'after' pace puts a made frame on the real frame's refresh, so first try 'first' (each
     // refresh one frame's work); then stop for this game. (Not while it is forced on: a test, or the engine test
     // scenes' frame generation runs, which time it as it is.)
+    // 30 → 60 tries a spare refresh first: the screen at 120 Hz, the frame between shown on the middle refresh or the
+    // one after (a real frame whose code runs past a 60 Hz refresh pushes the refresh for the frame between out)
     if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
       const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && (fg.pace === 'after' || fg.pace === 'early');
-      if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id); console.info('Frame generation off for this game: the phone is too busy for the frames between'); } }
-      else if (miss > .08) console.info(fg.pace === 'early' ? 'Frame generation: real frames back to one refresh of the chip for this game, its frames came late with two' : 'Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full');
+      const why = `${Math.round(miss * 100)}% of the refreshes between didn’t come${dropped ? `, ${Math.round(dropped * 100)}% of the frames between were late` : ''}${fg.pace ? `, pace ${fg.pace} at ${Math.round(screenHz())} Hz` : ''}`;
+      if ((miss > .08 || dropped > .5) && frameGenSlack(id)) console.info(`Frame generation: 30 → 60 asks for a faster screen for this game, so the frame between has a spare refresh (${why})`);
+      else if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id, why); console.info(`Frame generation off for this game: the phone is too busy for the frames between (${why})`); } }
+      else if (miss > .08) console.info(fg.pace === 'early' ? `Frame generation: real frames back to one refresh of the chip for this game, its frames came late with two (${why})` : `Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full (${why})`);
     }
     if (made) ch.sent(drawAt, 1000 / screenHz());
     if (!baking && !off) {

@@ -3060,6 +3060,39 @@ console.log('physics ok');
   assert.equal(sp.frameGenPace(g3.id), true, 'its frames came late with two refreshes: back to one');
   assert.equal(sp.frameGenPaceOf(g3, 2), 'first', 'pace first for it from then on');
   assert.ok(Math.abs(sp.frameGenRoom(g3) - 800 / 60) < 1e-9, 'and one refresh of room again');
+  // a game whose code runs past a 60 Hz refresh (Long Shadow on the Fold, Rob 2026-11-15): before 'first', a spare
+  // refresh: the screen at 120 Hz and the one frame made between shown on the middle refresh or the one after
+  const g4 = { id: 'kt-thirty-slow', era: 'nextgen' };
+  assert.equal(sp.frameGenOne(), true, '30 → 60 makes one frame between, whatever the screen');
+  assert.equal(sp.frameGenSlack(g4.id), false, 'no spare refresh where the screen has no 120');
+  screen.rates = [60, 90, 120]; screen.top = 120;
+  assert.equal(sp.slackRate(), 120); assert.equal(sp.slackRate([60, 90, 144]), 0, 'only a whole number of 60s');
+  sp.settle(g4.id, { fgPace: 'first' });
+  assert.equal(sp.frameGenPaceOf(g4, 2), 'early', "a 'first' from before waits until the spare refresh has been tried");
+  assert.equal(sp.screenWant(g4), 60, 'asked for 60 at first');
+  assert.equal(sp.frameGenSlack(g4.id), true, 'the frames between came late: a spare refresh');
+  assert.equal(sp.frameGenSlack(g4.id), false, 'once');
+  assert.equal(sp.screenWant(g4), 120, 'so the screen is asked for 120');
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'first', "after which the 'first' kept from before counts");
+  sp.settle(g4.id, { fgPace: null });
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'pace early on the faster screen');
+  for (let i = 0, t = 60000; i < 80; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.fpsFor(g4), 30, 'still 30 real frames a second');
+  assert.match(sp.frameGenStatus(g4), /makes 30 more \(blend, each real frame given two refreshes of the graphics chip, the screen at 120 Hz so the frame between has a spare refresh\)/, 'Settings says so');
+  assert.ok(sp.frameGenRoom(g4) > 1000 / 60, 'the real frame keeps two 60 Hz refreshes of room (less the made frame), not two of 120');
+  assert.equal(sp.frameGenFits(g4, 30), true, 'not judged by a 120 Hz refresh');
+  {
+    // GpuChain: one made frame from the middle refresh (2 of 4), or the first after it to come
+    const { GpuChain: GC } = await import('../src/kit/hd3d-gpu.js');
+    const run = ks => { const shown = [], me = { sched: { at: 0, ms: 1000 / 120, gap: 4, k: 0, first: true, D: 4, one: true, madeOne: false }, fg: { ready: true, keep() {} }, fgWin: { made: 0, dropped: 0 }, drop: true, owe: false,
+      dueMade: GC.prototype.dueMade, late: () => false, showAt: k => (shown.push(k), 'made') };
+      for (const k of ks) GC.prototype.between.call(me, false, k * 1000 / 120 + 1); return shown; };
+    assert.deepEqual(run([1, 2, 3]), [2], 'shown on the middle refresh, then kept');
+    assert.deepEqual(run([1, 3]), [3], 'or the one after, when the middle one did not come');
+    assert.deepEqual(run([2, 3, 4]), [2, 4], 'and the next real frame shown on time if it is late');
+  }
+  screen.rates = []; screen.top = 0;
+  for (let i = 0, t = 80000; i < 80; i++) sp.tick(t += 1000 / 60);
   sp.setFrameGenPick('auto');
   assert.equal(sp.frameGenFor(g3), false, 'Auto leaves a 60 Hz screen alone');
   assert.match(sp.frameGenStatus(g3), /30 → 60 fills a 60 Hz screen/, 'and Settings says which pick fills it');
