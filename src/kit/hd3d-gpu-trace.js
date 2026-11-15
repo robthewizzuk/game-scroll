@@ -53,12 +53,18 @@ const ROUGH_SHARP = .07, LOBE_KEEP = .95;
 // seen on a phone, whose chip put a floor polished to exactly ROUGH_SHARP on the rough side of it; a software
 // renderer puts it on the mirror's). So its rays go nearly straight, as a mirror's (the share of the cone they are
 // scattered over, coneOf, grows from none at ROUGH_SHARP to all of it at CONE_FULL), and the blur they leave out is
-// made by sharing them between pixels over the blur's shape: SHARE_WIDE: how wide, in the radius rays are shared over
-// elsewhere (the cone's far edge, which a rough surface's scattered rays reach by themselves, is a good part of its
-// blur); SHARE_THIN: how much narrower across the line of sight than the angle it is seen at alone makes it;
+// made by sharing them between pixels over the blur's shape. SHARE_WIDE: the round they are mostly shared over, in
+// the radius rays are shared over elsewhere: it holds the middle of the cone, about three rays in five; SHARE_TAIL:
+// how much each of REGEN_TAIL's four rays from further out counts (their radii in that same radius): the rest of
+// the cone, the wide faint glow round a bright thing in a polished floor. The two are the cone's own shape: a round
+// with all the weight in it, however wide, is a soft-edged smudge, not a sharp middle in a faint wide glow;
+// SHARE_THIN: how much narrower across the line of sight than the angle it is seen at alone makes it;
+// HOLD_STRAIGHT: how far from this frame's shared rays the history may be there, in their own spread (they are
+// not noise: what the history holds outside them is what was there before the camera moved);
 // STILL_KEEP: the least frames' worth any rough surface keeps while nothing moves (a mirror keeps six: its rays are
 // exact; here each frame's are another few of the blur, and six of them shimmer)
-const CONE_FULL = .16, SHARE_WIDE = 3.2, SHARE_THIN = .7, STILL_KEEP = 32;
+const CONE_FULL = .22, SHARE_WIDE = 1.9, SHARE_TAIL = .3, SHARE_THIN = .85, HOLD_STRAIGHT = 1, STILL_KEEP = 32;
+const REGEN_TAIL = [[2.6, 0], [3.1, 2.4], [4, 4.8], [5.6, 7.2]].map(([r, a]) => [r * Math.cos(a), r * Math.sin(a)]);
 const coneOf = (rough, U) => mix(smoothstep(ROUGH_SHARP, CONE_FULL, rough), float(1), U.ref);   // (the tests' reference: the whole cone)
 const REGEN_TAPS = [[0, 0], [1, 0], [0, 1], [1, 1]];
 // A rough surface's history. HIST_WIDE, HIST_FINE: how far to either side it is read as well, as a share of the
@@ -642,15 +648,24 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
       });
       const kk = mix(float(8), float(1.2), soft).toVar();
       const sum = vec3(0).toVar(), ws = float(0).toVar(), m1 = vec3(0).toVar(), m2 = vec3(0).toVar(), wb = float(0).toVar(), tn = float(-1).toVar(), wt = float(0).toVar(), us = float(0).toVar(), lo = vec3(1e4).toVar(), hi = vec3(-1e4).toVar(), fw = float(0).toVar();
-      const tap = (px, w0) => {
-        const p = clamp(px, ivec2(0), top), s = rays.load(p), z = zAt(vec2(p).add(.5).add(U.rj).div(U.half));
-        const on = max(float(1).sub(abs(z.sub(zc)).div(abs(zc).mul(.04).add(.03))), 0).mul(select(s.a.equal(0), float(0), float(1))).toVar();
+      // (how far this pixel's own ray went, as the share of the blur it leaves: see reach below)
+      const ownA = rays.load(clamp(ivec2(floor(hp.add(.5))), ivec2(0), top)).a, ownReach = select(spread.greaterThan(.02).and(ownA.greaterThan(0)), ownA.div(ownA.add(len)), float(1)).toVar();
+      const tap = (px, w0, out = 1) => {
+        const p = clamp(px, ivec2(0), top), s = rays.load(p), tq = vec2(p).add(.5).add(U.rj).div(U.half).toVar(), z = zAt(tq);
+        // (on this pixel's surface: as deep as it, or as deep as its plane is at the ray's own pixel. A floor seen at a
+        // low angle gets deeper fast toward the camera, the way its blur is longest, and held to this pixel's depth
+        // alone its rays were shared over a strip across the picture, not over the blur)
+        const tb = U.invProj.mul(vec4(tq.x.mul(2).sub(1), tq.y.oneMinus().mul(2).sub(1), .5, 1)), tr = tb.xyz.div(tb.w), tdn = dot(nv, tr), zp = select(abs(tdn).greaterThan(1e-6), tr.z.mul(dot(nv, vp)).div(tdn), zc);
+        const on = max(float(1).sub(min(abs(z.sub(zc)), abs(z.sub(zp))).div(abs(zc).mul(.04).add(.03))), 0).mul(select(s.a.equal(0), float(0), float(1))).toVar();
         // (a ray from another pixel is one of this pixel's cone only if it started within the cone's width at the
         // thing it found: a thing found close by, as a pole's foot by the floor in front of it, is seen from there
-        // alone, and shared further it spreads into a halo beside its reflection)
-        const reach = rough.mul(rough).mul(1.3).mul(wide).mul(U.focal).mul(select(s.a.greaterThan(0), s.a.div(s.a.add(len)), float(1)));
+        // alone, and shared further it spreads into a halo beside its reflection. Where the rays go straight and the
+        // sharing is the blur, that holds both ways: this pixel's own ray having found a thing close by, its cone is
+        // as narrow there, and a ray from further off than that is not one of it either. out: REGEN_TAIL's rays,
+        // which are from that much further out by design)
+        const reach = rough.mul(rough).mul(1.3).mul(wide).mul(U.focal).mul(min(select(s.a.greaterThan(0), s.a.div(s.a.add(len)), float(1)), ownReach)).mul(out);
         const mine = float(1).sub(smoothstep(max(reach, .7), max(reach, .7).mul(1.5).add(.3), length(vec2(p).sub(hp).add(across.mul(dot(vec2(p).sub(hp), across).mul(thin.reciprocal().sub(1)))))));
-        const val = select(s.a.greaterThan(0), s.rgb.sub(sky), vec3(0)).toVar(), w = w0.mul(on).mul(mix(float(1), mine, soft)).toVar();
+        const val = select(s.a.greaterThan(0), s.rgb.sub(sky), vec3(0)).toVar(), w = w0.mul(on).mul(mix(float(1), mine, max(soft, spread))).toVar();
         sum.addAssign(val.mul(w)); ws.addAssign(w); fw.addAssign(select(s.a.greaterThan(0), w, float(0))); m1.addAssign(val.mul(on)); m2.addAssign(val.mul(val).mul(on)); wb.addAssign(on);
         // (how near the things found are: one over how far each ray went, nothing found counting as endlessly far)
         us.addAssign(select(s.a.greaterThan(0), w.div(max(s.a, 1e-3)), float(0)));
@@ -738,6 +753,8 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
       If(isRough.and(U.ref.lessThan(.5)), () => {
         const rad = clamp(lobe.mul(mix(mix(float(1), float(.45), clamp(wh.div(8), 0, 1)), float(1), spread)), min(mix(float(1.5), float(.75), fill), max(lobe, .3)), 14).min(max(al.div(max(turn.mul(full), 1e-4)), .5)).toVar(), dw = mix(mix(float(.5), float(.5 * (1 - FILL_KEEPS)), fill), float(.5), spread).toVar(), ang = interleavedGradientNoise(screenCoordinate.xy).add(U.turn.x).mul(6.2832), cs = cos(ang).toVar(), sn = sin(ang).toVar();
         for (const [x, y] of REGEN_DISC) tap(ivec2(floor(hp.add(.5).add(flat(vec2(cs.mul(x).sub(sn.mul(y)), sn.mul(x).add(cs.mul(y))).mul(rad))))), dw);
+        // (and from further out, for the wide faint part of the cone: see SHARE_TAIL)
+        If(spread.greaterThan(.02), () => { for (const [x, y] of REGEN_TAIL) tap(ivec2(floor(hp.add(.5).add(flat(vec2(cs.mul(x).sub(sn.mul(y)), sn.mul(x).add(cs.mul(y))).mul(min(lobe.div(wide), 4.3)))))), spread.mul(SHARE_TAIL), 3); });
         If(known.lessThan(6), () => {
           for (const [x, y] of REGEN_DISC) tap(ivec2(floor(hp.add(.5).add(flat(vec2(sn.mul(x).add(cs.mul(y)), sn.mul(y).sub(cs.mul(x))).mul(rad.mul(.7)))))), float(.5));
           // (and as many again where there is nothing yet: a place just uncovered)
@@ -769,7 +786,8 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
       wh.mulAssign(drop.oneMinus());
       // (what is usual is not raised by a frame far outside it, or stale history would come to look usual)
       fast.assign(select(had0, mix(usual, min(off2, band.mul(band)), USUAL), usual));
-      const box = dev.mul(mix(float(1.5), float(3), soft)).add(mix(float(.004), float(.02), noisy)).add(abs(mean).mul(.03)).add(noisy.mul(noisy).mul(noisy).mul(mix(float(8), float(HOLD_MOVING), clamp(went.mul(.5), 0, 1)))).add(U.ref.mul(1e4)), edge = mix(float(.004), float(.02), noisy).add(abs(mean).mul(.03)), hc = mix(clamp(hrgb, min(lo, mean).sub(edge), max(hi, mean).add(edge)), clamp(hrgb, mean.sub(box), mean.add(box)), max(noisy, U.ref)).toVar();
+      // (where the rays go straight and are shared for the blur: held as well to this frame's shared rays, give or take their spread: HOLD_STRAIGHT)
+      const box = dev.mul(mix(float(1.5), float(3), soft)).add(mix(float(.004), float(.02), noisy)).add(abs(mean).mul(.03)).add(noisy.mul(noisy).mul(noisy).mul(mix(float(8), float(HOLD_MOVING), clamp(went.mul(.5), 0, 1)))).add(U.ref.mul(1e4)), edge = mix(float(.004), float(.02), noisy).add(abs(mean).mul(.03)), tight = dev.mul(HOLD_STRAIGHT).add(edge), hc = mix(clamp(hrgb, max(min(lo, mean).sub(edge), mix(vec3(-1e4), cur.sub(tight), spread)), min(max(hi, mean).add(edge), mix(vec3(1e4), cur.add(tight), spread))), clamp(hrgb, mean.sub(box), mean.add(box)), max(noisy, U.ref)).toVar();
       wh.mulAssign(float(1).sub(smoothstep(edge, edge.mul(4), dot(abs(hrgb.sub(hc)), LUM)).mul(moved).mul(noisy.oneMinus()).mul(U.ref.oneMinus())));
       // the two blended by how much each knows. How much is kept of a rough surface's history while the camera
       // moves: what it reflects is at many distances at once (a thing near it, the sky), and each slides over it at
