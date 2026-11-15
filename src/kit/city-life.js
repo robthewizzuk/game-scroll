@@ -204,6 +204,7 @@ export function cower(L, at, r = 30) {
 export function fromCar(L, car) {
   const sk = L.plan.side === 'left' ? -1 : 1, h = car.heading, lx = Math.cos(h) * sk, lz = -Math.sin(h) * sk, w = car.wid / 2 + .5;
   const x = car.x + lx * w - Math.sin(h) * .3, z = car.z + lz * w - Math.cos(h) * .3;
+  car.empty = true;   // (the driver is out: nobody at the wheel of the car drawn close)
   const p = L.join(x, z); if (!p) return null;
   p.heading = Math.atan2(car.x - x, car.z - z);
   act(p, 'idle', 3 + L.R() * 3, p.heading, o => report(L, o, { x: car.x, z: car.z }, 'crash'));

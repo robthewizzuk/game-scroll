@@ -425,8 +425,9 @@ const TUNE = Symbol.for('gs.sound.tune');
  * to bring them in with intensity(); parts not in layers always play.
  * set: the instruments, 'chip' (square and triangle waves, the default), 'synth', 'band' or 'orchestra';
  * voices: { lead: 'bell', drums: 'kit' } swaps single parts (the names are in gs.sound.VOICES and KITS).
+ * out: an audio node to play into instead of the music channel (it should end up there: gs.sound.Radio does this).
  */
-export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'chip', voices = null, ...parts } = {}) {
+export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'chip', voices = null, out = null, ...parts } = {}) {
   const tracks = [];
   for (const [name, line] of Object.entries(parts)) {
     if (typeof line !== 'string') continue;
@@ -439,7 +440,7 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   const stepLen = () => 60 / tempo / 2 / rate;
   function noteLen(tr, i) { let n = 1; while (tr.steps[(i + n) % tr.steps.length] === '-' && n < tr.steps.length) n++; return n; }
   // Notes written ahead can't be taken back, so each run plays through its own gate: closing it is what stops them.
-  function open(a) { gate = a.ctx.createGain(); gate.connect(busIn('music')); }
+  function open(a) { gate = a.ctx.createGain(); gate.connect(out || busIn('music')); }
   function close() {
     const g = gate, b = band; gate = null; band = null; log = [];
     if (!g) return;
@@ -484,7 +485,12 @@ export function music({ tempo = 120, vol = 1, swing = 0, layers = null, set = 'c
   }
   const m = {
     get playing() { return !!timer; },
-    start() { if (timer) return m; if (ahead) ahead = false; else close(); step = 0; next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); held.delete(m); return m; },
+    /** Starts from the top, or from step `at` (a car radio tuning in half way through a song). */
+    start(at = 0) { if (timer) return m; if (ahead) ahead = false; else close(); step = Math.max(0, at | 0); next = 0; schedule(); timer = setInterval(schedule, TICK); playing.add(m); held.delete(m); return m; },
+    /** How many steps the tune takes before it repeats (its longest part). */
+    get length() { return Math.max(1, ...tracks.map(tr => tr.steps.length)); },
+    /** Seconds a step lasts now (an eighth note at the tempo and speed()). */
+    get stepTime() { return stepLen(); },
     stop() { clearInterval(timer); timer = 0; ahead = false; close(); playing.delete(m); held.delete(m); return m; },
     /** Holds the tune where it is (resume() carries on from the same step). The app does this on pause. */
     pause() {

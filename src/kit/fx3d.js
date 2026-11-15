@@ -2,6 +2,7 @@
 //  - text3d(): sharp text inside the 3D world (text3d.js: distance-field letters made from the app's
 //    fonts with tiny-sdf): scores over heads, signs, labels. Any gs.fonts font works.
 //  - Particles3D: 3D particle effects (particles3d.js): fire, smoke, sparks, explosions, magic, snow.
+//  - Impacts: shots landing by what they hit, muzzle flashes and spent cases (impacts.js).
 //  - outline / glitch / trails / focus / pixelate: extra screen effects for Next Gen views (three.js's
 //    own passes on WebGL; the same effects as nodes on WebGPU, hd3d-gpu.js).
 //
@@ -22,6 +23,7 @@ import { lazy } from './lazy.js';
 import { Vector2 } from 'three';
 import { Text3D } from './text3d.js';
 export { Particles3D } from './particles3d.js';
+export { Impacts } from './impacts.js';
 const libs = lazy('3D effects', () => import('./fx3d-libs.js'));
 export const loadFx3d = () => libs.load();
 

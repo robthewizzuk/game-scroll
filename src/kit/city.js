@@ -63,6 +63,7 @@ import { GroundPaint } from './ground-paint.js';
 import { Skyline } from './city-far.js';
 import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
+import { vehicle } from './models/vehicles.js';
 
 /* ---------- looks ---------- */
 
@@ -604,7 +605,7 @@ export class Traffic {
     /** What the traffic did since the city was made: lane changes, swerves, overtakes, yields (to sirens), crashes, wrecks, and people's dodges out of the way. */
     this.stats = { laneChanges: 0, swerves: 0, overtakes: 0, yields: 0, crashes: 0, wrecks: 0, dodges: 0 };
     // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
-    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, this.cap) : null;
+    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, this.cap, { crowd: () => city.people?.crowd }) : null;   // (its close cars' drivers are the crowd's)
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
     const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: false, color: '#ffffff' });
     this.meshes = {};
@@ -651,7 +652,7 @@ export class Traffic {
     const taxi = !o.police && (F ? (kit.style === 'saloon' || kit.style === 'hatch') && r > .8 : kind === 'car' && r > .82);
     const car = { id: this.nextId = (this.nextId || 0) + 1, kind, style, taxi, colour: o.colour ?? (taxi ? '#f2c21b' : R.pick(CAR_COLOURS)), edge: e, lane: k, lat: k, latTo: k, s, v: e.speed * .6, vmax: e.speed * (.8 + R() * .3),
       len: kit ? kit.length : kind === 'van' ? 4.6 : CAR_LEN, wid: kit ? kit.width : kind === 'van' ? 1.9 : 1.84, x: 0, y: 0, z: 0, heading: 0, braking: false, turn: null, plan: null, blocked: 0, stun: 0, honked: 0, odo: 0,
-      mode: 'lane', why: null, stuck: 0, think: R(), laneT: 0, yieldT: 0, dodge: null, hurry: 0, damage: 0, q: null, up: 1, vx: 0, vz: 0, spin: 0, still: 0, looseT: 0, body: null, chase: null, metT: 0, scrape: 0,
+      mode: 'lane', why: null, stuck: 0, think: R(), laneT: 0, yieldT: 0, dodge: null, hurry: 0, damage: 0, empty: false, q: null, up: 1, vx: 0, vz: 0, spin: 0, still: 0, looseT: 0, body: null, chase: null, metT: 0, scrape: 0,
       police: !!o.police, siren: false, keep: !!o.keep, by: null, hz: null };
     if (keep) car.slot = keep.slot;
     this.place(car); return car;
@@ -856,6 +857,22 @@ export class Traffic {
     const rx = x - c.x, rz = z - c.z, fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx;
     const dx = Math.max(Math.abs(lat) - c.wid / 2, 0), dz = Math.max(Math.abs(along) - c.len / 2, 0); return dx * dx + dz * dz <= r * r;
   }
+  /**
+   * A car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people
+   * sat at the wheel (driver: false for none), so a game can car.pull('driver', player) or car.enter(player). It is the game's
+   * from then on (give it physics, or drive it by hand); the traffic goes on without it. null if c isn't in it.
+   */
+  take(c, { driver = true } = {}) {
+    const i = this.list.indexOf(c); if (i < 0) return null;
+    this.list.splice(i, 1); for (const o of this.list) if (o.ahead === c) o.ahead = null;
+    if (c.body) { c.body.remove(); c.body = null; this.loose--; }
+    const car = this.fleet ? this.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
+    if (!this.fleet) { car.position.set(c.x, 0, c.z); car.rotation.y = c.heading + Math.PI; }
+    this.fleet?.freeSlot(c);   // (its far copy's place, for the next car added)
+    this.city.group.add(car); car.updateMatrixWorld(true);
+    if (driver) { const who = human(FOLK[(c.id ?? c.slot ?? 0) % FOLK.length]); this.city.group.add(who); car.putIn(who, 'driver'); }
+    return car;
+  }
   /** The first car whose body overlaps a circle at p of radius r (or null). */
   hit(p, r = .5) {
     const pz = p.z ?? p.y;
@@ -909,7 +926,7 @@ export class People {
     if (city.opts.crowd) {
       this.folk = FOLK.map(o => { const h = human(o); addMoves(h.rig); return h; });
       this.sizes = this.folk.map(h => h.scale.y || 1);
-      this.crowd = new Crowd(city.view, { of: this.folk, moves: ['idle', 'walk', 'run', 'downed', 'sit', 'talk', 'phone', 'cower'], far: 140 });
+      this.crowd = new Crowd(city.view, { of: this.folk, moves: ['idle', 'walk', 'run', 'downed', 'sit', 'talk', 'phone', 'cower', 'drive'], far: 140 });
       this.folk.forEach((h, i) => h.scale.setScalar(this.sizes[i]));
     } else this.crowd = null;
     this.members = []; this.spread = 50;

@@ -17,13 +17,16 @@ import { pbr, surface } from '../hd3d.js';
 import { rng } from '../math.js';
 import { MAKERS as ROAD, KINDS as ROADS } from './vehicle-shapes.js';
 import { railcar, RAIL } from './vehicle-rail.js';
-import { boat, plane, CRAFT } from './vehicle-craft.js';
+import { boat, plane, helicopter, CRAFT } from './vehicle-craft.js';
+import { bike, BIKE_KINDS } from './vehicle-bike.js';
 import { wheelGeo, wheelsetGeo } from './vehicle-parts.js';
 import { carPaint, carGlass } from './vehicle-looks.js';
 import { wearAndTear } from './vehicle-damage.js';
+import { riders } from './vehicle-seats.js';
 import { looksOf } from '../looks.js';
 
-const MAKERS = { ...ROAD, train: o => railcar(o.style, o), boat, plane }, KINDS = { ...ROADS, train: RAIL, ...CRAFT };
+const MAKERS = { ...ROAD, bike, train: o => railcar(o.style, o), boat, plane, helicopter }, KINDS = { ...ROADS, bike: BIKE_KINDS, train: RAIL, ...CRAFT };
+const ROADGOING = new Set(['car', 'truck', 'bus', 'bike']);   // (what wears a car's looks and its wear and tear: dirt, rain, dents, glass that breaks)
 
 const { PI, abs, min, max, tan, sign } = Math, clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const hash = n => { let t = (n * 2654435761) >>> 0; t ^= t >>> 15; t = Math.imul(t, 0x2c1b3c6d); t ^= t >>> 12; return (t >>> 0) / 4294967296; };
@@ -49,6 +52,9 @@ const SLOTS = {
   boards: k => { const t = boarding(); return pbr(k.boards || '#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, tar: () => pbr('#454544', { rough: .96 }), copper: () => pbr('#96603c', { rough: .38, metal: .9 }),
   timber: () => { const t = boarding(); return pbr('#8a6a44', { rough: .92, ...(t ? { tex: t } : {}) }); }, drum: () => pbr('#4c5a32', { rough: .6, metal: .15 }), fire: k => pbr('#ff8a30', { rough: .6, glow: k.lit ? 2.6 : .5 }),
   plates: k => { const m = finish(k.colour, k.finish), t = k.finish === 'worn' || k.finish === 'rusty' ? null : rivets(); return t ? pbr(k.colour, { rough: m.roughness, metal: m.metalness, tex: t }) : m; },
+  // a working vehicle's flashing lamps, blue and red (each vehicle gets its own to flash: siren()), and a lit sign (a taxi's, a bus's destination)
+  beaconA: () => pbr('#25407a', { rough: .22, glow: .03, glowCol: '#4b7dff' }), beaconB: () => pbr('#7a2420', { rough: .22, glow: .03, glowCol: '#ff3b2a' }),
+  sign: k => pbr('#e8dcb0', { rough: .35, glow: k.lit ? 1.6 : .2, glowCol: '#ffd27a' }),
 };
 // plate with rows of rivets along its seams, a metre a sheet (null where there is no canvas to paint on)
 let plateTex;
@@ -83,7 +89,7 @@ const AGES = { paint: 1, paint2: 1, plates: 1, wood: .8, boards: .8, timber: .8,
 const shared = new Map();
 // (a car's or a lorry's paint, glass and lamps wear their looks, vehicle-looks.js: theirs are kept apart from a train's, and a paint
 // from another style's, as the look knows where the car's sills and tail are)
-const keyOf = (slot, k) => slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish, k.flakes || 0, k.fit || ''] : slot === 'lamp' || slot === 'tail' || slot === 'fire' || slot === 'dials' ? [k.lit, !!k.fit]
+const keyOf = (slot, k) => slot === 'paint' || slot === 'paint2' || slot === 'plates' ? [k.colour, k.trim, k.finish, k.flakes || 0, k.fit || ''] : slot === 'lamp' || slot === 'tail' || slot === 'fire' || slot === 'dials' || slot === 'sign' ? [k.lit, !!k.fit]
   : slot === 'canvas' ? k.canvas : slot === 'boards' ? k.boards : slot === 'glass' ? [!!k.inside, k.fit || ''] : slot === 'seat' ? k.seat : '';
 const matOf = (slot, k) => { const key = slot + '|' + keyOf(slot, k); let m = shared.get(key); if (!m) shared.set(key, m = (SLOTS[slot] || SLOTS.paint)(k)); return m; };
 let wheelMat = null; const wheelGeos = new Map();
@@ -91,8 +97,13 @@ const wheelOf = g => { const key = JSON.stringify(g); let w = wheelGeos.get(key)
 
 // what each kind looks like when nothing is said: its colours to pick from by seed, its paint, how worn
 const LOOKS = {
-  car: { colours: ['#a3231c', '#1d4a86', '#d9d7d0', '#202428', '#868b90', '#2c6537', '#d19c17', '#5f2b62', '#bf561b', '#7a9fc2'], finish: 'gloss', wear: .3 },
-  truck: { colours: ['#4c5a3c', '#27456b', '#8a2f22', '#b88a1a', '#3c4146', '#c9c5b8', '#2f5d54'], finish: 'satin', wear: .6, trim: '#cfccc0' },
+  car: { colours: ['#a3231c', '#1d4a86', '#d9d7d0', '#202428', '#868b90', '#2c6537', '#d19c17', '#5f2b62', '#bf561b', '#7a9fc2'], finish: 'gloss', wear: .3,
+    by: { police: { colours: ['#e6e8ea'], trim: '#1d3a7e', wear: .15 }, taxi: { colours: ['#e3ad17'], trim: '#1d1e20' }, ambulance: { colours: ['#ecebe2'], trim: '#2f8a46', wear: .15 } } },
+  truck: { colours: ['#4c5a3c', '#27456b', '#8a2f22', '#b88a1a', '#3c4146', '#c9c5b8', '#2f5d54'], finish: 'satin', wear: .6, trim: '#cfccc0', by: { fire: { colours: ['#b51f18'], trim: '#e8e5da', finish: 'gloss', wear: .2 } } },
+  bus: { colours: ['#b8302a', '#1f5c9a', '#d9a81c', '#2b7448', '#e3e1d8', '#5c2a63'], finish: 'gloss', wear: .4, trim: '#e8e6dc', by: { coach: { trim: '#2a2c30' }, double: { trim: '#e3c45a' } } },
+  bike: { colours: ['#a3231c', '#202428', '#1d4a86', '#d19c17', '#2c6537', '#d9d7d0', '#bf561b'], finish: 'gloss', wear: .25, trim: '#2a2b2e', by: { dirt: { colours: ['#d8641a', '#2a5fb0', '#c9c21c', '#cf2a2a', '#3a8a36'], trim: '#e6e4dc' }, scooter: { colours: ['#9fc8c0', '#e3dfd2', '#c43c30', '#5e88b8', '#e4b93a'], trim: '#e3dfd2' } } },
+  helicopter: { colours: ['#d6d3ca', '#1d4a86', '#a3231c', '#202428', '#d19c17'], finish: 'gloss', wear: .25, trim: '#2a2b2e',
+    by: { police: { colours: ['#1f2a44'], trim: '#e2e4e6' }, medic: { colours: ['#e9e6dc'], trim: '#c42a22' } } },
   tank: { colours: ['#4a5236', '#5b5a44', '#6d6a55', '#3f4a3c', '#7a6f52'], finish: 'matt', wear: .8 },
   train: { colours: ['#1d1e20', '#1f4a2c', '#6e1a1a', '#1f3a66'], finish: 'satin', wear: .6, trim: '#8c8a84',
     by: { diesel: { colours: ['#1f4a2c', '#a8301f', '#1f3a66', '#c9a21a', '#b8500f'], trim: '#d8d2bc' }, coach: { colours: ['#6e1a1a', '#1f4a2c', '#1f3a66', '#5a3a1e'] } } },
@@ -152,7 +163,7 @@ function one(kind, opts, k, age) {
   let v = made.get(key);
   if (!v) {
     pause('Models');   // (while a card loads, a frame may go by before each new vehicle: slices.js)
-    const plan = MAKERS[kind](opts), road = kind === 'car' || kind === 'truck';
+    const plan = MAKERS[kind](opts), road = ROADGOING.has(kind);
     const kk = road ? { ...k, inside: !!plan.inside, fit: [plan.size.length, plan.size.height, plan.clear].map(mm).join() } : k;
     v = { plan, k: kk, body: dress(plan.body, kk, opts.seed, age), parts: {} };
     for (const [name, p] of Object.entries(plan.parts || {})) v.parts[name] = dress(p.shape, kk, opts.seed + 7, age);
@@ -167,7 +178,7 @@ function one(kind, opts, k, age) {
 function looks(v, k, seed) {
   const { plan } = v, size = [plan.size.length, plan.size.height, plan.clear || .2];
   const sc = plan.screen ? [-.31, plan.screen[0], plan.screen[1], .6] : [0, 0, 0, 0];
-  for (const p of v.body) {
+  for (const p of [...v.body, ...Object.values(v.parts).flat()]) {   // (a car's doors and wheel too)
     if (looksOf(p.mat).length || p.mat.userData?.pom) continue;
     if (p.slot === 'paint' || p.slot === 'paint2') carPaint(p.mat, { flakes: p.slot === 'paint' ? k.flakes || 0 : 0, size, seed });
     else if (p.slot === 'glass') carGlass(p.mat, { see: k.inside ? .42 : -1, size, screen: sc, seed });
@@ -185,13 +196,13 @@ function stand(kind, v, k, opts) {
   wheelMat ||= pbr('#ffffff', { rough: .78, vertexColors: true });
   // the parts that turn, each on its own pivot (inside the part it rides on)
   const parts = {};
-  for (const [name, p] of Object.entries(plan.parts || {})) { const g = parts[name] = new Group(); g.name = name; g.position.set(...p.at); if (p.order) g.rotation.order = p.order; if (p.rot) g.rotation.set(...p.rot); tris += meshes(v.parts[name], g); }
+  for (const [name, p] of Object.entries(plan.parts || {})) { const g = parts[name] = new Group(); g.name = name; g.position.set(...p.at); if (p.order) g.rotation.order = p.order; if (p.rot) g.rotation.set(...p.rot); tris += meshes(v.parts[name], g); if (p.inPlace) for (const m of g.children) m.position.set(-p.at[0], -p.at[1], -p.at[2]); }   // (inPlace: a door, its shape in the vehicle's own space, hung on its hinge)
   for (const [name, p] of Object.entries(plan.parts || {})) (p.on ? parts[p.on] : shell).add(parts[name]);
   const wheel = (w, into) => {
     const piv = new Object3D(), g = wheelOf(w.geo), m = new Mesh(g, wheelMat); piv.rotation.order = 'YXZ'; piv.position.set(...w.at); if (w.rot) piv.rotation.set(...w.rot);
     if (w.at[0] < 0 && !w.rot) m.rotation.y = PI; m.castShadow = m.receiveShadow = true; m.name = 'wheel'; piv.add(m); piv.radius = w.geo.r; piv.width = w.geo.w; piv.steers = !!w.steer; into.add(piv); tris += g.attributes.position.count / 3; return piv;
   };
-  const wheels = (plan.wheels || []).map(w => wheel(w, root));
+  const wheels = (plan.wheels || []).map(w => wheel(w, w.on ? parts[w.on] : plan.lean ? shell : root));   // (a bike's ride in the body that leans, its front one on the forks)
   for (const s of plan.spares || []) wheel(s, shell);
   const points = {};
   for (const [name, p] of Object.entries(plan.points || {})) { const at = Array.isArray(p) ? p : p.at, o = points[name] = new Object3D(); o.name = name; o.position.set(...at); (p.on ? parts[p.on] : shell).add(o); }
@@ -211,11 +222,12 @@ function stand(kind, v, k, opts) {
   for (const p of props) for (const m of p.children) if (m.name === 'blur') { m.visible = false; m.castShadow = false; }
   root.traverse(m => { if (m.name === 'screen' || (m.name === 'glass' && k.inside) || m.name === 'dials') m.castShadow = false; });   // (sun through a see-through cabin's windows)
   for (const key of ['gear', 'sit', 'draft']) if (plan[key] != null) root[key] = plan[key];
-  let dist = 0, turn = 0, was = 0, lean = 0, pitch = 0, yaw = 0, lift = 0, rev = 0;
+  let dist = 0, turn = 0, was = 0, lean = 0, pitch = 0, yaw = 0, lift = 0, rev = 0, tilt = 0;
+  const forks = plan.lean ? parts[plan.steer] : null;
   /** Turns its wheels (and tracks) for a distance travelled so far, in metres (backwards: a smaller number). */
   root.roll = (d, right = d) => { dist = d; for (const w of wheels) w.rotation.x = -d / w.radius; tracks?.roll(d, right); if (sets.length || plan.rods) spin(d); return root; };
   /** Turns its front wheels: radians, + to the right. */
-  root.steer = a => { turn = a; for (const w of wheels) if (w.steers) w.rotation.y = -a; return root; };
+  root.steer = a => { turn = a; for (const w of wheels) if (w.steers) w.rotation.y = -a; if (forks) forks.rotation.y = -a; if (parts.steering) parts.steering.rotation.z = -a * 4.5; return root; };
   /**
    * The easy way to keep it alive each frame: rolls its wheels for its speed (metres a second), eases its front
    * wheels to steer (-1..1, + right; lock: how far they turn at 1, radians), and rocks its body on its springs:
@@ -223,15 +235,19 @@ function stand(kind, v, k, opts) {
    * runs one track ahead of the other, aim ([bearing, lift]) eases its turret and gun there. power (0..1) spins
    * propellers up to a blur. ground: false keeps wheels still (a plane's, in the air).
    */
-  root.move = (dt, speed = 0, { steer = 0, lock = .55, sway = 1, turn: spin = 0, aim = null, power = speed ? 1 : 0, ground = kind !== 'plane' } = {}) => {
+  root.move = (dt, speed = 0, { steer = 0, lock = plan.lean ? .45 : .55, sway = 1, turn: spin = 0, aim = null, power = speed ? 1 : 0, ground = kind !== 'plane' && kind !== 'helicopter', lean: lean0 = null } = {}) => {
     const h = min(1, dt * 8), a = dt > 0 ? (speed - was) / dt : 0; was = speed;
     root.update?.(dt);
     if (tracks) { const dv = clamp(spin, -1, 1) * max(1.2, abs(speed) * .5); tracks.left += (speed + dv) * dt; tracks.right += (speed - dv) * dt; root.roll(tracks.left, tracks.right); } else if (ground) root.roll(dist + speed * dt);
     root.steer(turn + (clamp(steer, -1, 1) * lock - turn) * h);
     if (props.length) { rev += (clamp(power, 0, 1) - rev) * min(1, dt * 1.5); const fast = rev > .45; for (const p of props) { p.rotation.z += rev * 42 * dt; for (const m of p.children) m.visible = (m.name === 'blur') === fast; } }
-    if (plan.steer) parts[plan.steer].rotation.y = turn * .7; if (parts.radar) parts.radar.rotation.y += dt * 2.2;
-    if (aim && parts.turret) { const q = min(1, dt * 2.5); root.aim(yaw + (aim[0] - yaw) * q, lift + ((aim[1] || 0) - lift) * q); }
-    if (plan.wheelbase) {
+    if (plan.steer && !forks) parts[plan.steer].rotation.y = turn * .7; if (parts.radar) parts.radar.rotation.y += dt * 2.2;
+    if (aim && (parts.turret || plan.aim)) { const q = min(1, dt * 2.5); root.aim(yaw + (aim[0] - yaw) * q, lift + ((aim[1] || 0) - lift) * q); }
+    if (forks) {   // a bike leans into a turn as far as its speed round it asks (or as the game says), about where its tyres meet the road
+      const want = lean0 ?? Math.atan(clamp(speed * speed * tan(turn * .55) / plan.wheelbase / 9.81, -1.2, 1.2)) * sway;
+      tilt += (clamp(want, -.85, .85) - tilt) * min(1, dt * 6); pitch += (clamp(a * .004, -.03, .03) * sway - pitch) * min(1, dt * 5);
+      shell.rotation.z = -tilt; shell.rotation.x = pitch;
+    } else if (plan.wheelbase) {
       lean += (clamp(speed * speed * tan(turn) / plan.wheelbase * .012, -.07, .07) * sway - lean) * h; pitch += (clamp(a * .006, -.035, .035) * sway - pitch) * min(1, dt * 5);
       shell.rotation.z = lean; shell.rotation.x = pitch;
     }
@@ -247,22 +263,99 @@ function stand(kind, v, k, opts) {
     const r = plan.radius, h = o.h ?? .5, rest = o.rest ?? .3, len = rest - 9.81 / (4 * (o.stiffness ?? 30));
     shell.position.set(0, -(h / 2 + len + r), -(plan.mid || 0));
     for (let i = 4; i < wheels.length; i++) { const w = wheels[i], lead = wheels[2 + i % 2], dz = w.position.z - lead.position.z; w.children[0].onBeforeRender = () => { w.rotation.x = lead.rotation.x; w.position.set(w.position.x, lead.position.y, lead.position.z + dz); }; }
+    if (plan.lean) return { w: .36, h, l: plan.wheelbase + r * 1.6, radius: r, rest, travel: .2, wheels: [], bike: true, steer: .45, grip: 3, ...o };   // (a bike: its wheels go with its body, which leans)
     return { w: plan.track + .1, h, l: plan.wheelbase + r * 1.8, radius: r, rest, travel: .25, wheels: wheels.slice(0, 4), ...o };
   };
-  /** A tank's turret turned (radians, + to its left, from straight ahead) and its gun lifted (radians up). */
-  root.aim = (y = 0, up = 0) => { yaw = y; lift = clamp(up, -.14, .45); if (parts.turret) parts.turret.rotation.y = yaw; if (parts.gun) parts.gun.rotation.x = lift; return root; };
+  /** A tank's turret turned (radians, + to its left, from straight ahead) and its gun lifted (radians up); a fire engine's ladder on its turntable. */
+  const AIM = plan.aim || { turn: 'turret', lift: 'gun', lo: -.14, hi: .45 };
+  root.aim = (y = 0, up = 0) => { yaw = y; lift = clamp(up, AIM.lo, AIM.hi); if (parts[AIM.turn]) parts[AIM.turn].rotation.y = yaw; if (parts[AIM.lift]) parts[AIM.lift].rotation.x = lift; return root; };
+  /** How far a bike leans (radians, + to its right). */
+  Object.defineProperty(root, 'lean', { get: () => tilt, configurable: true });
   /** Its lamps on or off (it gets lamps of its own, so its copies keep theirs). */
   root.lights = (on = true) => {
     root.userData.lit = !!on;
-    root.traverse(m => { if (m.isMesh && (m.name === 'lamp' || m.name === 'tail' || m.name === 'dials')) { if (m.userData.gsOwn) m.material.emissiveIntensity = on ? m.userData.gsGlow : 0; else m.material = matOf(m.name, { ...k, lit: !!on }); } });
+    root.traverse(m => { if (m.isMesh && (m.name === 'lamp' || m.name === 'tail' || m.name === 'dials' || m.name === 'sign')) { if (m.userData.gsOwn) m.material.emissiveIntensity = on ? m.userData.gsGlow : 0; else m.material = matOf(m.name, { ...k, lit: !!on }); } });
     return root;
   };
   root.userData.lit = !!k.lit;
-  // a car's and a lorry's own dirt, rain and damage (vehicle-damage.js)
-  if (kind === 'car' || kind === 'truck') wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) });
+  // a road vehicle's own dirt, rain and damage (vehicle-damage.js)
+  if (ROADGOING.has(kind)) wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) });
+  if (plan.beacons?.length) sirens(root, plan, points, opts.seed);
+  if (plan.doors?.length) hinges(root, plan, parts);
+  seatsOf(root, plan, points);
+  if (Object.keys(root.seats).length) riders(root, plan);   // (people getting in, sitting, getting out: vehicle-seats.js)
   /** Another one just like it (sharing its shapes and materials). */
   root.twin = () => stand(kind, v, k, opts);
   return root;
+}
+
+// a car's doors: open(which, amount) and shut(which) ease them there in update() (move() calls it); a hinged door swings out on its
+// front edge, a van's back door comes out and slides back. which: a door's name ('doorL', 'doorR', 'backL', 'backR'), a seat's
+// ('driver', 'passenger', 'backL', 'backR': the door beside it), a side (-1 left, 1 right), 'all', or a list of these.
+// Each door says how far open it is (open 0..1) and, for one frame, that it was opened (opened) or slammed shut (slammed).
+const SWING = 1.15;
+function hinges(root, plan, parts) {
+  const doors = root.doors = plan.doors.map(d => ({ name: d.name, side: d.side, slide: d.slide, part: parts[d.name], at: parts[d.name].position.clone(), length: d.length, open: 0, want: 0, speed: 3, opened: false, slammed: false }));
+  const pick = which => {
+    if (which === 'all' || which == null) return doors;
+    if (Array.isArray(which)) return which.flatMap(pick);
+    if (typeof which === 'number') return doors.filter(d => d.side === Math.sign(which));
+    const seat = root.seats?.[which]; if (seat?.door) which = seat.door;
+    return doors.filter(d => d.name === which);
+  };
+  root.door = which => pick(which)[0] || null;
+  /** Opens doors (amount 0..1 of the way; speed: how many times a second it would swing all the way, 3). */
+  root.open = (which = 'all', amount = 1, { speed = null } = {}) => { for (const d of pick(which)) { d.want = clamp(amount, 0, 1); if (speed) d.speed = speed; } return root; };
+  root.shut = (which = 'all', o) => root.open(which, 0, o);
+  const set = d => {
+    const e = d.open * d.open * (3 - 2 * d.open);
+    if (d.slide) { const out = clamp(d.open * 5, 0, 1); d.part.position.set(d.at.x + d.side * .14 * out, d.at.y, d.at.z + max(0, d.open - .15) / .85 * d.length * .92); }
+    else d.part.rotation.y = d.side * SWING * e;
+  };
+  const up = root.update;
+  root.update = dt => {
+    up?.(dt);
+    for (const d of doors) {
+      d.opened = d.slammed = false; if (d.open === d.want) continue;
+      const was = d.open, step = dt * d.speed * (d.want < d.open ? 1.4 : 1);   // (a door is shut harder than it is opened)
+      d.open = d.want > d.open ? min(d.want, d.open + step) : max(d.want, d.open - step);
+      if (was === 0 && d.open > 0) d.opened = true; if (d.open === 0 && was > 0) d.slammed = true;
+      set(d);
+    }
+    return root;
+  };
+}
+// where people sit (a vehicle's seats, by name): each its point, the door beside it (a car's), the side it gets in from and
+// whether it is a saddle (a motorbike's: legs either side); who sits there is the game's (gs.models.seat, vehicle-seats.js)
+function seatsOf(root, plan, points) {
+  const seats = root.seats = {};
+  const near = (side, z) => (root.doors || []).filter(d => d.side === side).sort((a, b) => Math.abs(a.at.z + a.length / 2 - z + .35) - Math.abs(b.at.z + b.length / 2 - z + .35))[0]?.name || null;
+  for (const name of ['driver', 'passenger', 'backL', 'backR', 'rider', 'pillion', 'pilot', 'copilot']) {
+    const p = points[name]; if (!p) continue;
+    const side = plan.lean ? -1 : Math.sign(p.position.x) || -1;
+    seats[name] = { name, point: p, side, door: near(side, p.position.z), saddle: !!plan.lean, steer: name === 'driver' || name === 'rider' || name === 'pilot', hold: true, who: null };
+  }
+}
+
+// a working vehicle's flashing lamps: its own copies of the lenses (so its copies flash in their own time), siren(on) to set
+// them going, beacons (each lamp's point, colour and whether it is lit this frame, to light the street with: view.flash, placeLamps)
+const FLASH = [[0, .1], [.17, .27]];   // (each side's two short bursts in a cycle of .8 s, the other side half a cycle later)
+function sirens(root, plan, points, seed) {
+  const own = {}, ms = [];
+  root.traverse(m => { if (m.isMesh && (m.name === 'beaconA' || m.name === 'beaconB')) { own[m.name] ||= m.material.clone(); m.material = own[m.name]; ms.push(m); } });
+  let on = false, t = hash(seed + 31) * .8;
+  root.beacons = plan.beacons.map((q, i) => ({ point: points['beacon' + i], colour: q.slot === 'beaconA' ? '#4b7dff' : '#ff3b2a', slot: q.slot, on: false }));
+  const show = () => {
+    const ph = t % .8, lit = s => on && FLASH.some(([a, b]) => { const p = (ph - (s === 'beaconB' ? .4 : 0) + .8) % .8; return p >= a && p < b; });
+    for (const name in own) own[name].emissiveIntensity = lit(name) ? 9 : .03;
+    for (const b of root.beacons) b.on = lit(b.slot);
+  };
+  /** Its flashing lamps on or off (they flash with update(dt), which move() calls). */
+  root.siren = (v = true) => { on = !!v; show(); return root; };
+  Object.defineProperty(root, 'sirenOn', { get: () => on, configurable: true });
+  const before = root.update;
+  root.update = dt => { before?.(dt); if (on) { t += dt; show(); } return root; };
+  show();
 }
 
 // a train: its cars in a row, nose to tail, coupled

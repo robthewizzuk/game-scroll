@@ -1081,6 +1081,12 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   refreshes apart: 28.8 on a 144 Hz screen) and a made frame between each pair, on a 60 Hz screen too
   (the only pick that fills one), and a faster screen is asked for 60 Hz. Each real frame is given two
   refreshes of the graphics chip (pace **early**, below), so a game can draw more per frame than at 60.
+  A real frame's own code (update and draw) still has one refresh, since the refresh for the frame made
+  between needs the phone's main thread too. Where that refresh keeps coming too late (a game whose code
+  takes about a whole 60 Hz refresh, like Long Shadow on the Fold), the game asks the screen for 120 Hz
+  instead (`speed.js` `frameGenSlack`, remembered for it). It still makes one frame between each pair, shown
+  on the middle refresh, or on the one after if the real frame's code ran over: still 60 different pictures
+  a second. Only then does it fall back to pace first, and after that off.
 - **Screen rate:** phone screens pick their own rate (LTPO screens like the Fold's step between 120,
   60 and lower) and a web page can't ask for one, so the app asks through `plugins/screen-rate`
   (`src/kit/screenrate.js`, Android) while a round is played: the fastest rate that's a whole number of

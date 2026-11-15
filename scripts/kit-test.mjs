@@ -1788,6 +1788,62 @@ console.log('physics ok');
   console.log('combat: shooting from a car ok');
 }
 {
+  // weapons: the arsenal's numbers, a pouch the guns share, a loadout, pickups; the models and two hands on them; hits and spent cases
+  const { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } = await import('../src/kit/combat.js');
+  const { weapon, WEAPON_KINDS, Wield } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js');
+  assert.deepEqual(Object.keys(ARSENAL).sort(), [...WEAPON_KINDS].sort(), 'a number for every weapon model');
+  const rifle = arm('rifle'); assert.ok(rifle.kind === 'rifle' && rifle.mag === 30 && rifle.auto && rifle.ammoType === 'rifle', 'arm() makes a gun from its numbers');
+  const shotgun = arm('shotgun', { rng: () => .5 }); assert.equal(shotgun.pull({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }).length, 9, 'a shotgun throws pellets');
+  const pouch = new Pouch({ rifle: 10 }), g = arm('rifle', { pouch }); g.ammo = 0; assert.ok(g.startReload() && g.spare === 10, 'reloads out of the pouch');
+  g.update(3); assert.ok(g.ammo === 10 && pouch.count('rifle') === 0 && !g.startReload(), 'the pouch empties into the magazine: ' + g.ammo);
+  assert.equal(new Pouch({ rockets: 50 }).count('rockets'), 6, 'carries no more than its max');
+  const arms = new Loadout({ pouch: new Pouch({ pistol: 20 }), sounds: false }); arms.give('pistol');
+  assert.ok(arms.kind === 'pistol' && arms.gun.ammo === 12 && arms.pouch.count('pistol') === 32, 'a weapon picked up comes loaded, with its rounds');
+  assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 0, 'no firing while it is being drawn');
+  arms.update(.5); assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 1, 'then it fires');
+  assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 0, 'semi-automatic: one a pull');
+  const drops = new Pickups(), sg = drops.add({ x: 1, y: 0, z: 0, kind: 'shotgun' }), am = drops.add({ x: 30, y: 0, z: 0, kind: 'ammo', of: 'pistol', amount: 20, respawn: 5 });
+  assert.deepEqual(drops.collect(1 / 60, { x: 0, y: 0, z: 0 }, arms).map(p => p.kind), ['shotgun'], 'picks up what is in reach');
+  assert.ok(arms.has('shotgun') && arms.kind === 'pistol' && !drops.list.includes(sg), 'carried, not taken out; gone from the world');
+  drops.collect(1 / 60, { x: 30, y: 0, z: .5 }, arms); assert.ok(!am.here && arms.pouch.count('pistol') === 52, 'ammo goes in the pouch: ' + arms.pouch.count('pistol'));
+  for (let i = 0; i < 400; i++) drops.update(1 / 60); assert.ok(am.here, 'and comes back after its respawn');
+  arms.give('smg'); assert.ok(arms.list.join() === 'pistol,smg', 'one long gun: the smg takes the shotgun\'s place: ' + arms.list);
+  arms.give('bat'); arms.next(); assert.ok(arms.list[0] === 'bat' && arms.gun, 'switches in slot order');
+  const back = new Loadout().load(JSON.parse(JSON.stringify(arms.save()))); assert.ok(back.list.join() === arms.list.join() && back.kind === arms.kind && back.pouch.count('pistol') === arms.pouch.count('pistol'), 'saves and loads');
+  weaponSound('shotgun'); weaponSound('rifle', 'reload', { x: 0, y: 0, z: 0 }); weaponSound('bat', 'swing');   // (quiet here: no audio)
+  // the models: a few draws each, their points, the same one shared
+  for (const k of WEAPON_KINDS) { const w = weapon(k), info = w.userData.weapon; assert.ok(w.children.filter(c => c.isMesh).length <= 6 && w.points.grip && w.points.muzzle && info.length > .05, k + ': a model with its points'); }
+  assert.ok(weapon('rifle').children[0].geometry === weapon('rifle').children[0].geometry, 'the same weapon shares its shapes');
+  // both hands on a rifle up to aim, on a plain figure: the stock at the shoulder, the hands at the grip and fore-end, pointing ahead
+  const man = figure(), held = weapon('rifle').wield(man), V = held.gun.points.grip.position.constructor;
+  man.rig.upper('aim'); man.rig.update(1 / 60); for (let i = 0; i < 30; i++) held.update(1 / 60, { how: 'aim' });
+  man.updateMatrixWorld(true);
+  const sh = man.rig.parts.armR.getWorldPosition(new V()), stock = held.gun.points.stock.getWorldPosition(new V());
+  assert.ok(stock.distanceTo(sh) < .15 && held.dir.z > .97 && held.muzzle.z > .6, 'the rifle sits in the shoulder, pointing ahead: ' + stock.distanceTo(sh).toFixed(2) + ' ' + held.dir.z.toFixed(2));
+  const tip = s => { const f = man.rig.parts['fore' + s]; return f.localToWorld(new V(0, -f.userData.ikLength, 0)); };   // (the end of the forearm: a figure has no hand bones)
+  const grip = held.gun.points.grip.getWorldPosition(new V()), fore = held.gun.points.fore.getWorldPosition(new V());
+  assert.ok(tip('R').distanceTo(grip) < .15 && tip('L').distanceTo(fore) < .15, 'both hands on it: ' + tip('R').distanceTo(grip).toFixed(2) + ' ' + tip('L').distanceTo(fore).toFixed(2));
+  held.update(1 / 60, { how: 'aim', pitch: .4 }); for (let i = 0; i < 30; i++) held.update(1 / 60, { how: 'aim', pitch: .4 });
+  assert.ok(held.dir.y > .3, 'pitch aims it up');
+  held.update(1 / 60, { how: 'none' }); assert.ok(!held.gun.visible, 'put away');
+  // hits and spent cases (the particles and the case meshes; marks need a view that has decal())
+  const T = await import('three'), { Impacts } = await import('../src/kit/impacts.js'), scene = new T.Scene();
+  let made = 0; const dots = { make: (p, o) => { made += o.burst || 0; return {}; }, flash() {}, update() {}, clear() {} };   // (the particles draw on a page: counted here)
+  const fx = new Impacts({ scene }, { sounds: false, particles: dots });
+  const metal = new T.Mesh(new T.BoxGeometry(1, 1, 1), new T.MeshStandardMaterial({ name: 'steel plate', metalness: 1 }));
+  assert.equal(fx.hit({ point: { x: 0, y: 1, z: 0 }, normal: { x: 0, y: 0, z: 1 }, mesh: metal }), 'metal', 'what was hit is read from its mesh');
+  assert.equal(fx.hit({ point: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 1, z: 0 } }, { surface: 'grass' }), 'dirt', 'grass sprays like dirt');
+  assert.ok(made > 10, 'bits fly');
+  fx.muzzle({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { kind: 'shotgun' });
+  const e = new T.Object3D(); e.position.set(0, 1, 0); scene.add(e); e.updateMatrixWorld(true);
+  for (let i = 0; i < 5; i++) fx.shell(e, { kind: 'pistol' }); fx.shell(e, { kind: 'revolver' });
+  assert.equal(fx.cases.length, 5, 'pistols throw cases; revolvers keep theirs');
+  for (let i = 0; i < 180; i++) fx.update(1 / 60);
+  assert.ok(fx.cases.every(c => c.still && Math.abs(c.p.y - .0045) < .01 && c.p.x > .2), 'they fly out to the right and lie on the ground');
+  fx.clear(); assert.equal(fx.cases.length, 0, 'cleared');
+  console.log('combat: weapons, ammo, pickups, holding and hits ok');
+}
+{
   const { Melee, Brawler, SWINGS } = await import('../src/kit/fight.js');
   const A = { x: 0, y: 0, z: 0, yaw: 0 }, B = { x: 0, y: 0, z: 1.6, yaw: Math.PI };   // face to face, 1.6 m apart
   const a = new Melee(A), b = new Melee(B); let hits = [];
@@ -2322,7 +2378,8 @@ console.log('physics ok');
   const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
   const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
   const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
-  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  const all = []; v.shell.traverse(m => { if (m.isMesh) all.push(m); });   // (its doors' cards and its steering wheel are parts of their own)
+  const inner = all.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
   assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
   const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
   F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
@@ -3045,6 +3102,39 @@ console.log('physics ok');
   assert.equal(sp.frameGenPace(g3.id), true, 'its frames came late with two refreshes: back to one');
   assert.equal(sp.frameGenPaceOf(g3, 2), 'first', 'pace first for it from then on');
   assert.ok(Math.abs(sp.frameGenRoom(g3) - 800 / 60) < 1e-9, 'and one refresh of room again');
+  // a game whose code runs past a 60 Hz refresh (Long Shadow on the Fold, Rob 2026-11-15): before 'first', a spare
+  // refresh: the screen at 120 Hz and the one frame made between shown on the middle refresh or the one after
+  const g4 = { id: 'kt-thirty-slow', era: 'nextgen' };
+  assert.equal(sp.frameGenOne(), true, '30 → 60 makes one frame between, whatever the screen');
+  assert.equal(sp.frameGenSlack(g4.id), false, 'no spare refresh where the screen has no 120');
+  screen.rates = [60, 90, 120]; screen.top = 120;
+  assert.equal(sp.slackRate(), 120); assert.equal(sp.slackRate([60, 90, 144]), 0, 'only a whole number of 60s');
+  sp.settle(g4.id, { fgPace: 'first' });
+  assert.equal(sp.frameGenPaceOf(g4, 2), 'early', "a 'first' from before waits until the spare refresh has been tried");
+  assert.equal(sp.screenWant(g4), 60, 'asked for 60 at first');
+  assert.equal(sp.frameGenSlack(g4.id), true, 'the frames between came late: a spare refresh');
+  assert.equal(sp.frameGenSlack(g4.id), false, 'once');
+  assert.equal(sp.screenWant(g4), 120, 'so the screen is asked for 120');
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'first', "after which the 'first' kept from before counts");
+  sp.settle(g4.id, { fgPace: null });
+  assert.equal(sp.frameGenPaceOf(g4, 4), 'early', 'pace early on the faster screen');
+  for (let i = 0, t = 60000; i < 80; i++) sp.tick(t += 1000 / 120);
+  assert.equal(sp.fpsFor(g4), 30, 'still 30 real frames a second');
+  assert.match(sp.frameGenStatus(g4), /makes 30 more \(blend, each real frame given two refreshes of the graphics chip, the screen at 120 Hz so the frame between has a spare refresh\)/, 'Settings says so');
+  assert.ok(sp.frameGenRoom(g4) > 1000 / 60, 'the real frame keeps two 60 Hz refreshes of room (less the made frame), not two of 120');
+  assert.equal(sp.frameGenFits(g4, 30), true, 'not judged by a 120 Hz refresh');
+  {
+    // GpuChain: one made frame from the middle refresh (2 of 4), or the first after it to come
+    const { GpuChain: GC } = await import('../src/kit/hd3d-gpu.js');
+    const run = ks => { const shown = [], me = { sched: { at: 0, ms: 1000 / 120, gap: 4, k: 0, first: true, D: 4, one: true, madeOne: false }, fg: { ready: true, keep() {} }, fgWin: { made: 0, dropped: 0 }, drop: true, owe: false,
+      dueMade: GC.prototype.dueMade, late: () => false, showAt: k => (shown.push(k), 'made') };
+      for (const k of ks) GC.prototype.between.call(me, false, k * 1000 / 120 + 1); return shown; };
+    assert.deepEqual(run([1, 2, 3]), [2], 'shown on the middle refresh, then kept');
+    assert.deepEqual(run([1, 3]), [3], 'or the one after, when the middle one did not come');
+    assert.deepEqual(run([2, 3, 4]), [2, 4], 'and the next real frame shown on time if it is late');
+  }
+  screen.rates = []; screen.top = 0;
+  for (let i = 0, t = 80000; i < 80; i++) sp.tick(t += 1000 / 60);
   sp.setFrameGenPick('auto');
   assert.equal(sp.frameGenFor(g3), false, 'Auto leaves a 60 Hz screen alone');
   assert.match(sp.frameGenStatus(g3), /30 → 60 fills a 60 Hz screen/, 'and Settings says which pick fills it');
@@ -6401,7 +6491,7 @@ console.log('physics ok');
 
 // vehicles made in code (src/kit/models/vehicle-*.js, vehicles.js: gs.models.vehicle)
 {
-  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js');
+  const THREE = await import('three'), P = await import('../src/kit/models/vehicle-parts.js'), S = await import('../src/kit/models/vehicle-shapes.js'), R = await import('../src/kit/models/vehicle-rail.js'), C = await import('../src/kit/models/vehicle-craft.js'), B = await import('../src/kit/models/vehicle-bike.js');
   const { vehicle } = await import('../src/kit/models/vehicles.js');
   // what a shape's triangles say: its volume (triangles facing out make it positive), its box, edges that are not shared by two triangles, corners that are not numbers
   const facts = geos => {
@@ -6456,13 +6546,17 @@ console.log('physics ok');
     const plans = [], t0 = performance.now();
     for (const st of S.KINDS.car) plans.push(S.car({ style: st })); for (const st of S.KINDS.truck) plans.push(S.truck({ style: st })); plans.push(S.truck({ style: 'flat', axles: 3 }));
     for (const st of S.KINDS.tank) plans.push(S.tank({ style: st })); for (const st of R.RAIL) plans.push(R.railcar(st)); for (const st of C.CRAFT.boat) plans.push(C.boat({ style: st })); for (const st of C.CRAFT.plane) plans.push(C.plane({ style: st }));
+    for (const st of S.KINDS.bus) plans.push(S.bus({ style: st })); for (const st of B.BIKE_KINDS) plans.push(B.bike({ style: st })); for (const st of C.CRAFT.helicopter) plans.push(C.helicopter({ style: st }));
     const ms = performance.now() - t0; let tris = 0;
     for (const p of plans) {
       const name = p.kind + ' ' + p.style, f = facts(all(p.body)); tris += f.tris;
       assert.ok(f.bad === 0 && f.tris > 800, name + ': ' + f.tris + ' triangles, all real numbers'); assert.ok(f.facing > .97, name + ': faces out (' + f.facing.toFixed(3) + ')');
-      assert.ok(near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');
+      assert.ok((p.kind === 'bike' ? f.hi[2] - f.lo[2] < p.size.length && f.hi[2] - f.lo[2] > p.wheelbase * .8 : near(f.hi[2] - f.lo[2], p.size.length, p.size.length * .12 + .4)) && f.hi[0] - f.lo[0] <= p.size.width + .05 && near(f.lo[0], -f.hi[0], .25), name + ': the size it says, the same both sides');   // (a bike's size is over its wheels)
       for (const q of Object.values(p.parts || {})) assert.equal(facts(all(q.shape)).bad, 0);
-      for (const w of p.wheels) { assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(w.at[1] - w.geo.r, -p.gear, .01) || w.at[2] > 3 : near(w.at[1], w.geo.r, 1e-9)), name + ': wheels on the ground'); }
+      for (const w of p.wheels) {   // (a bike's front wheel is on its forks: where the forks put it)
+        const at = w.on ? new THREE.Vector3(...w.at).applyEuler(new THREE.Euler(...(p.parts[w.on].rot || [0, 0, 0]))).add(new THREE.Vector3(...p.parts[w.on].at)).toArray() : w.at;
+        assert.ok(w.geo.r > .1 && (p.kind === 'plane' ? near(at[1] - w.geo.r, -p.gear, .01) || at[2] > 3 : near(at[1], w.geo.r, 1e-6)), name + ': wheels on the ground');
+      }
       for (const pt of Object.values(p.points)) assert.ok((Array.isArray(pt) ? pt : pt.at).every(Number.isFinite));
     }
     const car = plans[0], jeep = plans.find(p => p.style === 'jeep'), lorry = plans.find(p => p.kind === 'truck'), six = plans.find(p => p.kind === 'truck' && p.wheels.length === 6);
@@ -6474,7 +6568,7 @@ console.log('physics ok');
     const steam = plans.find(p => p.style === 'steam'); assert.ok(steam.rods && steam.parts.rods && steam.parts.mainRods && steam.sets[0].geo.spokes && steam.points.smoke[1] > 3 && steam.radius === steam.rods.r, 'a steam engine: spoked wheels, rods, a chimney to smoke from; its radius is its driving wheels\'');
     const van = plans.find(p => p.kind === 'train' && p.style === 'van'); assert.ok(near(van.points.roof[1], van.size.height, .01) && van.points.roof[0] === 0 && van.points.roof[2] === 0, 'a van\'s roof point is the top of its roof');
     // the goods train: wagons on leaf springs with spoked wheels; a guard's van (look-outs, an open end, two tail lamps); loads; a tank wagon's filler; smoke deflectors
-    const cut = (p, n) => (p.body.slots.get(n) || []).reduce((t, g) => t + g.attributes.position.count / 3, 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
+    const cut = (p, n) => [p.body, ...Object.values(p.parts || {}).map(q => q.shape)].reduce((t, b) => t + (b.slots.get(n) || []).reduce((u, g) => u + g.attributes.position.count / 3, 0), 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
     const guard = rail('guard'), open = rail('open'), flat = rail('flat'), tank = rail('tanker');
     assert.ok(R.RAIL.includes('guard') && guard.points.veranda[2] > 2.5 && guard.points.tail[2] > guard.points.veranda[2] && near(guard.points.roof[1], van.points.roof[1], 1e-9) && guard.size.height > guard.points.roof[1] + .4 && guard.size.width > van.size.width + .25 && cut(guard, 'tail') > 0 && cut(guard, 'glass') > 0 && cut(guard, 'boards') > cut(van, 'boards'), 'a guard\'s van: look-outs wider than a van, a stove pipe above its roof, an open end, tail lamps');
     for (const w of [van, guard, open, flat, tank]) assert.ok(w.sets.length === 1 && w.sets[0].geo.spokes === 9 && w.sets[0].at.length === 2 && cut(w, 'iron') > 2000, w.style + ': two spoked wheelsets under their springs and guards');
@@ -6491,6 +6585,15 @@ console.log('physics ok');
     assert.equal(JSON.stringify(tender.sets[0].geo), JSON.stringify(van.sets[0].geo), 'a tender on the wagons\' wheels (one shape, so one draw in a fused train)');
     for (const bt of plans.filter(p => p.kind === 'boat')) { const f = facts(all(bt.body)); assert.ok(near(f.lo[1], -bt.draft, .02) && f.hi[1] > .3, bt.style + ' floats: ' + f.lo[1].toFixed(2) + ' m below the water'); const bow = facts(all(bt.body).map(g => { const a = g.attributes.position.array, keep = []; for (let i = 0; i < a.length; i += 9) if (Math.max(a[i + 2], a[i + 5], a[i + 8]) < f.lo[2] + .25) keep.push(...a.subarray(i, i + 9)); const o = new THREE.BufferGeometry(); o.setAttribute('position', new THREE.BufferAttribute(new Float32Array(keep), 3)); o.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(keep.length), 3)); return o; }).filter(g => g.attributes.position.count)); assert.ok(bow.hi[0] - bow.lo[0] < bt.size.width * .45, bt.style + ': a bow at -z'); }
     for (const pl of plans.filter(p => p.kind === 'plane')) { const f = facts(all(pl.body)); assert.ok(near(f.hi[0] - f.lo[0], pl.size.width, pl.size.width * .1) && pl.props.every(n => pl.parts[n].shape.slots.has('blur')) && pl.gear > 1 && pl.points.pilot, pl.style + ': wings as wide as it says'); }
+    // the working vehicles: liveries and flashing lamps, a fire engine's ladder; buses; bikes on their forks; helicopters' rotors
+    const pol = plans.find(p => p.style === 'police'), amb = plans.find(p => p.style === 'ambulance'), taxi = plans.find(p => p.style === 'taxi'), fire = plans.find(p => p.style === 'fire');
+    for (const w of [pol, amb, fire]) assert.ok(w.beacons.length >= 2 && w.beacons.every((q, i) => q.slot && w.points['beacon' + i] === q.at) && w.body.slots.has('beaconA') && w.body.slots.has('beaconB') && cut(w, 'paint2') > 50, w.style + ': a livery and lamps that flash');
+    assert.ok(cut(taxi, 'sign') > 0 && !taxi.beacons.length && amb.size.height > 2.4 && pol.size.length < 5.3, 'a taxi\'s sign; an ambulance stands tall');
+    assert.ok(fire.parts.turntable && fire.parts.ladder.on === 'turntable' && fire.points.tip.on === 'ladder' && fire.aim.turn === 'turntable' && fire.wheels.length === 6 && fire.points.crewL, 'a fire engine: a ladder on a turntable, crew seats, three axles');
+    for (const bu of plans.filter(p => p.kind === 'bus')) assert.ok(bu.size.length > 10 && bu.wheels.length === 4 && bu.wheels[2].geo.dual && cut(bu, 'glass') > 400 && bu.points.door0 && bu.points.door0[0] > 1, bu.style + ': a bus, its doors on the kerb side');
+    assert.ok(plans.find(p => p.style === 'double').size.height > 4.2 && S.bus({ side: 'left' }).points.door0[0] < -1, 'a double decker is tall; side: left puts the doors on the left');
+    for (const bk of plans.filter(p => p.kind === 'bike')) assert.ok(bk.wheels.length === 2 && bk.wheels[0].on === 'fork' && bk.steer === 'fork' && bk.lean && bk.rake > .2 && bk.rake < .5 && bk.points.rider[1] > .7 && bk.points.barL.on === 'fork' && bk.size.width < 1, bk.style + ': a bike, its front wheel on raked forks');
+    for (const h of plans.filter(p => p.kind === 'helicopter')) assert.ok(h.props.every(n => h.parts[n].shape.slots.has('blur')) && h.parts.rotor.rot[0] === -Math.PI / 2 && h.rotor > 3.5 && h.points.pilot[1] > .5 && h.gear === 0, h.style + ': a helicopter, its rotor level over it');
     assert.ok(ms < 4000, 'every plan in ' + ms.toFixed(0) + ' ms');
     // the made vehicle: its parts move as asked; a copy shares its shapes
     const v = vehicle('car', { style: 'saloon', seed: 3 }), w = v.twin();
@@ -6512,7 +6615,73 @@ console.log('physics ok');
       assert.doesNotThrow(() => pw.free(), 'a world with a car in it can be freed');
     }
     let bad = null; try { vehicle('car', { style: 'hovercraft' }); } catch (e) { bad = e; } assert.ok(/no car called 'hovercraft'/.test(bad?.message)); bad = null; try { vehicle('sled'); } catch (e) { bad = e; } assert.ok(/no vehicle 'sled'/.test(bad?.message), 'what it does not know is an error that names what it does');
-    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'train', 'boat', 'plane']);
+    assert.deepEqual(Object.keys(vehicle.kinds), ['car', 'truck', 'tank', 'bus', 'bike', 'train', 'boat', 'plane', 'helicopter']);
+    // a bike: its forks steer, it leans into a turn with the speed, and on gs.physics3d springs it stays upright and leans as it turns
+    {
+      const bk = vehicle('bike', { style: 'road' }); bk.steer(.2); assert.ok(bk.parts.fork.rotation.y === -.2 && bk.wheels[0].parent === bk.parts.fork && bk.wheels[1].parent === bk.shell, 'a bike: the front wheel turns with the forks');
+      for (let i = 0; i < 90; i++) bk.move(1 / 60, 12, { steer: .3 }); assert.ok(bk.lean > .3 && bk.shell.rotation.z < -.3 && near(bk.shell.rotation.z, -bk.lean, 1e-9), 'and leans into a right turn: ' + bk.lean.toFixed(2));
+      for (let i = 0; i < 90; i++) bk.move(1 / 60, 2, { steer: .3 }); assert.ok(bk.lean < .2, 'less, slowly: ' + bk.lean.toFixed(2));
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const mb = vehicle('bike', { style: 'sport' }), hold = new THREE.Scene(); hold.add(mb);
+      const ride = pw.vehicle(mb, mb.chassis({ at: { x: 0, y: 1, z: 0 }, power: 8 })); for (let i = 0; i < 60; i++) pw.step(1 / 60);
+      assert.ok(ride.bike && ride.grounded && !ride.fallen, 'a bike on springs stands');
+      for (let i = 0; i < 180; i++) { ride.drive(1, i > 90 ? .5 : 0); pw.step(1 / 60); }
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(mb.quaternion);
+      assert.ok(ride.speed > 6 && !ride.fallen && up.y > .95 && mb.lean > .15 && Math.abs(mb.position.x) > .5, 'and rides, turns and leans into the turn: ' + ride.speed.toFixed(1) + ' m/s, leaning ' + mb.lean.toFixed(2) + ', upright ' + up.y.toFixed(3));
+      pw.box(null, 4, 3, 1, { at: { x: mb.position.x - Math.sin(mb.rotation.y) * 4, y: 1.5, z: mb.position.z - Math.cos(mb.rotation.y) * 4 }, fixed: true });
+      ride.fallAt = 2; for (let i = 0; i < 120; i++) { ride.drive(1, 0); pw.step(1 / 60); } assert.ok(ride.fallen, 'into a wall: it goes over');
+      ride.rightUp(); assert.ok(!ride.fallen, 'rightUp() stands it up again'); pw.free();
+      // a police car's lamps flash in turn, its own; a fire engine's ladder lifts within its stops
+      const pc = vehicle('car', { style: 'police' }), twin = pc.twin(), lens = (v, n) => v.shell.children.find(m => m.name === n).material;
+      assert.ok(pc.beacons.length === 2 && !pc.sirenOn && lens(pc, 'beaconA') !== lens(twin, 'beaconA') && lens(pc, 'beaconA').emissiveIntensity < .1, 'a police car: its own lamps, dark');
+      pc.siren(true); const seen = { A: 0, B: 0, both: 0 }; for (let i = 0; i < 96; i++) { pc.update(1 / 60); const a = pc.beacons[0].on, b = pc.beacons[1].on; if (a) seen.A++; if (b) seen.B++; if (a && b) seen.both++; }
+      assert.ok(seen.A > 10 && seen.B > 10 && seen.both === 0 && lens(twin, 'beaconA').emissiveIntensity < .1, 'siren(): blue, then red, never both: ' + JSON.stringify(seen));
+      pc.siren(false); assert.ok(!pc.beacons.some(q => q.on) && lens(pc, 'beaconB').emissiveIntensity < .1, 'and off');
+      const fe = vehicle('truck', { style: 'fire' }); fe.aim(.6, 3); assert.ok(fe.parts.turntable.rotation.y === .6 && fe.parts.ladder.rotation.x === 1.25 && fe.beacons.length === 4, 'a fire engine\'s ladder turns and lifts, to its stop');
+      const hc = vehicle('helicopter', { style: 'medic' }); for (let i = 0; i < 120; i++) hc.move(1 / 60, 0, { power: 1 }); assert.ok(hc.parts.rotor.rotation.z > 20 && hc.parts.tail.rotation.z > 20 && hc.parts.rotor.children.find(m => m.name === 'blur').visible, 'a helicopter\'s rotors spin up into a blur');
+    }
+    // a car's doors hang on their hinges and open; its steering wheel turns with its wheels; people get in, sit at the wheel, get out and are pulled out
+    {
+      const { skeleton } = await import('../src/kit/models/human.js'), { Reactions } = await import('../src/kit/reactions.js'), wp = o => o.getWorldPosition(new THREE.Vector3());
+      const sal = vehicle('car', { style: 'saloon' }), sp = vehicle('car', { style: 'sports' }), van = vehicle('car', { style: 'van' }), jp = vehicle('car', { style: 'jeep' }), shut = vehicle('car', { style: 'saloon', doors: false });
+      assert.deepEqual(sal.doors.map(d => d.name), ['doorL', 'doorR', 'backL', 'backR'], 'a saloon: four doors');
+      assert.ok(sp.doors.length === 2 && van.doors.filter(d => d.slide).length === 2 && !jp.doors && !shut.doors && Object.keys(shut.parts).join() === 'steering', 'a sports car two; a van\'s back doors slide; a jeep none; doors: false keeps them in the body');
+      assert.ok(sal.seats.driver.door === 'doorL' && sal.seats.passenger.door === 'doorR' && sal.seats.backL.door === 'backL' && sal.seats.driver.steer && !sal.seats.passenger.steer, 'each seat its door');
+      // (shut, a door is just where the body was: its meshes, hung on the hinge, put back by the hinge)
+      sal.updateMatrixWorld(true); const dl = sal.parts.doorL, paint = dl.children.find(m => m.name === 'paint'), bb = paint.geometry.boundingBox || (paint.geometry.computeBoundingBox(), paint.geometry.boundingBox);
+      assert.ok(paint && dl.children.some(m => m.name === 'glass') && dl.children.some(m => m.name === 'lining') && dl.children.some(m => m.name === 'chrome') && bb.min.x < -.8 && bb.max.z - bb.min.z > 1, 'a door: its paint, glass, card and handle, on the car\'s left');
+      const corner = new THREE.Vector3(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld), c0 = corner.clone();
+      sal.open('driver'); for (let i = 0; i < 40; i++) sal.update(1 / 60); sal.updateMatrixWorld(true); corner.set(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld);
+      assert.ok(sal.door('doorL').open === 1 && dl.rotation.y < -1 && corner.x < c0.x - .6 && sal.door('doorR').open === 0, 'open(\'driver\'): the driver\'s door swings out on its front edge: ' + corner.x.toFixed(2));
+      let slam = 0; sal.shut('all'); for (let i = 0; i < 40; i++) { sal.update(1 / 60); if (sal.door('doorL').slammed) slam++; } assert.ok(slam === 1 && dl.rotation.y === 0, 'shut: slammed once');
+      van.open('backR'); for (let i = 0; i < 90; i++) van.update(1 / 60); assert.ok(van.parts.backR.position.z - van.door('backR').at.z > .9 && van.parts.backR.position.x > van.door('backR').at.x, 'a van\'s side door comes out and slides back');
+      sal.steer(.3); assert.ok(sal.parts.steering.rotation.z < -1, 'the wheel turns with the steering');
+      // the damage reaches the doors: a dent there bends the door's own paint
+      const pv = paint.geometry.attributes.position.array.slice(); const dent = new THREE.Vector3(-.9, .65, -.2); sal.updateMatrixWorld(true); sal.dent(sal.localToWorld(dent.clone()), { power: 1 });
+      const pa = paint.geometry.attributes.position.array; let bent = 0; for (let i = 0; i < pa.length; i++) bent = Math.max(bent, Math.abs(pa[i] - pv[i])); assert.ok(bent > .03 && sal.damage.dents === 1, 'a dent in a door: ' + bent.toFixed(3));
+      // in, sat, out
+      const scene = new THREE.Group(), car = vehicle('car', { style: 'saloon' }); scene.add(car); car.position.set(10, 0, 5); car.rotation.y = .7;
+      const me = skeleton({ seed: 1 }); scene.add(me); me.position.set(7, 0, 9);
+      const go = car.enter(me); let steps = [], opened = false;
+      for (let i = 0; i < 900 && !go.done; i++) { car.update(1 / 60); if (steps.at(-1) !== go.step) steps.push(go.step); if (car.door('doorL').open > .9) opened = true; }
+      assert.deepEqual(steps.slice(0, 4), ['walk', 'open', 'in', 'close'], 'enter: walk, open, in, close: ' + steps);
+      car.updateMatrixWorld(true);
+      const hips = wp(me.rig.parts.hips), seat = wp(car.points.driver);
+      assert.ok(go.done && opened && me.vehicle === car && me.seat === 'driver' && car.who('driver') === me && me.parent === car.shell && car.door('doorL').open === 0 && hips.distanceTo(seat) < .16 && me.rig.state === 'drive', 'sat at the wheel, hips on the cushion, the door shut: ' + hips.distanceTo(seat).toFixed(2));
+      const hand = wp(me.bones.handL), rimL = wp(car.parts.steering); assert.ok(hand.distanceTo(rimL) < .3, 'a hand on the wheel: ' + hand.distanceTo(rimL).toFixed(2));
+      const out = car.exit(); for (let i = 0; i < 600 && !out.done; i++) car.update(1 / 60);
+      assert.ok(out.done && me.parent === scene && !me.vehicle && car.who('driver') === null && Math.abs(me.rotation.x) < 1e-6 && wp(me).distanceTo(wp(car)) > 1.2 && wp(me).distanceTo(wp(car)) < 3 && car.door('doorL').open === 0, 'exit: out, beside it, the door shut, theirs again');
+      // pulled out: the one at the wheel goes down (by their Reactions), the one who pulled sits there
+      const them = skeleton({ seed: 2 }); scene.add(them); car.putIn(them); const react = new Reactions(them, { world: false, link: false }); them.react = react;
+      const pull = car.pull('driver', me); let downAt = -1;
+      for (let i = 0; i < 900 && !pull.done; i++) { car.update(1 / 60); if (them.parent === scene) { them.rig.update(1 / 60); react.update(1 / 60); if (downAt < 0 && react.busy) downAt = i; } }
+      assert.ok(pull.done && pull.thrown === them && downAt > 0 && them.parent === scene && !them.vehicle && car.who('driver') === me && wp(them).distanceTo(wp(car)) > 1.2, 'pull: thrown out and down, and the puller at the wheel');
+      // astride a motorbike, from its left: hands on the bars
+      const bk = vehicle('bike', { style: 'road' }), rider = skeleton({ seed: 3 }); scene.add(bk, rider); rider.position.set(-2, 0, 1);
+      const mount = bk.enter(rider); for (let i = 0; i < 600 && !mount.done; i++) bk.update(1 / 60); bk.updateMatrixWorld(true);
+      assert.ok(mount.done && bk.who('rider') === rider && rider.rig.state === 'ride' && wp(rider.rig.parts.hips).distanceTo(wp(bk.points.rider)) < .16, 'on a bike: astride it, on the saddle');   // (hands go on the bars where the person has touch(): a sculpted one)
+      assert.throws(() => car.enter(skeleton(), { seat: 'boot' }), /no seat 'boot'/);
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
@@ -6573,7 +6742,7 @@ console.log('physics ok');
       'dirt and wet change this car only');
     // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
     const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
-    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const hp = hc.parts.doorR.children.find(m => m.name === 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
     const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
     let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
     assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),
@@ -7325,6 +7494,193 @@ console.log('physics ok');
   assert.throws(() => h.buff('nope'), /no buff 'nope'/, 'an unknown buff says so');
   assert.throws(() => new Stats({ hp: 'lots' }), /should be a number/, 'a bad stat says so');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
+}
+
+// gs.magic: casts, mana and cooldowns, bolts that home, pierce, chain and splash, areas that warn and linger, beams, wards, heals, statuses that meet
+{
+  const { Magic, STATUSES, Looks } = await import('../src/kit/magic.js');
+  const { Stats } = await import('../src/kit/stats.js');
+  const BOOK = {
+    firebolt: { kind: 'bolt', element: 'fire', cost: 10, cool: 1, cast: .3, speed: 20, damage: 12, status: 'burn' },
+    seeker: { kind: 'bolt', element: 'arcane', speed: 10, damage: 5, homing: 4 },
+    spear: { kind: 'bolt', element: 'frost', speed: 30, damage: 6, pierce: 2, status: 'chill' },
+    arc: { kind: 'bolt', element: 'storm', speed: 30, damage: 20, chain: { jumps: 2, range: 4, falloff: .5 } },
+    meteor: { kind: 'area', element: 'fire', at: 'aim', range: 20, radius: 2.5, delay: 1, damage: 30, push: 6 },
+    cone: { kind: 'area', element: 'frost', shape: 'cone', angle: .4, radius: 9, damage: 4 },
+    puddle: { kind: 'area', element: 'water', at: 'aim', radius: 2, status: 'wet', for: 3, every: .5 },
+    ray: { kind: 'beam', element: 'storm', channel: 1, every: .25, damage: 2, range: 10, drain: 5 },
+    ward: { kind: 'shield', element: 'arcane', absorb: 20, for: 5 },
+    mirror: { kind: 'shield', reflect: true, absorb: 100, for: 5 },
+    mend: { kind: 'heal', heal: 25, cast: .5, fragile: true },
+    renew: { kind: 'heal', heal: 30, over: 3 },
+    hurry: { kind: 'buff', buff: 'haste' },
+  };
+  const mk = (team, x, z, o = {}) => ({ team, body: { x, y: 0, z, yaw: o.yaw ?? 0 }, stats: new Stats({ speed: 5, castSpeed: 1, hp: { max: 100 }, mana: { max: 50, regen: 0 } }, { buffs: STATUSES }) });
+  const magic = new Magic({ book: BOOK, link: false }), ev = [];
+  magic.on('any', e => ev.push(e.type));
+  const H = mk('hero', 0, 0), hero = magic.unit(H.body, { team: 'hero', stats: H.stats });
+  const foes = [[0, 8], [1, 10], [-1, 12]].map(([x, z]) => { const f = mk('foes', x, z); return magic.unit(f.body, { team: 'foes', stats: f.stats, radius: .5 }); });
+  const run = (s, dt = 1 / 60) => { for (let t = 0; t < s - 1e-9; t += dt) magic.update(dt); };
+  // a cast takes its time, costs mana once it goes, then cools down
+  assert.equal(hero.cast('firebolt', { target: foes[0] }), true, 'cast starts');
+  assert.equal(hero.cast('firebolt'), 'busy', 'one cast at a time'); run(.2);
+  assert.ok(hero.casting && Math.abs(hero.casting.part - .2 / .3) < .1 && hero.stats.get('mana') === 50, 'mana is taken when the spell goes, not while casting');
+  run(.15); assert.ok(!hero.casting && hero.stats.get('mana') === 40 && magic.bolts.length === 1, 'released: a bolt in flight, 10 mana spent');
+  run(.3); assert.equal(hero.can('firebolt'), 'cooling', 'cooling down');
+  run(.35); assert.ok(foes[0].stats.get('hp') === 88 && foes[0].stats.has('burn') && magic.bolts.length === 0, 'it hit: 12 off, burning: ' + foes[0].stats.get('hp'));
+  run(1.2); assert.ok(foes[0].stats.get('hp') < 88 - 3.9, 'burn ticks: ' + foes[0].stats.get('hp'));
+  assert.equal(hero.can('firebolt'), true, 'ready again after its cooldown');
+  hero.stats.change('mana', -45); assert.equal(hero.can('firebolt'), 'mana', 'not enough mana'); hero.stats.fill('mana');
+  // statuses meet: frost on the wet freezes, fire thaws (and hits harder), chill at three doses becomes frozen
+  const f1 = foes[1]; f1.stats.buff('wet');
+  magic.hit(hero, f1, 'test', { element: 'frost', damage: 0 }); assert.ok(f1.stats.is('frozen') && !f1.stats.has('wet') && f1.stats.is('stunned'), 'frost on the wet: frozen');
+  const e = magic.hit(hero, f1, 'test', { element: 'fire', damage: 10, status: 'burn' }); assert.ok(e.reaction === 'thaw' && e.damage === 15 && !f1.stats.is('frozen') && !f1.stats.has('burn'), 'fire thaws: 1.5x and no burn: ' + JSON.stringify([e.reaction, e.damage]));
+  for (let i = 0; i < 3; i++) magic.hit(hero, f1, 'test', { element: 'frost', status: 'chill' }); assert.ok(f1.stats.is('frozen') && !f1.stats.has('chill'), 'three doses of chill: frozen');
+  assert.equal(f1.cast('ward'), 'stunned', 'frozen: no casting'); f1.stats.remove('frozen');
+  // a homing bolt turns after a foe that steps aside
+  const s0 = foes[2]; s0.body.x = 4; hero.cast('seeker', { target: s0, dir: { x: 0, y: 0, z: 1 } }); const hp2 = s0.stats.get('hp'); run(2.5);
+  assert.ok(s0.stats.get('hp') === hp2 - 5, 'a homing bolt finds a foe off to the side: ' + s0.stats.get('hp')); s0.body.x = -1;
+  // piercing goes through two, a chain jumps on with less each time
+  for (const f of foes) f.stats.clear(); hero.gcd = 0;
+  foes[1].body.x = .3; hero.cast('spear', { dir: { x: 0, y: 0, z: 1 } }); run(1);
+  assert.ok(foes[0].stats.get('hp') === 94 && foes[0].stats.has('chill'), 'the first it pierced'); assert.ok(foes[1].stats.get('hp') === 94 || foes[2].stats.get('hp') === 94, 'and one behind');
+  for (const f of foes) f.stats.clear(); hero.gcd = 0; foes[1].body.x = 0; foes[2].body.x = 0;
+  hero.cast('arc', { target: foes[0] }); run(1);
+  assert.deepEqual(foes.map(f => f.stats.get('hp')), [80, 90, 95], 'a chain: 20, then 10 and 5 jumping on');
+  assert.ok(magic.zaps.length === 0 && ev.includes('hit'), 'zaps fade');
+  // an area warns, then goes off where aimed, shoving those in it
+  for (const f of foes) f.stats.clear(); hero.gcd = 0;
+  hero.cast('meteor', { at: { x: 0, y: 0, z: 8.5 } }); run(.5);
+  assert.ok(magic.areas[0] && !magic.areas[0].live && Math.abs(magic.areas[0].part - .5) < .05 && ev.includes('warn'), 'a warning first, half way: ' + magic.areas[0]?.part);
+  let pushed = null; magic.on('hit', e => { if (e.spell === 'meteor') pushed = e.push; }); run(.6);
+  assert.ok(foes[0].stats.get('hp') === 70 && foes[1].stats.get('hp') === 70 && foes[2].stats.get('hp') === 100 && magic.areas.length === 0, 'it lands on those within its radius: ' + foes.map(f => f.stats.get('hp')));
+  assert.ok(pushed && Math.abs(pushed.z) > 1, 'and pushes them away from the middle');
+  // a cone in front, not behind
+  for (const f of foes) f.stats.clear(); hero.gcd = 0; const back = magic.unit({ x: 0, y: 0, z: -3 }, { team: 'foes', stats: new Stats({ hp: { max: 100 } }) });
+  hero.cast('cone'); run(.05); assert.ok(foes[0].stats.get('hp') === 96 && back.stats.get('hp') === 100, 'a cone the way the caster faces');
+  magic.remove(back);
+  // a lingering puddle soaks those who stand in it, then lightning through the wet stuns
+  hero.gcd = 0; hero.cast('puddle', { at: { x: 0, y: 0, z: 8 } }); run(.6); assert.ok(foes[0].stats.has('wet') && magic.areas.length === 1, 'a lingering area ticks');
+  run(3); assert.equal(magic.areas.length, 0, 'and ends');
+  const c = magic.hit(hero, foes[0], 'test', { element: 'storm', damage: 10 }); assert.ok(c.reaction === 'conduct' && c.damage === 15 && foes[0].stats.is('stunned'), 'lightning through water stuns');
+  // a beam held: ticks while channelled, drains mana, ends after its time
+  for (const f of foes) f.stats.clear(); hero.stats.fill('mana'); hero.gcd = 0;
+  hero.cast('ray', { target: foes[0] }); run(.55); assert.ok(hero.channel && magic.beams[0].hit === foes[0] && foes[0].stats.get('hp') === 94, 'a beam ticks: ' + foes[0].stats.get('hp'));
+  run(.6); assert.ok(!hero.channel && magic.beams.length === 0 && foes[0].stats.get('hp') === 92 && Math.abs(hero.stats.get('mana') - 45) < .2, 'ends after its channel; drained mana: ' + hero.stats.get('mana'));
+  // a ward soaks up harm; a mirror turns a bolt back on who sent it
+  hero.gcd = 0; hero.cast('ward'); const w = magic.hit(foes[0], hero, 'test', { damage: 30 }); assert.ok(w.absorbed === 20 && w.damage === 10 && hero.stats.get('hp') === 90 && ev.includes('broken'), 'a ward takes 20, the rest gets through');
+  const m = magic.unit({ x: 6, y: 0, z: 0 }, { team: 'foes', stats: new Stats({ hp: { max: 100 }, mana: { max: 50 } }) });
+  m.cast('mirror'); hero.gcd = 0; hero.stats.hurry('firebolt', 0, { all: true }); hero.cast('firebolt', { target: m }); run(3);
+  assert.ok(m.stats.get('hp') === 100 && hero.stats.get('hp') < 90 && ev.includes('reflect'), 'the mirror sends it back: ' + hero.stats.get('hp'));
+  magic.remove(m);
+  // heals: at once after a cast a hit breaks (fragile), and over time
+  hero.stats.change('hp', -40); hero.stats.cleanse(); const was = hero.stats.get('hp'); hero.gcd = 0;
+  hero.cast('mend'); run(.2); hero.stats.change('hp', -1); assert.ok(!hero.casting && ev.includes('interrupt'), 'a fragile cast is broken by a hit');
+  hero.gcd = 0; hero.cast('mend'); run(.6); assert.equal(hero.stats.get('hp'), was - 1 + 25, 'a heal');
+  hero.gcd = 0; hero.cast('renew'); run(3.05); assert.ok(Math.abs(hero.stats.get('hp') - (was + 24 + 30)) < 1.01 || hero.stats.full('hp'), 'and over time: ' + hero.stats.get('hp'));
+  hero.gcd = 0; hero.cast('hurry'); assert.ok(hero.stats.is('hasted') && hero.stats.get('speed') > 6, 'a buff');
+  // dead units stop casting and say so
+  foes[0].stats.change('hp', -999); run(.02); assert.ok(foes[0].dead && ev.includes('dead') && foes[0].cast('ward') === 'dead', 'dead');
+  // the same on the flat (2D: no z)
+  const flat = new Magic({ book: BOOK, link: false }), a = flat.unit({ x: 0, y: 0, angle: 0 }, { team: 'a', stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }), b = flat.unit({ x: 20, y: 1 }, { team: 'b', radius: 2, stats: new Stats({ hp: { max: 50 } }) });
+  a.cast('seeker', { dir: { x: 1, y: 0 } }); for (let i = 0; i < 200; i++) flat.update(1 / 60);
+  assert.ok(b.stats.get('hp') === 45 && flat.bolts.length === 0, '2D: a bolt on the flat: ' + b.stats.get('hp'));
+  // a wall in the physics world stops a bolt short of the foe behind it
+  const wallAt = 4, W = { ray: (from, dir, l) => { const n = Math.hypot(dir.x, dir.y, dir.z), z1 = from.z + dir.z / n * l; return from.z < wallAt && z1 >= wallAt ? { thing: 'wall', point: { x: from.x, y: from.y, z: wallAt }, distance: (wallAt - from.z) * n / dir.z } : null; } };
+  const walled = new Magic({ book: BOOK, world: W, link: false }), wa = walled.unit({ x: 0, y: 0, z: 0 }, { stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }), wb = walled.unit({ x: 0, y: 0, z: 8 }, { team: 'x', stats: new Stats({ hp: { max: 50 } }) });
+  let wallHit = null; walled.on('wall', e => { wallHit = e; }); wa.cast('seeker', { target: wb }); for (let i = 0; i < 120; i++) walled.update(1 / 60);
+  assert.ok(wallHit && Math.abs(wallHit.at.z - wallAt) < 1e-6 && wb.stats.get('hp') === 50, 'a wall stops a bolt');
+  // looks: trails, rings and flashes on a stand-in particle system
+  const made = []; const fx = { make: (p, o) => { const t = { p, o, on: true, at(q) { this.p = q; return t; }, stop() { t.on = false; } }; made.push(t); return t; }, flash: () => ({ at() {}, stop() {} }), sparks: () => {} };
+  const M2 = new Magic({ book: BOOK, link: false }), L = new Looks(M2, fx), u1 = M2.unit({ x: 0, y: 0, z: 0 }, { stats: new Stats({ hp: { max: 50 }, mana: { max: 50 } }) }); M2.unit({ x: 0, y: 0, z: 6 }, { team: 'x', stats: new Stats({ hp: { max: 50 } }) });
+  u1.cast('firebolt', { dir: { x: 0, y: 0, z: 1 } }); for (let i = 0; i < 60; i++) { M2.update(1 / 60); L.update(1 / 60); }
+  assert.ok(made.some(t => t.o.loop && !t.on) && made.filter(t => t.o.burst).length >= 2, 'looks: a trail that stops, bursts where it went and where it hit');
+  assert.throws(() => new Magic({ book: { x: { kind: 'nope' } } }), /needs kind/, 'a spell with no kind says so');
+  console.log('gs.magic: casts, mana, cooldowns, homing, piercing, chains, warned and lingering areas, cones, beams, wards, mirrors, heals, buffs, statuses that meet, 2D, looks ok');
+}
+
+// gs.monsters: attack sets with telegraphs (picked by range and side, cooldowns, charges, leaps, breath, spit, spells),
+// a creature that flinches, staggers, is knocked down and gets up, falls dead; bosses in phases with poise and enrage
+{
+  const { Moveset, Hurt, Boss, ATTACKS, inShape } = await import('../src/kit/monsters.js');
+  const { Stats } = await import('../src/kit/stats.js'), { creature } = await import('../src/kit/models/creature.js');
+  let seed = 3; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const hero = { x: 0, y: 0, z: 1.6, radius: .4, stats: new Stats({ hp: { max: 200 } }) };
+  const wolf = { x: 0, y: 0, z: 0, yaw: 0 }, run = (m, s, t = hero, ts = [t], dt = 1 / 60) => { const outs = []; for (let i = 0; i * dt < s - 1e-9; i++) { const o = m.update(dt, t, ts); wolf.x += o.move.x; wolf.z += o.move.z; wolf.y += o.move.y; wolf.yaw = o.face; outs.push(o); } return outs; };
+  // a bite: a windup to see coming, then it hurts once, then an opening
+  const bites = new Moveset(wolf, { attacks: ['bite'], radius: .5, rest: [0, 0], rng });
+  let o = run(bites, .05).at(-1); assert.ok(o.attack?.phase === 'windup' && o.attack.shape.kind === 'cone' && o.hits.length === 0, 'in range: it winds up a bite');
+  assert.ok(o.pose?.name === 'attack' && o.pose.at < .25, 'and plays its attack pose from the start');
+  const outs = run(bites, 1.2); const hits = outs.flatMap(x => x.hits);
+  assert.ok(hits.length === 1 && hits[0].damage === 12 && hero.stats.get('hp') === 188 && Math.abs(hits[0].push.z - 2) < 1e-6, 'one bite, 12 off, a shove away: ' + hits.length);
+  assert.ok(outs.some(x => x.attack?.phase === 'recover') && bites.cools.bite > 0, 'then it recovers, and the bite cools down');
+  // out of range: it walks in; behind it: a tail sweep, not a bite
+  const set = new Moveset(wolf, { attacks: ['bite', 'tail'], radius: .5, rest: [0, 0], rng }), far = { x: 0, y: 0, z: 6, radius: .4 };
+  o = run(set, .1, far).at(-1); assert.ok(!o.attack && o.walk.z > .5 && o.speed > 0, 'out of range: it closes in');
+  wolf.yaw = 0; set.face = 0; const behind = { x: 0, y: 0, z: -1.6, radius: .4, stats: new Stats({ hp: { max: 50 } }) };
+  assert.equal(set.can('bite', behind), 'side', 'no biting what is behind it'); assert.equal(set.can('tail', behind), true, 'but its tail can');
+  set.start('tail', behind); run(set, .8, behind); assert.ok(behind.stats.get('hp') === 34, 'the tail sweeps behind: ' + behind.stats.get('hp'));
+  // a guard takes most of it off; dodging, all of it
+  const guard = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 50 } }), blocks: () => true }; wolf.x = wolf.z = 0; wolf.yaw = 0;
+  const g = new Moveset(wolf, { attacks: ['claw'], radius: .5, rest: [0, 0], rng }); g.face = 0; let hit = run(g, 1, guard).flatMap(x => x.hits)[0];
+  assert.ok(hit.blocked && hit.damage === 2 && guard.stats.get('hp') === 48, 'blocked: only a chip of it');
+  const dodger = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 50 } }), dodging: true }; const g2 = new Moveset(wolf, { attacks: ['claw'], radius: .5, rest: [0, 0], rng }); g2.face = 0;
+  assert.ok(run(g2, 1, dodger).flatMap(x => x.hits).length === 0 && dodger.stats.get('hp') === 50, 'dodging: nothing');
+  // a hard hit breaks a windup; a stun holds it
+  const h1 = new Moveset(wolf, { attacks: ['slam'], radius: .5, rest: [0, 0], rng }); h1.face = 0; run(h1, .1, { x: 0, y: 0, z: 2.4, radius: .4 });
+  assert.ok(h1.now?.phase === 'windup' && h1.hurt(.2) === false && h1.hurt(.6) === true && !h1.now, 'a light hit does not break a windup, a hard one does');
+  h1.stunFor(1); o = run(h1, .5, { x: 0, y: 0, z: 2.4, radius: .4 }).at(-1); assert.ok(!o.attack && o.speed === 0, 'stunned: nothing');
+  // a charge carries it along and hits what it runs into; a pounce leaps
+  wolf.x = wolf.y = wolf.z = 0; const target = { x: 0, y: 0, z: 7, radius: .4, stats: new Stats({ hp: { max: 100 } }) };
+  const ch = new Moveset(wolf, { attacks: ['charge'], radius: .5, rest: [0, 0], rng }); ch.face = 0; const co = run(ch, 2.6, target);
+  assert.ok(wolf.z > 6 && target.stats.get('hp') === 78 && co.some(x => x.attack?.shape?.kind === 'line'), 'a charge: it runs ' + wolf.z.toFixed(1) + ' m and rams: ' + target.stats.get('hp'));
+  wolf.x = wolf.y = wolf.z = 0; target.z = 4; const pn = new Moveset(wolf, { attacks: ['pounce'], radius: .5, rest: [0, 0], rng }); pn.face = 0; let top = 0;
+  for (const x of run(pn, .7, target)) top = Math.max(top, wolf.y); run(pn, 1, target);
+  assert.ok(top > 1 && Math.abs(wolf.y) < 1e-6 && wolf.z > 3, 'a pounce leaps up and comes down where it was going: ' + [top, wolf.y, wolf.z].map(v => v.toFixed(3)));
+  // breath hurts again and again while it lasts; a spit throws a shot
+  wolf.x = wolf.y = wolf.z = 0; const br = new Moveset(wolf, { attacks: ['breath'], radius: .5, rest: [0, 0], rng }); br.face = 0; const burnt = { x: 0, y: 0, z: 3, radius: .4, stats: new Stats({ hp: { max: 100 } }) };
+  const bh = run(br, 3, burnt).flatMap(x => x.hits); assert.ok(bh.length >= 6 && burnt.stats.has('burn'), 'breath: hit after hit, and it burns: ' + bh.length);
+  const sp = new Moveset(wolf, { attacks: ['spit'], radius: .5, rest: [0, 0], rng }); sp.face = 0; const shots = run(sp, 1, { x: 0, y: 0, z: 8, radius: .4 }).flatMap(x => x.shots);
+  assert.ok(shots.length === 1 && shots[0].dir.z > .9 && shots[0].speed === 14, 'spit: one shot at the target');
+  // with a gs.magic unit, an attack can be a spell
+  { const { Magic } = await import('../src/kit/magic.js'), magic = new Magic({ book: { fireball: { kind: 'bolt', element: 'fire', speed: 20, damage: 9 } }, link: false });
+    const me = magic.unit(wolf, { team: 'm', stats: new Stats({ hp: { max: 50 } }) }), you = magic.unit({ x: 0, y: 0, z: 6 }, { team: 'h', stats: new Stats({ hp: { max: 50 } }) });
+    const ms = new Moveset(wolf, { attacks: [{ name: 'fireball', shape: 'none', range: [0, 10], windup: .3, active: .1, recover: .3, spell: 'fireball' }], unit: me, rest: [0, 0], rng }); ms.face = 0;
+    for (let i = 0; i < 90; i++) { ms.update(1 / 60, { body: you.body, unit: you, radius: .4 }); magic.update(1 / 60); }
+    assert.equal(you.stats.get('hp'), 41, 'an attack that casts a spell'); }
+  // choosing: weighted, only what fits, power from its stats
+  wolf.x = wolf.y = wolf.z = 0; const ch2 = new Moveset(wolf, { attacks: ['bite', { name: 'claw', weight: 0 }, 'slam'], radius: .5, rng, stats: new Stats({ power: 2 }) }); ch2.face = 0; const picks = {}; ch2.on('start', n => { picks[n.name] = (picks[n.name] || 0) + 1; });
+  const dummy = { x: 0, y: 0, z: 1.4, radius: .4, stats: new Stats({ hp: { max: 9999 } }) }; const dh = run(ch2, 30, dummy).flatMap(x => x.hits);
+  assert.ok(picks.bite > 3 && !picks.claw && dh.some(x => x.damage === 24), 'it picks among what fits by weight, and its power doubles a bite: ' + JSON.stringify(picks));
+  assert.ok(inShape({ kind: 'cone', x: 0, z: 0, dir: 0, radius: 2, angle: .5 }, 0, 1.5) && !inShape({ kind: 'cone', x: 0, z: 0, dir: 0, radius: 2, angle: .5 }, 1.5, .2) && inShape({ kind: 'line', x: 0, z: 0, dir: Math.PI / 2, radius: 5, width: 1 }, 3, .2), 'shapes');
+  // on the flat (2D): +x is ahead
+  const bug = { x: 0, y: 0, angle: 0 }, flatSet = new Moveset(bug, { attacks: ['bite'], radius: 5, rest: [0, 0], rng }), prey = { x: 10.5, y: 0, radius: 5, stats: new Stats({ hp: { max: 50 } }) };
+  for (let i = 0; i < 90; i++) flatSet.update(1 / 60, prey); assert.equal(prey.stats.get('hp'), 38, '2D: a bite on the flat');
+  // Hurt: a creature flinches away from a light hit, staggers back from a harder one, is knocked down and gets up, dies
+  const cat = creature({ like: 'cat', now: true, fur: false }), hurt = new Hurt(cat, { ground: () => 0 }), ev = []; for (const k of ['hit', 'down', 'up', 'dead']) hurt.on(k, e => ev.push(k + (e.kind ? ':' + e.kind : '')));
+  const step = s => { for (let i = 0; i * (1 / 60) < s; i++) { cat.move(1 / 60, 0); hurt.update(1 / 60); } };
+  step(.2); const head0 = cat.bones.head.getWorldPosition(new (await import('three')).Vector3()).clone();
+  hurt.hit({ x: 0, y: 0, z: -1 }, { power: .1 }); step(.06); cat.updateMatrixWorld(true); const head1 = cat.bones.head.getWorldPosition(head0.clone());
+  assert.ok(hurt.state === 'flinch' && !hurt.busy && head1.distanceTo(head0) > .002, 'a light hit: it flinches (the head jerks ' + (head1.distanceTo(head0) * 1000).toFixed(1) + ' mm) and is not held up');
+  step(.6); assert.equal(hurt.state, 'steady', 'and settles');
+  const x0 = cat.position.z; hurt.hit({ x: 0, y: 0, z: -5 }, { power: .5 }); assert.ok(hurt.state === 'stagger' && hurt.busy, 'harder: a stagger'); step(.8); assert.ok(cat.position.z < x0 - .3 && hurt.state === 'steady', 'it is shoved back ' + (x0 - cat.position.z).toFixed(2) + ' m and finds its feet');
+  const hip0 = cat.bones.hips.rotation.z; hurt.hit({ x: 6, y: 0, z: 0 }, { power: .9 }); step(.4); assert.ok(hurt.state === 'down' && Math.abs(cat.bones.hips.rotation.z - hip0) > 1, 'knocked off its feet: on its side');
+  step(1.8); assert.ok(hurt.state === 'steady' && Math.abs(cat.bones.hips.rotation.z - hip0) < .2 && ev.includes('up'), 'and up again');
+  hurt.die({ x: 0, y: 0, z: 2 }); step(1); assert.ok(hurt.dead && hurt.busy && Math.abs(cat.bones.hips.rotation.z - hip0) > 1 && ev.includes('dead'), 'dead: down and staying down'); hurt.hit({ x: 1, y: 0, z: 0 }); assert.equal(hurt.state, 'dead', 'nothing moves the dead');
+  // Boss: phases by health, a roar between when nothing hurts, poise that breaks, enrage
+  const bs = new Stats({ hp: { max: 1000 }, power: 1, attackSpeed: 1 }), bm = new Moveset(wolf, { attacks: ['bite'], rest: [0, 0], rng });
+  const boss = new Boss({ stats: bs, moves: bm, phases: [{ below: 1, name: 'one', attacks: ['bite'] }, { below: .6, name: 'two', attacks: ['bite', 'stomp'], buff: { mul: { attackSpeed: 1.25 } }, pause: 1.5, summon: { count: 3, kind: 'pup' } }, { below: .25, name: 'three', attacks: ['breath'], pause: 1 }], poise: { max: 100, recover: 5, stun: 2 }, enrage: 60 });
+  const bev = []; const bstep = s => { for (let i = 0; i * (1 / 60) < s; i++) bev.push(...boss.update(1 / 60)); };
+  assert.equal(boss.phase.name, 'one', 'it starts in its first phase');
+  bs.change('hp', -450); bstep(.05); assert.ok(boss.phase.name === 'two' && boss.changing && bs.is('invulnerable') && bm.list.some(a => a.name === 'stomp') && bs.get('attackSpeed') === 1.25, 'under 60%: phase two, a roar, new attacks, faster');
+  assert.ok(bev.some(e => e.type === 'phase' && e.from === 0) && bev.some(e => e.type === 'summon' && e.count === 3), 'it says so, and calls for help');
+  bstep(1.6); assert.ok(!boss.changing && bev.some(e => e.type === 'calm'), 'then fights on');
+  bs.change('hp', -60); bs.change('hp', -50); bstep(.02); assert.ok(bev.some(e => e.type === 'staggered') && bs.is('stunned') && bm.stun > 1, 'poise broken: staggered');
+  bs.change('hp', -300); bstep(.05); assert.ok(boss.phase.name === 'three' && bs.get('attackSpeed') === 1 && bm.list[0].name === 'breath', 'phase three: its own attacks, the last phase\'s buff off');
+  bstep(60); assert.ok(boss.enraged && bs.get('power') === 1.4 && bev.some(e => e.type === 'enraged'), 'enraged after a minute');
+  bs.change('hp', -1000); bstep(.02); assert.ok(boss.dead && bev.some(e => e.type === 'dead'), 'dead');
+  assert.throws(() => new Boss({ stats: new Stats({ speed: 1 }) }), /hp pool/); assert.throws(() => new Moveset(wolf, { attacks: ['nope'] }), /no attack 'nope'/);
+  console.log('gs.monsters: telegraphed attacks picked by range, side and weight, tail sweeps, guards and dodges, broken windups, charges, pounces, breath, spit, spells, 2D; creatures that flinch, stagger, fall, get up and die; bosses in phases with poise and enrage ok');
 }
 
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
@@ -8172,6 +8528,83 @@ console.log('physics ok');
   ears.heardCats([]);
   assert.ok(hear(MIX.glass).length === 32 && sOk >= 54 && sNone >= 54 && (ears.heardCats([]), ears.shape) === null, `sounds under names of your own: ${sOk}/60, another sound is none of them ${sNone}/60`);
   console.log(`brains 6: teach by example: hand signs ${(one.right * 100).toFixed(0)}% from one example, ${(three.right * 100).toFixed(0)}% from three, ${(five.right * 100).toFixed(0)}% from five (${(five.wrong * 100).toFixed(1)}% taken for another), poses ${pOk}%, phone moves ${mOk}/40, sounds ${sOk}/60, saved ok`);
+}
+
+{
+  // open-world missions: jobs with markers, a phone that rings with them, retry mid-city, the world in 8 KB
+  const { Mission, Jobs, Phone, WorldSave, zone, rows, unrows } = await import('../src/kit/missions.js');
+  const { Radio } = await import('../src/kit/sound.js').then(() => import('../src/kit/radio.js'));
+  const { ownedBy } = await import('../src/kit/cleanup.js');
+  let store = null; const api = { save: d => { store = JSON.parse(JSON.stringify(d)); return true; }, load: f => store ?? f };
+  const me = { x: 0, z: 0 }, docks = { x: 50, z: 0 }, shop = { x: 10, z: 0 }, card = {};
+  let jobs, phone, radio, save, cash = 0;
+  const make = () => ownedBy(card, () => {
+    radio = new Radio(); phone = new Phone();
+    jobs = new Jobs([
+      { id: 'pies', name: 'Hot Pies', at: shop, pay: 150, call: { from: 'Nonna Ruth', say: ['The pies are ready!', 'Come to the shop.'] },
+        script: function* (m, job) { assert.equal(job.id, 'pies'); m.objective('Take the pies to the docks', { at: docks, kind: 'drop' }); m.timer(60); yield m.until(() => zone(docks, 6).has(me)); m.checkpoint('docks', { at: { x: 50, z: 0 } }); m.objective('Back to the shop', { at: shop }); yield m.until(() => zone(shop, 4).has(me)); } },
+      { id: 'race', name: 'Night Race', needs: ['pies'], at: { x: -20, z: 5 }, call: { say: ['Fancy a race?'] }, script: function* (m) { m.objective('Win'); yield m.wait(1); } },
+    ]);
+    save = new WorldSave(api); save.keep('world', () => ({ cash, hour: 13.456789 }), d => { cash = d.cash; });
+  });
+  make();
+  assert.ok(jobs.phone === phone && phone.jobs === jobs && phone.radio === radio, 'jobs, the phone and the radio find each other');
+  assert.deepEqual(jobs.markers.map(m => m.job), ['pies'], 'one marker: the open job (the race needs the pies first)');
+  radio.on();
+  const step = s => { for (let i = 0; i < s * 60; i++) { jobs.update(1 / 60, me); phone.update(1 / 60); radio.update(1 / 60); save.update(1 / 60); } };
+  step(7);
+  assert.ok(phone.state === 'ringing' && phone.call.from === 'Nonna Ruth' && radio.held, 'the phone rings with the open job, and the radio waits');
+  phone.answer(); assert.ok(jobs.pinned === 'pies' && jobs.markers[0].pinned, 'answering pins the job as the waypoint');
+  step(30); assert.ok(phone.state === 'idle' && !radio.held, 'the caller hangs up, the radio carries on');
+  me.x = 10; step(.2); assert.equal(jobs.offer?.id, 'pies', 'standing on the marker offers the job');
+  const m = jobs.start('pies'); assert.ok(m && jobs.markers[0].kind === 'drop' && jobs.markers[0].at.x === 50, 'the mission\'s objective is the marker now');
+  me.x = 50; step(.2); assert.ok(m.respawn?.x === 50 && m.current.text === 'Back to the shop', 'a checkpoint with a place');
+  m.fail('Pies dropped'); step(.1); assert.equal(jobs.failed, 'Pies dropped');
+  me.x = 0; jobs.retry(); assert.ok(m.respawn.x === 50 && m.current.text === 'Back to the shop' && m.clock.left > 50, 'retry: back at the docks checkpoint, mid-city');
+  cash = 77; save.now(); const mid = store;
+  assert.ok(mid.J.a?.m === 'docks' && mid.J.a.p.x === 50 && mid.world.hour === 13.46, 'the save keeps the running job\'s checkpoint, numbers rounded');
+  me.x = 10; step(.2); assert.ok(jobs.money === 150 && jobs.done.has('pies'), 'done: paid');
+  step(7); assert.ok(phone.state === 'ringing' && phone.call.job === 'race', 'the next job opens and its call comes');
+  save.now(); const after = store;
+  cash = 0; make(); assert.ok(save.load() && cash === 77 && jobs.done.has('pies') && jobs.money === 150 && jobs.isOpen('race'), 'a new phone: the world comes back from the save');
+  me.x = 0; store = mid; make(); save.load();
+  assert.ok(jobs.mission?.respawn?.x === 50 && jobs.mission.current.text === 'Back to the shop', 'loading mid-job: back at its checkpoint');
+  assert.ok(JSON.stringify(after).length < 400, 'small: ' + JSON.stringify(after));
+  const t = new Mission(function* (m) { m.timer(2); yield m.wait(10); }); for (let i = 0; i < 150; i++) t.update(1 / 60); assert.equal(t.failed, 'Out of time', 'timer()');
+  me.x = 200; const l = new Mission(function* (m) { m.leash(() => me.x < 100, 1, 'Lost'); yield m.wait(10); }); l.update(.5); assert.ok(l.away > 0); for (let i = 0; i < 40; i++) l.update(1 / 60); assert.equal(l.failed, 'Lost', 'leash()');
+  assert.deepEqual(unrows(rows([{ a: 1, b: 'x' }], ['a', 'b']), ['a', 'b']), [{ a: 1, b: 'x' }], 'rows / unrows');
+  const warn = console.warn; console.warn = () => {};
+  const s2 = new WorldSave(api, { link: false }); s2.keep('big', () => 'x'.repeat(9000), null, { optional: true }); s2.keep('core', () => ({ a: 1 }));
+  assert.ok(s2.now() && s2.dropped[0] === 'big' && store.core.a === 1 && !('big' in store), 'over 8 KB: the optional part is left out');
+  const s3 = new WorldSave(api, { link: false }); s3.keep('big', () => 'x'.repeat(9000)); assert.equal(s3.now(), false, 'and a save that can\'t fit isn\'t written');
+  console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
+  console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
+}
+{
+  // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines
+  const { Radio } = await import('../src/kit/radio.js');
+  const a = new Radio(), b = new Radio();
+  assert.deepEqual(a.stations.map(s => s.seg.song.title), b.stations.map(s => s.seg.song.title), 'the same seed, the same songs');
+  assert.notDeepEqual(new Radio({ seed: 'other' }).stations.map(s => s.seg.song.title), a.stations.map(s => s.seg.song.title), 'another seed, other songs');
+  const lines = [];
+  a.on(); let last = null;
+  for (let i = 0; i < 60 * 400; i++) { a.update(1 / 60); const n = a.now.line; if (n && n !== last) lines.push(last = n); }
+  assert.ok(lines.length >= 3 && lines.every(l => !/[{}]|undefined/.test(l)), 'the DJ talks between songs, every slot filled: ' + lines.slice(0, 3).join(' | '));
+  const s1 = a.stations[1], at = s1.seg.t + s1.n; a.tune(1); assert.ok(s1.seg.t + s1.n >= at && a.now.station === 'Owl Hours', 'a station carried on while it was off air');
+  a.tune('Redline 104'); assert.equal(a.index, 2); a.next().next().next(); assert.equal(a.index, 0, 'the dial goes round');
+  a.news('a police chase is heading over the harbour bridge', { urgent: true }); for (let i = 0; i < 60; i++) a.update(1 / 60);
+  assert.ok(/police chase/.test(a.now.line || ''), 'urgent news breaks in: ' + a.now.line);
+  a.news('the ferry is running late'); assert.ok(a.stations.every(st => [st.seg, st.after].some(x => x?.kind === 'talk' && x.parts.some(p => /ferry/.test(p.line))) || st.news?.some(p => /ferry/.test(p.news))), 'news goes on every station\'s next break');
+  const inside = a.level, hz = a.muffle; a.listen({ inside: false, distance: 4 }); assert.ok(a.level < inside * .5 && a.muffle < hz / 5, 'outside the car: quieter and muffled');
+  a.listen({ distance: 40 }); assert.equal(a.level, 0, 'out of earshot'); a.listen(); a.hold(true); for (let i = 0; i < 60; i++) a.update(1 / 60); assert.ok(a.level < inside * .3, 'held down for the phone');
+  const asked = []; const ai = { ask: (p, o) => { asked.push(p); return Promise.resolve('Fresh line from the booth!'); } };
+  const c = new Radio({ ai }); c.on(); await new Promise(r => setTimeout(r, 0));
+  assert.ok(asked.length && asked.every(p => p.includes('made-up radio station') && !/\{/.test(p)), 'the phone AI is asked for the station on air only');
+  assert.ok(c.station.after.parts.some(p => p.line === 'Fresh line from the booth!'), 'and its answer is used');
+  const none = new Radio({ ai: { ask: () => Promise.reject(new Error('no model')) } }); none.on(); await new Promise(r => setTimeout(r, 0));
+  assert.ok(none.station.after.parts.every(p => p.line && p.line.length > 5), 'no AI answer: the written lines stay');
+  a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
+  console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
