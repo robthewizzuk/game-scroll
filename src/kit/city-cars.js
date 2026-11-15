@@ -161,6 +161,8 @@ function glassMat(k) {
 const lampMat = kind => shared(kind, () => kind === 'head' ? new MeshStandardMaterial({ color: '#f2eee2', emissive: new Color('#fff1d0'), emissiveIntensity: .05, roughness: .2 })
   : new MeshStandardMaterial({ color: '#9c1010', emissive: new Color('#ff2414'), emissiveIntensity: kind === 'brake' ? 2.6 : .1, roughness: .25 }));
 
+// a car's paint as a colour, worked out from its name once (it was read from the text every frame for every car)
+export const paintOf = c => { if (c.paintKey !== c.colour) { (c.paintCol ||= new Color()).set(c.colour); c.paintKey = c.colour; } return c.paintCol; };
 const _m = new Matrix4(), _q = new Quaternion(), _s = new Vector3(1, 1, 1), _p = new Vector3(), _up = new Vector3(0, 1, 0), _c = new Color(), _w = new Object3D(), _eu = new Euler(0, 0, 0, 'YXZ');
 const ZERO = new Matrix4().makeScale(0, 0, 0), _half = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI);
 // a car's turn as its model is made (nose along -z): its heading (and its pitch on a hill or a bridge), or its whole tilt when it has crashed (c.q, nose along +z)
@@ -282,7 +284,7 @@ export class Fleet {
       const F = this.far[c.style];
       if (this.close.has(c)) { F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); this.pose(c, this.close.get(c), dt, night); continue; }
       turnOf(c, _q); _m.compose(_p.set(c.x, c.y || 0, c.z), _q, _s);
-      F.paint.setMatrixAt(c.slot, _m); F.rest.setMatrixAt(c.slot, _m); F.paint.setColorAt(c.slot, _c.set(c.colour));
+      F.paint.setMatrixAt(c.slot, _m); F.rest.setMatrixAt(c.slot, _m); F.paint.setColorAt(c.slot, paintOf(c));
     }
     for (const F of this.far) { sendUsed(F.paint.instanceMatrix, F.n); sendUsed(F.rest.instanceMatrix, F.n); sendUsed(F.paint.instanceColor, F.n); }
     const hm = lampMat('head'), tm = lampMat('tail');

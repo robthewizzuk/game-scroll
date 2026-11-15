@@ -128,6 +128,18 @@ function clearPlace(S, ev, o, mark = null) {
   return n;
 }
 
+// A depth picture, with every field it will ever have made here, in one order: one that gained fields as it went
+// (vpe, sheets, sf...) had a different shape at each step, and the code reading it was thrown out and made again
+// over and over (V8's "wrong map"), running slowly meanwhile and making megabytes of garbage a minute in its sums.
+function picture(n, nc) {
+  return {
+    z: new Float32Array(n), d: new Float32Array(n), nr: new Float32Array(n), fill: new Uint8Array(n), solid: new Uint8Array(n), lab: new Int32Array(n), par: new Int32Array(n), link: new Uint8Array(n),
+    cu: new Int32Array(nc), czh: new Float32Array(nc), czl: new Float32Array(nc), cdh: new Float32Array(nc),
+    w: 0, h: 0, f: 0, vp: null, inv: null, fx: 1, fy: 1, vpe: new Float64Array(16), id: 0, p10: 0, p14: 0, x: 0, y: 0, z0: 0,
+    prep: false, holes: false, t: 0, pad: 0, bp: 8, near: 0, sheets: false, sf: new Uint8Array(0),
+  };
+}
+
 // What a depth picture's blocks are (once a picture, and again when a moved thing is taken out): which
 // have anything in them (fill) and which are one surface all over (solid: 2 when the blocks round it show
 // it to be, 1 when it is only flat enough to be taken for one).
@@ -298,13 +310,13 @@ export class Occlusion {
   depth(px, w, h, tag, flip = false) {
     if (!tag || !tag.persp || this.f - tag.f > EV_KEEP || (this.src && tag.f <= this.src.f)) return this;   // too old: the moves since are no longer kept
     const old = this.src, n = w * h, holed = !!old?.holes;
-    const nc = (w + 1) * (h + 1), S = old && old.z.length === n ? old : { z: new Float32Array(n), d: new Float32Array(n), nr: new Float32Array(n), fill: new Uint8Array(n), solid: new Uint8Array(n), lab: new Int32Array(n), par: new Int32Array(n), link: new Uint8Array(n), cu: new Int32Array(nc), czh: new Float32Array(nc), czl: new Float32Array(nc), cdh: new Float32Array(nc) };
+    const nc = (w + 1) * (h + 1), S = old && old.z.length === n ? old : picture(n, nc);
     // a picture drawn from where the last one was says the same thing: it keeps the last one's number, so a still camera's answers
     // stand. Not when a moved thing was taken out of the last one (this one may show what is there now), nor while something in
     // view changes shape by itself (soft: leaves in the wind), which only a picture can tell
     let sameCam = !!old && old.w === w && old.h === h; if (sameCam) { const a = old.vpe, b = tag.vp.elements; for (let i = 0; i < 16; i++) if (a[i] !== b[i]) { sameCam = false; break; } }
     S.w = w; S.h = h; S.f = tag.f; S.vp = tag.vp; S.inv = tag.inv; S.fx = Math.abs(tag.ip.elements[0]) ? 1 / Math.abs(tag.ip.elements[0]) : 1; S.fy = Math.abs(tag.ip.elements[5]) ? 1 / Math.abs(tag.ip.elements[5]) : 1;
-    S.vpe = Float64Array.from(tag.vp.elements); S.id = sameCam && !holed && !this.soft ? old.id : (this.ids = (this.ids || 0) + 1);
+    S.vpe.set(tag.vp.elements); S.id = sameCam && !holed && !this.soft ? old.id : (this.ids = (this.ids || 0) + 1);
     S.p10 = tag.p10; S.p14 = tag.p14; S.x = tag.x; S.y = tag.y; S.z0 = tag.z; S.prep = false; S.holes = false; S.t = tag.t ?? performance.now(); S.pad = tag.pad || 0;
     S.bp = tag.W > 0 && tag.H > 0 ? Math.max(1, Math.min(tag.W / w, tag.H / h)) : 8;   // the frame's pixels to a block
     const ip = tag.ip.elements, z = S.z, d = S.d, nr = S.nr, gl = tag.gl;
@@ -349,7 +361,7 @@ export class Occlusion {
     // Something in view sways by itself (soft): a block that looks into where it is (sf) does not count with
     // anything nearer than this in it. That near, what swayed could have gone more than the one texel the
     // picture is drawn back by there.
-    const sf = this.soft ? S.sf : null;
+    const sf = this.soft && S.sf.length ? S.sf : null;
     const sn = this.soft ? (this.softReach ?? (this.soft === true ? 1 : +this.soft || 1) * Math.max(0, performance.now() - S.t) / 1000) * .5 * Math.max(w * this.fx, h * this.fy) : 0;
     if (very) {
       const fill = S.fill; this.stats.still = true;
