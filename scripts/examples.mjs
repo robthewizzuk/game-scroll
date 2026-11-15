@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'), GAMES = join(ROOT, 'src', 'games');
 
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // text from the command line, matched as itself
+
 // Blank comments and string contents (keeping line numbers) so a word in a hint or a comment is no hit.
 const blank = s => s
   .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
@@ -70,7 +72,7 @@ export function declared(query) {
   const d = readFileSync(join(ROOT, 'src', 'gamescroll.d.ts'), 'utf8').split('\n');
   const segs = query.replace(/^gs\./, '').split('.'), name = segs.pop(), owner = segs.pop();
   if (!/^\w+$/.test(name || '')) return [];
-  const re = new RegExp(`^\\s*(?:export\\s+)?(?:declare\\s+)?(?:static\\s+|readonly\\s+)*(?:(?:class|interface|type|namespace|function|const|let)\\s+)?${name}\\??\\s*[(:<={]`);
+  const re = new RegExp(`^\\s*(?:export\\s+)?(?:declare\\s+)?(?:static\\s+|readonly\\s+)*(?:(?:class|interface|type|namespace|function|const|let)\\s+)?${esc(name)}\\??\\s*[(:<={]`);
   const out = [];
   d.forEach((l, i) => {
     if (!re.test(l)) return;
@@ -91,11 +93,11 @@ export function documented(query) {
   const d = readFileSync(join(ROOT, 'docs', 'maker-kit.md'), 'utf8').split('\n');
   const segs = query.replace(/^gs\./, '').split('.'), name = segs.pop(), owner = segs.pop();
   if (!/^\w+$/.test(name || '')) return [];
-  const call = new RegExp(`[.\\s\`(]${name}\\s*\\(|\`${name}\``), out = [];
+  const call = new RegExp(`[.\\s\`(]${esc(name)}\\s*\\(|\`${esc(name)}\``), out = [];
   let section = '', inOwner = !owner;
   d.forEach((l, i) => {
-    if (/^#{1,4}\s/.test(l)) { section = l.replace(/^#+\s*/, ''); inOwner = !owner || new RegExp(`\\b${owner}\\b`, 'i').test(section); }
-    if (call.test(l) && (inOwner || (owner && new RegExp(`\\b${owner}\\b`).test(l)))) out.push({ line: i + 1, section, text: l.trim().slice(0, 240) });
+    if (/^#{1,4}\s/.test(l)) { section = l.replace(/^#+\s*/, ''); inOwner = !owner || new RegExp(`\\b${esc(owner)}\\b`, 'i').test(section); }
+    if (call.test(l) && (inOwner || (owner && new RegExp(`\\b${esc(owner)}\\b`).test(l)))) out.push({ line: i + 1, section, text: l.trim().slice(0, 240) });
   });
   return out.slice(0, 4);
 }
@@ -130,7 +132,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   let kind = 'kit';
   if (!hits.length) {   // plain text in the code (comments and strings left out, unless the query is about a definition field)
     kind = 'text';
-    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'), 'i');
+    const re = new RegExp(esc(q).replace(/\s+/g, '\\s*'), 'i');
     hits = games.map(g => { const code = /:/.test(q) ? g.src : blank(g.text).split('\n'); return { g, at: code.map((l, i) => re.test(l) ? { part: q, line: i + 1 } : null).filter(Boolean) }; }).filter(h => h.at.length);
   }
   hits.sort((a, b) => a.g.size - b.g.size);

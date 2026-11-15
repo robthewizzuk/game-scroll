@@ -34,6 +34,8 @@ const QUICK = flag('quick'), FULL = flag('full'), JSONOUT = flag('json');
 let id = argv.find(a => !a.startsWith('--'));
 if (id?.endsWith('.js')) id = id.replace(/^.*[\\/]/, '').slice(0, -3);
 if (!id) { console.log('Usage: node scripts/check.mjs <game-id> [--quick] [--full] [--json]'); process.exit(1); }
+if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(id)) { console.error(`"${id}" isn't a game id (lowercase letters, numbers and dashes, like my-game)`); process.exit(1); }
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), ID = esc(id);   // ids are checked above; escaped all the same
 const REL = `src/games/${id}.js`, FILE = join(ROOT, REL);
 if (!existsSync(FILE)) { console.error(`${REL} doesn't exist. Start one with: npm run new ${id} --style phone`); process.exit(1); }
 const SRC = readFileSync(FILE, 'utf8').split('\n');
@@ -92,7 +94,7 @@ function crashes(text, check) {
   }, []);
   for (const [head, ...frames] of blocks) {
     if (/^(PASS|FAIL|WARN|NOTE|note:|WebGPU|\d+ failed|playtest |\(node|Replace `|\(Use `|\d+\/\d+ games|\d+ games,)/.test(head) || !/(Error|error|threw|undefined|not a function|not defined|failed|stalled|off screen|blank)/.test(head)) continue;
-    const msg = head.replace(new RegExp(`^(FAIL\\s+)?${id}\\s+`), '').replace(/\s+\|\s+/g, ' / ');
+    const msg = head.replace(new RegExp(`^(FAIL\\s+)?${ID}\\s+`), '').replace(/\s+\|\s+/g, ' / ');
     let at = null, inKit = null, fn = null;
     for (const fr of frames) {
       const m = fr.match(/^at (?:(?:async )?([\w$.<>[\] ]+?) \()?(.+?):(\d+):(\d+)\)?$/); if (!m) continue;
@@ -174,9 +176,9 @@ if (!QUICK) {
     for (const [name, p] of plays) {
       const r = await p, script = { smoke: 'smoke.cjs', stream: 'stream-smoke.mjs', fold: 'fold.cjs', sweep: 'sweep.cjs', playtest: 'playtest.cjs', budget: 'budget.cjs' }[name];
       if (name === 'playtest') {
-        const line = r.out.split('\n').find(l => new RegExp(`^(PASS|WARN|FAIL|NOTE)\\s+${id}\\b`).test(l)) || '';
+        const line = r.out.split('\n').find(l => new RegExp(`^(PASS|WARN|FAIL|NOTE)\\s+${ID}\\b`).test(l)) || '';
         const status = r.code ? 'fail' : /^WARN/.test(line) ? 'warn' : 'pass';
-        const why = line.replace(new RegExp(`^\\w+\\s+${id}\\s+`), '').trim();
+        const why = line.replace(new RegExp(`^\\w+\\s+${ID}\\s+`), '').trim();
         const fix = /goal-not-reached/.test(why) ? 'A bot found no way to the goal. If a person could, this is fine (note it in the PR); else lower goal or make early points easier to get. Behind a Ready gate the bot only starts if a tap scores within about 1.6 s.'
           : /idle|nothing/i.test(why) ? 'The goal was reached without playing: score only from what the player does, and wait for the first tap with gs.rounds.Ready.' : 'See: node scripts/playtest.cjs ' + id;
         const bare = m => m.replace(/^\w*Error:\s*/, '');
