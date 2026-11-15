@@ -2378,7 +2378,8 @@ console.log('physics ok');
   const { lookOf } = await import('../src/kit/models/vehicle-looks.js'), { looksOf } = await import('../src/kit/looks.js');
   const tri = g => (g.index ? g.index.count : g.attributes.position.count) / 3, IN = new Set(['lining', 'liner', 'carpet', 'dash', 'dials', 'seat']);
   const k = carKit('saloon'), v = vehicle('car', { style: 'saloon', seed: 3, colour: '#ffffff', finish: 'gloss' });
-  const inner = v.shell.children.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
+  const all = []; v.shell.traverse(m => { if (m.isMesh) all.push(m); });   // (its doors' cards and its steering wheel are parts of their own)
+  const inner = all.filter(m => IN.has(m.name)).reduce((t, m) => t + tri(m.geometry), 0);
   assert.ok(inner > 1000 && k.glass && tri(k.whole) - tri(k.closed) === inner - tri(k.glass), 'a parked car close by has its inside (' + inner + ' triangles), further off dark glass and none');
   const grp = new THREE.Group(), F = new Fleet(grp, ['saloon', 'hatch'], 4), list = [{ style: 0, x: 0, z: 3, heading: 0, v: 0, colour: '#aa2222' }, { style: 1, x: 200, z: 0, heading: 0, v: 0, colour: '#2244aa' }];
   F.assign(list); F.focus = { x: 0, z: 0 }; F.draw(list, 0, 0);
@@ -6493,7 +6494,7 @@ console.log('physics ok');
     const steam = plans.find(p => p.style === 'steam'); assert.ok(steam.rods && steam.parts.rods && steam.parts.mainRods && steam.sets[0].geo.spokes && steam.points.smoke[1] > 3 && steam.radius === steam.rods.r, 'a steam engine: spoked wheels, rods, a chimney to smoke from; its radius is its driving wheels\'');
     const van = plans.find(p => p.kind === 'train' && p.style === 'van'); assert.ok(near(van.points.roof[1], van.size.height, .01) && van.points.roof[0] === 0 && van.points.roof[2] === 0, 'a van\'s roof point is the top of its roof');
     // the goods train: wagons on leaf springs with spoked wheels; a guard's van (look-outs, an open end, two tail lamps); loads; a tank wagon's filler; smoke deflectors
-    const cut = (p, n) => (p.body.slots.get(n) || []).reduce((t, g) => t + g.attributes.position.count / 3, 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
+    const cut = (p, n) => [p.body, ...Object.values(p.parts || {}).map(q => q.shape)].reduce((t, b) => t + (b.slots.get(n) || []).reduce((u, g) => u + g.attributes.position.count / 3, 0), 0), rail = n => plans.find(p => p.kind === 'train' && p.style === n);
     const guard = rail('guard'), open = rail('open'), flat = rail('flat'), tank = rail('tanker');
     assert.ok(R.RAIL.includes('guard') && guard.points.veranda[2] > 2.5 && guard.points.tail[2] > guard.points.veranda[2] && near(guard.points.roof[1], van.points.roof[1], 1e-9) && guard.size.height > guard.points.roof[1] + .4 && guard.size.width > van.size.width + .25 && cut(guard, 'tail') > 0 && cut(guard, 'glass') > 0 && cut(guard, 'boards') > cut(van, 'boards'), 'a guard\'s van: look-outs wider than a van, a stove pipe above its roof, an open end, tail lamps');
     for (const w of [van, guard, open, flat, tank]) assert.ok(w.sets.length === 1 && w.sets[0].geo.spokes === 9 && w.sets[0].at.length === 2 && cut(w, 'iron') > 2000, w.style + ': two spoked wheelsets under their springs and guards');
@@ -6565,6 +6566,48 @@ console.log('physics ok');
       const fe = vehicle('truck', { style: 'fire' }); fe.aim(.6, 3); assert.ok(fe.parts.turntable.rotation.y === .6 && fe.parts.ladder.rotation.x === 1.25 && fe.beacons.length === 4, 'a fire engine\'s ladder turns and lifts, to its stop');
       const hc = vehicle('helicopter', { style: 'medic' }); for (let i = 0; i < 120; i++) hc.move(1 / 60, 0, { power: 1 }); assert.ok(hc.parts.rotor.rotation.z > 20 && hc.parts.tail.rotation.z > 20 && hc.parts.rotor.children.find(m => m.name === 'blur').visible, 'a helicopter\'s rotors spin up into a blur');
     }
+    // a car's doors hang on their hinges and open; its steering wheel turns with its wheels; people get in, sit at the wheel, get out and are pulled out
+    {
+      const { skeleton } = await import('../src/kit/models/human.js'), { Reactions } = await import('../src/kit/reactions.js'), wp = o => o.getWorldPosition(new THREE.Vector3());
+      const sal = vehicle('car', { style: 'saloon' }), sp = vehicle('car', { style: 'sports' }), van = vehicle('car', { style: 'van' }), jp = vehicle('car', { style: 'jeep' }), shut = vehicle('car', { style: 'saloon', doors: false });
+      assert.deepEqual(sal.doors.map(d => d.name), ['doorL', 'doorR', 'backL', 'backR'], 'a saloon: four doors');
+      assert.ok(sp.doors.length === 2 && van.doors.filter(d => d.slide).length === 2 && !jp.doors && !shut.doors && Object.keys(shut.parts).join() === 'steering', 'a sports car two; a van\'s back doors slide; a jeep none; doors: false keeps them in the body');
+      assert.ok(sal.seats.driver.door === 'doorL' && sal.seats.passenger.door === 'doorR' && sal.seats.backL.door === 'backL' && sal.seats.driver.steer && !sal.seats.passenger.steer, 'each seat its door');
+      // (shut, a door is just where the body was: its meshes, hung on the hinge, put back by the hinge)
+      sal.updateMatrixWorld(true); const dl = sal.parts.doorL, paint = dl.children.find(m => m.name === 'paint'), bb = paint.geometry.boundingBox || (paint.geometry.computeBoundingBox(), paint.geometry.boundingBox);
+      assert.ok(paint && dl.children.some(m => m.name === 'glass') && dl.children.some(m => m.name === 'lining') && dl.children.some(m => m.name === 'chrome') && bb.min.x < -.8 && bb.max.z - bb.min.z > 1, 'a door: its paint, glass, card and handle, on the car\'s left');
+      const corner = new THREE.Vector3(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld), c0 = corner.clone();
+      sal.open('driver'); for (let i = 0; i < 40; i++) sal.update(1 / 60); sal.updateMatrixWorld(true); corner.set(bb.min.x, bb.max.y, bb.max.z).applyMatrix4(paint.matrixWorld);
+      assert.ok(sal.door('doorL').open === 1 && dl.rotation.y < -1 && corner.x < c0.x - .6 && sal.door('doorR').open === 0, 'open(\'driver\'): the driver\'s door swings out on its front edge: ' + corner.x.toFixed(2));
+      let slam = 0; sal.shut('all'); for (let i = 0; i < 40; i++) { sal.update(1 / 60); if (sal.door('doorL').slammed) slam++; } assert.ok(slam === 1 && dl.rotation.y === 0, 'shut: slammed once');
+      van.open('backR'); for (let i = 0; i < 90; i++) van.update(1 / 60); assert.ok(van.parts.backR.position.z - van.door('backR').at.z > .9 && van.parts.backR.position.x > van.door('backR').at.x, 'a van\'s side door comes out and slides back');
+      sal.steer(.3); assert.ok(sal.parts.steering.rotation.z < -1, 'the wheel turns with the steering');
+      // the damage reaches the doors: a dent there bends the door's own paint
+      const pv = paint.geometry.attributes.position.array.slice(); const dent = new THREE.Vector3(-.9, .65, -.2); sal.updateMatrixWorld(true); sal.dent(sal.localToWorld(dent.clone()), { power: 1 });
+      const pa = paint.geometry.attributes.position.array; let bent = 0; for (let i = 0; i < pa.length; i++) bent = Math.max(bent, Math.abs(pa[i] - pv[i])); assert.ok(bent > .03 && sal.damage.dents === 1, 'a dent in a door: ' + bent.toFixed(3));
+      // in, sat, out
+      const scene = new THREE.Group(), car = vehicle('car', { style: 'saloon' }); scene.add(car); car.position.set(10, 0, 5); car.rotation.y = .7;
+      const me = skeleton({ seed: 1 }); scene.add(me); me.position.set(7, 0, 9);
+      const go = car.enter(me); let steps = [], opened = false;
+      for (let i = 0; i < 900 && !go.done; i++) { car.update(1 / 60); if (steps.at(-1) !== go.step) steps.push(go.step); if (car.door('doorL').open > .9) opened = true; }
+      assert.deepEqual(steps.slice(0, 4), ['walk', 'open', 'in', 'close'], 'enter: walk, open, in, close: ' + steps);
+      car.updateMatrixWorld(true);
+      const hips = wp(me.rig.parts.hips), seat = wp(car.points.driver);
+      assert.ok(go.done && opened && me.vehicle === car && me.seat === 'driver' && car.who('driver') === me && me.parent === car.shell && car.door('doorL').open === 0 && hips.distanceTo(seat) < .16 && me.rig.state === 'drive', 'sat at the wheel, hips on the cushion, the door shut: ' + hips.distanceTo(seat).toFixed(2));
+      const hand = wp(me.bones.handL), rimL = wp(car.parts.steering); assert.ok(hand.distanceTo(rimL) < .3, 'a hand on the wheel: ' + hand.distanceTo(rimL).toFixed(2));
+      const out = car.exit(); for (let i = 0; i < 600 && !out.done; i++) car.update(1 / 60);
+      assert.ok(out.done && me.parent === scene && !me.vehicle && car.who('driver') === null && Math.abs(me.rotation.x) < 1e-6 && wp(me).distanceTo(wp(car)) > 1.2 && wp(me).distanceTo(wp(car)) < 3 && car.door('doorL').open === 0, 'exit: out, beside it, the door shut, theirs again');
+      // pulled out: the one at the wheel goes down (by their Reactions), the one who pulled sits there
+      const them = skeleton({ seed: 2 }); scene.add(them); car.putIn(them); const react = new Reactions(them, { world: false, link: false }); them.react = react;
+      const pull = car.pull('driver', me); let downAt = -1;
+      for (let i = 0; i < 900 && !pull.done; i++) { car.update(1 / 60); if (them.parent === scene) { them.rig.update(1 / 60); react.update(1 / 60); if (downAt < 0 && react.busy) downAt = i; } }
+      assert.ok(pull.done && pull.thrown === them && downAt > 0 && them.parent === scene && !them.vehicle && car.who('driver') === me && wp(them).distanceTo(wp(car)) > 1.2, 'pull: thrown out and down, and the puller at the wheel');
+      // astride a motorbike, from its left: hands on the bars
+      const bk = vehicle('bike', { style: 'road' }), rider = skeleton({ seed: 3 }); scene.add(bk, rider); rider.position.set(-2, 0, 1);
+      const mount = bk.enter(rider); for (let i = 0; i < 600 && !mount.done; i++) bk.update(1 / 60); bk.updateMatrixWorld(true);
+      assert.ok(mount.done && bk.who('rider') === rider && rider.rig.state === 'ride' && wp(rider.rig.parts.hips).distanceTo(wp(bk.points.rider)) < .16, 'on a bike: astride it, on the saddle');   // (hands go on the bars where the person has touch(): a sculpted one)
+      assert.throws(() => car.enter(skeleton(), { seat: 'boot' }), /no seat 'boot'/);
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
@@ -6625,7 +6668,7 @@ console.log('physics ok');
       'dirt and wet change this car only');
     // a dent moves only what is near where it was hit, on a shape of its own, and scrapes the paint there
     const hc = vehicle('car', { style: 'saloon', seed: 3 }), hold2 = new THREE.Scene(); hold2.add(hc);
-    const hp = slot(hc, 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
+    const hp = hc.parts.doorR.children.find(m => m.name === 'paint'), shared0 = hp.geometry, before = shared0.attributes.position.array.slice(), at = new THREE.Vector3(hc.size.width / 2, hc.size.height * .38, 0);
     const what = hc.hit(at, { power: 1, dir: new THREE.Vector3(-1, 0, 0) }), after = hp.geometry.attributes.position.array;
     let dMoved = 0, dFar = 0; for (let i = 0; i < after.length; i += 3) { const d = Math.hypot(after[i] - before[i], after[i + 1] - before[i + 1], after[i + 2] - before[i + 2]); if (d > 1e-6) { dMoved++; if (Math.hypot(before[i] - at.x, before[i + 1] - at.y, before[i + 2] - at.z) > .5 + 1e-6) dFar++; } }
     assert.ok(hp.geometry !== shared0 && dMoved > 20 && dFar === 0 && hc.damage.dents === 1 && lookOf(hp.material).gsCpX.value[0].w > 0 && shared0.attributes.position.array.every((q, i) => q === before[i]),

@@ -4080,10 +4080,36 @@ update(dt) {
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.
-- Not there: nothing dents or comes off, doors and bonnets do not open, cars have dark glass with no
-  inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
-  there are no simpler shapes for far away made by themselves, and a train has no physics of its
-  own.
+- **Doors that open.** A car's doors are parts of their own, hung on their front edges: `car.doors`
+  (`doorL`, `doorR`, and `backL`, `backR` on a four-door car; a van's back ones slide), `car.open(which,
+  amount)` and `car.shut(which)` ease them there as `update(dt)` or `move()` runs. `which` is a door's name,
+  a seat's (`'driver'` is the door beside it), a side (`-1`, `1`) or `'all'`. Each door says how far open
+  it is (`open`) and, for a frame, that it was `opened` or `slammed` (for its sound). They dent and lose their
+  glass as the body does, open or shut. `doors: false` keeps them in the body: about 12 fewer draws, for a
+  car nobody gets into. The steering wheel is a part too (`parts.steering`) and turns with `steer`.
+- **People in it.** `car.seats` are its seats by name (`driver`, `passenger`, `backL`, `backR`; a
+  motorbike's `rider`, `pillion`; a helicopter's `pilot`, `copilot`), each with its `point`, its `door` and
+  `who` sits there.
+  ```js
+  trip = car.enter(player);                 // walks to the driver's door, opens it, gets in, sits, pulls it shut
+  trip.then(() => { driving = true; });     // trip.step: 'walk', 'open', 'in', 'close', then 'done'
+  car.exit();                               // opens the door, steps out, shuts it: the player is the game's again
+  car.pull('driver', player);               // wrenches the door open, throws the driver out, gets in in their place
+  car.putIn(driver, 'driver');              // a car that comes with someone at the wheel (takeOut(person) the other way)
+  ```
+  A person in a car, or on the way in or out, is the car's: its `update(dt)` runs their rig, sits them on
+  the cushion, and puts their hands on the wheel as it turns (a motorbike's: on the bars), so leave anyone
+  with `person.vehicle` set alone. A person who is pulled out is thrown down by their
+  `gs.characters.Reactions` if they have one (`trip.thrown` says who it was; they are the game's again).
+  `seats.driver.hold = false` frees the hands (shooting out of the window: `gs.combat.DriveBy`). The poses
+  are `drive` and `ride` (any `gs.poses` rig has them). Enter and exit take about four seconds with the walk,
+  `pull` about three and a half.
+- **In the city,** the cars drawn whole have drivers (the crowd's people at the wheel), and
+  `city.cars.take(c)` takes a traffic car out of the traffic as one of these, with its driver in it, ready to
+  `pull`.
+- Not there: bonnets and boots do not open, lorries, buses and helicopters have no doors that open (people
+  walk in by their door point), there are no simpler shapes for far away made by themselves, and a train has
+  no physics of its own.
 
 ## Fur and hair
 

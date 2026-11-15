@@ -7,6 +7,7 @@
 //   &views=front,side,back,top,move   &cell=360x230   &finish=worn   &wear=1   &lit   &seed=3   &time=15   &zoom=3 &at=-5 (a closer look, 5 m toward its nose)   &gpu (WebGPU)
 //   &axles=3 &offroad (lorries)   &colour=%23802020 &trim=...   &detail=.5
 //   &dirt=.6 &wet=1 (wet=w: none of its own, the air's rain instead) &hit (knocked: a door dented, a side window and the screen broken, a lamp) &flakes=1 &noinside
+//   &open (its doors open; &open=.5 half way, &which=driver one of them)
 //   views also near (close by its front wheel), in (through the driver's window), screen (at the windscreen), dent (at the knocked door)
 //   a train: train:steam-van-open_tarp-flat_crates-guard_565b5e (a wagon, then _ its load and/or _ its colour), &deflectors, &fuse (fuse: true), &dull (polished: false)
 import gs, { loadParts } from '../../src/gamescroll.js';
@@ -45,6 +46,13 @@ try {
       car.smash(new T.Vector3(.3, H * .82, -L * .2), { power: .8 });
       car.hit(car.points.lampR.getWorldPosition(new T.Vector3()), { power: .6, dir: new T.Vector3(0, 0, 1) });
       for (let i = 0; i < 120; i++) car.update(1 / 60);
+    }
+    if (Q.has('open') && car.open) { car.open(Q.get('which') || 'all', +(Q.get('open') || 1)); for (let i = 0; i < 90; i++) car.update(1 / 60); }   // (its doors open: &open, &open=.5, &which=driver)
+    if (Q.get('enter') && car.enter) {   // someone getting in, this many seconds on (&enter=3; &seat=passenger; &pull: someone in the seat is pulled out)
+      const opts = { seed: 3 }; await gs.models.human.ready([opts]); const who = gs.models.human(opts), seat = Q.get('seat') || (car.seats.driver ? 'driver' : 'rider');
+      v.scene.add(who); who.position.set(car.seats[seat].side * 2.6, 0, 1.2); who.rotation.y = -car.seats[seat].side * Math.PI / 2;
+      if (Q.has('pull')) { const sat = gs.models.human({ seed: 3 }); v.scene.add(sat); car.putIn(sat, seat); car.pull(seat, who); } else car.enter(who, { seat });
+      for (let i = 0; i < +Q.get('enter') * 60; i++) car.update(1 / 60);
     }
     v.scene.add(car); const boat = kind === 'boat', plane = kind === 'plane'; ground.visible = !boat; sea.visible = boat; if (plane) car.position.y = car.gear || 0;
     let draws = 0; car.traverse(o => { if (o.isMesh) draws++; });

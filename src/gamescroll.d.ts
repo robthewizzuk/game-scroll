@@ -3053,6 +3053,8 @@ export interface VehicleOptions {
   fuse?: boolean;
   /** A bus: the side its doors are on, 'right' (where the kerb is when you drive on the right) or 'left'. */
   side?: 'right' | 'left';
+  /** A car: false keeps its doors in its body (they don't open; about 12 fewer draws, for a car nobody gets into). */
+  doors?: boolean;
 }
 /** One wagon of a train, when a name is not enough: `cars: ['van', { style: 'open', load: 'coal', colour: '#565c50' }, 'guard']`. */
 export interface WagonOptions {
@@ -3109,6 +3111,34 @@ export type VehicleT = Loose & {
   lights(on?: boolean): VehicleT;
   /** A police car, an ambulance, a fire engine, a police helicopter: its flashing lights, each its own lamp you can light a scene with (point: where it is, colour '#rrggbb', on: lit this frame). Empty on anything else. */
   beacons: { point: Loose; colour: string; slot: string; on: boolean }[];
+  /** A car's doors that open, each hung on its front edge (a van's back ones slide): name 'doorL' | 'doorR' | 'backL' | 'backR', side -1 left 1 right, open 0..1 now, and for one frame opened or slammed (its sound). */
+  doors?: VehicleDoor[];
+  /** Opens doors (amount 0..1 of the way) over the next frames as update(dt) or move() runs. which: a door's name, a seat's ('driver': the door beside it), a side (-1, 1), 'all' (the default) or a list. speed: how many times a second it would swing all the way (3). */
+  open?(which?: string | number | (string | number)[], amount?: number, o?: { speed?: number }): VehicleT;
+  /** Shuts doors (as open(which, 0)). */
+  shut?(which?: string | number | (string | number)[], o?: { speed?: number }): VehicleT;
+  /** A door by its name or by a seat's, or null. */
+  door?(which: string | number): VehicleDoor | null;
+  /** Its seats by name: a car's 'driver', 'passenger', 'backL', 'backR'; a motorbike's 'rider', 'pillion'; a helicopter's 'pilot', 'copilot'... point (where the cushion is), the door beside it, side, saddle (astride), steer (it has the wheel), hold (hands on the wheel or the bars while sat: false frees them, to shoot out of the window) and who sits there. */
+  seats: Record<string, { name: string; point: Loose; door: string | null; side: number; saddle: boolean; steer: boolean; hold: boolean; who: Loose | null }>;
+  /**
+   * Someone gets in: walks to the door (round the car if need be, at walk metres a second), opens it with a hand on its handle, steps in and sits, and pulls it shut (shut: false leaves it open); a motorbike is got astride from its left.
+   * seat: a seat's name (the one with the wheel when left out). From the start the person is the vehicle's: its update(dt) runs their rig and puts their hands on the wheel, so the game leaves anyone with person.vehicle set alone.
+   * Someone already in that seat is pulled out (pull()).
+   */
+  enter?(person: Loose, o?: { seat?: string; walk?: number; shut?: boolean }): VehicleTrip;
+  /** Someone gets out (a seat's name, or the person; the wheel's seat when left out): opens the door, steps out, stands clear and shuts it. They are the game's again when the trip is done. null if nobody sits there. */
+  exit?(which?: string | Loose | null, o?: { shut?: boolean }): VehicleTrip | null;
+  /** by pulls whoever sits in the seat out (thrown down by their gs.characters.Reactions where they have one: made for them or person.react), then gets in and shuts the door. trip.thrown is who came out, from that moment. With nobody there it is enter(). */
+  pull?(which: string | null, by: Loose, o?: { walk?: number; throw?: number }): VehicleTrip;
+  /** Puts someone in a seat at once (a car that comes with its driver), posed and holding the wheel. */
+  putIn?(person: Loose, which?: string | null): VehicleT;
+  /** Takes someone out of their seat at once and stands them beside it, the game's again (null if they were in none). */
+  takeOut?(person: Loose): Loose | null;
+  /** Who sits where ({ driver: person | null, ... }), or who sits in one seat. */
+  who?(which?: string): Loose;
+  /** The people getting in and out now. */
+  readonly trips?: VehicleTrip[];
   /** Its flashing lights on or off (they flash in bursts, one side then the other, in update(dt) or move()). No sound: play your own. */
   siren(on?: boolean): VehicleT;
   readonly sirenOn: boolean;
@@ -3126,13 +3156,17 @@ export type VehicleT = Loose & {
   hit?(point: Loose, o?: { power?: number; dir?: Loose }): 'lamp' | 'screen' | 'crack' | 'window' | null;
   /** Mended: its shapes and materials shared again, the broken glass gone (its dirt and wet stay). */
   mend?(): VehicleT;
-  /** Each frame while glass is falling (the bits lie still once down). */
+  /** Each frame (move() calls it): falling glass, doors swinging, flashing lamps, and the people in it or getting in and out. */
   update?(dt: number): VehicleT;
   /** What it has taken: dents, panes of glass broken or crazed, lamps broken. */
   readonly damage?: { dents: number; glass: number; lamps: number };
   /** Another just like it, sharing its shapes and materials. */
   twin(): VehicleT;
 };
+/** A car's door (VehicleT.doors). */
+export interface VehicleDoor { name: string; side: number; slide: boolean; part: Loose; length: number; open: number; want: number; speed: number; opened: boolean; slammed: boolean; handle?: Loose; inside?: Loose }
+/** Someone getting in or out of a vehicle: what they are doing now ('walk', 'open', 'in', 'close', 'out', 'grab', 'throw', then 'done'); then(fn) when it is done. */
+export interface VehicleTrip { person: Loose; seat: string; kind: 'enter' | 'exit' | 'pull'; step: string; done: boolean; busy: boolean; thrown?: Loose | null; victim?: Loose; then(fn: (trip: VehicleTrip) => void): VehicleTrip }
 /** A train from gs.models.vehicle('train', ...): its cars coupled nose to tail, the engine first, the middle of the train at its origin. */
 export type TrainT = Loose & {
   kind: 'train'; style: string;
@@ -4139,7 +4173,9 @@ export interface CityWorld {
   far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null;
   /** 0 day .. 1 night: windows, shop signs, street lamps and car lights. Follows sky.night when made with { sky }. */
   night: number;
-  cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar };
+  cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar;
+    /** A traffic car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people at the wheel (driver: false for none), ready for car.pull('driver', player). It is the game's from then on; null if it isn't in the traffic. */
+    take(car: CityCar, o?: { driver?: boolean }): VehicleT | null };
   people: { list: CityPerson[]; near(p: { x: number; z?: number; y?: number }, r: number): CityPerson[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityPerson | null;
     scare(p: { x: number; z?: number; y?: number }, r?: number, t?: number): unknown; knock(person: CityPerson, dx?: number, dz?: number, seconds?: number): CityPerson };
   props: PropsPart['Props'] extends new (...a: Loose[]) => infer P ? P : Loose;
