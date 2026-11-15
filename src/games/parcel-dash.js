@@ -2,7 +2,7 @@
 // gs.city (streets, traffic at the lights, people, routes), gs.vehicles (the van's handling), gs.sky
 // (the evening light) and gs.hd (Next Gen 3D).
 import gs from '../gamescroll.js';
-const { sounds, bed } = gs.sound;
+const { sounds, bed, Radio } = gs.sound;
 const { haptic } = gs.device;
 const { Juice } = gs.juice;
 const { twoThumb, Keys } = gs.controls;
@@ -11,6 +11,8 @@ const { City } = gs.city;
 const { Sky } = gs.sky;
 const { Car } = gs.vehicles;
 const { rng } = gs.math;
+const { icon } = gs.icons;
+const { PhoneAI } = gs.phoneai;
 
 let W = 300, H = 300;
 let v, light, city, sky, van, wheels, beacon, ring, arrow;
@@ -42,27 +44,62 @@ function setup() {
 
 function make(api) {
   const fx = new Juice(), keys = new Keys(), pad = twoThumb(W, H, { right: ['BRAKE'] });
-  let car, score, time, t, target, route, routeT, hitT, delivered, engine, msg, msgT, R, camPos, camLook;
+  // the van's radio: five made-up stations, DJs between the songs (the phone's AI freshens their lines
+  // where it can), and the news picks up how your evening is going
+  const radio = new Radio({ seed: 'parcel-dash', ai: new PhoneAI({ words: 40 }) });
+  let dial = null, newsT = 0;
+  const dialAt = () => {
+    const w = Math.min(176, W * .58), h = 30, a = api.scoreArea(); let y = 54;
+    if (a && 10 < a.x + a.w && a.x < 10 + w && y < a.bottom) y = Math.ceil(a.bottom) + 4;
+    return dial = { x: 10, y, w, h };
+  };
+  const onDial = (x, y) => { const d = dial || dialAt(); return x >= d.x - 4 && x <= d.x + d.w + 4 && y >= d.y - 4 && y <= d.y + d.h + 4; };
+  // a tap on the dial: on, through the stations, then off
+  const turnDial = () => {
+    const n = radio.now;
+    if (!n.on) radio.tune(0); else if (n.index === radio.stations.length - 1) radio.off(); else radio.next();
+    sounds.click(); haptic('tick');
+  };
+  const tellRadio = text => { if (newsT <= 0) { radio.news(text); newsT = 25; } };
+  let car, score, time, t, target, route, routeT, hitT, delivered, engine, msg, msgT, R, camPos, camLook, radioStarted;
   const pickTarget = () => {
     target = city.spot('door', { near: { x: car.x, z: car.y }, min: 110, max: 300, rnd: R }) || city.spot('door', { rnd: R });
     ring.position.set(target.x, .2, target.z); beacon.position.set(target.x, 80, target.z); routeT = 0;
   };
   const say = (s, col = '#fff') => { msg = [s, col]; msgT = 1.6; };
+  // the radio's dial on the HUD: the station, then the song (or what the DJ is saying)
+  const fit = (c, s, w) => { if (c.measureText(s).width <= w) return s; while (s.length > 1 && c.measureText(s + '…').width > w) s = s.slice(0, -1); return s + '…'; };
+  const drawDial = c => {
+    const d = dialAt(), n = radio.now;
+    c.save(); c.globalAlpha = .82; c.fillStyle = '#0b1020'; c.beginPath(); c.roundRect(d.x, d.y, d.w, d.h, 8); c.fill(); c.globalAlpha = 1;
+    c.strokeStyle = n.on ? '#ffb24a66' : '#ffffff33'; c.lineWidth = 1; c.stroke();
+    icon(c, n.on ? 'musical-notes' : 'speaker-off', d.x + 14, d.y + d.h / 2, 16, { color: n.on ? '#ffb24a' : '#9aa4b8' });
+    c.textAlign = 'left'; const tx = d.x + 27, tw = d.w - 32;
+    if (!n.on) { c.font = '600 11px Rubik, sans-serif'; c.fillStyle = '#c8d0e0'; c.fillText('Radio off · tap for music', tx, d.y + 19); c.restore(); return; }
+    c.font = '700 11px Rubik, sans-serif'; c.fillStyle = '#fff';
+    c.fillText(fit(c, `${n.station}  ${n.freq}`, tw), tx, d.y + 13);
+    const sub = n.kind === 'talk' ? (n.line ? `${n.dj}: “${n.line}”` : n.dj) : n.song ? `${n.song.title} · ${n.song.artist}` : '';
+    c.font = '500 10px Rubik, sans-serif'; c.fillStyle = n.kind === 'talk' ? '#ffd9a0' : '#b8c4dc';
+    c.fillText(fit(c, sub, tw), tx, d.y + 25);
+    c.restore();
+  };
   return {
     reset() {
       if (!v) setup();
       city.reset(); R = rng(11);
       const st = city.spot('street', { near: city.start, max: 60, rnd: R }) || city.road(0, 0);
       car = new Car({ x: st.x, y: st.z, angle: Math.PI / 2 - st.heading, top: 21, accel: 13, brakes: 32, turn: 2.3, roll: .35, grip: 7, reverse: .35 });
-      score = 0; time = 50; t = 0; hitT = 0; delivered = 0; msg = null; msgT = 0; engine = null;
+      score = 0; time = 50; t = 0; hitT = 0; delivered = 0; msg = null; msgT = 0; engine = null; radioStarted = false; newsT = 0;
       camPos = new THREE.Vector3(car.x, 6, car.y - 10); camLook = new THREE.Vector3(car.x, 1, car.y);
       pickTarget(); route = city.route({ x: car.x, z: car.y }, target);
       fx.clear(); pad.release(); keys.clear();
     },
     resize(w, h) { W = w; H = h; pad.layout(w, h); },
     update(dt) {
-      t += dt; time -= dt; hitT -= dt; msgT -= dt; fx.update(dt);
+      t += dt; time -= dt; hitT -= dt; msgT -= dt; newsT -= dt; fx.update(dt);
       engine ||= bed({ vol: .015, from: 120, filter: 'lowpass', q: 4 });
+      if (!radioStarted) { radioStarted = true; radio.on(); }   // the radio comes on with the engine
+      radio.listen({ inside: true }).update(dt);
       const k = keys.axis(), sx = pad.left.active ? pad.left.x : k.x, sy = pad.left.active ? pad.left.y : k.y;
       const braking = pad.buttons.BRAKE.isDown;
       car.update(dt, { throttle: pad.left.active || k.x || k.y ? Math.max(-1, Math.min(1, -sy * 1.4 + (pad.left.active ? .35 : 0))) : 0, steer: sx, brake: braking || keys.held(' ') });
@@ -71,7 +108,7 @@ function make(api) {
       const p = { x: car.x, z: car.y }, wall = city.collide(p, 1.15, .5);
       if (wall) { const nx = p.x - car.x, nz = p.z - car.y, l = Math.hypot(nx, nz) || 1; car.x = p.x; car.y = p.z; if (Math.abs(car.speed) > 6) { sounds.hit(); haptic('medium'); fx.shake(3); } car.bump(nx / l, nz / l, { keep: .4 }); }
       const other = hitT <= 0 && city.cars.hit(p, 1.1);
-      if (other) { hitT = 1; city.cars.bump(other); car.bump(); time -= 3; say('Crash! -3s', '#ff7060'); sounds.boom(); haptic('heavy'); fx.shake(6); city.people.scare(p, 12); }
+      if (other) { hitT = 1; city.cars.bump(other); car.bump(); time -= 3; say('Crash! -3s', '#ff7060'); sounds.boom(); haptic('heavy'); fx.shake(6); city.people.scare(p, 12); tellRadio('an orange parcel van has just bumped into a car downtown, so expect some delays'); }
       const person = city.people.hit(p, 1);
       if (person && hitT <= 0 && Math.abs(car.speed) > 2) { hitT = 1; car.speed *= .2; time -= 2; say('Watch out! -2s', '#ffb040'); sounds.hurt(); haptic('warning'); city.people.scare(p, 10, 3); }
       city.avoid(p, 1.4);
@@ -83,6 +120,7 @@ function make(api) {
           delivered++; score = delivered; api.score(score);
           const bonus = Math.round(10 + Math.min(14, route.length / 30)); time += bonus;
           say(`Delivered! +${bonus}s`, '#60ffb8'); sounds.coin(1.2); sounds.powerup(); haptic('success');
+          if (delivered % 3 === 0) tellRadio(`the orange parcel van has dropped off ${delivered} parcels already this evening`);
           const [x, y] = v.toScreen(target.x, 2, target.z); fx.pop(x, y, '📦', { color: '#fff' });
           pickTarget();
         } else if (msgT <= 0) say('Slow down to drop it off', '#fff');
@@ -119,13 +157,17 @@ function make(api) {
       const [tx, ty] = city.mapPoint(target); c.fillStyle = '#40ffb0'; c.beginPath(); c.arc(tx, ty, 4, 0, 7); c.fill(); c.restore();
       c.fillStyle = '#f07a1a'; c.beginPath(); c.moveTo(mx + ms / 2, my + ms / 2 - 6); c.lineTo(mx + ms / 2 + 4, my + ms / 2 + 4); c.lineTo(mx + ms / 2 - 4, my + ms / 2 + 4); c.fill();
       c.strokeStyle = '#ffffff55'; c.lineWidth = 1; c.strokeRect(mx + .5, my + .5, ms - 1, ms - 1);
+      drawDial(c);
       if (msgT > 0 && msg) { c.globalAlpha = Math.min(1, msgT * 2); c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'center'; c.fillStyle = msg[1]; c.fillText(msg[0], W / 2, H * .3); c.globalAlpha = 1; }
-      if (t < 4) { c.font = '500 12px Rubik, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#fffc'; c.fillText('Left thumb: drive and steer · follow the green arrow', W / 2, H * .4); }
+      if (t < 4) {
+        c.font = '500 12px Rubik, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#fffc'; c.fillText('Left thumb: drive and steer · follow the green arrow', W / 2, H * .4);
+        c.fillText('Tap the radio to change station', W / 2, H * .4 + 16);
+      }
     },
-    down: (x, y, id) => pad.down(x, y, id),
+    down: (x, y, id) => { if (onDial(x, y)) turnDial(); else pad.down(x, y, id); },
     move: (x, y, pr, id) => pad.move(x, y, pr, id),
     up: (x, y, id) => pad.up(x, y, id),
-    key: (k, d) => keys.key(k, d),
+    key: (k, d) => { if (d && (k === 'r' || k === 'R')) turnDial(); keys.key(k, d); },
   };
 }
 

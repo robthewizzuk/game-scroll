@@ -2678,6 +2678,28 @@ hero = magic.unit(heroMesh, { team: 'hero', stats: new Stats({ hp: { max: 100 },
 // update(dt): for (const e of magic.update(dt)) if (e.type === 'hit') feel.hit(...); looks.update(dt);
 ```
 
+**Monsters** (`gs.monsters`, 2D or 3D): `new Moveset(body, { attacks: ['bite', 'claw', 'pounce'], radius, stats })`
+is what a monster fights with. Each attack is data (`ATTACKS` has `bite`, `claw`, `swipe`, `tail`,
+`sweep`, `stomp`, `slam`, `charge`, `pounce`, `breath`, `spit` and `roar` to start from): a `shape`
+(`cone`, `circle`, `ring`, `rear` behind it, `line` for a dash), the `range` and `side` it is picked
+from, a `windup` you can see coming, an `active` moment it hurts, a `recover` to punish, `damage`,
+`push`, `status`, `cool` and `weight`; `track` turns it after you while it winds up, `spin` sweeps it
+round, `dash` and `leap` carry it (a charge, a pounce), `every` hurts again and again (breath), `spell`
+casts a gs.magic spell from its `unit`. `moves.update(dt, target, targets)` gives `{ walk, speed, face,
+pose, move, hits, shots }`: walk it in between, play `pose` (`{ name, at }`) on its rig, add `move`
+to its position. Draw the telegraph from `moves.now.shape` (red while it winds up, by `now.phaseT`).
+Targets with `stats` lose health, with `react` (people who react, or a Hurt) are shoved, with
+`blocks(attack, from)` take a chip, `dodging` are missed. `moves.hurt(power)` breaks a windup on a hard
+hit; `skill` (a number or a gs.brains `Dial`) shortens the windups and the rests. `new Hurt(creature, {
+ground })` is how a `gs.models.creature` (or anything on a gs.poses rig) takes a hit, over whatever its
+rig is doing: `hurt.hit(push, { power })` is a flinch away from the blow, a stagger back, or knocked off
+its feet onto its side to get up again; `hurt.die(push)` falls dead and stays; `hurt.busy` says when it
+can't act; call `hurt.update(dt)` after the rig. `new Boss({ stats, moves, phases: [{ below: 1, attacks
+}, { below: .6, attacks, buff, pause, summon }], poise: { max, stun }, enrage: 120 })` changes the fight
+as its health falls: new attacks and buffs, a roar between when it takes no harm (`invulnerable`), a
+`summon` event for adds, a poise meter its hits fill that breaks into a stagger, and a rage when time is
+up; `boss.update(dt)` gives `phase`, `staggered`, `summon`, `calm`, `enraged` and `dead`.
+
 **Campaigns** (`gs.campaign`): `Campaign(chapters, { extras }).attach(api)` keeps which missions are
 open (in order, or by stars), up to three stars each (score targets or named challenges), best
 scores, collectibles and extras that unlock at a star count, saved compactly with `api.save()`.
@@ -4177,10 +4199,36 @@ update(dt) {
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.
-- Not there: nothing dents or comes off, doors and bonnets do not open, cars have dark glass with no
-  inside behind it (the jeep, the lorry's bed, the boats and the cockpits are open and have seats),
-  there are no simpler shapes for far away made by themselves, and a train has no physics of its
-  own.
+- **Doors that open.** A car's doors are parts of their own, hung on their front edges: `car.doors`
+  (`doorL`, `doorR`, and `backL`, `backR` on a four-door car; a van's back ones slide), `car.open(which,
+  amount)` and `car.shut(which)` ease them there as `update(dt)` or `move()` runs. `which` is a door's name,
+  a seat's (`'driver'` is the door beside it), a side (`-1`, `1`) or `'all'`. Each door says how far open
+  it is (`open`) and, for a frame, that it was `opened` or `slammed` (for its sound). They dent and lose their
+  glass as the body does, open or shut. `doors: false` keeps them in the body: about 12 fewer draws, for a
+  car nobody gets into. The steering wheel is a part too (`parts.steering`) and turns with `steer`.
+- **People in it.** `car.seats` are its seats by name (`driver`, `passenger`, `backL`, `backR`; a
+  motorbike's `rider`, `pillion`; a helicopter's `pilot`, `copilot`), each with its `point`, its `door` and
+  `who` sits there.
+  ```js
+  trip = car.enter(player);                 // walks to the driver's door, opens it, gets in, sits, pulls it shut
+  trip.then(() => { driving = true; });     // trip.step: 'walk', 'open', 'in', 'close', then 'done'
+  car.exit();                               // opens the door, steps out, shuts it: the player is the game's again
+  car.pull('driver', player);               // wrenches the door open, throws the driver out, gets in in their place
+  car.putIn(driver, 'driver');              // a car that comes with someone at the wheel (takeOut(person) the other way)
+  ```
+  A person in a car, or on the way in or out, is the car's: its `update(dt)` runs their rig, sits them on
+  the cushion, and puts their hands on the wheel as it turns (a motorbike's: on the bars), so leave anyone
+  with `person.vehicle` set alone. A person who is pulled out is thrown down by their
+  `gs.characters.Reactions` if they have one (`trip.thrown` says who it was; they are the game's again).
+  `seats.driver.hold = false` frees the hands (shooting out of the window: `gs.combat.DriveBy`). The poses
+  are `drive` and `ride` (any `gs.poses` rig has them). Enter and exit take about four seconds with the walk,
+  `pull` about three and a half.
+- **In the city,** the cars drawn whole have drivers (the crowd's people at the wheel), and
+  `city.cars.take(c)` takes a traffic car out of the traffic as one of these, with its driver in it, ready to
+  `pull`.
+- Not there: bonnets and boots do not open, lorries, buses and helicopters have no doors that open (people
+  walk in by their door point), there are no simpler shapes for far away made by themselves, and a train has
+  no physics of its own.
 
 ## Fur and hair
 

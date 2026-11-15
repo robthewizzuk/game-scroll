@@ -79,6 +79,8 @@ export function bounceGrid(w, h, d, nx, ny, nz) {
   return g;
 }
 export { bakeProbe };   // v.bakeLight() on this renderer
+export { FarWorld } from './hd3d-gpu-far.js';   // v.farWorld: the far world drawn into pictures round the camera
+import { FAR_LAYER } from './hd3d-gpu-far.js';
 export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
 export { gpuGas } from './gas-gpu.js';
@@ -2757,6 +2759,7 @@ export class GpuChain {
         const n = this.giN = vxgi(dN, nN, this.scene, this.cam, this.giRes || 64); n.useTemporalFiltering = false; n.bounces = 1;
         if (this.giBox) n.volume.bounds.copy(this.giBox);
         n.volume.layers.enable(OCC_LAYER);   // (what the camera's occlusion culling hides this frame is still part of the level)
+        n.volume.layers.enable(FAR_LAYER);   // (and so is the far world while its picture stands in for it: hd3d-gpu-far.js)
         const gi = n.getGINode(), vao = n.getAONode();
         g = Fn(() => vec4(C.sample(uv()).rgb.mul(mix(float(1), vao.sample(uv()).r, .5)).add(dif.sample(uv()).rgb.mul(gi.sample(uv()).rgb).mul(U.giK)), 1))();
       } else {
@@ -3187,7 +3190,7 @@ export class GpuChain {
     if (!(gap >= 1 && gap <= 6)) gap = Math.max(1, Math.round(steps));
     if (S) { this.fgWin.real++; if (S.k < gap - 1) this.fgWin.missed++; }   // refreshes in that gap showed nothing new
     const n = Math.max(1, Math.ceil(steps - .01)), first = mode === 'blend' && (fgo.pace === 'first' || fgo.pace === 'early');
-    this.sched = { at: o.now, ms, gap, k: 0, first, D: mode === 'ahead' ? 0 : first ? n : Math.max(1, n - 1) };
+    this.sched = { at: o.now, ms, gap, k: 0, first, D: mode === 'ahead' ? 0 : first ? n : Math.max(1, n - 1), one: !!fgo.one && first && n > 2, madeOne: false };
     this.owe = true;
     // fresh aim: where the input pointed the camera for this frame (a later change is the finger's own)
     const base = this.aim && fg.ready ? this.aim() : null; if (base) copyPose(base, this.aimBase);
@@ -3213,11 +3216,15 @@ export class GpuChain {
   between(last = true, now = null) {
     const S = this.sched; if (!S || !this.fg) return false;
     S.k = refreshesSince(S, now);
+    // one (30 → 60 on a faster screen): the one frame made between is shown from the middle refresh (or the first
+    // after it to come); the screen keeps the last real frame before it and the made frame after it, so 60
+    // different pictures a second, with a spare refresh for a real frame whose code ran over
+    const hold = S.one && S.k < S.D && (S.k < S.D / 2 || S.madeOne);
     // a made frame that can't be ready for the refresh after this one (the chip still on the real frame) is
     // dropped: the screen keeps what it shows, and the next real frame isn't held up behind it
-    if (this.drop && this.dueMade(S) && this.late(now)) { this.fgWin.dropped++; this.drops = (this.drops || 0) + 1; return false; }
-    const shown = this.showAt(S.k);
-    if (shown === 'made') this.fgWin.made++;
+    if (!hold && this.drop && this.dueMade(S) && this.late(now)) { this.fgWin.dropped++; this.drops = (this.drops || 0) + 1; return false; }
+    const shown = hold ? false : this.showAt(S.k);
+    if (shown === 'made') { this.fgWin.made++; S.madeOne = true; }
     if (last && this.owe) { this.fg.keep(); this.owe = false; }
     return shown;
   }

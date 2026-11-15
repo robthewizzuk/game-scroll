@@ -11,3 +11,4 @@ export * as gadgets from './kit/gadgets.js';
 export * as campaign from './kit/campaign.js';
 export * as arena from './kit/arena.js';
 export * as magic from './kit/magic.js';
+export * as monsters from './kit/monsters.js';
