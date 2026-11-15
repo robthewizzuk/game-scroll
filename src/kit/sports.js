@@ -45,7 +45,7 @@ function laneGap(a, b, foes) {
 }
 
 export class Team {
-  /** side: 0 attacks the top, 1 the bottom; formation: a name ('1-1', '2-1', '2-2', '1-2-1', 'k-2-2', 'k-3-2': k is a keeper) or [[across, up]...]; skill: 0..1 (how well it reads the game); shootRange: in game units. */
+  /** side: 0 attacks the top, 1 the bottom; formation: a name ('1-1', '2-1', '2-2', '1-2-1', 'k-2-2', 'k-3-2': k is a keeper) or [[across, up]...]; skill: 0..1 (how well it reads the game: a number, or a gs.brains.Dial that follows the player); shootRange: in game units. */
   constructor(pitch, side, { formation = '2-2', skill = .7, shootRange = null, keeper = null, players = null, rnd = Math.random } = {}) {
     this.pitch = pitch; this.side = side; this.skill = skill; this.rnd = rnd;   // rnd: a seeded gs.math.rng for replays
     this.spots = typeof formation === 'string' ? FORMATIONS[formation] || FORMATIONS['2-2'] : formation;

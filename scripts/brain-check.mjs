@@ -130,9 +130,9 @@ if (gi >= 0) {
       await p.mouse.click(r.x + Math.random() * r.w, r.y + Math.random() * r.h); await p.waitForTimeout(60 + Math.random() * 200);
     }
     const stats = await p.evaluate(() => __gs.brains());
-    const bad = stats.filter(s => s.ok === false || (s.kind === 'brain' && s.rounds >= 3 && s.winRate < s.target && s.skill > s.skill0 + .05));
+    const bad = stats.filter(s => s.ok === false || ((s.kind === 'brain' || s.kind === 'dial') && s.rounds >= 3 && s.winRate < s.target && s.skill > s.skill0 + .05));
     if (bad.length) failed++;
-    console.log(`${bad.length ? 'FAIL' : 'PASS'} ${id.padEnd(16)} rounds=${rounds} ` + stats.map(s => s.kind === 'brain' ? `${s.name} skill ${s.skill0.toFixed(2)}→${s.skill.toFixed(2)} win ${s.winRate.toFixed(2)}` : `${s.name} (${s.kind})`).join(', ') + (bad.length ? `\n   got harder for a losing player: ${bad.map(s => s.name).join(', ')}` : ''));
+    console.log(`${bad.length ? 'FAIL' : 'PASS'} ${id.padEnd(16)} rounds=${rounds} ` + stats.map(s => s.kind === 'brain' || s.kind === 'dial' ? `${s.name} skill ${s.skill0.toFixed(2)}→${s.skill.toFixed(2)} win ${s.winRate.toFixed(2)}` : `${s.name} (${s.kind})`).join(', ') + (bad.length ? `\n   got harder for a losing player: ${bad.map(s => s.name).join(', ')}` : ''));
   }
   await br.close(); server.httpServer.close();
   process.exit(failed ? 1 : 0);
