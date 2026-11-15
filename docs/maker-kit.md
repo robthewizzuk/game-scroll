@@ -2692,11 +2692,15 @@ level: `lod: [[90, mid], [240, imp.geometry, imp.material]]` (a level can have a
 
 **Cities** (`gs.city`, 3D): `new City(view, { seed, blocks: 6, style: 'downtown' | 'oldtown' | 'harbour' | 'suburb' })`
 makes a made-up city from a seed: streets and junctions with traffic lights, buildings with lit windows,
-shops, roof tanks and fire escapes, parks, trees and lamps, cars that keep to their lanes and stop at
-red, and people who cross at the corners. `city.update(dt, player)` each frame; `city.avoid(player)`
-makes cars brake for you. It answers `collide`, `ray`, `route(a, b)` (a `gs.paths` Path along the
-roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `people.scare`, and gives the plan as plain
-numbers for your own map. The full guide is [docs/city.md](city.md).
+shops, roof tanks and fire escapes, parks, trees and lamps, cars that keep to their lanes, stop at
+red, change lanes, overtake, swerve, pull over for sirens and crash (Rapier bodies after `city.solid(world)`),
+and people who cross at the corners, sit, phone, chat, gather at a crash and fall when hit. `city.update(dt, player)`
+each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers `collide`, `ray`, `route(a, b)`
+(a `gs.paths` Path along the roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `cars.chase(car, target)`,
+`cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
+numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
+seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
+tactics and learns this player), officers on foot, searches, busted or escaped. The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and
