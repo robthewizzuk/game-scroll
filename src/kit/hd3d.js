@@ -3004,6 +3004,8 @@ export class HDView {
   }
   drawGPU(G, r, T, baking, off, now, up, direct) {
     const s2 = up && !up.s1 ? up : null;
+    // soft sun shadows: fewer taps on a turning pattern while the upscaler's history averages them (hd3d-gpu.js PCSS)
+    G.fx.pcssFrame?.(!!s2 && !baking, this._pcssF = (this._pcssF || 0) + 1);
     // card pictures (bakes) draw with no upscaler and no frame generation, which the chain is built for: one
     // shared chain flipped between the two and rebuilt all its passes twice whenever the game's card was baked
     const ck = baking ? '_gpuBakeChain' : '_gpuChain';
