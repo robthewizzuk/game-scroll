@@ -54,7 +54,7 @@ import { lookPatch, looksOf, lookSpec } from './looks.js';
 import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
-import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE } from './gpu.js';
+import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE, SEND_CHANGED, ONE_WRITE } from './gpu.js';
 import { packing } from './pack.js';
 import { ONE_SUBMIT, flushGPU, sendEarly } from './submit.js';
 import { steerFor } from './steering.js';
@@ -592,6 +592,10 @@ export const HD = {
   submitEarly: true,
   /** WebGPU: the 3D canvas is opaque to the page while the view fills it (every view but AR's, whose camera picture shows behind the 3D): the browser draws it without blending it over the card behind. false: blended always, as three sets it up, to compare. HD.info.canvas: 'opaque' or 'premultiplied' last frame. */
   opaque: true,
+  /** WebGPU: an attribute marked as rewritten often (copies' places, cloth, particles, a posed mesh's index list) goes to the chip when it has changed, like any other; false: again every time a pass draws with it, changed or not, as three does, to compare (gpu.js sendChanged). */
+  sendChanged: true,
+  /** WebGPU: the changed numbers of one thing (its matrix, its normal matrix, its pose's place) go to the chip in one call; false: a call for each run of changed numbers, as three does, to compare (gpu.js oneWrite). */
+  oneWrite: true,
   /** The frame lab's switch and tests: false builds the kit's compute passes without WebGPU subgroups where the chip has them (subgroups.js: GPU culling's lists, frame generation's counts, the fluid's sums). HD.info.subgroups says which it is. */
   subgroups: true,
   /**
@@ -3011,7 +3015,7 @@ export class HDView {
     if (live && this.stillSkip(ch, now)) { speed.between = null; HD.info.still = true; HD.info.cpu = performance.now() - now; return; }
     if (!baking && !off) HD.info.still = false;
     // (the canvas is opaque unless this view lets what is behind it show, AR's camera picture: gpu.js canvasShows)
-    OPAQUE.on = HD.opaque !== false; { const m = canvasShows(r, !!this.clearBg); if (!baking && !off) HD.info.canvas = m; }
+    OPAQUE.on = HD.opaque !== false; SEND_CHANGED.on = HD.sendChanged !== false; ONE_WRITE.on = HD.oneWrite !== false; { const m = canvasShows(r, !!this.clearBg); if (!baking && !off) HD.info.canvas = m; }
     if (!baking && !off) HD.info.depth = r.reversedDepthBuffer ? 'reversed' : 'forward';   // (gpu.js REVERSED)
     // people on bones posed once a frame on the chip (skin-gpu.js): this frame's meshes are taken into the pool now, before
     // anything below draws or builds a shader for them; they are posed once the world's matrices are this frame's (below)
