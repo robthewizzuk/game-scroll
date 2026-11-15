@@ -14,7 +14,7 @@ const fs = require('fs'), path = require('path');
     ? { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } }
     : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' || process.env.ALLWARN) console.log('page:', m.text().slice(0, 400)); });
-  await p.goto(`http://localhost:${port}/scripts/pose-sheet/?${gpu ? 'gpu&' : ''}${q.join('&')}`); await p.waitForFunction(() => window.result, null, { timeout: 900000 });
+  const page = (q.find(a => a.startsWith('page=')) || '').slice(5); await p.goto(`http://localhost:${port}/scripts/pose-sheet/${page ? page + '.html' : ''}?${gpu ? 'gpu&' : ''}${q.join('&')}`); await p.waitForFunction(() => window.result, null, { timeout: 900000 });
   const res = await p.evaluate(() => window.result);
   await b.close(); await server.close();
   if (res.error || errs.length) { console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }

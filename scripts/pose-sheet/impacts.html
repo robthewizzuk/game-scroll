@@ -1,0 +1,51 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Shots landing on each surface, for scripts/pose-sheet.cjs page=impacts: a cell for each surface, the hit caught
+// t seconds in (and its mark and sound), a gun's muzzle flash and its spent cases on the floor.
+//   ?page=impacts&surfaces=metal,stone,wood,glass,dirt,water,cloth&t=.06&cell=220x220&gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const info = [], T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const surfaces = (Q.get('surfaces') || 'metal,stone,wood,glass,dirt,sand,water,cloth,muzzle,cases').split(','), [cw, ch] = (Q.get('cell') || '220x220').split('x').map(Number), at = +(Q.get('t') || .06);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const sheet = document.createElement('canvas'); sheet.width = cw * Math.min(5, surfaces.length); sheet.height = ch * Math.ceil(surfaces.length / 5); const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const mats = { metal: gs.models.material('metal', { colour: '#6a6e74' }), stone: gs.models.material('concrete'), wood: gs.models.material('planks'), glass: new T.MeshStandardMaterial({ color: '#9ab', metalness: 0, roughness: .05, transparent: true, opacity: .35, name: 'glass' }),
+    dirt: gs.models.material('dirt'), sand: gs.models.material('sand'), water: new T.MeshStandardMaterial({ color: '#2d6f8a', roughness: .1, name: 'water' }), cloth: gs.models.material('fabric', { colour: '#5a6a8a' }) };
+  for (let i = 0; i < surfaces.length; i++) {
+    const s = surfaces[i], v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .35 });
+    const sun = gs.hd.sun('#fff2d8', 1.6, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+    const floor = new T.Mesh(new T.BoxGeometry(6, .2, 6), gs.models.material('concrete')); floor.position.y = -.1; floor.receiveShadow = true; v.scene.add(floor);
+    const fx = new gs.fx3d.Impacts(v, { sounds: false });
+    v.cam.fov = 35; v.cam.aspect = cw / ch; v.cam.near = .02; v.cam.far = 50; v.cam.updateProjectionMatrix();
+    if (s === 'muzzle' || s === 'cases') {
+      const gun = gs.models.weapon(s === 'muzzle' ? 'rifle' : 'pistol'); gun.position.set(0, .8, 0); gun.rotation.y = -.6; v.scene.add(gun); gun.updateMatrixWorld(true);
+      const m = gun.points.muzzle.getWorldPosition(new T.Vector3()), d = new T.Vector3(0, 0, -1).transformDirection(gun.matrixWorld);
+      if (s === 'muzzle') fx.muzzle(m, d, { kind: 'rifle' });
+      else for (let k = 0; k < 8; k++) { fx.shell(gun.points.eject, { kind: k % 3 ? 'small' : 'shell' }); for (let j = 0; j < 9; j++) fx.update(1 / 60); }
+      for (let j = 0; j < (s === 'cases' ? 120 : 1); j++) fx.update(1 / 60);
+      if (s === 'cases') { const c = new T.Vector3(); for (const k of fx.cases) c.add(k.p); c.divideScalar(fx.cases.length); v.cam.position.set(c.x + .25, .45, c.z + .45); v.cam.lookAt(c); info.push('cases at ' + fx.cases.map(k => k.p.toArray().map(n => n.toFixed(2)).join(',')).join(' ')); }
+      else { v.cam.position.set(m.x + .5, m.y + .25, m.z + .9); v.cam.lookAt(m.x - .1, m.y, m.z); }
+    } else {
+      // a slab of the surface, hit three times: one caught t in, the earlier ones' marks left
+      const flat = s === 'dirt' || s === 'sand' || s === 'water';
+      const slab = new T.Mesh(new T.BoxGeometry(flat ? 3 : 1.6, flat ? .1 : 1.4, flat ? 3 : .12), mats[s]); slab.position.set(0, flat ? .05 : .8, flat ? 0 : -.2); slab.receiveShadow = true; v.scene.add(slab); slab.updateMatrixWorld(true);
+      const n = flat ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 }, from = { x: .6, y: 1.4, z: 3 };
+      const pts = flat ? [[-.4, .1, .2], [.35, .1, -.3], [0, .1, .1]] : [[-.4, 1.05, -.14], [.35, .55, -.14], [0, .8, -.14]];
+      for (let k = 0; k < 3; k++) { fx.hit({ point: { x: pts[k][0], y: pts[k][1], z: pts[k][2] }, normal: n, mesh: slab }, { surface: s, from }); for (let j = 0; j < (k < 2 ? 60 : Math.round(at * 60)); j++) fx.update(1 / 60); }
+      v.cam.position.set(.25, flat ? .75 : .9, flat ? 1.0 : .75); v.cam.lookAt(0, flat ? .1 : .8, -.2);
+    }
+    v.cam.updateMatrixWorld(); v.cut?.();
+    for (let n = 0; n < (i ? 3 : 8); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+    sx.drawImage(cell, (i % 5) * cw, Math.floor(i / 5) * ch);
+    sx.font = '12px sans-serif'; sx.fillStyle = '#000'; sx.fillText(s, (i % 5) * cw + 4, Math.floor(i / 5) * ch + 14);
+    fx.dispose(); v.dispose?.();
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

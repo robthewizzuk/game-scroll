@@ -23,6 +23,10 @@ const rgb = c => { K.set(c); return [K.r, K.g, K.b]; };
 const pair = v => Array.isArray(v) ? v : [v, v];
 // the same dice every time for a seed (mulberry32): a replay or a test gets the same particles
 const seeded = s => () => { s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+// three directions at right angles, the last along d: a cone turned to point along d
+const basis = d => { const l = Math.hypot(d.x, d.y, d.z) || 1, z = [d.x / l, d.y / l, d.z / l], a = Math.abs(z[1]) < .9 ? [0, 1, 0] : [1, 0, 0];
+  const x = [a[1] * z[2] - a[2] * z[1], a[2] * z[0] - a[0] * z[2], a[0] * z[1] - a[1] * z[0]], xl = Math.hypot(...x); x[0] /= xl; x[1] /= xl; x[2] /= xl;
+  return [...x, z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0], ...z]; };
 const MAX = 16384;   // dots in one mesh at most
 const LAMP_K = .3, LL = [0, 0, 0];   // (how much of a lamp's light a soft dot sends back: about a pale matt surface's)
 const STRIDE = 19;   // numbers kept per particle: place 3, speed 3, age, life, size, end size, red, green and blue (start, end), fade, gravity, its effect
@@ -107,7 +111,7 @@ export class Particles3D {
    * Your own effect. o: life [min, max] seconds, speed [min, max], size [min, max] (a dot's width),
    * colors [from, to], rate (per second, 0 for a burst only), burst (count at the start), loop,
    * duration (seconds it makes particles for when it doesn't loop), shape: 'point' | 'sphere' | 'cone'
-   * (radius, angle), up (a cone points up; else along z), gravity (units/s², negative falls), glow
+   * (radius, angle), up (a cone points up; else along z), dir (a cone points this way: { x, y, z }), gravity (units/s², negative falls), glow
    * (false: soft dots like smoke; else they glow), shrink (false to keep their size), grow (they
    * double in size), fade (false to stay solid).
    */
@@ -116,7 +120,7 @@ export class Particles3D {
       pos: new Vector3(pos?.x || 0, pos?.y || 0, pos?.z || 0), on: true, t: 0, acc: 0, burst: o.burst || 0, loop: o.loop ?? false, duration: o.duration ?? 1, rate: o.rate ?? 0,
       life: pair(o.life ?? [.4, .8]), speed: pair(o.speed ?? [1, 3]), size: pair(o.size ?? [.1, .3]),
       c0: rgb((o.colors || ['#ffffff'])[0]), c1: rgb((o.colors || ['#ffffff', '#ffffff'])[1] ?? (o.colors || ['#ffffff'])[0]),
-      shape: o.shape === 'cone' ? 2 : o.shape === 'point' ? 0 : 1, radius: o.radius ?? .1, angle: o.angle ?? .4, up: !!o.up,
+      shape: o.shape === 'cone' ? 2 : o.shape === 'point' ? 0 : 1, radius: o.radius ?? .1, angle: o.angle ?? .4, up: !!o.up, dir: o.dir ? basis(o.dir) : null,
       gravity: o.gravity || 0, end: o.shrink === false ? 1 : o.grow ? 2 : 0, fade: o.fade === false ? 0 : 1, dots: o.glow === false ? this.soft : this.glow,
       id: ++this.ids, light: null, at: p => { fx.pos.set(p.x, p.y, p.z); fx.light?.at(p.x, p.y + fx.lift, p.z); return fx; }, stop: () => { fx.on = false; fx.light?.stop(); return fx; }, lift: 0,
       remove: () => { fx.on = false; fx.light?.stop(); this.live.delete(fx); const D = fx.dots, P = D.P; for (let i = 0; i < D.n; i++) if (P[i * STRIDE + 18] === fx.id) P[i * STRIDE + 6] = P[i * STRIDE + 7]; },
@@ -132,7 +136,8 @@ export class Particles3D {
     if (fx.shape === 2) {   // a cone: from a disc, spreading out by up to the angle
       const a = R() * 6.2831853, rr = Math.sqrt(R()) * fx.radius, th = R() * fx.angle, ph = R() * 6.2831853, s = Math.sin(th);
       const cx = Math.cos(a) * rr, cy = Math.sin(a) * rr, vx = s * Math.cos(ph), vy = s * Math.sin(ph), vz = Math.cos(th);
-      if (fx.up) { px = cx; pz = -cy; dx = vx; dy = vz; dz = -vy; } else { px = cx; py = cy; dx = vx; dy = vy; dz = vz; }
+      if (fx.dir) { const B = fx.dir; px = B[0] * cx + B[3] * cy; py = B[1] * cx + B[4] * cy; pz = B[2] * cx + B[5] * cy; dx = B[0] * vx + B[3] * vy + B[6] * vz; dy = B[1] * vx + B[4] * vy + B[7] * vz; dz = B[2] * vx + B[5] * vy + B[8] * vz; }
+      else if (fx.up) { px = cx; pz = -cy; dx = vx; dy = vz; dz = -vy; } else { px = cx; py = cy; dx = vx; dy = vy; dz = vz; }
     } else {
       const u = R() * 2 - 1, a = R() * 6.2831853, q = Math.sqrt(Math.max(0, 1 - u * u)); dx = q * Math.cos(a); dy = u; dz = q * Math.sin(a);
       if (fx.shape === 1) { const rr = Math.cbrt(R()) * fx.radius; px = dx * rr; py = dy * rr; pz = dz * rr; }   // a ball: starts anywhere in it, flying outwards

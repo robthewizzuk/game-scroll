@@ -79,10 +79,11 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
 | Run, aim, hang and climb poses on a 3D figure | `gs.poses` | [Action and adventure kits](#action-and-adventure-kits) |
 | Mission scripts, objectives, checkpoints | `gs.missions` | [Action and adventure kits](#action-and-adventure-kits) |
+| Jobs around an open world, a phone that rings with them, retry mid-city, the world saved in 8 KB | `gs.missions` `Jobs`, `Phone`, `WorldSave` | [Action and adventure kits](#action-and-adventure-kits) |
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
-| Cars, lorries, tanks, trains, boats and planes to drive, with no model files: wheels that roll and steer, tracks, a turret, propellers | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
+| Cars, lorries, buses, motorbikes, tanks, trains, boats, planes and helicopters to drive (police, taxi, ambulance and fire engine too), with no model files: wheels that roll and steer, tracks, a turret, propellers, rotors, flashing lights | `gs.models.vehicle` | [Vehicles made in code](#vehicles-made-in-code) |
 | Fur on animals, beards (and hair, when asked) in strands on people, or a furry anything: strands in layers, no texture files | `gs.models.fur`, `creature({ fur })`, `human({ strands, beard })` | [Fur and hair](#fur-and-hair) |
 | Light meter, takedowns, bodies, disguises | `gs.stealth` | [Action and adventure kits](#action-and-adventure-kits) |
 | Grappling hook, zip line, hacking puzzles | `gs.gadgets` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -107,6 +108,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Lines that change every time (a shopkeeper, a riddle) | `gs.phoneai` (the phone's built-in AI) | [Hearing, doodles and the phone's AI](#hearing-doodles-and-the-phones-ai) |
 | The same jumps and timings at 30, 60 and 120 fps; exact replays | `tick: 60`, `gs.tick` | [Fixed game tick](#fixed-game-tick) |
 | An original tune for your game without writing notes | `gs.sound.compose({ mood, seed })` | [Music composer](#music-composer) |
+| A car radio: stations, made-up DJs, adverts, news | `gs.sound.Radio` | [Car radio](#car-radio) |
 | Music under every round in one line; a band, synths or an orchestra instead of beeps | `music: 'chase'` in the definition, `music({ set: 'band' })`, `gs.sound.instrument()` | [Sound](#sound) |
 | Smooth lines in a drawing game; ink that stays under the fingertip | `touch: 'fine'`, `api.ahead()` | [Finer touch](#finer-touch) |
 | Save something big (a built world, drawings, recorded runs) | `api.saveLocal()` / `loadLocal()` | [Save slots](#a-bigger-save-that-stays-on-the-phone) |
@@ -2416,6 +2418,38 @@ arrows) and asks your `hits()` what each one met; `arc` and `lob` give grenade t
 down before dying, and keeps the direction of each hit (`hits[].angle`) for damage arrows.
 `Markers` times hit markers. `Explosives` are barrels and mines that set each other off.
 
+**A ready-made arsenal** (`gs.combat`): `ARSENAL` holds the numbers for every weapon `gs.models.weapon` makes
+(`pistol`, `revolver`, `smg`, `shotgun`, `rifle`, `sniper`, `launcher`, `grenade`, and `bat`, `pipe`, `wrench`, `baton`
+to swing): its `Gun` options, the ammo it takes, the case it throws, a grenade's throw and fuse, a rocket's blast and
+a melee weapon's `{ reach, damage, arc }` for `Melee`. `arm('rifle')` is a `Gun` with those numbers. `Pouch({ pistol: 36 })`
+is ammo by kind with a most of each, and a gun given one (`arm(kind, { pouch })`) reloads out of it, so guns that take
+the same rounds share them. `Loadout({ pouch, health })` is what one person carries, a weapon to each slot (melee, hand,
+long, heavy, throw): `give(kind)` picks one up loaded (another of the same kind gives its rounds; a second long gun
+takes the first's place, which `give` returns to drop), `next()`, `use(kind)` (drawing takes a moment),
+`fire(from, dir, held, { at })` pulls the trigger with the weapon's sound, `reload()`, `save()` / `load()`.
+`Pickups()` lies about the world: `add({ x, y, z, kind: 'shotgun' })`, `{ kind: 'ammo', of: 'shells', amount }`,
+`{ kind: 'health', amount }`, with `respawn` seconds; `drops.collect(dt, hero.feet, arms)` takes what the hero walks
+over and the loadout has room for (each has `spin` and `bob` to draw it turning). `weaponSound(kind, what, at)` is each
+weapon's own report, click when empty, reload, pump or bolt, swing, pin and draw, heard from `at` through the game's
+`gs.sound.Ears` when it made one (muffled behind walls, echoing in the place). A rocket is a flying `Shots` shot that
+lights an `Explosives` charge where it lands; a grenade is a `World3D` ball added to `Explosives` with `body` and lit
+(`ARSENAL.grenade.throw` has its speed and fuse; `arc` draws the throw line).
+
+**Weapons you can see** (`gs.models` and `gs.fx3d`, Next Gen): `gs.models.weapon('rifle')` is one made in code, our own
+designs, a few draws each, with `points` for the right hand's `grip`, the left hand's `fore`, the `muzzle`, `eject`,
+`sight` and `stock`. `weapon.wield(person)` puts it in the hands of a `gs.models.human`, a `gs.poses` person or a figure:
+each frame after `rig.update()`, `held.update(dt, { how, pitch, yaw })` holds it `'aim'` (a long gun's stock in the
+shoulder, a pistol out in both hands, pointing where the body faces, turned about the shoulder by the aim), `'hip'`,
+`'ready'` (pointing down in front), `'low'` (in one hand at the side), `'slung'` (on the back) or `'none'` (put away),
+eased from one to the next, with both hands closed round it; `held.muzzle` and `held.dir` are where shots leave. Things
+to swing are held up over the shoulder at `'ready'` and out in front at `'aim'`. `gs.fx3d.Impacts(view)` shows where shots
+land, by what they hit: `fx.hit(worldRayHit, { from })` throws sparks off metal, dust and chips off stone, splinters off
+wood, glints off glass, a spray of dirt, sand or snow, a splash on water, a puff off cloth and people (no blood) and
+leaves a mark on the surface, with its sound; what was hit is read from the mesh as `Foley` reads it (or
+`{ surface: 'metal' }`). `fx.muzzle(at, dir, { kind })` is a flash that lights the scene and a wisp of smoke;
+`fx.shell(held.gun.points.eject, { kind })` throws a spent case out to the right that bounces on the world with a tinkle.
+`fx.update(dt)` each frame, `fx.clear()` in `reset()`. On WebGPU marks don't show on see-through things (glass).
+
 **Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
 `gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
 out further the further round it points), through the windscreen, out of the back window with `rear: true`; the
@@ -2613,6 +2647,59 @@ does, with a small bright point in each eye; `{ strength: .5 }` sets how much, `
 m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` makes areas, `all()` and
 `any()` wait for several things, `restart()` returns to the last checkpoint after a loss (skipping
 the lines already heard), and `save()`/`load()` keep it between sessions.
+
+**Open-world missions** (`gs.missions`, for a city game): three more pieces on top of `Mission`.
+
+`Jobs` is the list of jobs in the world, each a mission with a place to start it:
+
+```js
+const { Jobs, Phone, WorldSave, zone } = gs.missions;
+jobs = new Jobs([
+  { id: 'pies', name: 'Hot Pies', at: shop, from: 'Nonna Ruth', pay: 150, icon: 'pizza',
+    call: { from: 'Nonna Ruth', say: ['The pies are getting cold!', 'Come to the shop.'] },
+    script: function* (m, job) {
+      m.objective('Take the pies to the docks', { at: docks, kind: 'drop' }); m.timer(90);
+      yield m.until(() => zone(docks, 6).has(me));
+      m.checkpoint('docks', { at: docks });                        // a retry starts here, mid-city
+      m.leash(() => inVan, 10, 'You left the van');
+      m.objective('Back to the shop', { at: shop }); yield m.until(() => zone(shop, 4).has(me));
+    } },
+  { id: 'race', needs: ['pies'], at: { x: -20, z: 5 }, script: ... },
+]);
+update(dt) { jobs.update(dt, me); }   // me: { x, z }
+```
+
+- `jobs.offer` is the open job whose marker the player stands on: show "Start" and call `jobs.start(id)`
+  (`start: 'enter'` starts it by walking on). `jobs.mission` is the running Mission.
+- `jobs.markers`, each frame: `[{ at: { x, y, z }, kind, text, icon, pinned, job }]`: the open jobs' start points
+  while roaming, the mission's objectives during one (an objective's `at` can be a moving thing, or a function).
+  Pass them to your map and GPS (`pinned` is where the GPS should go).
+- A fail sets `jobs.failed`: `jobs.retry()` goes back to the last checkpoint and `jobs.mission.respawn` is where
+  to put the player; `jobs.quit()` drops it (the marker stays, to try again). `m.abandon()` is the player giving up.
+- `m.timer(seconds)` fails the mission when it runs out (`m.clock.left` to show); `m.leash(test, seconds)` fails
+  it after that long out of the area or out of the car (`m.away` to show a warning).
+- Done jobs pay into `jobs.money`, unlock the jobs that `needs` them, and fire `on('done')`.
+
+`Phone` is the player's phone: `phone.ring({ from, say: [lines], voice, job })` rings (with a buzz), and once
+answered (`phone.answer()`, or `decline()`) the caller's lines are spoken on a phone line and shown as
+`phone.call.line`; `skip()` moves on. A call with a `job` pins it as the waypoint. Jobs made in the same game ring
+the phone with each job's `call` by themselves when it opens; the car radio waits while it rings.
+`phone.text(from, text)` puts a message in `phone.inbox`; `phone.missed` has the calls nobody answered.
+
+`WorldSave` keeps the world's state in the 8 KB that `api.save()` follows the player with:
+
+```js
+save = new WorldSave(api);
+save.keep('world', () => ({ hour: sky.time, cash, rain: weather.kind }), d => { sky.time = d.hour; cash = d.cash; });
+save.keep('cars', () => rows(garage, ['style', 'colour', 'x', 'z']), d => garage = unrows(d, ['style', 'colour', 'x', 'z']), { optional: true });
+save.load();                       // in make(), after everything is made
+update(dt) { save.update(dt); }    // saves when something changed, every few seconds; save.now() straight away
+```
+
+The Jobs (done, money, a running job's checkpoint), Phone (texts) and Radio (the station) of the same game are kept
+by themselves. Numbers are rounded to two places and `rows()` writes a list of records without repeating the names;
+if it all comes to more than 8 KB, the `optional` parts are left out (`save.dropped`), and `save.size` / `save.room`
+say how much is used. A built world (every crate where you left it) is bigger: keep that with `api.saveLocal`.
 
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
@@ -3165,6 +3252,48 @@ definition instead (see [Sound](#sound)): the app does all of this for you.
 It returns music()'s parts with `layers: { arp, drums2, lead2 }`, so `intensity()` and `follow()` build
 it up. `info` has the key, mode and chords, plus `win` and `lose` jingles for `notes()` in the same key.
 Music theory (scales and modes) comes from Tonal (MIT).
+
+## Car radio
+
+`gs.sound.Radio` is a car radio for a driving or open-city game: stations of original songs written by
+`compose()`, each with a made-up DJ who talks between songs through `say()`, station idents, silly made-up
+adverts, and the news your game feeds it. Every station keeps its own clock, so a station you left is further
+on when you come back, half way through a song. Five stations come with it (all made up: Kerbside 88 for pop,
+Owl Hours for slow songs, Redline 104 for fast ones, Gilded 97's orchestra and Honk 101's chip tunes), each with
+its own DJ, voice and catch phrases; the songs have made-up titles and artists from the seed.
+
+```js
+const { Radio } = gs.sound;
+make() { radio = new Radio(); }                   // made once: the stations carry on from round to round
+update(dt) { radio.update(dt); }                  // nothing plays until it's on
+// get in the car: radio.on()     the dial: radio.next(), radio.prev(), radio.tune('Owl Hours')
+// get out:  radio.listen({ inside: false, distance: 3 })      back in: radio.listen({ inside: true })
+// a chase starts: radio.news('a police chase is heading over the harbour bridge', { urgent: true })
+draw: radio.now   // { on, station, freq, dj, kind: 'song' | 'talk', song: { title, artist }, line, left }
+```
+
+- **Songs** have a shape: an intro without the tune, then the layers (`compose()`'s arpeggio, busier drums and
+  harmony) come and go, and the tune drops out at the end. Each station plays in its own instrument set.
+- **Breaks**: the DJ names the song that just played and the next one, sometimes says the weather (a `gs.sky`
+  Weather made in the same game is found by itself) and the time of day (from a Sky), reads an advert or a bit of
+  local news, over a soft bed of the next song's chords. A break lasts as long as the DJ takes.
+- **News** (`radio.news(text)`): every station reads it at its next break; `urgent: true` breaks in now, over
+  the song, with two pips. This is how a wanted level, a robbery or a crash gets on the radio.
+- **The car body**: inside, it sounds like car speakers; `listen({ inside: .6 })` is a door open; outside it's
+  muffled through the body and quieter, fades as you walk away, the DJ can't be made out past 8 m and it's silent
+  past 30 m.
+- **The phone**: a `gs.missions` Phone made in the same game holds the radio down while it rings and while you
+  talk (`radio.hold(true)` does it by hand: a cutscene).
+- **The phone's own AI** writes fresher DJ lines on phones that have one: `new Radio({ ai: new PhoneAI({ persona:
+  'a radio DJ', words: 24 }) })` (`gs.phoneai`). It's asked only for the station on air, a song ahead; every line
+  has a written one, and play never waits for it.
+- **Your own stations**: `new Radio({ stations: [{ name, freq, mood, set, voices, tagline, talk, dj: { name, voice:
+  'woman' | 'man', take, pitch, rate, persona, sign: ['catch phrase'] } }] })`. `seed` changes every song.
+  `gs.sound.STATIONS` and `ADVERTS` are the ones that come with it.
+
+It plays on the music channel, so the player's Sound settings rule it (with music off, the DJs are quiet too),
+and music stops with the round as usual. Don't also put `music:` in the definition of a game with a radio.
+`radio.pack()` / `unpack()` keep the station (a `WorldSave` does it by itself).
 
 ## Puzzles and opponents
 
@@ -4001,8 +4130,8 @@ update(dt) {
 
 ## Vehicles made in code
 
-`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, tanks, trains, boats and planes with no model
-files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
+`const { vehicle } = gs.models;` (Next Gen.) Cars, lorries, buses, motorbikes, tanks, trains, boats, planes
+and helicopters with no model files. Each is worked out from a few measures into a shell, dressed in paint, glass, chrome and rubber, aged
 a little, and handed back as a three.js Group with the parts that turn on pivots of their own:
 
 ```js
@@ -4019,12 +4148,15 @@ update(dt) {
 
 | `kind` | `style` (the first is what you get with none) | What turns | `points` |
 | --- | --- | --- | --- |
-| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch` |
-| `truck` | `flat`, `canvas`, `box`, `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind | a car's, and `load` |
+| `car` | `saloon`, `hatch`, `estate`, `sports`, `van`, `pickup`, `jeep`, `police`, `taxi`, `ambulance` | four `wheels` | `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; `beacon0`, `beacon1`... (lights on the roof) |
+| `truck` | `flat`, `canvas`, `box`, `fire` (a fire engine), `tanker`; `axles: 3`, `offroad: true` (tyres with lugs), `canvas: '#5c6040'` | four or six `wheels`, twin tyres behind; a fire engine's `parts.turntable` and `ladder` | a car's, and `load`; a fire engine's `tip`, `hose`, `crewL`, `crewR` |
+| `bus` | `city`, `double` (a double decker), `coach`; `side: 'left'` puts its doors on the left | four `wheels`, twin tyres behind | `driver`, `door` (`door0`, `door1`...), `aisle`, `exhaust`, `lampL`, `lampR`, `hitch` |
+| `bike` (a motorbike) | `road`, `sport` (a fairing), `scooter`, `dirt` | `parts.fork` with its bars and front wheel, both `wheels`; it leans | `rider`, `pillion`, `pegL`, `pegR`, `barL`, `barR`, `exhaust`, `lampL`, `stand` |
 | `tank` | `medium`, `light`, `heavy` | tracks and road wheels, `parts.turret`, `parts.gun` | `muzzle`, `commander`, `driver`, `exhaust` |
 | `train` | engines `steam` (it brings its tender) and `diesel`; wagons `van`, `open`, `flat`, `tanker`, `guard` (a guard's van), `coach`, `tender` | every wheel, a steam engine's rods | `front`, `back`; `smoke`, `steam`, `whistle`, `driver`, `fire`; a tender's `coal`; a wagon's `load`, a coach's `door`, the `roof` of a van, a guard's van and a coach; a guard's van's `veranda` and `tail`; a tank wagon's `filler` |
 | `boat` | `rowboat`, `motor`, `fishing`, `patrol` | `parts.oarL`, `oarR`; `motor` and its `prop`; `radar`, `turret`, `gun` | `helm` (a rowboat: `seat`), `bow`, `wake`, `deck`, `muzzle` |
 | `plane` | `prop`, `biplane`, `twin`, `jet` | `parts.prop` (a twin: `propL`, `propR`), its `wheels` | `pilot`, `exhaust`, `guns`, `smoke`; a twin's `door`, `cabin` |
+| `helicopter` | `light`, `police` (a searchlight under its nose), `medic` | `parts.rotor`, `parts.tail` | `pilot`, `copilot`, `door`, `cabin`, `hook`, `tailRotor`, `smoke`; a police one's `spot` |
 
 `vehicle.kinds` is the same list, for a menu or a test.
 
@@ -4059,7 +4191,16 @@ update(dt) {
   springs does (`sway: 0` for none), propellers spin up to a blur with `power` (0..1), a boat's outboard turns with the steering
   and a patrol boat's radar goes round. A tank takes `turn` (-1..1: one track runs ahead of the other, on
   the spot when it stands) and `aim: [bearing, lift]`, which eases its turret and gun there. `ground:
-  false` keeps a plane's wheels still in the air (it is the default for a plane).
+  false` keeps a plane's wheels still in the air (it is the default for a plane and a helicopter). A
+  motorbike's `fork` turns with `steer` and it leans into a turn as far as its speed round it asks
+  (`bike.lean` is how far now; `lean` in the options to say yourself, as a stunt or a fall does).
+- **Flashing lights.** A police car, an ambulance, a fire engine and a police helicopter have beacons:
+  `car.siren(true)` sets them flashing in bursts, one side and then the other, as `move()` or `update(dt)`
+  runs (`siren(false)` stops them, `sirenOn` says). `car.beacons` lists each one (`point`, `colour`, `on` this
+  frame), so a game can light the street with `v.flash()` or `placeLamps` where they are. Each flashing car has
+  materials of its own, so one car's lights do not flash another's; a taxi's roof sign lights with `lights(true)`.
+  No sound comes with them: a siren is the game's (`gs.sound`). `gs.sound.Foley` gives buses, motorbikes,
+  scooters, dirt bikes and helicopters' rotors engines of their own by themselves.
 - **By hand** instead: `roll(metres so far)` (a tank: `roll(left, right)`), `steer(radians)`,
   `aim(bearing, lift)` (the gun stops at its own limits), or turn any of `parts` yourself (they are
   Groups: `boat.parts.oarL.rotation.y = stroke`).
@@ -4075,7 +4216,14 @@ update(dt) {
   `gs.physics3d` the chassis and the car's own four wheels, so they ride the bumps and it can roll over;
   then `drive.drive(throttle, steer, brake)` each frame as ever (don't call `move()` as well). `chassis()`
   moves the body so its origin is the middle of the chassis and not the road, so call it once, when you
-  make the car. A third axle's wheels follow the second's.
+  make the car. A third axle's wheels follow the second's. A bus the same.
+- **A motorbike on real physics:** `ride = world.vehicle(bike, bike.chassis())` (`chassis()` says `bike: true`):
+  its rays sit close under it, its back wheel drives, its rider keeps it upright and its mesh leans into the
+  turn and turns its forks by itself. It goes over when it hits something at `fall` metres a second or more
+  (8; `bike.chassis({ fall: 12 })`) or is tipped past about 50°: then `ride.fallen` is true, and the game
+  throws the rider (`gs.characters.Reactions`). `ride.rightUp()` stands it up again.
+- **A helicopter** is the look for `gs.craft.Hover`: place it from the craft each frame and `move(dt, speed,
+  { power })` spins its rotor and tail rotor up to a blur.
 - **Boats and planes** are the look for `gs.craft`: `boat = new Boat(sea, { length: hull.size.length,
   width: hull.size.width, draft: 0 })`, then `hull.position.copy(boat.pos); hull.quaternion.copy(boat.quat);
   hull.move(dt, boat.speed, { steer })` each frame; a plane the same from a `Plane({ ground, gear:
@@ -4116,7 +4264,9 @@ update(dt) {
   whole train by its own position.
 - **Cost.** A car is about 13,000 triangles in 12 to 14 draws; a lorry 12,000 to 17,000; a tank 18,000 to
   21,000 (most of it track links and road wheels, which are two draws of copies); a railway car 5,000 to
-  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000. Each is made in about a tenth of a second or less
+  15,000; a boat 3,000 to 6,000; a plane 5,000 to 8,000;
+  a police car, a taxi and an ambulance 19,000 to 22,000 in about 20 draws; a fire engine 21,000 in 25; a bus 16,000 to 17,000 in 13; a
+  motorbike 11,500 to 16,000 in about 20; a helicopter 5,500 to 8,000 in 14 to 18. Each is made in about a tenth of a second or less
   on a desktop (not yet measured on a phone), and the same vehicle asked for again, or `car.twin()`,
   shares its shapes and materials and costs almost nothing: a car park is one car made once.
   Wagons of one kind share theirs too. Make vehicles in `make()`.
