@@ -1652,6 +1652,30 @@ export interface CharactersPart {
    * Call update(dt) each frame after rig.update(dt), and steer the character only while `busy` is false.
    */
   Reactions: new (body: Loose, o?: ReactionsOptions) => ReactionsT;
+  /**
+   * Things carried on the body and drawn to the hand: a sword at the hip, a greatsword or a shield on the back, a quiver, a dagger at the belt.
+   * add(name, thing, spot, { grip, along, face, hand, held, sheath }) puts it at a spot (SPOTS, or your own); draw(name) sends the hand to it,
+   * takes it and brings it round into the hand, sheathe(name) puts it back; update(dt) after rig.update() each frame. On a gs.models.human the
+   * hand closes round the grip. A thing's own frame: its grip at `grip`, its length along `along` (+y), its flat along `face` (+z).
+   */
+  Carry: new (person: Loose, o?: { spots?: Record<string, CarrySpot>; time?: number }) => CarryT;
+  /** Where things are carried: hipL, hipR, back, backL, shield, quiver, bow, belt. */
+  SPOTS: Record<string, CarrySpot>;
+}
+export interface CarrySpot { bone: string; /** where the grip sits, in the person's own space as they stand (1.8 m, facing +z, the left at +x) */ at: P3; /** which way its length points */ dir: P3; /** which way its flat faces */ face: P3; /** the hand that draws it */ hand?: 'L' | 'R' }
+export interface CarryT {
+  person: Loose; things: Record<string, Loose>; readonly busy: boolean;
+  add(name: string, thing: Loose, spot: string | CarrySpot, o?: { grip?: P3; along?: P3; face?: P3; hand?: 'L' | 'R'; held?: { at: P3; dir: P3; face: P3 }; /** a scabbard that stays on the body: true (sized to the thing) or its size */ sheath?: boolean | { length?: number; radius?: number; colour?: string } }): Loose;
+  /** The hand goes to it, takes it ('grab') and brings it round ('drawn'). false if it is already in hand or that hand is busy. */
+  draw(name: string, o?: { time?: number }): boolean;
+  sheathe(name: string, o?: { time?: number }): boolean;
+  /** Straight to the hand or the spot, no reach (a round's start). */
+  set(name: string, where: 'hand' | 'spot'): boolean;
+  /** The name of what is in a hand, or null. */
+  held(hand?: 'L' | 'R'): string | null;
+  on(ev: 'grab' | 'drawn' | 'stowed', fn: (e: { name: string; to?: string }) => void): CarryT;
+  update(dt: number): void;
+  clear(): void;
 }
 export interface ReactionsOptions {
   /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Left out: the one the game made; false, or none made: falls are acted. */
@@ -4163,7 +4187,7 @@ export interface ModelsPart {
   };
   /**
    * A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail.
-   * Returns a Group with rig, bones, mesh, lods, shadowBody (what casts its shadow: its far level on a layer only shadows draw; null with shadows: false), lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level, round }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each; round: the radius of the bar a hand closes its fingers round, metres, or { L, R }), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), fingers({ L: 0..1, R: [thumb, index, middle, ring, little] }) (how far each hand is closed: 0 flat, 1 a fist, null as sculpted; they stay as set until 'auto' gives a hand back: left to themselves hands lie relaxed, and close round what hold() or touch() puts them on, each finger until it meets it), face.
+   * Returns a Group with rig, bones, mesh, lods, shadowBody (what casts its shadow: its far level on a layer only shadows draw; null with shadows: false), lod (0 close .. 2 far), see(camera, screenHeightPx), twin() (another of the same person, nearly free), hold(thing, rightPoint, leftPoint) (both hands onto a thing: after rig.update()), touch({ handL, handR, footL, footR }, { blend, elbows, knees, palms, level, round }) (hands and feet onto points in the world, after rig.update(): a rung, a bar, a ledge; a hand's grip or palm and the ball of a foot land on the point; palms: { L: [x, y, z] } the way a palm faces; level: 0..1 the sole held flat; elbows and knees: the way they point; blend: 0..1 or one for each; round: the radius of the bar a hand closes its fingers round, metres, or { L, R }), gear (gear.hat.visible = false; gear.hat.loose(): a loose copy, a plain mesh), armour (outfit.armour: { chest: 'plate' | 'leather' | 'brigandine' | [kinds ready], shoulders, arms, hands, thighs, shins, feet, colour, leather, cloth, rivets }: armour.wear(part, kind | null) at once, armour.worn, armour.kinds(part), armour.over(bone) for what a hit there strikes; helms are hats: 'nasal' | 'kettle' | 'sallet' | 'great' | 'circlet'; tops add 'gambeson', legs 'hose'), fingers({ L: 0..1, R: [thumb, index, middle, ring, little] }) (how far each hand is closed: 0 flat, 1 a fist, null as sculpted; they stay as set until 'auto' gives a hand back: left to themselves hands lie relaxed, and close round what hold() or touch() puts them on, each finger until it meets it), face.
    * The skeleton: the joints poses turn (hips, spine (the rib cage), head, armL/R, foreL/R, handL/R, legL/R, shinL/R, footL/R) and, between them, a waist, a neck, a collar bone to each arm, the turn along each forearm, toes and three joints a finger, which the rig sets by itself (rig.fill() after turning joints yourself). Further off the small ones stand still and cost nothing.
    * A cut of clothes this phone hasn't sculpted yet takes a second or two in the background: the app shows "Loading…" and makes the game again (make people in make() or reset()); it is then saved. Several kinds: human.all([...]) first thing.
    * A painted face and combed hair, with no texture files: brows, lashes, the line of the lids and the lips are painted in a small picture the engine makes itself for each look, and the hair is a clean sculpted shape with a crisp hairline and combed strands in a second picture, laid round the head from the crown. Nothing to set, and the same on WebGL and WebGPU.

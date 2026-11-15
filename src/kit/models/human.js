@@ -39,7 +39,7 @@ const PI = Math.PI, abs = Math.abs;
 
 // ---- which material each kind of surface is drawn with (a maker's own slots say theirs: { colour, as })
 const AS = { skin: 'skin', lips: 'skin', lid: 'skin', lash: 'skin', lashes: 'lash', browhair: 'lash', beardhair: 'lash', caruncle: 'eyes', mouth: 'hard', teeth: 'hard', tongue: 'hard', eyes: 'eyes', hair: 'hair', brow: 'skin', top: 'cloth', legs: 'cloth', kit: 'cloth', trim: 'cloth', tab: 'cloth', band: 'cloth', hatband: 'cloth', scarf: 'cloth', hat: 'cloth', glove: 'cloth', roll: 'cloth',
-  belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
+  plate: 'steel', rivet: 'steel', hide: 'leather', padding: 'cloth', belt: 'leather', boots: 'leather', strap: 'leather', pouch: 'leather', sole: 'leather', holster: 'leather', helm: 'hard', visor: 'hard', wood: 'hard', flask: 'hard', case: 'hard', buckle: 'steel', button: 'steel', steel: 'steel', badge: 'steel' };
 const CLASSES = ['skin', 'eyes', 'cloth', 'leather', 'hard', 'steel', 'hair', 'lash'];   // (what is in the mouth is 'hard': plain, with none of the skin's pores)
 
 // ---- the grain's seams, worked out once for a piece and kept with it (and with its mirrored and turned copies, made once too)
@@ -235,7 +235,7 @@ function mats() {
 export const WEAVES = ['plain', 'twill', 'denim', 'knit', 'canvas', 'wool', 'fine'];
 function weaveOf(sp, o, slot) {
   const own = typeof o.slots?.[slot] === 'object' && o.slots[slot].weave; if (own) return own;
-  if (slot === 'top') return sp.top.weave || { shirt: 'knit', tunic: 'twill', smock: 'twill', blouse: 'fine' }[sp.top.kind] || 'plain';
+  if (slot === 'top') return sp.top.weave || { shirt: 'knit', tunic: 'twill', smock: 'twill', blouse: 'fine', gambeson: 'canvas' }[sp.top.kind] || 'plain';
   if (slot === 'legs') return sp.legs.weave || (sp.legs.kind === 'breeches' ? 'wool' : 'twill');
   if (slot === 'hat' || slot === 'hatband') return sp.hat?.weave || 'wool';
   if (slot === 'scarf' || slot === 'roll') return 'wool';
@@ -452,7 +452,7 @@ function specOf(o) {
     o = { ...o, skin: realSkin(o.skin ?? seeded.skin ?? DEF.skin), hair: o.hair === undefined ? seeded.hair ?? undefined : o.hair, iris: o.iris ?? seeded.iris ?? undefined };
   }
   const hat = of.hat ? { kind: 'helmet', ...of.hat } : null;
-  return { build, top, legs, feet, face, hat, belt: of.belt || null, web: of.webbing || null, extras: of.extras || {}, pack: of.pack || null, gear: o.gear || [], hands: o.hands || 'open', gloves: of.gloves || null,
+  return { build, top, legs, feet, face, hat, belt: of.belt || null, web: of.webbing || null, extras: of.extras || {}, pack: of.pack || null, gear: o.gear || [], armour: of.armour || null, hands: o.hands || 'open', gloves: of.gloves || null,
     hair: o.hair === null ? null : o.hair ?? DEF.hair, hairStyle: o.hairStyle || 'short', moustache: !!o.moustache, beard: o.beard === true ? .6 : Math.max(0, Math.min(1.5, +o.beard || 0)), fem, tall: body?.tall ?? 1, o };
 }
 // an eye's colours, band by band from the pupil out (human-shapes.js eyeball()): the pupil, the iris (paler and warmer by the pupil, darker
@@ -529,6 +529,37 @@ function occOf(f, bones) {
 // a real face's lashes: darker and greyer than the hair (near black for dark or red hair), lighter only for fair or grey hair
 const lashColour = hair => { const h = { h: 0, s: 0, l: 0 }; new Color(hair || '#3b2a1a').getHSL(h); return '#' + new Color('#120e0c').lerp(new Color('#6a625a'), ss(.3, .7, h.l)).getHexString(); };
 // the colour of each slot for this person
+// armour's colours: the plate's steel (outfit.armour.colour), leather (leather), a brigandine's cloth (cloth) and its rivets (rivets)
+function armourColours(sp) {
+  const a = sp.armour || {};
+  return { plate: a.colour ?? '#82878e', hide: a.leather ?? '#5e3d24', padding: a.cloth ?? '#6a2226', rivet: a.rivets ?? '#c4ad72' };
+}
+// person.armour: what is worn on each part of the body, changed at once (each piece is on a bone of its own: the kinds not worn are there, hidden)
+const HELMS = new Set(['helmet', 'nasal', 'kettle', 'sallet', 'great']);
+function armourOf(list, gear, hat) {
+  const bySlot = {}, worn = {};
+  // (a helm is the hat: it is the head's armour, and comes off and goes on again as the hat does)
+  if (hat && HELMS.has(hat) && gear.hat) { bySlot.head = { [hat]: [{ name: 'hat' }] }; worn.head = hat; }
+  for (const q of list) { (bySlot[q.slot] ||= {})[q.kind] ||= []; bySlot[q.slot][q.kind].push(q); if (q.worn) worn[q.slot] = q.kind; else gear[q.name].visible = false; }
+  // (what covers a bone: a hit on the spine is on the chest's armour)
+  const COVER = { spine: 'chest', waist: 'chest', chest: 'chest', belly: 'chest', hips: 'chest', neck: 'head', head: 'head', armL: 'shoulders', armR: 'shoulders', elbowL: 'arms', elbowR: 'arms', foreL: 'arms', foreR: 'arms', twistL: 'arms', twistR: 'arms', handL: 'hands', handR: 'hands', legL: 'thighs', legR: 'thighs', kneeL: 'thighs', kneeR: 'thighs', shinL: 'shins', shinR: 'shins', footL: 'feet', footR: 'feet', toeL: 'feet', toeR: 'feet' };
+  return {
+    worn,
+    pieces: list,
+    /** The kinds ready for a part of the body (sculpted with the person: outfit.armour.chest: ['plate', 'leather']). */
+    kinds: slot => Object.keys(bySlot[slot] || {}),
+    /** Puts on a kind (one of kinds(slot)), or takes the part off (null). Instant: nothing is made. false if that kind wasn't made with the person. */
+    wear(slot, kind) {
+      const S = bySlot[slot]; if (!S) return kind == null;
+      if (kind != null && !S[kind]) return false;
+      for (const k in S) for (const q of S[k]) gear[q.name].visible = k === kind;
+      if (kind == null) delete worn[slot]; else worn[slot] = kind;
+      return true;
+    },
+    /** What is worn over a bone (a hit's bone, from a ray or a hit box): the kind, or null. */
+    over(bone) { const slot = COVER[bone]; return slot && worn[slot] || null; },
+  };
+}
 function palette(sp) {
   const { top, legs, feet, hat, belt, web, o } = sp, c = v => v, ex = sp.extras;
   return {
@@ -537,7 +568,7 @@ function palette(sp) {
     top: top.colour, trim: top.collar || top.cuffs || top.strapColour || top.colour, tab: top.tabs || top.colour, band: top.band || '#d9c25a', hatband: hat?.band ?? hat?.colour ?? '#4b5249', button: top.buttons || '#8a8270',
     legs: legs.colour, boots: feet.colour, sole: '#16120e', kit: feet.gaiter || ex.bag || ex.kit || '#6e6a4c', strap: web?.colour ?? belt?.colour ?? '#2b2723', pouch: web?.pouchColour ?? web?.colour ?? belt?.colour ?? '#2b2723',
     belt: belt?.colour ?? '#2b2723', buckle: belt?.buckle ?? '#8a8270', holster: ex.holsterColour ?? belt?.colour ?? '#2b2723', flask: ex.canteen === true ? '#4a4034' : ex.canteen || '#4a4034', scarf: ex.scarf === true ? top.colour : ex.scarf || top.colour,
-    hat: hat?.colour ?? '#4b5249', helm: hat?.colour ?? '#4b5249', visor: hat?.visor ?? '#111111', badge: hat?.badge ?? '#b8a050', roll: sp.pack?.roll ?? '#5a5a54', case: sp.pack?.colour ?? '#454a40', steel: '#2a2c2e', wood: '#5a3e26',
+    hat: hat?.colour ?? '#4b5249', helm: hat?.colour ?? '#4b5249', visor: hat?.visor ?? '#111111', badge: hat?.badge ?? '#b8a050', roll: sp.pack?.roll ?? '#5a5a54', case: sp.pack?.colour ?? '#454a40', steel: '#2a2c2e', wood: '#5a3e26', ...armourColours(sp),
     ...Object.fromEntries(Object.entries(o.slots || {}).map(([k, v]) => [k, c(typeof v === 'string' ? v : v.colour)])),
   };
 }
@@ -550,12 +581,17 @@ function palette(sp) {
  * { length (metres), layers, lean, tile }, for the hair of the head too; false for none), cards (a real face's hair close up wears
  * strips of single hairs with see-through edges, human-hair.js: false leaves them off), face ({ jaw, chin, brow, nose, lips,
  * cheeks, eyes }), hands ('open' | 'grip').
- * outfit: top { kind: 'shirt' | 'tunic' | 'blouse' | 'smock', colour, camo ([colour, colour]: blotches over it; legs and hat take it too), sleeves, collar (a colour, or false), pockets (0, 2, 4),
+ * outfit: top { kind: 'shirt' | 'tunic' | 'blouse' | 'smock' | 'gambeson' (a padded, quilted coat), colour, camo ([colour, colour]: blotches over it; legs and hat take it too), sleeves, collar (a colour, or false), pockets (0, 2, 4),
  * buttons (a colour), straps (shoulder straps), tabs (collar patches' colour), cuffs, band (an armband's colour, left arm) },
- * legs { kind: 'trousers' | 'breeches', colour }, feet { kind: 'shoes' | 'boots' | 'tall' | 'gaiters', colour, gaiter },
- * hat { kind: 'helmet' | 'cap' | 'beret' | 'wool' | 'hood', colour, band, badge, strap, hide }, belt { colour, buckle },
+ * legs { kind: 'trousers' | 'breeches' | 'hose' (close-fitting, as under armour), colour }, feet { kind: 'shoes' | 'boots' | 'tall' | 'gaiters', colour, gaiter },
+ * hat { kind: 'helmet' | 'cap' | 'beret' | 'wool' | 'hood', or a helm in the armour's steel: 'nasal' | 'kettle' | 'sallet' | 'great' | 'circlet'; colour, band, badge, strap, hide }, belt { colour, buckle },
  * webbing { colour, y (straps up over the shoulders), cross, pouches (each side), kind: 'big' }, gloves { colour },
  * pack { kind: 'pack' | 'radio' | 'roll', colour, roll, hide }, extras { bag, canteen, holster, scarf } (true or a colour).
+ * armour { chest: 'plate' | 'leather' | 'brigandine', shoulders: 'plate' | 'leather', arms: 'plate' | 'leather', hands: 'plate' | 'leather',
+ * thighs: 'plate' | 'leather', shins: 'plate' | 'leather', feet: 'plate'; each a kind, or a list of kinds to have ready (the first worn);
+ * colour (the steel's), leather, cloth (a brigandine's), rivets }: rigid pieces over the clothes, each on a bone of its own, so
+ * person.armour.wear(part, kind | null) changes what is worn at once, building nothing; person.armour.worn, kinds(part), over(bone)
+ * (what a hit on that bone strikes: 'plate', 'leather'... or null; a helm is the head's). Hose (legs.kind) fit under greaves best.
  * gear: [{ name, bone, shapes, cell, hide }]: your own kit as shapes (gs.models.sculpt's, with slot names) in the
  * person's space, riding a bone; hide: true gives it a bone of its own (person.gear[name].visible = false).
  * slots: { name: colour | { colour, as: 'cloth' | 'leather' | 'hard' | 'steel' | 'skin' } } for your own slot names.
@@ -581,7 +617,7 @@ export function human(o = {}) {
   const M = mats(), pal = palette(sp), pieces = [], stub = sp.fem ? 0 : o.stubble ?? .35, skin = skinOf(sp, pal, stub);
   // gear bones: a hat that can come off, a pack or a maker's own kit that can be hidden
   const { bones, parent, own: gearBones, HAND, inset, atOf, tree, kit } = frameOf(sp), gearPiece = {}, hung = [];   // (hung: what swings as he moves: [bone, how])
-  const ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
+  const armourAt = [], ownBone = (name, par) => { bones.push(name); parent[name] = par; gearBones[name] = par; gearPiece[name] = pieces.length; return name; };
   // (from: the piece this is a copy of, moved or put on another bone: the same shape, so its seams are that one's)
   const onBone = (p, b) => ({ ...p, names: p.names.map(() => b), from: p.from || p });
   const moved = (p, dx) => { if (!dx) return p; const Q = p.P.slice(); for (let i = 0; i < p.n; i++) Q[i * 3] += dx; return { ...p, P: Q, from: p.from || p }; };
@@ -592,6 +628,7 @@ export function human(o = {}) {
     else if (j.kind === 'head') pieces.push(headP = p);
     else if (j.kind === 'hat') pieces.push(onBone(p, sp.hat.hide === false ? 'head' : ownBone('hat', 'head')));
     else if (j.kind === 'pack') { const sa = atOf('spine'); pieces.push(onBone(p, ownBone('pack', 'spine'))); hung.push(['pack', { pivot: [0, 1.45 - sa[1], -.1 - sa[2]], swing: .008, bounce: .0016, stiff: 200, damp: 12, most: .08, away: [0, 0, -1] }]); }   // (it hangs from the shoulders)
+    else if (j.kind === 'armour') { const q = j.q, b = q.bone; armourAt.push({ ...q, name: ownBone(`armour:${q.slot}:${q.kind}:${q.piece}${q.side === 'R' ? 'R' : 'L'}`, b) }); pieces.push(onBone(ARMB.test(b) ? moved(p, b.endsWith('L') ? -inset : inset) : p, armourAt[armourAt.length - 1].name)); }
     else if (j.kind === 'gear') { const b = j.g.bone || 'spine'; pieces.push(onBone(ARMB.test(b) ? moved(p, b.endsWith('L') ? -inset : inset) : p, j.g.hide ? ownBone(j.g.name, b) : b)); }
     else { if (p.hang) for (const name in p.hang) { const { at, ...how } = p.hang[name]; hung.push([kit(name, 'hips', at), how]); } pieces.push(p); }   // (the trunk, and what hangs from its belt)
   }
@@ -856,6 +893,8 @@ export function human(o = {}) {
     };
     const gear = {};
     for (const name of Object.keys(gearBones)) { const bone = B[name]; gear[name] = { get visible() { return bone.scale.x > 0; }, set visible(on) { bone.scale.setScalar(on ? 1 : 0); }, bone, loose: () => loose(name) }; }
+    // armour: each piece on a bone of its own, the kinds not worn ready and hidden, so changing what is worn builds nothing
+    const armour = armourOf(armourAt, gear, sp.hat?.kind);
     // hands that take hold of things: a point in each palm, and both arms bent to bring them where they are wanted
     const palm = {}; for (const sd of ['L', 'R']) { const q = new Object3D(); q.position.set(sd === 'L' ? -.014 : .014, -.082, .012); B['hand' + sd].add(q); palm[sd] = q; }
     const tgt = new Vector3(), pole = new Vector3();
@@ -1033,7 +1072,7 @@ export function human(o = {}) {
       }
       return root;
     };
-    root.gear = gear; root.tris = tris; root.twin = stand;
+    root.gear = gear; root.armour = armour; root.tris = tris; root.twin = stand;
     // (strands show once a head is big on screen: every layer when he stands about 800 pixels tall, every other one from about 360)
     // (a real face's roots less dark: with the coat's own dark roots a dark beard had become a black mass; and a beard by itself, not the hair
     // of the head too, of short strands standing out and curling over, fur's, not the long combed strands of hair, which lay on it like brush strokes)

@@ -7566,6 +7566,45 @@ console.log('physics ok');
   console.log('gs.monsters: telegraphed attacks picked by range, side and weight, tail sweeps, guards and dodges, broken windups, charges, pounces, breath, spit, spells, 2D; creatures that flinch, stagger, fall, get up and die; bosses in phases with poise and enrage ok');
 }
 
+// gs.models.human armour (human-armour.js): plate, leather and brigandine pieces sculpted on their own, each for a bone, the right flipped
+// from the left; helms as hats; a gambeson and hose; gs.characters.Carry: things at the hip or on the back, drawn to the hand and put back
+{
+  const F = await import('../src/kit/models/field.js'), HS = await import('../src/kit/models/human-shapes.js'), A = await import('../src/kit/models/human-armour.js'), HB = await import('../src/kit/models/human-body.js'); await F.thinReady;
+  const list = A.armourPieces({ chest: ['plate', 'leather'], arms: 'plate', feet: 'plate', colour: '#888' });
+  assert.ok(list.filter(q => q.slot === 'chest').length === 4 && list.filter(q => q.slot === 'chest' && q.worn).every(q => q.kind === 'plate'), 'a list of kinds: all made, the first worn');
+  assert.ok(list.some(q => q.piece === 'couter' && q.bone === 'elbowR') && list.some(q => q.piece === 'toecap' && q.bone === 'toeL'), 'pairs on both sides, each on its bone: ' + list.map(q => q.bone));
+  assert.throws(() => A.armourPieces({ chest: 'mithril' }), /no chest armour called 'mithril'/); assert.throws(() => A.armourPieces({ tail: 'plate' }), /no armour for 'tail'/);
+  const build = { shoulders: 1, chest: 1, waist: 1, hips: 1, limbs: 1, bust: 0, neck: .92, muscle: .45 };
+  const cu = HS.sculpt({ kind: 'armour', a: { piece: 'cuirass', kind: 'plate', side: 'L', build, top: 'tunic' } });
+  assert.ok(cu.n > 1000 && cu.slots.includes('plate') && cu.I[0].length > cu.I[1].length && cu.I[1].length > cu.I[2].length, 'a breastplate: steel, three levels: ' + cu.I.map(i => i.length / 3));
+  let zf = -1; for (let i = 0; i < cu.n; i++) if (Math.abs(cu.P[i * 3]) < .02 && Math.abs(cu.P[i * 3 + 1] - 1.25) < .02) zf = Math.max(zf, cu.P[i * 3 + 2]);
+  const T = HB.torsoOf(build, 'tunic'), chest = T.sec(1.25); assert.ok(zf > chest[2] + chest[1] + .02, 'it stands clear of the chest, rounded out: ' + zf.toFixed(3));
+  const vl = HS.sculpt({ kind: 'armour', a: { piece: 'vambrace', kind: 'plate', side: 'L', build } }), vr = HS.sculpt({ kind: 'armour', a: { piece: 'vambrace', kind: 'plate', side: 'R', build } });
+  const mx = p => { let a = 0; for (let i = 0; i < p.n; i++) a += p.P[i * 3]; return a / p.n; };
+  assert.ok(mx(vl) > .15 && Math.abs(mx(vl) + mx(vr)) < .01, 'the right arm\'s is the left\'s flipped: ' + mx(vl).toFixed(3) + ' ' + mx(vr).toFixed(3));
+  const br = HS.sculpt({ kind: 'armour', a: { piece: 'cuirass', kind: 'brigandine', side: 'L', build, top: 'tunic' } }); assert.ok(br.slots.includes('rivet') && br.slots.includes('padding'), 'a brigandine: cloth and rivets');
+  for (const kind of ['nasal', 'kettle', 'sallet', 'great', 'circlet']) { const h = HS.sculpt({ kind: 'hat', a: { kind, ridge: 1, strap: 1 } }); assert.ok(h.n > 200 && h.slots.includes('plate'), 'a ' + kind + ' helm'); }
+  const leg = HB.legRows(build, 1, HB.lowRows(build, 'boots')), hose = HB.hoseRows(leg);
+  assert.ok(hose.every((r, i) => r[1] <= leg[i][1]) && hose[1][1] < leg[1][1] * .8 && hose[hose.length - 1][1] === leg[leg.length - 1][1], 'hose: close at the shin, meeting the seat as trousers do');
+  // carried and drawn, on a gs.poses figure
+  const T3 = await import('three'), { figure } = await import('../src/kit/poses.js'), { Carry, SPOTS } = await import('../src/kit/carry.js');
+  const fig = figure(); fig.rig.play('idle'); fig.rig.update(1 / 60);
+  const sword = new T3.Mesh(new T3.BoxGeometry(.04, .8, .01)); sword.geometry.translate(0, .45, 0);
+  const kit = new Carry(fig), ev = []; kit.on('grab', e => ev.push('grab:' + e.to)).on('drawn', e => ev.push('drawn')).on('stowed', () => ev.push('stowed'));
+  const t = kit.add('sword', sword, 'hipL', { sheath: true }); assert.ok(sword.parent === fig.rig.parts.hips && t.sheath && t.sheath.parent === fig.rig.parts.hips, 'at the hip, in its scabbard');
+  fig.updateMatrixWorld(true); const at = sword.getWorldPosition(new T3.Vector3()); assert.ok(Math.abs(at.x - SPOTS.hipL.at[0]) < .05 && Math.abs(at.y - SPOTS.hipL.at[1]) < .12, 'its grip where the spot is: ' + at.toArray().map(v => v.toFixed(2)));
+  assert.ok(kit.draw('sword') && !kit.draw('sword') && kit.busy, 'drawn once at a time');
+  for (let i = 0; i < 40; i++) { fig.rig.update(1 / 60); kit.update(1 / 60); }
+  assert.ok(kit.held('R') === 'sword' && sword.parent === fig.rig.parts.foreR && !kit.busy && ev.join() === 'grab:hand,drawn', 'in the hand: ' + ev);
+  assert.ok(t.sheath.parent === fig.rig.parts.hips, 'the scabbard stays');
+  kit.sheathe('sword'); for (let i = 0; i < 40; i++) { fig.rig.update(1 / 60); kit.update(1 / 60); }
+  assert.ok(kit.held('R') === null && sword.parent === fig.rig.parts.hips && ev.slice(-2).join() === 'grab:spot,stowed', 'and back: ' + ev);
+  assert.ok(sword.position.distanceTo(t.restP) < 1e-6, 'where it was');
+  assert.throws(() => kit.add('x', new T3.Object3D(), 'pocket'), /no spot 'pocket'/);
+  kit.set('sword', 'hand'); assert.equal(kit.held('R'), 'sword'); kit.clear(); assert.ok(!sword.parent && !t.sheath.parent, 'cleared');
+  console.log('gs.models.human armour: plate, leather and brigandine pieces on their own bones, the right flipped from the left, helms, a gambeson and hose; gs.characters.Carry draws from the hip and puts back ok');
+}
+
 // gs.regions: parts of a world made a little each frame while they're wanted and freed behind; squares and land round the player
 {
   const THREE = await import('three');

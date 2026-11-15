@@ -1,0 +1,74 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A sheet of people in armour for scripts/armour.cjs: a row for each outfit, a column for each side it is seen from.
+//   ?zoom=upper|legs   ?sets=plate,leather,brigandine,mixed,none   &pose=idle (pose[@phase])   &views=front,three,back,side   &cell=240x300   &swap (the first row swaps kinds after it is made)   &gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+const SETS = {
+  none: {},
+  plate: { chest: 'plate', shoulders: 'plate', arms: 'plate', hands: 'plate', thighs: 'plate', shins: 'plate', feet: 'plate' },
+  leather: { chest: 'leather', shoulders: 'leather', arms: 'leather', hands: 'leather', thighs: 'leather', shins: 'leather', leather: '#5a3a22' },
+  brigandine: { chest: 'brigandine', shoulders: 'plate', arms: 'plate', shins: 'plate', cloth: '#6b1d24' },
+  dark: { chest: 'plate', shoulders: 'plate', arms: 'plate', hands: 'plate', thighs: 'plate', shins: 'plate', feet: 'plate', colour: '#3d4044' },
+  nasal: { chest: 'brigandine', shoulders: 'plate', hat: 'nasal', cloth: '#26394f' },
+  kettle: { chest: 'brigandine', hat: 'kettle', cloth: '#3c4a2a' },
+  sallet: { chest: 'plate', shoulders: 'plate', arms: 'plate', hat: 'sallet' },
+  great: { chest: 'plate', shoulders: 'plate', arms: 'plate', hat: 'great' },
+  circlet: { chest: 'leather', hat: 'circlet' },
+  gambeson: { top: 'gambeson', hat: 'kettle' },
+  padded: { top: 'gambeson', chest: 'brigandine', shoulders: 'plate', hat: 'nasal', cloth: '#5a2a1e' },
+  swap: { chest: ['plate', 'leather'], shoulders: ['plate', 'leather'], arms: ['leather', 'plate'], shins: ['plate', 'leather'] },
+};
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
+  const sets = (Q.get('sets') || 'plate,leather,brigandine').split(','), views = (Q.get('views') || 'front,three,back,side').split(','), [cw, ch] = (Q.get('cell') || '240x300').split('x').map(Number);
+  const [pose, ph] = (Q.get('pose') || 'idle').split('@');
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .5, amb: .35 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 2.1, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * sets.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [], who = s => ({ seed: 3, look: 'real', outfit: { top: { kind: SETS[s].top || 'tunic', colour: '#6d6450' }, legs: { kind: 'hose', colour: '#4a4236' }, feet: { kind: 'boots', colour: '#3a2a1c' }, gloves: { colour: '#3a2a1c' }, armour: SETS[s], hat: SETS[s].hat ? { kind: SETS[s].hat } : undefined } });
+  const t0 = performance.now(); await gs.models.human.ready(sets.map(who)); info.push(`sculpted in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  const VIEW = { side: [1, .12, .05], three: [.8, .3, .75], front: [.05, .15, 1], back: [-.6, .25, -.9], top: [.02, 1, .2] };
+  const world = new T.Group(); v.scene.add(world);
+  const floor = new T.Mesh(new T.BoxGeometry(30, .4, 30), gs.hd.pbr('#6f7466', { rough: .9 })); floor.position.y = -.2; floor.receiveShadow = true; world.add(floor);
+  for (let r = 0; r < sets.length; r++) {
+    const body = gs.models.human(who(sets[r])); world.add(body);
+    if (sets[r] === 'swap') { const t = performance.now(); body.armour.wear('chest', 'leather'); body.armour.wear('shoulders', null); body.armour.wear('arms', 'plate'); info.push(`swap: ${(performance.now() - t).toFixed(2)} ms, worn ${JSON.stringify(body.armour.worn)}`); }
+    // ?carry=hipL,back,shield@.45: things carried, the first drawn that far through its draw (0 carried .. 1 in the hand)
+    let carry = null; const CQ = Q.get('carry');
+    if (CQ) {
+      const [list, at] = CQ.split('@'), mat = c => new T.MeshStandardMaterial({ color: c, roughness: .35, metalness: .9 }), wood = new T.MeshStandardMaterial({ color: '#4a3020', roughness: .8 });
+      const sword = (len = .78) => { const g = new T.Group(); const bl = new T.Mesh(new T.BoxGeometry(.045, len, .008), mat('#c9ccd0')); bl.position.y = .1 + len / 2; const gd = new T.Mesh(new T.BoxGeometry(.2, .022, .03), mat('#8a7a50')); gd.position.y = .1; const hl = new T.Mesh(new T.CylinderGeometry(.015, .015, .19, 8), wood); hl.position.y = 0; const pm = new T.Mesh(new T.SphereGeometry(.024, 10, 8), mat('#8a7a50')); pm.position.y = -.1; g.add(bl, gd, hl, pm); g.traverse(o => o.castShadow = true); return g; };
+      const shield = () => { const m = new T.Mesh(new T.CylinderGeometry(.3, .3, .03, 24), new T.MeshStandardMaterial({ color: '#7a2a20', roughness: .7 })); m.rotation.x = Math.PI / 2; const g = new T.Group(); m.position.z = .03; g.add(m); const b = new T.Mesh(new T.SphereGeometry(.07, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat('#9aa0a6')); b.rotation.x = Math.PI / 2; b.position.z = .045; g.add(b); g.traverse(o => o.castShadow = true); return g; };
+      const quiver = () => { const m = new T.Mesh(new T.CylinderGeometry(.05, .04, .55, 10), new T.MeshStandardMaterial({ color: '#5e3d24', roughness: .8 })); m.position.y = -.25; const g = new T.Group(); g.add(m); for (let i = 0; i < 5; i++) { const a = new T.Mesh(new T.CylinderGeometry(.004, .004, .3, 4), wood); a.position.set((i - 2) * .012, .1, (i % 2) * .01); g.add(a); } return g; };
+      carry = new gs.characters.Carry(body); let first = null;
+      for (const spot of list.split(',')) { const thing = spot === 'shield' ? shield() : spot === 'quiver' ? quiver() : sword(spot === 'back' ? 1.05 : spot === 'belt' ? .25 : .78); carry.add(spot, thing, spot, { sheath: spot === 'hipL' || spot === 'hipR' || spot === 'belt' }); first ||= spot; }
+      carry.firstName = first; carry.at = +(at ?? 0);
+    }
+    if (!body.rig.poses[pose]) throw new Error('no pose ' + pose);
+    body.rig.steps = false;
+    for (let i = 0; i < 50; i++) { body.rig.play(pose, ph != null ? { at: +ph } : {}); body.rig.update(1 / 60); }
+    if (carry && carry.at > 0) { carry.draw(carry.firstName, { time: 1 }); body.rig.update(1 / 60); carry.update(Math.min(.999, carry.at)); if (carry.at >= 1) { for (let i = 0; i < 3; i++) { body.rig.update(1 / 60); carry.update(.01); } } body.updateMatrixWorld(true); const hw = body.bones.handR.getWorldPosition(new T.Vector3()); info.push(`carry: ${carry.firstName} ${carry.at}: in hand ${carry.held('R') || carry.held('L')}; hand ${hw.toArray().map(v => v.toFixed(2))} aim ${carry.aim?.toArray().map(v => v.toFixed(2))}`); }
+    body.updateMatrixWorld(true);
+    const hp = body.rig.parts.hips.getWorldPosition(new T.Vector3());
+    let tris = 0; body.traverse(o => { if (o.isMesh && o.visible && o.geometry?.index) tris += o.geometry.index.count / 3; });
+    for (let k = 0; k < views.length; k++) {
+      const view = VIEW[views[k]]; if (!view) throw new Error('no view ' + views[k]);
+      const zoom = Q.get('zoom'), aim = new T.Vector3(0, zoom === 'upper' ? 1.3 : zoom === 'legs' ? .5 : Math.max(.6, hp.y * .85 + .1), 0), len = Math.hypot(...view), dist = zoom ? 2.1 : 4.4;
+      v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+      v.cam.position.set(aim.x + view[0] / len * dist, aim.y + view[1] / len * dist, aim.z + view[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
+      for (let n = 0; n < (k || r ? 2 : 6); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, k * cw, r * ch);
+      sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${sets[r]} ${views[k]}`, k * cw + 4, r * ch + 12);
+    }
+    info.push(`${sets[r]}: ${body.armour.pieces.length} pieces, ${tris | 0} triangles in its meshes`);
+    world.remove(body);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

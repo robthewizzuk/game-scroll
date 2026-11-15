@@ -141,3 +141,5 @@ export class Wobble {
 // per-frame work, timed while the frame lab is open (prof.js)
 timed(Steps.prototype, 'update', 'characters');
 timed(Wobble.prototype, 'update', 'characters');
+// things carried on the body (a sword at the hip, a shield on the back) and drawn to the hand
+export { Carry, SPOTS } from './carry.js';
