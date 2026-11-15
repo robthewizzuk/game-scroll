@@ -39,7 +39,8 @@
 // and the brain leans its pressure towards what this player enjoys, always inside the win-rate rail.
 //
 // Dial is the win-rate rail by itself, for an opponent that isn't a Brain: a search, a team, a
-// director (wherever a kit takes a skill number).
+// director (wherever a kit takes a skill number). Examples is teaching by example for any list of
+// numbers: a hand sign, a pose, a move made with the phone or a sound of the game's or the player's own.
 //
 // Corrections: bot.correct(see, 'flee') is "in this spot the right move was flee". A brain holds to
 // it from a couple of examples, at once and without retraining, in spots like the ones it was shown
@@ -174,8 +175,9 @@ function slot(api, name) {
 // card that made them.
 const LIVE = new Set();
 const track = o => { o.owner = currentOwner(); LIVE.add(new WeakRef(o)); if (LIVE.size > 200) for (const r of LIVE) if (!r.deref()) LIVE.delete(r); };
-/** The brains (Brain, Dial, Shadow, Nemesis) still alive, optionally only those a card made. */
-export const brainStats = b => b.dial ? { name: b.name, kind: 'dial', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, ok: isFinite(b.skill) }
+/** The brains (Brain, Dial, Examples, Shadow, Nemesis) still alive, optionally only those a card made. */
+export const brainStats = b => b.examples ? { name: b.name, kind: 'examples', names: b.names.length, count: b.count(), ok: true }
+  : b.dial ? { name: b.name, kind: 'dial', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, ok: isFinite(b.skill) }
   : b.target && !b.habits ? { name: b.name, kind: 'brain', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, trust: b.trust, lean: b.lean, fun: b.fun, ok: b.net.w.every(Number.isFinite) }
   : b.habits ? { name: b.name, kind: 'nemesis', ...b.record } : { name: b.name, kind: 'shadow', like: b.like, seen: b.seen, ok: b.net.w.every(Number.isFinite) };
 export function liveBrains(owner) {
@@ -841,6 +843,189 @@ export class Dial {
 // The player's chance of winning at each skill level is learned the way a Brain learns it.
 Dial.prototype.winChance = Brain.prototype.winChance;
 Dial.prototype.calibrate = Brain.prototype.calibrate;
+
+// ---------------------------------------------------------------- Examples
+
+const EX_KEEP = 12;        // examples kept per name (the newest)
+const EX_PRIOR = 2;        // how many examples' worth the maker's guess at the spread counts for
+const EX_OWN = 4;          // how many examples' worth every name's spread counts for in one name's
+const EX_LIMIT = 3;        // how far (in spreads, squared, averaged over the inputs) a thing may be from a name's examples and still count
+const EX_CHARS = 1500;     // the most a learner's saved examples take, as text
+// what the kits' shapes are like: how far a number wobbles between two takes, and how picky to be
+const EX_OF = { hand: { spread: .06 }, pose: { spread: .06 }, move: { spread: .3, strict: .7 }, sound: { spread: .1, strict: .8 } };
+
+/**
+ * Teach by example: show it a thing a few times under a name, and it tells you which name a new
+ * thing looks like, or that it looks like none of them. The corrections method by itself, for any
+ * list of numbers: a hand's shape, a body's pose, a move made with the phone, a sound.
+ *
+ *   const signs = new gs.brains.Examples(api, { name: 'signs' });
+ *   signs.add('rock', hand.shape);                 // an example (the newest 12 per name are kept)
+ *   const g = signs.guess(hand.shape);             // { name, sure, like } or null: none of them
+ *   if (g && g.sure > .6) play(g.name);
+ *
+ * It works out which numbers matter for each name (where its examples agree) and how much a player's
+ * own takes vary (by leaving each example out in turn and asking how well the rest explain it), and
+ * a name can be two kinds of thing (a wave with either hand). One example is enough to start; three
+ * make it dependable. opts: name, of ('hand' | 'pose' | 'move' | 'sound': what the kits' shapes are
+ * like, which sets the next two), spread (how far a number wobbles between two takes of the same
+ * thing before it has seen any: .12, for numbers about -1..1), strict (1; higher is pickier about
+ * what counts, lower more forgiving), inputs (taken from the first example when left out), start (the maker's own examples:
+ * pack()'s text, or { name: [numbers, ...] }), save (true: examples given while running are kept
+ * with the game's brains, about 25 of a hand's shape).
+ */
+export class Examples {
+  constructor(api, opts = {}) {
+    if (api && !api.brains && !api.score && arguments.length < 2) { opts = api; api = null; }
+    this.examples = true;
+    this.name = String(opts.name || 'examples');
+    this.n = opts.inputs | 0;
+    this.keep = clamp(opts.keep | 0 || EX_KEEP, 1, 64);
+    const of = EX_OF[opts.of] || {};
+    this.spread = Math.max(1e-3, +opts.spread || of.spread || .12);
+    this.strict = Math.max(.1, +opts.strict || of.strict || 1);
+    this.lists = new Map();      // name -> examples given while running (saved)
+    this.given = new Map();      // name -> the maker's own (not saved, never forgotten)
+    this.order = [];             // [name, example] as they were added, for undo() and the save
+    this.fits = null;
+    this.slot = opts.save === false ? null : slot(api, this.name);
+    const st = opts.start;
+    if (typeof st === 'string') this.unpack(st, this.given);
+    else if (st && typeof st === 'object') for (const [k, l] of Object.entries(st)) for (const e of Array.isArray(l) ? l : []) this.put(this.given, k, e);
+    if (this.slot) { try { this.unpack(this.slot.load(), this.lists, true); } catch (_) {} }
+    track(this);
+  }
+  read(numbers) {
+    if (!numbers || !(numbers.length > 0)) return null;
+    if (!this.n) this.n = numbers.length;
+    if (numbers.length !== this.n) return null;
+    const x = new Float32Array(this.n); for (let i = 0; i < this.n; i++) x[i] = clamp(+numbers[i] || 0, -4, 4);
+    return x;
+  }
+  put(map, name, numbers, note = false) {
+    const x = this.read(numbers); name = String(name);
+    if (!x || !name) return false;
+    let l = map.get(name); if (!l) map.set(name, l = []);
+    l.push(x); if (note) this.order.push([name, x]);
+    if (map === this.lists && l.length > this.keep) { const old = l.shift(); this.order = this.order.filter(o => o[1] !== old); }
+    this.fits = null; return true;
+  }
+  /** One more example of a name. False when the numbers aren't the length of the ones before. */
+  add(name, numbers) { const ok = this.put(this.lists, name, numbers, true); if (ok) this.persist(); return ok; }
+  /** Takes back the last example added (a bad take). */
+  undo() {
+    const o = this.order.pop(); if (!o) return this;
+    const l = this.lists.get(o[0]); if (l) { const i = l.indexOf(o[1]); if (i >= 0) l.splice(i, 1); if (!l.length) this.lists.delete(o[0]); }
+    this.fits = null; this.persist(); return this;
+  }
+  /** Forgets the examples given while running (all, or one name's); the maker's own stay. */
+  forget(name) {
+    if (name == null) { this.lists.clear(); this.order = []; } else { this.lists.delete(String(name)); this.order = this.order.filter(o => o[0] !== String(name)); }
+    this.fits = null; this.persist(); return this;
+  }
+  /** The names it has examples of. */
+  get names() { return [...new Set([...this.given.keys(), ...this.lists.keys()])]; }
+  /** How many examples a name has (all of them when left out). */
+  count(name) {
+    if (name == null) { let c = 0; for (const k of this.names) c += this.count(k); return c; }
+    return (this.given.get(String(name)) || []).length + (this.lists.get(String(name)) || []).length;
+  }
+  all(name) { return (this.given.get(name) || []).concat(this.lists.get(name) || []); }
+  // some examples as a centre and a spread per input: where they agree an input counts for more
+  fit(list, s0) {
+    const n = this.n, m = new Float32Array(n), s = new Float32Array(n), K = list.length, each = typeof s0 !== 'number';
+    for (const e of list) for (let i = 0; i < n; i++) m[i] += e[i] / K;
+    let ld = 0;
+    for (let i = 0; i < n; i++) { let q = 0; for (const e of list) q += (e[i] - m[i]) ** 2; s[i] = Math.max(1e-6, (q + EX_OWN * (each ? s0[i] : s0)) / (K - 1 + EX_OWN)); ld += Math.log(s[i]); }
+    return { m, s, k: 1, ld: ld / n };
+  }
+  // how far x is from a fit, in spreads (squared, averaged over the inputs: about 1 for another take of the same thing)
+  far(x, g) { let t = 0; for (let i = 0; i < this.n; i++) { const d = x[i] - g.m[i]; t += d * d / g.s[i]; } return t / this.n / g.k; }
+  // a name's examples may be two kinds of thing: split on the two furthest apart, and keep the split
+  // only if each example is nearer the rest of its own half than the rest of them all
+  kinds(list, s0) {
+    if (list.length < 4) return [list];
+    const d = (a, b) => { let q = 0; for (let i = 0; i < this.n; i++) q += (a[i] - b[i]) ** 2; return q; };
+    let ca = list[0], cb = list[1], top = -1;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) { const q = d(list[i], list[j]); if (q > top) { top = q; ca = list[i]; cb = list[j]; } }
+    let a = [], b = [];
+    for (let it = 0; it < 4; it++) {
+      a = []; b = []; for (const e of list) (d(e, ca) <= d(e, cb) ? a : b).push(e);
+      if (a.length < 2 || b.length < 2) return [list];
+      ca = this.fit(a, s0).m; cb = this.fit(b, s0).m;
+    }
+    const left = g => { let q = 0; g.forEach((e, j) => { q += this.far(e, this.fit(g.filter((_, i) => i !== j), s0)); }); return q / g.length; };
+    return (left(a) * a.length + left(b) * b.length) / list.length < left(list) * .5 ? [a, b] : [list];
+  }
+  build() {
+    const names = this.names, n = this.n;
+    // the usual spread between two takes of one thing: what the examples themselves show, and the
+    // maker's guess while there are few
+    let q = 0, dof = 0;
+    for (const k of names) { const l = this.all(k); if (l.length < 2) continue; const m = new Float32Array(n); for (const e of l) for (let i = 0; i < n; i++) m[i] += e[i] / l.length; for (const e of l) for (let i = 0; i < n; i++) q += (e[i] - m[i]) ** 2; dof += (l.length - 1) * n; }
+    let s0 = (q + this.spread * this.spread * n * EX_PRIOR) / (dof + n * EX_PRIOR);
+    const groups = names.map(k => this.kinds(this.all(k), s0));
+    // again from the kinds: two kinds under one name aren't spread
+    q = 0; dof = 0;
+    for (const gs of groups) for (const g of gs) { if (g.length < 2) continue; const f = this.fit(g, s0); for (const e of g) for (let i = 0; i < n; i++) q += (e[i] - f.m[i]) ** 2; dof += (g.length - 1) * n; }
+    s0 = (q + this.spread * this.spread * n * EX_PRIOR) / (dof + n * EX_PRIOR);
+    // each input's own spread, over every name's examples (steadier than one name's few)
+    const si = new Float32Array(n).fill(EX_PRIOR * s0); let d1 = 0;
+    for (const gs of groups) for (const g of gs) { if (g.length < 2) continue; const f = this.fit(g, s0); for (const e of g) for (let i = 0; i < n; i++) si[i] += (e[i] - f.m[i]) ** 2; d1 += g.length - 1; }
+    for (let i = 0; i < n; i++) si[i] /= d1 + EX_PRIOR;
+    this.fits = names.map((k, ki) => groups[ki].map(g => {
+      const f = this.fit(g, si);
+      // leave each example out in turn: how far is it from the rest? That is how much this player's takes vary
+      if (g.length >= 3) { let r = 0; g.forEach((e, j) => { r += this.far(e, this.fit(g.filter((_, i) => i !== j), si)); }); f.k = clamp((r + EX_PRIOR) / (g.length + EX_PRIOR), .8, 4); }
+      return f;
+    }));
+    this.fitNames = names;
+  }
+  /**
+   * Which name these numbers look like: { name, sure: 0..1 (how clear of the other names and of "none"),
+   * like: 0..1 (how close to that name's examples) }, or null when they look like none. among: only these names.
+   */
+  guess(numbers, { among = null } = {}) {
+    if (!this.n || !numbers || numbers.length !== this.n) return null;
+    if (!this.fits) this.build();
+    const x = this.xb && this.xb.length === this.n ? this.xb : (this.xb = new Float32Array(this.n));
+    for (let i = 0; i < this.n; i++) x[i] = clamp(+numbers[i] || 0, -4, 4);
+    const limit = EX_LIMIT / (this.strict * this.strict);
+    // the name whose examples explain it best (a wide spread is no advantage), then: is it close enough?
+    let best = Infinity, at = -1, far = Infinity, others = 0; const ds = [];
+    for (let k = 0; k < this.fits.length; k++) {
+      if (among && !among.includes(this.fitNames[k])) { ds.push(Infinity); continue; }
+      let d = Infinity, fd = Infinity; for (const g of this.fits[k]) { const f = this.far(x, g), t = f * g.k + g.ld; if (t < d) { d = t; fd = f; } }
+      ds.push(d); if (d < best) { best = d; at = k; far = fd; }
+    }
+    if (at < 0 || !(far < limit)) return null;
+    for (let k = 0; k < ds.length; k++) if (k !== at) others += Math.exp(-2 * (ds[k] - best));
+    return { name: this.fitNames[at], sure: 1 / (1 + others + Math.exp(-2 * (limit - far))), like: clamp(1 - far / limit, 0, 1) };
+  }
+  /** Every example as text, for the start option (the maker's own and the ones given while running). */
+  pack() { const rows = []; for (const k of this.names) for (const e of this.all(k)) rows.push([k, e]); return this.text(rows, Infinity); }
+  text(rows, chars) {
+    if (!rows.length || !this.n) return '';
+    const per = this.n + 1, room = Math.floor((chars - 40) * 3 / 4 / per);
+    const keep = rows.length > room ? rows.slice(-Math.max(1, room)) : rows, names = [...new Set(keep.map(r => r[0]))];
+    let bin = '';
+    for (const [k, e] of keep) { bin += String.fromCharCode(names.indexOf(k)); for (let i = 0; i < this.n; i++) bin += String.fromCharCode((Math.round(e[i] / 4 * 127) + 256) & 255); }
+    return JSON.stringify({ v: 1, n: this.n, names, d: btoa(bin) });
+  }
+  unpack(text, map, note = false) {
+    if (!text) return;
+    let d; try { d = JSON.parse(text); } catch (_) { return; }
+    if (!d || d.v !== 1 || !Array.isArray(d.names) || typeof d.d !== 'string' || !(d.n > 0) || (this.n && d.n !== this.n)) return;
+    let bin; try { bin = atob(d.d); } catch (_) { return; }
+    const per = d.n + 1; if (bin.length % per) return;
+    for (let o = 0; o < bin.length; o += per) {
+      const k = d.names[bin.charCodeAt(o)]; if (typeof k !== 'string') continue;
+      const e = new Float32Array(d.n); for (let i = 0; i < d.n; i++) { const q = bin.charCodeAt(o + 1 + i); e[i] = (q > 127 ? q - 256 : q) / 127 * 4; }
+      this.put(map, k, e, note);
+    }
+  }
+  persist() { if (!this.slot) return; try { this.slot.save(this.text(this.order, EX_CHARS)); } catch (_) {} }
+}
 
 // ---------------------------------------------------------------- Wave
 

@@ -7174,5 +7174,142 @@ console.log('physics ok');
   console.log('the speed pass: a ray with no filter (through sensors, the same answer), a filter of the game\'s own, snow as it fell before ok');
 }
 
+// ---- Tiny Brains: teach by example (a learner for hand signs, poses, phone moves and sounds)
+{
+  // (last in the file: the motion kit needs the browser stand-ins the device tests above put in place)
+  globalThis.window ??= globalThis; globalThis.addEventListener ??= () => {}; globalThis.removeEventListener ??= () => {};
+  const { Examples } = await import('../src/kit/brains.js');
+  const { Hands, Body } = await import('../src/kit/vision.js');
+  const { Moves } = await import('../src/kit/motion.js');
+  const { Sounds } = await import('../src/kit/hear.js');
+  let sd = 5; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += rand(); return (u - 3) / Math.sqrt(.5); };
+  // a made-up hand as the tracker gives it (21 points in the camera picture) from five finger curls,
+  // with the wobble of a real take: each curl, each finger's spread, a turn of the whole hand, each point
+  const BASE = [-50, -18, -4, 10, 26].map(a => a * Math.PI / 180), LEN = [[.3, .3, .28, .24], [.95, .42, .26, .22], [1, .46, .3, .24], [.94, .42, .28, .22], [.84, .32, .2, .18]];
+  const hands = Object.create(Hands.prototype);
+  const hand = (curls, { at = [.5, .5], size = .12, turn = 0, left = false, aspect = 1 } = {}) => {
+    const t = turn + gauss() * 8 * Math.PI / 180, pts = [{ x: 0, y: 0 }];
+    for (let f = 0; f < 5; f++) {
+      let a = BASE[f] + gauss() * 4 * Math.PI / 180 + t, x = 0, y = 0; const c = Math.max(0, Math.min(1, curls[f] + gauss() * .08));
+      LEN[f].forEach((l, j) => { if (j) a += c * (f ? 1.5 : .9) * (f ? 1 : -1) * (j === 1 ? .9 : 1); x += Math.sin(a) * l; y -= Math.cos(a) * l; pts.push({ x: x + gauss() * .02, y: y + gauss() * .02 }); });
+    }
+    // the camera picture is not mirrored; a "right" hand on screen is what the tracker calls Left
+    const lm = pts.map(q => ({ x: 1 - (at[0] + (left ? -q.x : q.x) * size / aspect), y: at[1] + q.y * size }));
+    hands.read({ landmarks: [lm], handednesses: [[{ categoryName: left ? 'Right' : 'Left' }]], aspect });
+    return hands.list[0];
+  };
+  const SIGNS = { open: [0, 0, 0, 0, 0], fist: [1, 1, 1, 1, 1], point: [1, 0, 1, 1, 1], two: [1, 0, 0, 1, 1], three: [1, 0, 0, 0, 1], horns: [1, 0, 1, 1, 0], thumb: [0, 1, 1, 1, 1], call: [0, 1, 1, 1, 0], four: [1, 0, 0, 0, 0], gun: [0, 0, 1, 1, 1] };
+  const first = hand(SIGNS.two);
+  assert.ok(first.shape.length === 40 && first.side === 'right' && first.shape.every(v => Math.abs(v) < 2), 'a hand\'s shape is 40 numbers about -1..1');
+  const six = ['point', 'two', 'three', 'four', 'horns', 'gun'];
+  const score = (K, opts = {}, how = {}) => {
+    let right = 0, wrong = 0, n = 0, unseen = 0, yes = 0;
+    for (let rep = 0; rep < 4; rep++) {
+      const ex = new Examples({ name: 'signs' + K + rep, save: false, of: 'hand', ...opts });
+      for (const k of six) for (let i = 0; i < K; i++) ex.add(k, hand(SIGNS[k]).shape);
+      for (const k of six) for (let t = 0; t < 40; t++) { const g = ex.guess(hand(SIGNS[k], how).shape); n++; if (g && g.name === k) right++; else if (g) wrong++; }
+      for (const k of ['open', 'fist', 'thumb', 'call']) for (let t = 0; t < 20; t++) { unseen++; if (ex.guess(hand(SIGNS[k]).shape)) yes++; }
+    }
+    return { right: right / n, wrong: wrong / n, unseen: yes / unseen };
+  };
+  const one = score(1), three = score(3), five = score(5);
+  assert.ok(one.right > .7 && three.right > .88 && five.right > .9, `hand signs are known again: ${one.right.toFixed(2)} ${three.right.toFixed(2)} ${five.right.toFixed(2)}`);
+  assert.ok(three.wrong < .03 && five.wrong < .03, `and seldom taken for another: ${three.wrong.toFixed(3)} ${five.wrong.toFixed(3)}`);
+  assert.ok(three.unseen < .1 && five.unseen < .1, `signs it was never shown are mostly none of them: ${three.unseen.toFixed(2)} ${five.unseen.toFixed(2)}`);
+  // wherever the hand is, however near, on a wide picture, and with the other hand
+  const moved = score(3, {}, { at: [.2, .7], size: .05, aspect: 16 / 9 }), other = score(3, {}, { left: true });
+  assert.ok(moved.right > .88 && other.right > .88, `a sign is the same far away in a corner, and made with the other hand: ${moved.right.toFixed(2)} ${other.right.toFixed(2)}`);
+  // which way it points is part of the sign: thumbs up and thumbs down
+  const ud = new Examples({ name: 'updown', save: false, of: 'hand' });
+  for (let i = 0; i < 3; i++) { ud.add('up', hand(SIGNS.thumb, { turn: Math.PI / 2 }).shape); ud.add('down', hand(SIGNS.thumb, { turn: -Math.PI / 2 }).shape); }
+  let udOk = 0, udWrong = 0; for (let i = 0; i < 40; i++) { const up = i % 2 === 0, g = ud.guess(hand(SIGNS.thumb, { turn: up ? Math.PI / 2 : -Math.PI / 2 }).shape); if (g && g.name === (up ? 'up' : 'down')) udOk++; else if (g) udWrong++; }
+  assert.ok(udOk >= 32 && udWrong === 0, `thumbs up and thumbs down are told apart: ${udOk}/40, ${udWrong} mixed up`);
+  // one name, two kinds of thing
+  const tk = new Examples({ name: 'either', save: false, of: 'hand' });
+  for (let i = 0; i < 5; i++) { tk.add('go', hand(SIGNS.open).shape); tk.add('go', hand(SIGNS.point).shape); tk.add('stop', hand(SIGNS.fist).shape); }
+  let tkOk = 0, tkMid = 0;
+  for (let i = 0; i < 40; i++) { const g = tk.guess(hand(i % 2 ? SIGNS.open : SIGNS.point).shape); if (g && g.name === 'go') tkOk++; if (tk.guess(hand([.5, 0, .5, .5, .5]).shape)) tkMid++; }
+  assert.ok(tkOk >= 34 && tkMid <= 12, `a name can be two kinds of thing, and what lies between them is neither: ${tkOk}/40 ${tkMid}/40`);
+  // the rest of what it does
+  const ex = new Examples({ name: 'rest', save: false, of: 'hand' });
+  assert.equal(ex.guess(first.shape), null, 'nothing taught, nothing guessed');
+  ex.add('two', first.shape);
+  const g1 = ex.guess(hand(SIGNS.two).shape);
+  assert.ok(g1 && g1.name === 'two' && g1.sure > .5 && g1.like > 0 && g1.like <= 1, 'one example is enough to start');
+  assert.ok(!ex.add('two', [1, 2, 3]) && ex.guess([1, 2, 3]) === null && ex.count('two') === 1, 'numbers of another length are turned away');
+  for (let i = 0; i < 3; i++) { ex.add('fist', hand(SIGNS.fist).shape); ex.add('two', hand(SIGNS.two).shape); }
+  assert.deepEqual(ex.names, ['two', 'fist']); assert.ok(ex.count('two') === 4 && ex.count() === 7);
+  assert.equal(ex.guess(hand(SIGNS.two).shape, { among: ['fist'] }), null, 'among: only those names');
+  ex.add('fist', hand(SIGNS.two).shape); let muddled = 0; for (let i = 0; i < 20; i++) { const g = ex.guess(hand(SIGNS.two).shape); if (!g || g.sure < .6) muddled++; }
+  ex.undo(); let clear = 0; for (let i = 0; i < 20; i++) { const g = ex.guess(hand(SIGNS.two).shape); if (g && g.name === 'two' && g.sure > .6) clear++; }
+  assert.ok(ex.count('fist') === 3 && clear >= 16, `undo() takes back a bad take: ${clear}/20 clear again (${muddled}/20 were muddled)`);
+  for (let i = 0; i < 20; i++) ex.add('two', hand(SIGNS.two).shape);
+  assert.equal(ex.count('two'), 12, 'the newest 12 of a name are kept');
+  ex.forget('fist'); assert.deepEqual(ex.names, ['two']); ex.forget(); assert.equal(ex.count(), 0);
+  // the maker's own examples come with the game; the player's are saved with its brains
+  const made = new Examples({ name: 'made', save: false, of: 'hand' }); for (const k of ['two', 'fist']) for (let i = 0; i < 3; i++) made.add(k, hand(SIGNS[k]).shape);
+  const saved = new Map(), api = { brains: { load: n => saved.get(n) ?? null, save: (n, t) => { saved.set(n, t); return true; } } };
+  const game = new Examples(api, { name: 'kept', of: 'hand', start: made.pack() });
+  let fromStart = 0; for (let i = 0; i < 20; i++) if (game.guess(hand(SIGNS.fist).shape)?.name === 'fist') fromStart++;
+  assert.ok(game.count() === 6 && fromStart >= 15 && !saved.has('kept'), `start: the maker's examples, not saved again: ${fromStart}/20`);
+  for (let i = 0; i < 3; i++) game.add('horns', hand(SIGNS.horns).shape);
+  game.forget(); assert.equal(game.count(), 6, 'forget() keeps the maker\'s own');
+  for (let i = 0; i < 3; i++) game.add('horns', hand(SIGNS.horns).shape);
+  const again = new Examples(api, { name: 'kept', of: 'hand', start: made.pack() });
+  let back = 0; for (let i = 0; i < 20; i++) if (again.guess(hand(SIGNS.horns).shape)?.name === 'horns') back++;
+  assert.ok(again.count('horns') === 3 && back >= 15, `the player's examples are brought back: ${again.count('horns')} ${back}/20`);
+  for (let i = 0; i < 40; i++) again.add(six[i % 6], hand(SIGNS[six[i % 6]]).shape);
+  assert.ok(saved.get('kept').length <= 1500 && new Examples(api, { name: 'kept' }).count() >= 20, 'the save keeps to its size, the newest first: ' + saved.get('kept').length);
+  assert.equal(new Examples({ name: 'obj', save: false, start: { a: [[0, 0, 1]], b: [[1, 0, 0]] } }).guess([0, .05, .95]).name, 'a', 'start as plain lists');
+
+  // poses: each joint from the hips
+  const body = Object.create(Body.prototype); body.found = true;
+  const pose = (arms, { at = [.5, .6], size = .2 } = {}) => {
+    const j = {}, put = (n, x, y) => { j[n] = { x: at[0] + (x + gauss() * .03) * size, y: at[1] + (y + gauss() * .03) * size, seen: 1 }; };
+    put('nose', 0, -1.35); put('leftShoulder', -.35, -1); put('rightShoulder', .35, -1); put('leftHip', -.2, 0); put('rightHip', .2, 0);
+    put('leftKnee', -.22, .8); put('rightKnee', .22, .8); put('leftFoot', -.24, 1.6); put('rightFoot', .24, 1.6);
+    const arm = (side, a) => { const s = side === 'left' ? -1 : 1, r = a * Math.PI / 180; put(side + 'Elbow', s * (.35 + Math.sin(r) * .45), -1 - Math.cos(r) * .45); put(side + 'Hand', s * (.35 + Math.sin(r) * .9), -1 - Math.cos(r) * .9); };
+    arm('left', arms[0] + gauss() * 8); arm('right', arms[1] + gauss() * 8);
+    body.joints = j; body.shape_ = null; return body.shape;
+  };
+  const POSES = { up: [10, 10], tee: [90, 90], down: [170, 170], leftUp: [10, 170], rightUp: [170, 10] };
+  const poses = new Examples({ name: 'poses', save: false, of: 'pose' });
+  for (const k of Object.keys(POSES)) for (let i = 0; i < 3; i++) poses.add(k, pose(POSES[k]));
+  let pOk = 0, pNone = 0;
+  for (let i = 0; i < 100; i++) { const k = Object.keys(POSES)[i % 5], g = poses.guess(pose(POSES[k], { at: [.3 + rand() * .4, .5], size: .1 + rand() * .2 })); if (g && g.name === k) pOk++; if (!poses.guess(pose([50, 130]))) pNone++; }
+  assert.ok(pose(POSES.up).length === 26 && pOk >= 90 && pNone >= 85, `poses are known again wherever the player stands, and an odd one is none of them: ${pOk}/100 ${pNone}/100`);
+
+  // phone moves: a burst of movement, taught by making it
+  const stirs = new Examples({ name: 'moves', save: false, of: 'move' }), moves = new Moves({ learn: stirs });
+  const fired = []; for (const k of ['stir', 'saw', 'taught', 'motion']) moves.on(k, m => fired.push(m));
+  const play = kind => {   // half a second of movement at 60 readings a second, then stillness
+    const jit = () => 1 + gauss() * .12, ph = gauss() * .15, f = (kind === 'stir' ? 2 : 4) * jit(), amp = 9 * jit();
+    for (let i = 0; i < 60; i++) {
+      const t = i / 60, on = t < .5 * jit();
+      const ax = on ? (kind === 'stir' ? Math.cos(t * f * 6.283 + ph) : Math.sign(Math.sin(t * f * 6.283 + ph))) * amp : 0, ay = on && kind === 'stir' ? Math.sin(t * f * 6.283 + ph) * amp : 0;
+      moves.read({ dt: 1 / 60, ax: ax + gauss() * .4, ay: ay + gauss() * .4, az: gauss() * .4, ra: gauss() * 8, rb: gauss() * 8, rg: on && kind === 'saw' ? 160 * Math.sin(t * 25) : gauss() * 8 });
+    }
+    fired.length = 0; moves.update(); return fired.slice();
+  };
+  for (let i = 0; i < 3; i++) for (const k of ['stir', 'saw']) { moves.teach(k); const got = play(k); assert.ok(got.some(m => m.type === 'taught' && m.name === k && m.count === i + 1) && moves.teaching === null, 'teach(): the next move made is an example'); }
+  let mOk = 0, mShape = 0;
+  for (let i = 0; i < 40; i++) { const k = i % 2 ? 'stir' : 'saw', got = play(k); if (got.some(m => m.type === k) && !got.some(m => m.type === (i % 2 ? 'saw' : 'stir'))) mOk++; const mo = got.find(m => m.type === 'motion'); if (mo && mo.shape.length === 49 && mo.time > .2 && mo.time < .9) mShape++; }
+  assert.ok(mOk >= 34 && mShape === 40, `phone moves taught by making them fire under their names: ${mOk}/40, a shape each time ${mShape}/40`);
+  moves.stop();
+
+  // sounds: the mix of everyday sounds one is made of
+  const ears = Object.create(Sounds.prototype); Object.assign(ears, { now: new Map(), fresh: new Map(), sure: .3, want: null });
+  const MIX = { glass: { Glass: .5, 'Chink, clink': .6, Ding: .3 }, door: { Door: .6, Knock: .7, Thump: .2 }, kettle: { Steam: .6, Hiss: .5, Whistle: .25 } };
+  const hear = mix => { ears.heardCats(Object.entries(mix).map(([categoryName, v]) => ({ categoryName, score: Math.max(.03, Math.min(1, v + gauss() * .08)) }))); return ears.shape; };
+  const mine = new Examples({ name: 'sounds', save: false, of: 'sound' });
+  for (const k of Object.keys(MIX)) for (let i = 0; i < 3; i++) mine.add(k, hear(MIX[k]));
+  let sOk = 0, sNone = 0;
+  for (let i = 0; i < 60; i++) { const k = Object.keys(MIX)[i % 3], g = mine.guess(hear(MIX[k])); if (g && g.name === k) sOk++; if (!mine.guess(hear({ Speech: .7, Laughter: .4 }))) sNone++; }
+  ears.heardCats([]);
+  assert.ok(hear(MIX.glass).length === 32 && sOk >= 54 && sNone >= 54 && (ears.heardCats([]), ears.shape) === null, `sounds under names of your own: ${sOk}/60, another sound is none of them ${sNone}/60`);
+  console.log(`brains 6: teach by example: hand signs ${(one.right * 100).toFixed(0)}% from one example, ${(three.right * 100).toFixed(0)}% from three, ${(five.right * 100).toFixed(0)}% from five (${(five.wrong * 100).toFixed(1)}% taken for another), poses ${pOk}%, phone moves ${mOk}/40, sounds ${sOk}/60, saved ok`);
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
