@@ -93,6 +93,7 @@ export class Bulge extends Bone {
 // x; elbows bend negative x; a foot's toes point down with positive x. Hands and feet (handL, footL...)
 // are joints too where the figure has them.
 const P = (o, drop = 0) => ({ j: o, drop });
+const NO_POSE = Object.freeze({ j: Object.freeze({}), drop: 0 });   // (a pose a rig has not got: nothing)
 const cyc = (fn, rate) => ({ cycle: fn, rate });   // rate: cycles per metre
 export const POSES = {
   idle: cyc(p => P({ spine: [.03 + S(p * TAU) * .015, 0, 0], armL: [0, 0, -.08], armR: [0, 0, .08], foreL: [-.15, 0, 0], foreR: [-.15, 0, 0] }), 0),
@@ -341,6 +342,7 @@ const table = (f, n = 72) => { const T = new Float32Array(n + 1); for (let i = 0
 // against the legs, and the body rises and falls twice a stride (drop, bob, bobAt). In a run the knee
 // drives the foot through high (carry, carryAt) and the legs fling less far out behind and in front (trail, pull).
 const LEG = [.435, .435, .955, .085, .06, .13, .094];   // thigh, shin, the hip joint's height, the ankle's, heel and ball from the ankle, the hip joint out from the middle
+const put = (o, x, y, z) => { o[0] = x; o[1] = y; o[2] = z; return o; };
 function gait(g) {
   const { stride, stance, reach, lift = .1, liftAt = .5, carry = 0, carryAt = .72, pull = 1, trail = 1, yaw = 0, list = 0, lean = 0, twist = 1, arm = 0, armMid = 0, elbow = .3, elbowSwing = 0, armIn = 0, armOut = 0, drop = 0, bob = 0, bobAt = 0, side = 0, nod = 0, crouch = 0, head = .7, wrist = .7 } = g;
   const [L1, L2, HJ, AH, HEEL, BALL, HX] = LEG, footW = spline(g.foot, true);
@@ -365,33 +367,40 @@ function gait(g) {
   const thigh = leg(0), knee = leg(1), foot = table(footW);
   // the toes lie flat while the heel comes up off them, and straighten once the foot is in the air
   const toes = table(p => Math.min(1.1, Math.max(0, footW(p))) * (p < stance ? 1 : 1 - sstep(0, .3, (p - stance) / (1 - stance))));
+  // (one answer, written over each time: Rig.update reads a sample straight into its own mix before it asks for another,
+  // so a walk or a run makes no new lists a frame for each person who is walking. The pose's cycle() is a copy of it,
+  // yours to keep: gaitOf)
+  const R = { j: {}, drop: 0, shift: undefined }, J = R.j, SH = [0, 0, 0];
+  for (const k of ['hips', 'spine', 'head', 'legL', 'shinL', 'footL', 'toeL', 'legR', 'shinR', 'footR', 'toeR', 'armL', 'foreL', 'handL', 'armR', 'foreR', 'handR']) J[k] = [0, 0, 0];
   return p => {
     // (a person's own walk: how much the arms swing, each side's, how far the hips turn and sway and the shoulders against them, the rise
     // and fall, the arms out and bent, the toes out and the feet apart: manner.js)
     const M = MAN?.g, kA = M ? M.arm : 1, kH = M ? M.hips : 1, kT = M ? M.twist : 1, kB = M ? M.bob : 1, aO = M ? M.out : 0, eB = M ? M.elbow : 0, toe = M ? M.toe : 0, wd = M ? M.wide : 0, aL = M ? M.armL * kA : 1, aR = M ? M.armR * kA : 1;
     const a = p * TAU, c = Math.cos(a), hy = -yaw * kH * c, hz = list * kH * S(a + .6), pr = p + .5;
     const tl = thigh(p), tr = thigh(pr), kl = knee(p), kr = knee(pr), sw = Math.cos(a + .25);   // the arms trail the legs a touch
-    return { j: {
-      hips: [crouch, hy, hz],
-      spine: [lean, -hy * (1 + twist * kT), -hz * .8],
-      head: [-(lean + crouch) * head + nod * S(a * 2), hy * twist * kT * .8, -hz * .2],
-      legL: [tl - crouch, -hy + toe, -hz + wd], shinL: [kl, 0, 0], footL: [Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0], toeL: [-toes(p), 0, 0],
-      legR: [tr - crouch, -hy - toe, -hz - wd], shinR: [kr, 0, 0], footR: [Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0], toeR: [-toes(pr), 0, 0],
-      armL: [armMid + arm * aL * sw, -armIn, armOut + aO], foreL: [-(elbow + eB - elbowSwing * aL * sw), -wrist * .5, 0], handL: [-.12, -wrist * .5, 0],
-      armR: [armMid - arm * aR * sw, armIn, -armOut - aO], foreR: [-(elbow + eB + elbowSwing * aR * sw), wrist * .5, 0], handR: [-.12, wrist * .5, 0],
-    }, drop: drop + bob * kB * Math.cos(2 * a - bobAt), shift: side ? [side * kH * S(a + .6), 0, 0] : undefined };
+    put(J.hips, crouch, hy, hz);
+    put(J.spine, lean, -hy * (1 + twist * kT), -hz * .8);
+    put(J.head, -(lean + crouch) * head + nod * S(a * 2), hy * twist * kT * .8, -hz * .2);
+    put(J.legL, tl - crouch, -hy + toe, -hz + wd); put(J.shinL, kl, 0, 0); put(J.footL, Math.max(-.7, Math.min(1.2, foot(p) - tl - kl)), 0, 0); put(J.toeL, -toes(p), 0, 0);
+    put(J.legR, tr - crouch, -hy - toe, -hz - wd); put(J.shinR, kr, 0, 0); put(J.footR, Math.max(-.7, Math.min(1.2, foot(pr) - tr - kr)), 0, 0); put(J.toeR, -toes(pr), 0, 0);
+    put(J.armL, armMid + arm * aL * sw, -armIn, armOut + aO); put(J.foreL, -(elbow + eB - elbowSwing * aL * sw), -wrist * .5, 0); put(J.handL, -.12, -wrist * .5, 0);
+    put(J.armR, armMid - arm * aR * sw, armIn, -armOut - aO); put(J.foreR, -(elbow + eB + elbowSwing * aR * sw), wrist * .5, 0); put(J.handR, -.12, wrist * .5, 0);
+    R.drop = drop + bob * kB * Math.cos(2 * a - bobAt); R.shift = side ? put(SH, side * kH * S(a + .6), 0, 0) : undefined;
+    return R;
   };
 }
 // standing easy: breathing, the weight on one leg and then the other, a look about
-const idleLife = p => {
-  const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5;
-  return { j: {
-    hips: [0, .04 * w, .035 * w], spine: [.03 + .012 * br, -.03 * w, -.03 * w], head: [-.02 - .008 * br, .16 * look, -.01 * w],
-    // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
-    legL: [-.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03], shinL: [.06 + .16 * Math.max(0, -w), 0, 0], footL: [-.03 - .12 * Math.max(0, -w), 0, 0],
-    legR: [-.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03], shinR: [.06 + .16 * Math.max(0, w), 0, 0], footR: [-.03 - .12 * Math.max(0, w), 0, 0],
-    armL: [.03 + .01 * br, 0, .065], armR: [.03 + .01 * br, 0, -.065], foreL: [-.24, -.35, 0], foreR: [-.24, .35, 0], handL: [-.15, -.35, 0], handR: [-.15, .35, 0],
-  }, drop: .004 + .003 * Math.abs(w), shift: [.022 * w, 0, 0] };
+const IDLE = { j: {}, drop: 0, shift: [0, 0, 0] };   // (one answer, written over each time, as gait()'s; LIFELIKE.idle.cycle copies it)
+for (const k of ['hips', 'spine', 'head', 'legL', 'shinL', 'footL', 'legR', 'shinR', 'footR', 'armL', 'armR', 'foreL', 'foreR', 'handL', 'handR']) IDLE.j[k] = [0, 0, 0];
+const idleInto = p => {
+  const a = p * TAU, br = S(a * 3), w = S(a), look = S(a + 1.1) * .5 + S(a * 2 + .4) * .5, J = IDLE.j;
+  put(J.hips, 0, .04 * w, .035 * w); put(J.spine, .03 + .012 * br, -.03 * w, -.03 * w); put(J.head, -.02 - .008 * br, .16 * look, -.01 * w);
+  // (the toes a little out; the arms hang a little out from the shoulders, so the hands lie beside the thighs and not in them)
+  put(J.legL, -.03 - .04 * Math.max(0, -w), .1, -.035 * w + .03); put(J.shinL, .06 + .16 * Math.max(0, -w), 0, 0); put(J.footL, -.03 - .12 * Math.max(0, -w), 0, 0);
+  put(J.legR, -.03 - .04 * Math.max(0, w), -.1, -.035 * w - .03); put(J.shinR, .06 + .16 * Math.max(0, w), 0, 0); put(J.footR, -.03 - .12 * Math.max(0, w), 0, 0);
+  put(J.armL, .03 + .01 * br, 0, .065); put(J.armR, .03 + .01 * br, 0, -.065); put(J.foreL, -.24, -.35, 0); put(J.foreR, -.24, .35, 0); put(J.handL, -.15, -.35, 0); put(J.handR, -.15, .35, 0);
+  IDLE.drop = .004 + .003 * Math.abs(w); put(IDLE.shift, .022 * w, 0, 0);
+  return IDLE;
 };
 /**
  * Lifelike motion for a figure with feet and hands (gs.models.human people move with it): idle, walk, jog,
@@ -400,9 +409,12 @@ const idleLife = p => {
  * new Rig(parts, { poses: LIFELIKE, weight: 1 }). Speeds they suit (m/s): walk 1.4, jog 3.4, run 5.6, sprint 7.5,
  * sneak 1: rig.blend({ idle: 0, walk: 1.4, jog: 3.4, run: 5.6 }, speed) moves between them in step.
  */
-const gaitOf = g => ({ ...cyc(gait(g), 1 / g.stride), stance: g.stance, ground: true });   // (ground: the feet stand on the ground, so they can be kept where they are put down: stride.js)
+// a pose's answer copied out of the one a reused sampler writes over (sample: what Rig.update asks, nothing made)
+const kept = s => { const j = {}; for (const k in s.j) j[k] = s.j[k].slice(); return { j, drop: s.drop, shift: s.shift ? s.shift.slice() : undefined }; };
+const gaitOf = g => { const into = gait(g); return { ...cyc(p => kept(into(p)), 1 / g.stride), sample: into, stance: g.stance, ground: true }; };
+const idleLife = p => kept(idleInto(p));   // (ground: the feet stand on the ground, so they can be kept where they are put down: stride.js)
 export const LIFELIKE = {
-  idle: { cycle: idleLife, rate: 0, time: 9, ground: true },
+  idle: { cycle: idleLife, sample: idleInto, rate: 0, time: 9, ground: true },
   walk: gaitOf({ stride: 1.36, stance: .62, reach: .3, lift: .075, liftAt: .4,
     foot: [[0, -.3], [.1, 0], [.42, 0], [.52, .3], [.62, .8], [.72, .5], [.84, -.05], [.94, -.3]],
     yaw: .075, list: .05, lean: .045, twist: 1, arm: .36, armMid: .02, elbow: .26, elbowSwing: .13, armOut: .045, drop: .015, bob: .012, bobAt: 0, side: .02, nod: .01 }),
@@ -561,7 +573,8 @@ export class Rig {
     });
     return this;
   }
-  sample(name, phase) { const def = this.poses[name]; if (!def) return { j: {}, drop: 0 }; return def.cycle(phase); }
+  // (a pose with a sample of its own gives an answer written over each time, read into the mix before the next is asked: LIFELIKE)
+  sample(name, phase) { const def = this.poses[name]; if (!def) return NO_POSE; return def.sample ? def.sample(phase) : def.cycle(phase); }
   /**
    * speed: metres a second (the walk and run cycles follow it); aim: up/down aim (radians) for the upper layer (aim, carAimL/R/F);
    * aimYaw: turn at the waist for it (radians, to the left +: aiming from a seat); turn: how fast
@@ -613,7 +626,7 @@ export class Rig {
         if (s.shift) { bs[0] += s.shift[0] * w; bs[1] += s.shift[1] * w; bs[2] += s.shift[2] * w; }
         for (const j in s.j) { const a = s.j[j], o = mixd[j] ||= [0, 0, 0]; o[0] += a[0] * w; o[1] += a[1] * w; o[2] += a[2] * w; }
       }
-      for (const j of this.base.keys()) { const a = mixd[j]; if (!a && !out[j]) continue; const o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += ((a ? a[i] : 0) - o[i]) * k2; }
+      this.base.forEach((b, j) => { const a = mixd[j]; if (!a && !out[j]) return; const o = out[j] ||= [0, 0, 0]; for (let i = 0; i < 3; i++) o[i] += ((a ? a[i] : 0) - o[i]) * k2; });
       drop += (bd - drop) * k2; for (let i = 0; i < 3; i++) shift[i] += (bs[i] - shift[i]) * k2;
       gw += (bg - gw) * k2; if (bg > 0 && k2 >= .5) gph = this.blendPhase;
       if (this.blendOn && k2 >= 1) {   // the layers underneath: just its strongest pose, in step with it (what a later play() fades from)
@@ -639,12 +652,13 @@ export class Rig {
     if (this.idle) this.idle.pose(dt, out, speed, this.fine !== false, this.near !== false);   // a person standing about (gs.models.human's person.idle): fidgets close up, the head after the eyes, glances, gestures
     if (this.lead) this.lead.pose(dt, out, toward);   // the eyes and the head go first into a turn
     this.phase = last.phase;
-    if (!this.chains) for (const [j, b] of this.base) { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); }
-    else for (const [j, b] of this.base) {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
-      if (FILLED.has(j) || !this.fine && TOES.has(j)) continue; const a = out[j];
-      if (!a && TOES.has(j)) { if (this.still.has(j)) continue; this.still.add(j); } else if (a) this.still.delete(j);
+    // (forEach: a for...of over a Map's entries makes a list for each joint, each frame)
+    if (!this.chains) this.base.forEach((b, j) => { const a = out[j] || Z3, p = this.parts[j]; p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); });
+    else this.base.forEach((b, j) => {   // (a full skeleton: fill() sets the joints in between, and toes at rest are left there)
+      if (FILLED.has(j) || !this.fine && TOES.has(j)) return; const a = out[j];
+      if (!a && TOES.has(j)) { if (this.still.has(j)) return; this.still.add(j); } else if (a) this.still.delete(j);
       const p = this.parts[j]; if (a) p.rotation.set(b[0] + a[0], b[1] + a[1], b[2] + a[2]); else p.rotation.set(b[0], b[1], b[2]);
-    }
+    });
     if (this.parts.hips) { const k = this.height / 1.8; this.parts.hips.position.set(this.hipX + shift[0] * k, this.hip0 - drop * this.height + shift[1] * k, this.hipZ + shift[2] * k); }
     this.cur = out; if (this.chains) this.fill(out);
     if (this.stride) {   // steps that are really taken: how much of the pose stands on the ground, how much of it walks, and where in its stride it is
