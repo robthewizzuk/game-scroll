@@ -907,7 +907,15 @@ console.log('physics ok');
   };
   const make = (memory, extra = {}) => new Brain(null, { name: 'mem' + uid++, inputs: 4, actions: 4, teacher, ...quiet, memory, ...extra });
   const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
-  const plain = make(false); assert.ok(plain.mem === null && plain.remembered === null, 'memory is off by default');
+  const plain = make(false); play(plain, 1, 400); assert.ok(plain.mem === null && plain.remembered === null, 'memory: false never switches on');
+  // memory unset: it switches itself on where feel() follows most decisions, and stays off where it's rare
+  const often = make(undefined); assert.ok(often.mem === null, 'memory unset starts off');
+  play(often, 1, 140); assert.ok(often.mem === null, 'and waits to see how often feel() comes');
+  play(often, 1, 200); assert.ok(often.mem !== null, 'then switches itself on where feel() follows most decisions');
+  const rare = make(undefined), rr = rngOf(21);
+  for (let i = 0; i < 3000; i++) { rare.act([rr() * 2 - 1, rr() * 2 - 1, rr() * 2 - 1, rr() * 2 - 1], 1); if (i % 5 === 0) rare.feel(1); }
+  assert.ok(rare.mem === null, 'and stays off where feel() is rare (one decision in five)');
+  often.reset(); assert.ok(often.mem === null, 'reset() switches a self-started memory off again');
   const runs = { today: [], memory: [], delta: [] };
   for (let seed = 1; seed <= 6; seed++) for (const k in runs) { const b = make(k !== 'today'); if (k === 'delta') delta(b.mem); runs[k].push(avg(play(b, seed, 2000).slice(2))); }
   const [t, m, d] = [avg(runs.today), avg(runs.memory), avg(runs.delta)];
@@ -958,7 +966,7 @@ console.log('physics ok');
   // what a decision costs
   const cost = make(true); play(cost, 2, 600); const t0 = performance.now(), rc = rngOf(3); for (let i = 0; i < 4000; i++) { cost.act([rc() * 2 - 1, rc() * 2 - 1, rc() * 2 - 1, rc() * 2 - 1], 1); cost.feel(rc()); }
   const us = (performance.now() - t0) / 4000 * 1000; assert.ok(us < 200, 'a decision and a feel() with memory: ' + us.toFixed(1) + ' microseconds');
-  console.log(`brains 8: memory ${m.toFixed(2)} vs teacher ${t.toFixed(2)} vs delta ${d.toFixed(2)}, follows a change, remembered, saved, wave minds, trust per kind ${avg(mix.trust).toFixed(2)} vs ${avg(mix.today).toFixed(2)}, ${us.toFixed(0)} µs ok`);
+  console.log(`brains 8: switches itself on, memory ${m.toFixed(2)} vs teacher ${t.toFixed(2)} vs delta ${d.toFixed(2)}, follows a change, remembered, saved, wave minds, trust per kind ${avg(mix.trust).toFixed(2)} vs ${avg(mix.today).toFixed(2)}, ${us.toFixed(0)} µs ok`);
 }
 
 // ---- Tiny Brains: a dial for opponents that aren't brains

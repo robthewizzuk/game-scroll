@@ -432,6 +432,7 @@ const MEM_Z = .5;           // how sure a better move must be: its lead over the
 const MEM_QUICK = .15;      // how quickly a pair's recent lean follows (about the last seven writes)
 const MEM_MIN = 40;         // writes a pair needs before it can be found wrong
 const MEM_BYTES = 1500;     // the most a brain's saved memory takes, as text
+const MEM_AUTO_AFTER = 150, MEM_AUTO_SHARE = .5, MEM_AUTO_RATE = .01;   // memory unset: switch on after this many decisions once feel() follows this share of them
 const TRUST_SHARED = 3, TRUST_KIND = 4;   // how much faster trust moves when only disagreements count
 
 class Memory {
@@ -564,7 +565,8 @@ class Memory {
  *               or [see, action, false] where a move is wrong (kept through reset(); brain.correct()
  *               and brain.avoid() add more while the game runs)
  *   memory      remember which move made things exciting in which kind of spot, learned at once from
- *               feel(), and lean on it (false). true, or { margin: how much better a move must have gone
+ *               feel(), and lean on it. Unset, it switches itself on once feel() follows most of its decisions
+ *               (and stays off where feel() is rare); false never; true, or { margin: how much better a move must have gone
  *               before it counts, in typical feel()s (.2), curious: share of decisions it tries a move it
  *               has never made in a spot like this (0), erase: forget a choice's moves when they keep
  *               being wrong (true) }. For games that call feel() often (most decisions); brain.remembered
@@ -591,8 +593,12 @@ export class Brain {
     if (this.styles) { this.net = new Net([(opts.inputs | 0 || 1) + this.styles.length, ...(opts.hidden || [12]), nAct], hashName(this.name)); this.sv = new Float32Array(this.styles.length); this.sv[0] = 1; this.styleName = this.styles[0]; }
     this.xbuf = null;
     this.fix = new Fixes(opts.inputs | 0 || 1, nAct); this.lastSee = null;
-    this.mem = opts.memory ? new Memory(opts.inputs | 0 || 1, nAct, opts.memory === true ? {} : opts.memory) : null;
-    this.memRecent = []; this.memKind = -1; this.memAt = -1; this.memBetter = 0;
+    // memory: true (or options) on from the start, false never, unset: it switches itself on once the game
+    // calls feel() after most decisions (a game that rarely does stays exactly as it was)
+    this.memAuto = opts.memory == null;
+    this.memMake = () => new Memory(opts.inputs | 0 || 1, nAct, opts.memory && opts.memory !== true ? opts.memory : {});
+    this.mem = opts.memory ? this.memMake() : null;
+    this.memRecent = []; this.memKind = -1; this.memAt = -1; this.memBetter = 0; this.memFelt = false; this.memShare = 0; this.memSeen = 0;
     this.recallA = -1; this.recallT = 0;
     this.logOf = e => { const p = this.net.run(this.input(e)), z = new Float32Array(p.length); let m = 0; for (const v of p) if (v > m) m = v; for (let j = 0; j < p.length; j++) z[j] = Math.log(capped(p[j], m)); return z; };
     for (const c of Array.isArray(opts.corrections) ? opts.corrections : []) if (c && c[0]) this.fix.add(c[0], this.which(c[1]), c[2] === false, true);
@@ -644,7 +650,8 @@ export class Brain {
     this.tellNext = -1; this.tellLeft = 0; this.tellLen = 0;
     this.started = false;
     this.fix.clear();             // corrections given while running (the maker's own stay)
-    if (this.mem) { this.mem.clear(); this.memRecent = []; this.memKind = -1; this.memAt = -1; }
+    if (this.memAuto) { this.mem = null; this.memShare = 0; this.memSeen = 0; } else if (this.mem) this.mem.clear();
+    this.memRecent = []; this.memKind = -1; this.memAt = -1; this.memFelt = false;
     // a starting brain from the maker's own play
     const st = this.opts.start ? Net.unpack(this.opts.start) : null;
     if (st && st.shape === this.net.shape) { this.net = st; this.net.even = this.even; this.anchor = st.copy(); this.trust = this.teacher ? .6 : 1; this.started = true; }
@@ -754,6 +761,11 @@ export class Brain {
     }
     if (this.wait > 0 && this.last >= 0) return this.last;
     const raw = see; see = this.input(see);
+    // memory unset: watch how often feel() follows a decision, and switch the memory on where it's most of them
+    if (this.memAuto && !this.mem) {
+      this.memShare += ((this.memFelt ? 1 : 0) - this.memShare) * MEM_AUTO_RATE; this.memFelt = false;
+      if (++this.memSeen >= MEM_AUTO_AFTER && this.memShare >= MEM_AUTO_SHARE) this.mem = this.memMake();
+    }
     // reaction time: slower when the skill dial is low, never faster than limits.react
     this.wait = this.limits.react * (1 + (1 - this.skill) * 1.5);
     const p = net.run(see), teach = this.teacher ? this.index(this.teacher(raw, this.styleName)) : -1;
@@ -828,7 +840,7 @@ export class Brain {
    */
   feel(x = 1) {
     x = clamp(+x || 0, -2, 2);
-    this.mood += (x - this.mood) * .05; this.rSum += x; this.rN++;
+    this.mood += (x - this.mood) * .05; this.rSum += x; this.rN++; this.memFelt = true;
     // memory: the newest decision gets it in full, the two before less
     const keyed = this.mem && this.anchor && this.teacher, kind = keyed ? this.memKind : -1;
     if (this.mem) { const R = this.memRecent; for (let i = R.length - 1, wt = 1; i >= 0 && i >= R.length - 3; i--, wt *= .5) { const d = R[i]; d.got = true; this.mem.learn(d.x, d.b, d.a, x, wt); } }
@@ -935,6 +947,7 @@ export class Brain {
     this.net.even = this.even;
     if (Array.isArray(d.o) && d.o.length === this.odds.length) d.o.forEach((v, i) => { this.odds[i] = clamp(+v || 0, 0, 1e4); });
     if (d.c) this.fix.unpack(d.c, d.u);
+    if (d.m && !this.mem && this.memAuto) this.mem = this.memMake();   // it switched itself on in an earlier session
     if (d.m && this.mem) this.mem.unpack(d.m);
   }
   adoptShared(text) {
@@ -1323,7 +1336,7 @@ export class Wave {
     let total = 0, time = 0, alive = true;
     // each mind keeps its own reaction timer and last choice, so a squad of enemies that all act in
     // the same frame each decide for themselves (rather than getting whatever the last one chose)
-    const own = { wait: 0, since: 1, last: -1, tellNext: -1, tellLeft: 0, tellLen: 0, unsure: 0, lastSee: null, recallA: -1, recallT: 0, memRecent: [], memKind: -1, memAt: -1, memBetter: 0 };
+    const own = { wait: 0, since: 1, last: -1, tellNext: -1, tellLeft: 0, tellLen: 0, unsure: 0, lastSee: null, recallA: -1, recallT: 0, memRecent: [], memKind: -1, memAt: -1, memBetter: 0, memFelt: false };
     if (b.styles) { const keep = [b.sv.slice(), b.styleName]; b.style = style ?? b.styleName; own.sv = b.sv.slice(); own.styleName = b.styleName; b.sv.set(keep[0]); b.styleName = keep[1]; }
     const swap = () => { for (const k in own) [own[k], b[k]] = [b[k], own[k]]; };
     const self = this; this.live.add(net);
@@ -1338,7 +1351,7 @@ export class Wave {
       get remembered() { swap(); try { return b.remembered; } finally { swap(); } },
       get unsure() { return own.unsure; },
       get style() { return own.styleName; },
-      feel(x = 1) { total += clamp(+x || 0, -2, 2); if (b.mem) { swap(); try { b.feel(x); } finally { swap(); } } else b.feel(x); },   // (memory: about this mind's own last decisions)
+      feel(x = 1) { total += clamp(+x || 0, -2, 2); if (b.mem || b.memAuto) { swap(); try { b.feel(x); } finally { swap(); } } else b.feel(x); },   // (memory: about this mind's own last decisions)
       done() {
         if (!alive) return; alive = false; self.live.delete(net);
         pair.score[sign > 0 ? 0 : 1] = total / Math.max(1, time);

@@ -1797,8 +1797,11 @@ The method is the corrections of [TinyDecide](https://huggingface.co/TheREZOR/Ti
 leaving each example out in turn. Only the method is used, not the model.
 
 **Memory: what worked where, from a few moments.** A brain learns from `feel()` a little at a time, so
-it rarely gets far from its teacher. With `memory: true` it also remembers, for each kind of spot,
-which move made things exciting there, from the moment it happens, and makes that move next time:
+it rarely gets far from its teacher. Once a game calls `feel()` after most of a brain's decisions, the brain
+also remembers, for each kind of spot, which move made things exciting there, from the moment it happens,
+and makes that move next time. It switches this on by itself (after 150 decisions with `feel()` after at
+least half), so a game that calls `feel()` only now and then plays exactly as before; `memory: true` has it
+from the first decision and `memory: false` never:
 
 ```js
 const rival = new Brain(api, { inputs: 4, actions: ['jab', 'feint', 'lunge', 'wait'], teacher, memory: true });

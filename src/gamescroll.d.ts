@@ -1844,8 +1844,9 @@ export interface BrainOptions {
   /** The maker's own corrections: spots where the right move is known, as [see, action] (or [see, action, false] where a move is wrong). They come with the game and stay through reset(). */
   corrections?: ([number[], number | string] | [number[], number | string, false])[];
   /**
-   * Remember which move made things exciting in which kind of spot, learned at once from feel(), and lean on it
-   * (false). For games that call feel() on most decisions. margin: how much better a move must have gone, in typical
+   * Remember which move made things exciting in which kind of spot, learned at once from feel(), and lean on it.
+   * Unset, it switches itself on once feel() follows most of its decisions (a game that rarely calls feel() stays as it
+   * was); false never; true (or options) from the first decision. For games that call feel() on most decisions. margin: how much better a move must have gone, in typical
    * feel()s (.2); curious: share of decisions it tries a move it never made in a spot like this (0); erase: forget a
    * choice's moves when they keep being wrong the same way (true). It also keeps its trust per kind of disagreement
    * with the teacher. brain.remembered says when it changed a move.
