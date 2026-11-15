@@ -2435,8 +2435,11 @@ console.log('physics ok');
   const law = new Wanted(fake, null, { officers: false }), s0 = fake.spot('street', { near: { x: 0, z: 0 } }), me = { x: s0.x, z: s0.z, heading: s0.heading, v: 0, car: true };
   const lawStep = n => { for (let i = 0; i < n; i++) { step(1, me); law.update(1 / 60, me); } };
   assert.equal(law.crime('theft', me), 'unseen', 'police: a crime nobody sees'); assert.equal(law.stars, 0, 'police: no stars for it');
-  law.set(3); law.seenNow(me); lawStep(60 * 8);
-  assert.ok(law.units.length >= 2 && law.units.every(u => u.car.siren && u.car.mode === 'chase'), 'police: cars come with sirens at 3 stars (' + law.units.length + ')');
+  // (the player's speed kept above a walk here, so a car that gets there fast doesn't make the arrest before the count)
+  me.v = 3; law.set(3); law.seenNow(me); lawStep(60 * 8);
+  // (one may already have crashed into the traffic on the way: loose, then back on the chase)
+  const chasing = law.units.filter(u => u.car.police && u.car.siren && u.car.mode === 'chase').length;
+  assert.ok(law.units.length >= 2 && chasing >= 2 && law.units.every(u => u.car.police && ['chase', 'loose', 'wreck'].includes(u.car.mode)), 'police: cars come with sirens at 3 stars (' + law.units.map(u => u.car.mode + (u.car.siren ? '+siren' : '')) + ')');
   assert.equal(law.allow([.1, 0, .5, 2 / 5, 0, 0, 1], 'ram'), 'chase', 'police: no ramming below 3 stars');
   assert.notEqual(law.allow([.5, .9, .5, 3 / 5, .25, 0, 1], 'block'), 'block', 'police: no roadblocks below 4 stars');
   let esc = 0, bust = 0; law.on('escaped', () => esc++); law.on('busted', () => bust++);

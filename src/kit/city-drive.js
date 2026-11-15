@@ -291,6 +291,8 @@ export function meet(T, dt) {
     for (const b of T.near({ x: nx, z: nz }, 5)) {
       if (b === a || b.metT > 0 || !T.overlaps(b, nx, nz, a.wid / 2)) continue;
       const bvx = Math.sin(b.heading) * b.v, bvz = Math.cos(b.heading) * b.v, rv = Math.hypot(ax - bvx, az - bvz); b.metT = .5; n++;
+      // two police cars closing on the same player nudge and slow; they don't wreck each other
+      if (a.police && b.police && a.mode === 'chase') { a.v *= .5; if (b.mode === 'chase') b.v *= .7; continue; }
       T.city.event({ kind: 'crash', at: { x: nx, z: nz }, car: b, by: a.by ?? a, power: rv });
       if (rv > 6 && b.mode !== 'wreck') T.crash(b, { x: (ax - bvx) * .45, z: (az - bvz) * .45 }, { at: { x: nx, z: nz }, by: a.by ?? a });
       else if (b.mode === 'lane') T.bump(b, 1.2);
