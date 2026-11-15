@@ -3086,7 +3086,11 @@ each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers
 `cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
 numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
 seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
-tactics and learns this player), officers on foot, searches, busted or escaped. The full guide is [docs/city.md](city.md).
+tactics and learns this player), officers on foot, searches, busted or escaped. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
+roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
+bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
+that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
+road. The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and

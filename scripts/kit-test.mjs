@@ -2659,6 +2659,111 @@ console.log('physics ok');
   }
   console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
 }
+// districts side by side (layout centre) and the stand-ins for chunks not built (city-far.js Standins): a city moved is the
+// same city, every building as boxes of its own footprint and height in its chunk's one mesh, lit at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Standins } = await import('../src/kit/city-far.js');
+  const a = layout({ seed: 8, blocks: [4, 3], style: 'oldtown' }), b = layout({ seed: 8, blocks: [4, 3], style: 'oldtown', centre: [1200, -800] });
+  assert.ok(a.buildings.length === b.buildings.length && a.buildings.every((q, i) => Math.abs(b.buildings[i].x0 - q.x0 - 1200) < 1e-6 && Math.abs(b.buildings[i].z1 - q.z1 + 800) < 1e-6 && b.buildings[i].h === q.h), 'a city moved by centre is the same city, moved');
+  assert.ok(Math.abs(b.bounds.x0 - a.bounds.x0 - 1200) < 1e-6 && b.nodes.every((n, i) => n.out.join() === a.nodes[i].out.join()) && b.centre.join() === '1200,-800', 'its bounds, junctions and roads moved with it');
+  const chunks = new Map(); for (const k of b.blocks) { const key = (k.i >> 1) + ',' + (k.j >> 1); if (!chunks.has(key)) chunks.set(key, { key, blocks: [] }); chunks.get(key).blocks.push(k); }
+  const g = new THREE.Group(), S = new Standins(g, b, chunks, { colourOf: () => '#a45a45' });
+  const parts = b.buildings.reduce((n, q) => n + q.parts.length, 0), meshes = [...chunks.values()].filter(c => c.stand).map(c => c.stand);
+  assert.ok(S.count === b.buildings.length && meshes.length === g.children[0].children.length && meshes.reduce((n, m) => n + m.geometry.index.count / 3, 0) === parts * 10, 'every building stands in, ten triangles a part, one mesh a chunk');
+  for (const c of chunks.values()) if (c.stand) {
+    const P = c.stand.geometry.attributes.position.array, x0 = Math.min(...c.blocks.map(k => k.x0)) - .01, x1 = Math.max(...c.blocks.map(k => k.x1)) + .01, z0 = Math.min(...c.blocks.map(k => k.z0)) - .01, z1 = Math.max(...c.blocks.map(k => k.z1)) + .01;
+    for (let i = 0; i < P.length; i += 3) assert.ok(P[i] >= x0 && P[i] <= x1 && P[i + 2] >= z0 && P[i + 2] <= z1, 'a chunk\'s stand-ins stay on its own blocks');
+  }
+  S.night = 1; assert.ok(S.mat.emissiveIntensity > 1, 'their windows light at night'); S.dispose(); assert.equal(g.children.length, 0, 'disposed: gone');
+  console.log('city districts side by side and stand-ins for chunks not built ok');
+}
+// a big city of districts (city-metro.js) as plain numbers: the districts placed apart with land between and the harbour on the
+// south edge, all joined by roads between their outer junctions, and a route across them with no gaps on the driving side
+{
+  const { Metro, metroPlan } = await import('../src/kit/city-metro.js'), { routeOn } = await import('../src/kit/city.js');
+  const M = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'], between: [120, 240] }), D = M.districts, again = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'] });
+  const apart = (a, b) => Math.max(b.x0 - a.x1, a.x0 - b.x1, b.z0 - a.z1, a.z0 - b.z1);
+  assert.ok(D.length === 5 && D.every((d, i) => d.plan.buildings.length === again.districts[i].plan.buildings.length && d.rect.x0 === again.districts[i].rect.x0), 'the same seed places the same districts');
+  for (const a of D) for (const b of D) if (a !== b) assert.ok(apart(a.rect, b.rect) >= 118, `${a.name} and ${b.name} are ${apart(a.rect, b.rect).toFixed(0)} m apart`);
+  const H = D.find(d => d.harbour); assert.ok(D.every(d => d === H || d.rect.z1 < H.rect.z0) && H.plan.water && D[0].plan.centre.join() === '0,0', 'the harbour is south of every other district, the first in the middle');
+  assert.ok(D.filter(d => d.style === 'suburb').length === 2 && new Set(D.map(d => d.name)).size === 5, 'two suburbs, each named its own');
+  const { Ways, WayTraffic, RING } = await import('../src/kit/city-ways.js');
+  const m = Object.assign(Object.create(Metro.prototype), { districts: D, bounds: M.bounds, side: 'right', seed: 3 }); m.connectors = m.connect();
+  const w = new Ways(m, { seed: 3, hills: .8, river: M.river, highway: true, meshes: false }); m.ways = w; m.ring = w.ring; m.ramps = w.ramps;   // (the plan alone: no meshes)
+  const seen = new Set([D[0]]); for (let k = 0; k < D.length; k++) for (const r of m.connectors) { if (seen.has(r.a)) seen.add(r.b); if (seen.has(r.b)) seen.add(r.a); }
+  assert.ok(seen.size === D.length, 'every district is joined to the rest by road');
+  const outer = (P, n) => n.i === 0 || n.j === 0 || n.i === P.nx || n.j === P.nz;
+  for (const r of m.connectors) {
+    assert.ok(outer(r.a.plan, r.from) && outer(r.b.plan, r.to) && r.len > 100 && r.width >= 9, `road ${r.id} runs between outer junctions (${r.a.name} to ${r.b.name}, ${r.len.toFixed(0)} m)`);
+    for (const [x, z] of r.points.slice(2, -2)) for (const d of D) if (d !== r.a && d !== r.b) assert.ok(x < d.rect.x0 || x > d.rect.x1 || z < d.rect.z0 || z > d.rect.z1, `road ${r.id} keeps out of ${d.name}`);
+    const p = m.along(r, r.len / 2), q = m.lanePos(r, 0, r.len / 2), w = m.lanePos(r, 0, r.len / 2, true);
+    assert.ok((q.x - p.x) * -p.dz + (q.z - p.z) * p.dx > 1 && (w.x - p.x) * -p.dz + (w.z - p.z) * p.dx < -1, 'its lanes keep to the right, each way');
+    const on = m.road(p.x + 1, p.z); assert.ok(on.road === r && on.d < 4, 'a point on it is on that road');
+  }
+  const mid = d => { const cx = (d.rect.x0 + d.rect.x1) / 2, cz = (d.rect.z0 + d.rect.z1) / 2, n = d.plan.nodes.reduce((m, n) => Math.hypot(n.x - cx, n.z - cz) < Math.hypot(m.x - cx, m.z - cz) ? n : m); return { x: n.x + 30, z: n.z + 2 }; };   // (on a road near the middle)
+  for (const b of D.slice(1)) {
+    const r = m.route(mid(D[0]), mid(b)); let gap = 0; for (let i = 1; i < r.points.length; i++) gap = Math.max(gap, Math.hypot(r.points[i][0] - r.points[i - 1][0], r.points[i][1] - r.points[i - 1][1]));
+    assert.ok(r && r.legs.some(l => l.road) && r.legs[0].district === D[0] && r.legs.at(-1).district === b && gap < 130 && Math.hypot(r.points.at(-1)[0] - mid(b).x, r.points.at(-1)[1] - mid(b).z) < 20, `a route from ${D[0].name} to ${b.name}: ${r.legs.map(l => l.road ? 'road ' + l.road.id : l.district.name).join(', ')}, no step over ${gap.toFixed(0)} m`);
+  }
+  const inside = m.route(mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 }), alone = routeOn(D[1].plan, mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 });
+  assert.ok(inside.legs.length === 1 && Math.abs(inside.length - alone.path.length) < 1, 'a route inside one district is that district\'s own');
+  const r0 = m.connectors[0], half = m.along(r0, r0.len * .3), fromRoad = m.route({ x: half.x, z: half.z }, mid(r0.b));
+  assert.ok(fromRoad.legs[0].road === r0 && fromRoad.legs.at(-1).district === r0.b, 'a route from the road between districts starts along it');
+  console.log('a big city of districts: placed apart, joined by roads, routes across them ok');
+  // the ways between (city-ways.js): hills, a river, the roads' heights over them, the highway and its slip roads, the cars on them
+  assert.ok(M.river && D.every(d => (M.river.axis === 'z' ? d.rect.x1 < M.river.c - 100 || d.rect.x0 > M.river.c + 100 : d.rect.z1 < M.river.c - 100 || d.rect.z0 > M.river.c + 100)), 'a river runs between the districts, clear of them all');
+  assert.ok(w.ring && w.ramps.length >= 3, `a highway round the city and a slip road to most districts (${w.ramps.length})`);
+  for (const r of w.roads) {
+    const limit = r.ring ? .05 : r.ramp ? .065 : .07; let g = 0; for (let i = 1; i < r.y.length; i++) g = Math.max(g, Math.abs(r.y[i] - r.y[i - 1]) / (r.at[i] - r.at[i - 1]));
+    assert.ok(g <= limit + .002, `${r.id} climbs no steeper than ${limit * 100}% (${(g * 100).toFixed(1)}%)`);
+    if (!r.ring) assert.ok(r.y[0] === 0 && (r.ramp ? Math.abs(r.y.at(-1) - w.ringY(r.ringS)) < .01 : r.y.at(-1) === 0), `${r.id} meets its district level and its other end at its height`);
+    for (let i = 0; i < r.points.length; i += 3) {
+      const [x, z] = r.points[i], y = r.y[i], k = r.kind[i];
+      if (w.riverD(x, z) < 12 && w.riverE(x, z) > .9) assert.ok(k === 1 && y > 1, `${r.id} bridges the river (${y.toFixed(1)} m up)`);
+      if (k === 0 && !w.holes.some(h => x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) && !(w.near(x, z, 40, q => q !== r)?.d < 34)) assert.ok(Math.abs(w.landAt(x, z) - (y - .08)) < .35, `the land is cut or filled to ${r.id} (${w.landAt(x, z).toFixed(2)} for ${y.toFixed(2)})`);
+      if (k === 2 && r.tunnels.every(t => Math.min(r.at[i] - t.s0, t.s1 - r.at[i]) > 12)) assert.ok(w.landAt(x, z) > y + 6.5, `the land covers ${r.id}'s tunnel (${w.landAt(x, z).toFixed(2)} over ${y.toFixed(2)} at ${r.at[i].toFixed(0)}, tunnels ${r.tunnels.map(t => t.s0.toFixed(0) + '-' + t.s1.toFixed(0))})`);
+      if (k === 1) { assert.ok(Math.abs(w.surface(x, z) - y - .05) < .1 && w.surface(x, z, y - 3) < y - 1, `on ${r.id}'s bridge the ground is the deck, under it the land (${w.surface(x, z).toFixed(2)} ${w.surface(x, z, y - 3).toFixed(2)} for ${y.toFixed(2)} at ${r.at[i].toFixed(0)} of ${r.len.toFixed(0)}, land ${w.landAt(x, z).toFixed(2)} natural ${w.natural(x, z).toFixed(2)})`); }
+    }
+  }
+  for (const q of w.ramps) assert.ok(outer(q.a.plan, q.from) && q.b === RING && Math.abs(w.near(q.to.x, q.to.z, 30, r => r.ring).d - (w.ring.width / 2 + 4.5)) < 1, `${q.id} runs from an outer junction to beside the highway`);
+  const hw = m.along(w.ring, w.ramps[0].ringS + 300), toHw = m.route(mid(w.ramps[0].a), { x: hw.x, z: hw.z });
+  assert.ok(toHw && toHw.legs.some(l => l.road === w.ramps[0]) && toHw.legs.at(-1).road === w.ring, 'a route onto the highway climbs a slip road');
+  const across = m.route(mid(w.ramps[0].a), mid(w.ramps.at(-1).a)); assert.ok(across && across.length > 100, 'routes still cross the whole city');
+  const T = new WayTraffic(w, 30), top = Math.max(...w.roads.map(r => r.speed)); let joined = 0, left = 0, fast = 0;
+  for (let f = 0; f < 2700; f++) { const before = T.list.map(c => c.r); T.update(1 / 30, { x: 0, z: 0 }); T.list.forEach((c, i) => { if (before[i] !== c.r && c.r.ring) joined++; if (before[i]?.ring && c.r.ramp) left++; if (c.v > top * 1.13) fast++; }); }
+  let close = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.r === b.r && a.back === b.back && a.k === b.k && Math.abs(a.u - b.u) < 4) close++;
+  assert.ok(joined > 0 && left > 0 && !fast && close === 0 && T.list.every(c => Number.isFinite(c.x + c.y + c.z) && c.u >= 0 && c.u <= c.r.len), `cars between districts keep their lanes and distance, join the highway (${joined}) and leave it (${left}); ${fast} too fast, ${close} too close`);
+  T.dispose();
+  console.log('the ways between districts: hills, a river bridged, cuttings and tunnels, a highway with slip roads, cars on them ok');
+}
+// finding the way round a city (city-gps.js): a route that follows the player and is worked out again when they leave it, the
+// next turn, arriving, where the route goes (the game's, the player's waypoint, a pinned marker), and the maps' sums
+{
+  const { Gps } = await import('../src/kit/city-gps.js'), { layout, routeOn, roadOn } = await import('../src/kit/city.js');
+  const P = layout({ seed: 5, blocks: 5 }), city = { plan: P, start: { x: 0, z: 0 }, route: (a, b) => routeOn(P, a, b), road: (x, z) => roadOn(P, x, z) };
+  const gps = new Gps(city), n = P.nodes, a = roadOn(P, n[1].x + 20, n[1].z), b = roadOn(P, n.at(-2).x - 20, n.at(-2).z);
+  assert.ok(gps.target === null && gps.update(.1, a).next === null, 'nowhere to go: no route');
+  gps.to(b); gps.update(.1, { x: a.x, z: a.z, heading: a.heading });
+  const r = gps.route; assert.ok(r && r.turns.length >= 1 && r.turns.every(t => t.turn === 'left' || t.turn === 'right') && Math.abs(gps.left - r.length) < 3 && gps.next.in > 0, `a route of ${r.length.toFixed(0)} m with ${r.turns.length} turns`);
+  const made = gps.routes; let lastLeft = Infinity, down = true, turns = new Set();
+  for (let s = 0; s <= r.path.length; s += 3) { const p = r.path.at(s); gps.update(.1, { x: p.x + .8, z: p.z }); down &&= gps.left <= lastLeft + .01; lastLeft = gps.left; turns.add(gps.next.turn); }
+  assert.ok(gps.routes === made && down && gps.arrived && gps.next.turn === 'arrive' && turns.has('arrive'), `driven along it: never worked out again, metres to go only fall, arrived (${[...turns].join(', ')})`);
+  const off = { x: a.x + 45, z: a.z + 45 }; for (let i = 0; i < 6; i++) gps.update(.1, off);
+  assert.ok(gps.routes === made + 1 && Math.hypot(gps.route.points[0][0] - off.x, gps.route.points[0][1] - off.z) < 40, 'off the route: it is worked out again from where the player is');
+  const ahead = gps.ahead(12); assert.ok(ahead && Math.hypot(ahead.x - off.x, ahead.z - off.z) < 60, 'a point ahead along it, for an arrow');
+  // where it goes: the game's to(), else the waypoint, else the first pinned marker (a watched list, read each frame)
+  const job = { at: { x: n[7].x, y: 0, z: n[7].z }, kind: 'job', pinned: true }, jobs = { markers: [{ at: { x: 1, y: 0, z: 2 }, kind: 'job' }, job] };
+  gps.to(null); gps.watch(jobs); assert.ok(gps.target === job.at && gps.all().length === 2, 'with nowhere set it goes to the pinned marker of what it watches');
+  gps.waypoint = { at: { x: n[3].x, z: n[3].z }, kind: 'waypoint', pinned: true }; assert.ok(gps.target === gps.waypoint.at && gps.all().length === 3, 'the player\'s waypoint before that');
+  gps.to(b); assert.ok(gps.target === b, 'and the game\'s own before both');
+  const moving = { x: n[2].x, z: n[2].z }; gps.to(moving); gps.update(.1, a); const before = gps.routes; moving.x += 60; gps.update(.1, a);
+  assert.ok(gps.routes === before + 1, 'a target that moves far is followed');
+  // the maps' sums: a city point to the canvas and back, turned
+  const M = { cx: 50, cy: 60, s: .5, turn: .7, at: { x: 10, z: -20 } }, q = gps.toMap(M, 130, 40), back = gps.fromMap(M, q[0], q[1]);
+  assert.ok(Math.abs(back.x - 130) < 1e-9 && Math.abs(back.z - 40) < 1e-9, 'a point on the map and back');
+  gps.clear(); assert.ok(gps.target === null && !gps.all().length, 'cleared');
+  console.log('finding the way: a route that follows the player, turns, arriving, waypoints and markers ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {

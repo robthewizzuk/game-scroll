@@ -17,7 +17,8 @@ export * as destruction from './kit/destruction.js';
 export * as structure from './kit/structure.js';
 export * as props from './kit/props.js';
 export * as outdoors from './kit/outdoors.js';
-export * as city from './kit/city.js';
+import { City, Metro, metroPlan, Gps, layout, routeOn, roadOn, STYLES, FACADES, Traffic, People, Wanted, CRIMES, TACTICS } from './kit/city.js';
+export const city = { City, Metro, metroPlan, Gps, layout, routeOn, roadOn, STYLES, FACADES, Traffic, People, Wanted, CRIMES, TACTICS };   // (the city kit's other exports are its own parts' and other kits')
 export * as town3d from './kit/town3d.js';
 export * as models from './kit/models.js';
 export * as voxels from './kit/voxels.js';

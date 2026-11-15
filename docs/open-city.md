@@ -10,13 +10,14 @@ so each system can be given a budget, and a game can be built to it.
 
 A drive at 16 m/s across a made-up downtown of ten blocks a side, corner to corner and back, with the
 camera in a chase behind a car. The city is not built ahead: it builds as the drive reaches it, as a
-game's would. Three runs, each adding more:
+game's would. Four runs, the first three each adding more:
 
 | Run | What is on |
 | --- | --- |
 | `day` | The city to the horizon (`far: true`), traffic and people at 1.3 times normal, parked cars, at midday and dry |
 | `night` | The same drive at night in the rain: street lamps and headlights casting shadows, wet streets, drops on the lens, spray off the tyres |
 | `chase` | The night drive with three cars behind, the city solid in `gs.physics3d` (buildings, kerbs, street furniture, parked cars, the nearest traffic and people), crates in the road for the car to shove, people running from it and traffic braking for it |
+| `metro` | The whole city at midday: four districts (downtown, an old town, a suburb, a harbour) with land and roads between them (`gs.city` `Metro`), driven from the middle of downtown down to the harbour's quay and back. The districts round the start are made before the run, as a game's loading screen would; the harbour is made a step at a time on the way |
 
 Each run's report line gives each system's own time a frame (the city's code, the sky, the rain and
 wet, physics and how many hits), how many of the city's chunks are built, what the meshes keep in
@@ -47,8 +48,17 @@ Measured on the build machine (software WebGPU, size 0.25, so three blocks a sid
 The build machine is several times slower than a phone, so these say where the time goes, not what a
 phone takes.
 
+In the `metro` run the report line also says how many of the four districts were made and the most the city's code
+took in one frame while making one.
+
 ## What the scene shows today
 
-The city never frees a chunk it has built, so its memory grows with every street driven. A big city
-that streams (chunks freed behind, districts, curved roads, bridges and hills) is the next engine step,
-and this scene is its yardstick.
+A city lets go of the blocks it has driven past (`keep`, 600 m) and they stand as lit boxes, so its memory stays
+bounded however far the drive goes. A big city of districts (`Metro`) makes each district a step at a time as the
+drive comes near: on the build machine the longest step went from 105 ms (a new style of car, then the parked cars'
+shapes) to about 7 ms once every district's cars are shaped with the first. What is left is the city's own: a block
+of buildings is built whole in one frame (8 to 30 ms on the build machine), and each made district's traffic and
+people cost their own time, so three made at once took 9 ms a frame against 4 ms for one.
+
+Next for the big city: a highway with ramps, bridges over the water, tunnels and hills under the roads, and traffic
+on the roads between districts.
