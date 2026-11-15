@@ -2893,7 +2893,8 @@ red, and people who cross at the corners. `city.update(dt, player)` each frame; 
 makes cars brake for you. It answers `collide`, `ray`, `route(a, b)` (a `gs.paths` Path along the
 roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `people.scare`, and gives the plan as plain
 numbers for your own map. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
-roads between, each made over a few frames as the player comes near and let go behind. `new Gps(city)` finds the way: a route
+roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
+bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
 that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
 road. The full guide is [docs/city.md](city.md).
 

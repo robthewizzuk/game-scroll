@@ -116,6 +116,23 @@ update(dt) { metro.avoid(player, 1.2); metro.update(dt, player); }
   with the sea past it. `districts: 4` picks styles for you; `{ style, blocks, seed, name }` sets one district.
 - Roads join the districts: from the outer junction of one to the one of the next most nearly in line, curving across the land
   between (with its lines painted). Every district is joined to the rest.
+- The land between and round the districts rises into hills (`hills`, 0..1, .5); the districts themselves stay level. A river
+  runs down the gap between the first district and the next (`river: true`; that gap is made wide for it) to the sea, or to
+  the land's edge. Each road's height follows the land, smoothed and held to a gradient a car climbs (7 %), and level with
+  its district where it meets one: where that leaves it well over the land it is a **bridge** (a deck on piers, parapets each
+  side; the river is always bridged with room under it), well under it a **tunnel** (walls, a roof, lamps, a concrete portal
+  standing in a cutting at each end), and otherwise the land is cut or filled to meet it, with a level verge each side.
+- A **highway** goes round the whole city (`highway: true`), two lanes each way with a barrier between, on piers 6.5 m up
+  over level land and through cuttings and tunnels in the hills, with a **slip road** from an outer junction of each
+  district it can reach, joining it on the district's side in the way its cars then drive. `metro.ring` is the highway,
+  `metro.ramps` the slip roads.
+- Cars drive the roads between, the slip roads and the highway too: out of a district, up onto the highway (easing across into
+  its lane), round, off down another slip road, and into a district at the far end. They keep their lane at their own pace
+  behind the car ahead and brake for what you `avoid()`; they are in `metro.cars` with the districts' own.
+- `metro.ground(x, z, y)` is the road or the land between districts: under height `y` when given (under a bridge the land, in
+  a tunnel the road), so a car or a person stands at the right height anywhere; `metro.roadY(x, z)` the road's height (Gps
+  draws its way at it); `collide` keeps the player inside a bridge's parapets and a tunnel's walls; `solid(world)` makes the
+  hills, decks, parapets, piers and tunnels solid too.
 - Only the districts within `live` metres of the player (380) are real cities, each a `City` with its traffic, people,
   rooms and lamps. A district coming into range is made a step at a time, within `budget` ms a frame (3), so driving up to one
   doesn't stop the game; one well behind is let go. The others stand as their buildings in lit boxes, and with `far: true`
@@ -129,7 +146,7 @@ update(dt) { metro.avoid(player, 1.2); metro.update(dt, player); }
 - `metro.districts` lists them (`name`, `style`, `plan`, `rect`, `city` while made); `metro.city` is the made district the
   player is in, `metro.connectors` the roads between (`points`, `len`, `lanes`; `metro.lanePos(road, lane, s, back)`).
   `gs.city.metroPlan({ seed, districts })` places them without any 3D.
-- The traffic keeps to each district's own streets for now; the roads between are for the player.
+- A district's own traffic keeps to its streets; the cars between districts are the Metro's own.
 
 ## Finding the way: `Gps`
 

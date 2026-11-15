@@ -4383,6 +4383,8 @@ export interface CityPart {
    */
   Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string | { style?: string; blocks?: number | [number, number]; seed?: number; name?: string; [style: string]: Loose })[];
     /** [least, most] metres of land between districts ([120, 240]). */ between?: [number, number]; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
+    /** How hilly the land between and round the districts is, 0..1 (.5; districts stay level). */ hills?: number; /** A river down the gap between the first two districts, bridged (true). */ river?: boolean;
+    /** A highway round the whole city on piers, with a slip road to each district it can reach (true). */ highway?: boolean;
     side?: 'right' | 'left'; at?: { x: number; z: number } | null; keep?: number; far?: boolean | number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; traffic?: number; people?: number; paint?: boolean; crowd?: boolean; link?: boolean; [option: string]: Loose }) => CityMetro;
   /** A driving route across a plan's roads (from layout()), with no 3D: as City.route(). */
   routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };
@@ -4405,9 +4407,18 @@ export interface CityPart {
 }
 export interface CityDistrict { name: string; style: string; plan: CityPlan; rect: { x0: number; x1: number; z0: number; z1: number }; harbour: boolean; /** The City while it is made, else null. */ city: CityWorld | null }
 /** A road between two districts: points along it every few metres, from junction `from` of district a to junction `to` of b. */
-export interface CityRoad { id: number; a: CityDistrict; b: CityDistrict; from: Loose; to: Loose; points: [number, number][]; len: number; width: number; lanes: number; speed: number }
+/**
+ * A road between districts, a slip road (ramp: from a district to beside the highway, b the highway marker, ringS and join where and
+ * which way it joins) or the highway itself (ring, loop). y: its height at each point; kind: 0 on the land, 1 a bridge, 2 a tunnel,
+ * 3 the cutting before a tunnel; bridges and tunnels: their stretches in metres along it.
+ */
+export interface CityRoad { id: number | string; a: CityDistrict | Loose; b: CityDistrict | Loose; from: Loose; to: Loose; points: [number, number][]; at: number[]; len: number; width: number; lanes: number; speed: number;
+  y: Float32Array; kind: Uint8Array; bridges: { s0: number; s1: number }[]; tunnels: { s0: number; s1: number }[]; ring?: boolean; loop?: boolean; median?: boolean; ramp?: boolean; ringS?: number; join?: 1 | -1 }
 export interface CityMetro {
   districts: CityDistrict[]; connectors: CityRoad[]; bounds: { x0: number; x1: number; z0: number; z1: number }; start: { x: number; z: number }; night: number;
+  /** The highway round the city (null with highway: false), and the slip roads up to it. */ ring: CityRoad | null; ramps: CityRoad[];
+  /** The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). */
+  ways: { river: Loose; roads: CityRoad[]; landAt(x: number, z: number): number; natural(x: number, z: number): number; hills(x: number, z: number): number; near(x: number, z: number, reach?: number): { d: number; road: CityRoad; s: number; x: number; y: number; z: number; lateral: number } | null; traffic: { list: Loose[] } | null };
   /** The made districts. */ readonly cities: CityWorld[]; /** The made district the player is in, or null on the roads between. */ readonly city: CityWorld | null;
   /** The district being made a step at a time, or null. */ making: CityDistrict | null;
   /** The traffic and people of every made district. */ cars: CityWorld['cars']; people: CityWorld['people'];
@@ -4418,9 +4429,12 @@ export interface CityMetro {
   route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district: CityDistrict; from: Loose; to: Loose } | { road: CityRoad; from: number; to: number })[] } | null;
   /** The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). */
   road(x: number, z: number): Loose;
-  /** A point s metres along a road between districts { x, z, dx, dz }, and the middle of its lane k (back: driving from its second district). */
-  along(r: CityRoad, s: number, out?: Loose): { x: number; z: number; dx: number; dz: number }; lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; z: number; dx: number; dz: number };
-  avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro; buildingAt(x: number, z: number): CityBuilding | null; ground(x: number, z: number): number;
+  /** A point s metres along a road between districts, a slip road or the highway { x, y, z, dx, dz, kind, grade }, and the middle of its lane k (back: driving from its second end). */
+  along(r: CityRoad, s: number, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; kind: number; grade: number }; lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; grade: number };
+  /** The ground at x, z: in a district as City.ground(); between them the road or the land, under height y when given (under a bridge, the land; in a tunnel, the road). */
+  ground(x: number, z: number, y?: number): number;
+  /** The height of the road at x, z (on a bridge its deck, in a tunnel its floor), else the land: for things drawn on the road. */ roadY(x: number, z: number): number;
+  avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro; buildingAt(x: number, z: number): CityBuilding | null;
   collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null; ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null;
   spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?: () => number }): CitySpot | null;
   occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]; walls(): Loose[];

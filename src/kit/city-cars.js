@@ -19,7 +19,7 @@
 // motion the WebGPU view works out for frame generation and SGSR 2 comes from where a thing was drawn last
 // frame, so a reused one would streak from the last car's place.
 // Kit use only: city.js's Traffic draws through it (City option fleet).
-import { BoxGeometry, BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial,
+import { BoxGeometry, BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Euler, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial,
   NearestFilter, NoColorSpace, Object3D, Quaternion, RGBAFormat, Vector3 } from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
@@ -161,7 +161,7 @@ function glassMat(k) {
 const lampMat = kind => shared(kind, () => kind === 'head' ? new MeshStandardMaterial({ color: '#f2eee2', emissive: new Color('#fff1d0'), emissiveIntensity: .05, roughness: .2 })
   : new MeshStandardMaterial({ color: '#9c1010', emissive: new Color('#ff2414'), emissiveIntensity: kind === 'brake' ? 2.6 : .1, roughness: .25 }));
 
-const _m = new Matrix4(), _q = new Quaternion(), _s = new Vector3(1, 1, 1), _p = new Vector3(), _up = new Vector3(0, 1, 0), _c = new Color(), _w = new Object3D();
+const _m = new Matrix4(), _q = new Quaternion(), _s = new Vector3(1, 1, 1), _p = new Vector3(), _up = new Vector3(0, 1, 0), _c = new Color(), _w = new Object3D(), _eu = new Euler(0, 0, 0, 'YXZ');
 const ZERO = new Matrix4().makeScale(0, 0, 0);
 
 // a box as one of a car's surfaces (its corners coloured, its row in the table): the furthest parked cars' shapes
@@ -273,7 +273,7 @@ export class Fleet {
     for (const c of list) {
       const F = this.far[c.style];
       if (this.close.has(c)) { F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); this.pose(c, this.close.get(c), dt, night); continue; }
-      _q.setFromAxisAngle(_up, c.heading + Math.PI); _m.compose(_p.set(c.x, 0, c.z), _q, _s);
+      if (c.pitch) _q.setFromEuler(_eu.set(c.pitch, c.heading + Math.PI, 0)); else _q.setFromAxisAngle(_up, c.heading + Math.PI); _m.compose(_p.set(c.x, c.y || 0, c.z), _q, _s);   // (y, pitch: a car on a hill or a bridge)
       F.paint.setMatrixAt(c.slot, _m); F.rest.setMatrixAt(c.slot, _m); F.paint.setColorAt(c.slot, _c.set(c.colour));
     }
     for (const F of this.far) { sendUsed(F.paint.instanceMatrix, F.n); sendUsed(F.rest.instanceMatrix, F.n); sendUsed(F.paint.instanceColor, F.n); }
@@ -321,7 +321,7 @@ export class Fleet {
   // a close-up car each frame: where it is, its body on its springs, its wheels, its brake lamps
   pose(c, r, dt, night) {
     const k = this.kitOf(c), o = r.o;
-    o.position.set(c.x, 0, c.z); o.rotation.set(0, c.heading + Math.PI, 0);
+    o.position.set(c.x, c.y || 0, c.z); o.rotation.set(c.pitch || 0, c.heading + Math.PI, 0, 'YXZ');
     if (dt > 0) {
       const ds = Math.max(c.v * dt, 1e-4); let dh = c.heading - r.h; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
       const st = Math.max(-.6, Math.min(.6, -Math.atan(k.wheelbase * dh / ds))), h = Math.min(1, dt * 8), a = (c.v - r.v) / dt;
@@ -351,7 +351,7 @@ export class Fleet {
       const k = this.kitOf(c), sh = Math.sin(c.heading), ch = Math.cos(c.heading), f = k.length / 2 + .05, s = k.width * .36;   // (its nose along (sin, cos) of its heading)
       for (const side of [-1, 1]) {
         const p = pool[n++] ||= { x: 0, y: 0, z: 0, dir: [0, -.05, 0], angle: .5, soft: .35, shape: 'headlamp', shadow: true, near: .3, col: '#fff3dc', i: 0, reach: 26 };
-        p.x = c.x + sh * f - ch * s * side; p.y = k.lampY; p.z = c.z + ch * f + sh * s * side; p.dir[0] = sh; p.dir[2] = ch; p.i = 30 * night;
+        p.x = c.x + sh * f - ch * s * side; p.y = k.lampY + (c.y || 0); p.z = c.z + ch * f + sh * s * side; p.dir[0] = sh; p.dir[1] = -.05 + Math.sin(c.pitch || 0); p.dir[2] = ch; p.i = 30 * night;
         out.push(p);
       }
     }

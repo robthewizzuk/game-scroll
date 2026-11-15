@@ -1376,7 +1376,9 @@ function opencity({ gs, HD, size }) {
       lo = { x: Math.min(...xs) + 20, z: Math.min(...zs) + 20 }; hi = { x: Math.max(...xs) - 20, z: Math.max(...zs) - 20 };
       city = new City(v, { ...opts, at: lo });
     }
-    const go = city.route(lo, hi), back = city.route(hi, lo), pts = go.points.concat(back.points.slice(1));
+    // (the whole city: up downtown's slip road, along the highway and down to the harbour, over the river and back by the road between)
+    const up = key === 'metro' && city.ramps.find(r => r.a === city.districts[0]), via = up && city.along(city.ring, up.ringS + up.join * 80);
+    const go = via ? { points: city.route(lo, via).points.concat(city.route(via, hi).points.slice(1)) } : city.route(lo, hi), back = city.route(hi, lo), pts = go.points.concat(back.points.slice(1));
     path = new gs.paths.Path(pts.filter((p, i) => !i || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 2).map(([x, z]) => ({ x, y: 0, z })), { loop: true, kind: 'smooth', tension: .3 });
     sky.time = night ? 22.5 : 13; sky.update(0);
     if (night) { weather = new gs.sky.Weather(v, { kind: 'rain', amount: .6, level: city, area: 28, max: Math.round(900 * k), lens: true }); weather.wet = 1; weather.pools = .4; weather.watch(car); }
@@ -1400,7 +1402,9 @@ function opencity({ gs, HD, size }) {
   };
   const place = (m, d, dt) => {
     path.at(d, P); path.at(d + 3, Q);
-    m.position.set(P.x, 0, P.z); m.rotation.y = Math.atan2(Q.x - P.x, Q.z - P.z) + Math.PI; m.move(dt, SPEED, { steer: 0 }); m.updateMatrixWorld(true);
+    // (on the whole city's slip roads, bridges and highway: at the road's height, nose up a climb)
+    const y = mode === 'metro' ? city.ground(P.x, P.z, (m.userData.y ?? 0) + 2) : 0, yq = mode === 'metro' ? city.ground(Q.x, Q.z, y + 2) : 0; m.userData.y = y; P.y = y;
+    m.position.set(P.x, y, P.z); m.rotation.order = 'YXZ'; m.rotation.set(Math.atan2(yq - y, 3), Math.atan2(Q.x - P.x, Q.z - P.z) + Math.PI, 0); m.move(dt, SPEED, { steer: 0 }); m.updateMatrixWorld(true);
     return Math.atan2(Q.x - P.x, Q.z - P.z);
   };
   return {
@@ -1419,8 +1423,8 @@ function opencity({ gs, HD, size }) {
       if (back) sum.heading = h; else sum.heading += Math.atan2(Math.sin(h - sum.heading), Math.cos(h - sum.heading)) * Math.min(1, dt * 3);
       chasers.forEach((c, i) => { if (c.visible) place(c, (d - BACK[i] + path.length) % path.length, dt); });
       const fx = Math.sin(sum.heading), fz = Math.cos(sum.heading);
-      cam.position.set(P.x - fx * 9, 3.2, P.z - fz * 9); ahead.set(P.x + fx * 8, 1.4, P.z + fz * 8); cam.lookAt(ahead); cam.updateMatrixWorld();
-      sun.follow(P.x, 0, P.z);
+      const cy = P.y || 0; cam.position.set(P.x - fx * 9, cy + 3.2, P.z - fz * 9); ahead.set(P.x + fx * 8, cy + 1.4, P.z + fz * 8); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(P.x, cy, P.z);
       let t0 = performance.now(); sky.update(dt); sum.sky += performance.now() - t0;
       if (mode === 'chase') {
         city.avoid(car.position, 1.2); for (const c of chasers) city.avoid(c.position, 1.2);
