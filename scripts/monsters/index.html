@@ -1,0 +1,80 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.monsters filmed for scripts/monsters.cjs: a beast and a dragon fighting a stand-in hero, with each attack's telegraph drawn
+// on the ground (red while it winds up, white the moment it hurts); then a dog taking hits (Hurt): a flinch, a stagger, knocked
+// down, getting up, dead. It prints what each cell measured.
+//   ?cell=300x220 &gpu (WebGPU)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), { pbr } = gs.hd, { Moveset, Hurt, ATTACKS } = gs.monsters, { Stats } = gs.stats, { creature } = gs.models;
+  await creature.ready?.([{ like: 'beast', seed: 4 }, { like: 'dragon', seed: 2 }, { like: 'dog', seed: 7 }]);
+  const [cw, ch] = (Q.get('cell') || '300x220').split('x').map(Number), dt = 1 / 60;
+  window.__hd.force = 2; window.__hd.upscale = false;
+  const cells = [], info = [];
+  // one little scene per cell: a floor, a stand-in hero, the creature, a telegraph mesh
+  function scene(like, seed, size) {
+    const v = new gs.hd.HDView({ bg: '#8ea0b4', fog: .015, env: .45, amb: .35 });
+    const sun = gs.hd.sun('#fff1dc', 1.4, 12, [.5, .9, .4]); v.scene.add(sun, sun.target); v.sun = sun;
+    const floor = new T.Mesh(new T.BoxGeometry(30, .2, 30), pbr('#7c7462', { rough: .9 })); floor.position.y = -.1; floor.receiveShadow = true; v.scene.add(floor);
+    const c = creature({ like, seed, size }); c.traverse(m => { if (m.isMesh) m.castShadow = true; }); v.scene.add(c);
+    const hero = new T.Mesh(new T.CapsuleGeometry(.3, 1.1, 6, 12), pbr('#3a5a9a', { rough: .6 })); hero.position.set(0, .85, 2.2); hero.castShadow = true; v.scene.add(hero);
+    const tele = new T.Mesh(new T.BufferGeometry(), new T.MeshBasicMaterial({ color: '#ff3020', transparent: true, opacity: .45, depthWrite: false, side: T.DoubleSide })); tele.renderOrder = 2; v.scene.add(tele);
+    return { v, c, hero, tele };
+  }
+  // the telegraph: a flat piece of ground in the attack's shape
+  function draw(tele, s) {
+    tele.visible = !!s && s.kind !== 'none'; if (!tele.visible) return;
+    let g;
+    if (s.kind === 'cone' || s.kind === 'rear') g = new T.CircleGeometry(s.radius, 24, -s.angle, s.angle * 2);
+    else if (s.kind === 'ring') g = new T.RingGeometry(Math.max(.01, s.inner), s.radius, 40);
+    else if (s.kind === 'line') { g = new T.PlaneGeometry(s.radius, s.width); g.translate(s.radius / 2, 0, 0); }
+    else g = new T.CircleGeometry(s.radius, 40);
+    tele.geometry.dispose(); tele.geometry = g; tele.rotation.set(-Math.PI / 2, 0, s.dir - Math.PI / 2); tele.position.set(s.x, .02, s.z);
+    tele.material.color.set(s.phase === 'active' ? '#ffffff' : '#ff3020'); tele.material.opacity = s.phase === 'windup' ? .2 + .4 * (s.part || 0) : .55;
+  }
+  const shot = async (S, label, camAt = [3.4, 3, 4.2], look = [0, .7, .8]) => {
+    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const cx = cv.getContext('2d'), v = S.v;
+    v.cam.fov = 45; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 100; v.cam.updateProjectionMatrix(); v.cam.position.set(...camAt); v.cam.lookAt(...look); v.cam.updateMatrixWorld();
+    v.render(cx, cw, ch); await frame(); v.render(cx, cw, ch); cx.font = '12px sans-serif'; cx.fillStyle = '#000'; cx.fillText(label, 5, 14); cells.push(cv);
+  };
+  // fights: run a Moveset until a moment, with the creature moved by it
+  async function fight(like, seed, size, attacks, stops, heroZ = 2.2) {
+    const S = scene(like, seed, size), body = S.c, target = { body: S.hero, radius: .35, stats: new Stats({ hp: { max: 500 } }) };
+    S.hero.position.z = heroZ;
+    const m = new Moveset(body, { attacks, radius: Math.max(.4, body.size.width * .5), rest: [0, 0], rng: () => .3 });
+    let t = 0, k = 0; const log = [];
+    m.on('start', n => log.push(n.name)); m.on('hit', h => log.push('hit ' + h.damage));
+    while (k < stops.length) {
+      const o = m.update(dt, target, [target]); t += dt;
+      body.position.x += o.move.x; body.position.y += o.move.y; body.position.z += o.move.z; body.rotation.y = o.face;
+      if (!o.attack) { const sp = o.speed * (body.speeds.walk || 1); body.position.x += o.walk.x * sp * dt; body.position.z += o.walk.z * sp * dt; body.move(dt, sp); }
+      else if (o.pose && body.rig.poses[o.pose.name]) body.rig.play(o.pose.name, { at: o.pose.at }).update(dt, { speed: 0 }); else body.move(dt, 0);
+      draw(S.tele, m.now?.shape);
+      const [when, label] = stops[k]; if (when(m, t)) { await shot(S, label); k++; }
+      if (t > 12) throw new Error(like + ': ' + stops[k][1] + ' never came');
+    }
+    info.push(`${like}: ${log.join(', ')}; the hero has ${target.stats.get('hp')} left`);
+  }
+  const phase = (name, ph, at = 0) => m => m.now?.name === name && m.now.phase === ph && (m.now.phaseT ?? 0) >= at;
+  await fight('beast', 4, 1.6, ['claw', 'stomp'], [[phase('claw', 'windup', .6), 'beast: claw winding up'], [phase('claw', 'active'), 'claw: it hurts now'], [phase('stomp', 'windup', .7), 'stomp winding up']], 1.9);
+  await fight('dragon', 2, 3.2, [{ name: 'breath', range: [0, 7] }, 'tail'], [[phase('breath', 'windup', .5), 'dragon: breath coming'], [phase('breath', 'active', .4), 'breath (hurts each .25 s)']], 3.4);
+  // Hurt on a dog: the hero's blows, from the front
+  {
+    const S = scene('dog', 7, 1.1), dog = S.c, hurt = new Hurt(dog, { ground: () => 0 }); S.tele.visible = false; S.hero.position.set(0, .85, 1.6);
+    const run = async (s, label) => { for (let t = 0; t < s; t += dt) { dog.move(dt, 0); hurt.update(dt); } if (label) await shot(S, label, [2.6, 1.7, 2.8], [.2, .35, -.3]); };
+    await run(.3); hurt.hit({ x: 0, y: 0, z: -2 }, { power: .15 }); await run(.07, 'dog: flinch');
+    await run(.5); const z0 = dog.position.z; hurt.hit({ x: 0, y: 0, z: -6 }, { power: .5 }); await run(.25, 'stagger back'); await run(.6);
+    const z1 = dog.position.z; hurt.hit({ x: 2.5, y: 0, z: -1 }, { power: .9 }); await run(.45, 'knocked down'); await run(.95, 'getting up'); await run(.8);
+    hurt.die({ x: 0, y: 0, z: -3 }); await run(1, 'dead');
+    info.push(`dog: staggered back ${(z0 - z1).toFixed(2)} m, then knocked ${(z1 - dog.position.z).toFixed(2)} m on, state ${hurt.state}`);
+  }
+  const cols = 4, sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * Math.ceil(cells.length / cols); const sx = sheet.getContext('2d'); sx.fillStyle = '#222'; sx.fillRect(0, 0, sheet.width, sheet.height);
+  cells.forEach((c, i) => sx.drawImage(c, (i % cols) * cw, (i / cols | 0) * ch)); document.body.append(sheet);
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

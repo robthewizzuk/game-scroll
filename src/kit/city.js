@@ -61,6 +61,7 @@ import { GroundPaint } from './ground-paint.js';
 import { Skyline } from './city-far.js';
 import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
+import { vehicle } from './models/vehicles.js';
 
 /* ---------- looks ---------- */
 
@@ -594,7 +595,7 @@ class Traffic {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.avoid = []; this.R = rng(city.seed * 13 + 1); this.radius = 190;
     const P = this.plan; this.sideK = P.side === 'left' ? -1 : 1;
     // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
-    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, count) : null;
+    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, count, { crowd: () => city.people?.crowd }) : null;   // (its close cars' drivers are the crowd's)
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
     const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: false, color: '#ffffff' });
     this.meshes = {};
@@ -740,6 +741,20 @@ class Traffic {
     this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
   }
   near(p, r) { const pz = p.z ?? p.y; return this.list.filter(c => Math.hypot(c.x - p.x, c.z - pz) <= r).sort((a, b) => Math.hypot(a.x - p.x, a.z - pz) - Math.hypot(b.x - p.x, b.z - pz)); }
+  /**
+   * A car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people
+   * sat at the wheel (driver: false for none), so a game can car.pull('driver', player) or car.enter(player). It is the game's
+   * from then on (give it physics, or drive it by hand); the traffic goes on without it. null if c isn't in it.
+   */
+  take(c, { driver = true } = {}) {
+    const i = this.list.indexOf(c); if (i < 0) return null;
+    this.list.splice(i, 1);
+    const car = this.fleet ? this.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
+    if (!this.fleet) { car.position.set(c.x, 0, c.z); car.rotation.y = c.heading + Math.PI; }
+    this.city.group.add(car); car.updateMatrixWorld(true);
+    if (driver) { const who = human(FOLK[(c.id ?? c.slot ?? 0) % FOLK.length]); this.city.group.add(who); car.putIn(who, 'driver'); }
+    return car;
+  }
   /** The first car whose body overlaps a circle at p of radius r (or null). */
   hit(p, r = .5) {
     const pz = p.z ?? p.y;
@@ -777,7 +792,7 @@ class People {
   constructor(city, count) {
     this.city = city; this.plan = city.plan; this.max = count; this.list = []; this.R = rng(city.seed * 17 + 3); this.radius = 100;
     // sculpted people as one crowd on a Next Gen view (City option crowd); figures of boxes elsewhere
-    this.crowd = city.opts.crowd ? new Crowd(city.view, { of: FOLK.map(o => human(o)), moves: ['idle', 'walk', 'run', 'downed'], far: 140 }) : null;
+    this.crowd = city.opts.crowd ? new Crowd(city.view, { of: FOLK.map(o => human(o)), moves: ['idle', 'walk', 'run', 'downed', 'drive'], far: 140 }) : null;
     this.members = []; this.spread = 50;
     if (this.crowd) { this.radius = 75; this.spread = 32; }   // (more of them, closer round the player: busy pavements where you are)
     if (this.crowd) return;

@@ -130,6 +130,10 @@ export const POSES = {
   // shooting out of a car's side window (seated: the legs are the seat's), and through the windscreen
   carAimL: cyc(() => P({ spine: [0, .95, .12], head: [0, .35, 0], armR: [-1.45, 0, .3], foreR: [-.1, 0, 0], armL: [-1.3, 0, -.5], foreL: [-.5, 0, 0] }), 0),
   carAimF: cyc(() => P({ spine: [.1, .1, 0], head: [-.05, -.1, 0], armR: [-1.4, 0, .3], foreR: [-.2, 0, 0], armL: [-1.3, 0, -.5], foreL: [-.55, 0, 0] }), 0),
+  // at the wheel of a car: leaning back in the seat, the legs out to the pedals, both hands forward (gs.models vehicles put them on the wheel)
+  drive: cyc(p => P({ spine: [-.2, 0, 0], head: [.16 + S(p * TAU) * .01, 0, 0], legL: [-1.38, 0, -.1], legR: [-1.36, 0, .07], shinL: [1.12, 0, 0], shinR: [1.08, 0, 0], footL: [-.2, 0, 0], footR: [-.25, 0, 0], armL: [-1.02, .1, -.18], armR: [-1.02, -.1, .18], foreL: [-.62, 0, 0], foreR: [-.62, 0, 0] }, .245), 0),
+  // astride a motorbike: leaning forward, the knees out and bent to the pegs, the arms out to the bars
+  ride: cyc(p => P({ spine: [.42 + S(p * TAU) * .008, 0, 0], head: [-.38, 0, 0], legL: [-1.15, 0, -.32], legR: [-1.15, 0, .32], shinL: [1.75, 0, 0], shinR: [1.75, 0, 0], footL: [-.45, 0, 0], footR: [-.45, 0, 0], armL: [-1.2, .15, -.2], armR: [-1.2, -.15, .2], foreL: [-.4, 0, 0], foreR: [-.4, 0, 0] }, .17), 0),
 };
 // the other side of a pose: left and right swapped, as in a mirror (turns about y and z change sign)
 const SWAP = { armL: 'armR', armR: 'armL', foreL: 'foreR', foreR: 'foreL', handL: 'handR', handR: 'handL', legL: 'legR', legR: 'legL', shinL: 'shinR', shinR: 'shinL', footL: 'footR', footR: 'footL' };
@@ -165,7 +169,7 @@ Object.assign(POSES, {
 });
 POSES.dodgeR = cyc(mirror(POSES.dodgeL.cycle), 0);
 const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
-const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2 };
+const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
 // Gestures for conversations and cutscenes (Rob's RPG pick 1, 2026-11-15): each plays once and ends where it
 // began, standing at ease (rig.play('nod'); rig.done when it is over). Upper body and head only move; the legs
 // stand as at ease. Signs: a head's +x looks down, +y turns it to its own left, +z tips it to its left; arms as above.

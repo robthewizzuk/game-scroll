@@ -609,6 +609,22 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   `batch` (96) probes are relit a frame; a sun going in takes a couple of rounds. Moving things and
   people are not in the traced copy, so they take the light but don't bounce it. `HD.info.bounce` says
   what it holds; `HD.tracedBounce = false` turns it off.
+- `v.farWorld = true | { from, every, res, slack }` (WebGPU): the far world drawn into four pictures
+  round the camera, one looking each way, and shown from them instead of drawn again every frame. What
+  is still and at least `from` metres off (150) goes in: plain meshes and plain sets of copies, opaque,
+  not skinned, not moving. Each picture keeps its depth, so near things, people and anything far that
+  moves are drawn live in front of it or behind it as the scene has them, and fog, see-through things,
+  the upscaler and frame generation treat it as the scene. One picture is drawn again every `every` (6)
+  frames, so light changes reach it within half a second or so. It stands in only while the camera
+  stays within `slack` metres (a fiftieth of `from`) of where the pictures were drawn and doesn't zoom
+  in past their sharpness (`res`, 1024 pixels a picture at most): walking on or looking through a
+  scope draws everything live, and the pictures are drawn again where the camera settles. A far thing
+  that moves is drawn live until it has kept still a while; `mesh.userData.noFar = true` keeps one live from the start,
+  and `userData.hollow = r` says a mesh has nothing within `r` metres of its middle (gs.outdoors'
+  `horizon()` ring says so itself). Shadows, reflections and occlusion culling see the far things as
+  before. For a nest over a valley, a lookout, a castle wall: a view that keeps still. `HD.info.far`
+  says what it holds and why it is off; `HD.farWorld = false` draws everything live. WebGL draws
+  everything live.
 - `v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps }`
   (WebGPU, high and ultra): fog that light really travels through, kept in a grid of small boxes fitted
   to the view (froxels, as in Frostbite and Unreal) and worked out each frame on the graphics chip. The
@@ -1081,6 +1097,12 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   refreshes apart: 28.8 on a 144 Hz screen) and a made frame between each pair, on a 60 Hz screen too
   (the only pick that fills one), and a faster screen is asked for 60 Hz. Each real frame is given two
   refreshes of the graphics chip (pace **early**, below), so a game can draw more per frame than at 60.
+  A real frame's own code (update and draw) still has one refresh, since the refresh for the frame made
+  between needs the phone's main thread too. Where that refresh keeps coming too late (a game whose code
+  takes about a whole 60 Hz refresh, like Long Shadow on the Fold), the game asks the screen for 120 Hz
+  instead (`speed.js` `frameGenSlack`, remembered for it). It still makes one frame between each pair, shown
+  on the middle refresh, or on the one after if the real frame's code ran over: still 60 different pictures
+  a second. Only then does it fall back to pace first, and after that off.
 - **Screen rate:** phone screens pick their own rate (LTPO screens like the Fold's step between 120,
   60 and lower) and a web page can't ask for one, so the app asks through `plugins/screen-rate`
   (`src/kit/screenrate.js`, Android) while a round is played: the fastest rate that's a whole number of
@@ -1320,7 +1342,9 @@ works on instanced meshes and on WebGL and WebGPU alike.
   about a quarter of the triangles and a sixth of the draws for people, and look the same (the sun's normal
   bias is 4 cm). Contact shadows still come from what the picture shows (a nose on a cheek). The middle and far
   levels also pose only their own points (they posed the whole close-up list). `person.shadowBody` is the mesh;
-  `__hd.shadowBody = false` has each level cast its own again. `human({ shadows: false })` has none.
+  `__hd.shadowBody = false` has each level cast its own again. `human({ shadows: false })` has none. A `gs.props.Crowd`
+  does the same for its members: each kind casts from one shape (a person's about 1,000 triangles) holding every
+  member whose level casts, in one draw a shadow pass (`crowd.kinds[i].body`).
 - GPU culling (WebGPU): a `gs.props` kind with 2,000 copies or more is culled on the graphics chip
   instead of the CPU. A compute pass tests every copy against the view and the lights' shadow views,
   picks its detail level by distance, and packs the ones that pass into a list drawn with one indirect
