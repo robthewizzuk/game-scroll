@@ -17,6 +17,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Build, boxUV, rngOf } from './props.js';
 import { material } from './materials.js';
 import { reach } from '../characters.js';
+import { Solid } from '../solid-body.js';
 
 const Z = Math.PI / 2;
 // the materials, shared by every weapon that asks for the same look
@@ -345,7 +346,9 @@ const holdQ = (h, upright, out) => {
  * it where that way of holding has it (eased from the last: how 'aim' | 'ready' | 'hip' | 'low' | 'slung', or 'none' to
  * put it away: it is hidden) and the hands onto it, both for a two-handed one (gs.models.human: hold(), with the fingers
  * closed round it; a plain figure: its arms bent to reach). Up to aim and at the hip it points where the body faces,
- * turned about the right shoulder by pitch (up and down, radians, up +) and yaw (the turn at the waist, left +). Then
+ * turned about the right shoulder by pitch (up and down, radians, up +) and yaw (the turn at the waist, left +). It never goes into its
+ * holder's own body or, with a gs.physics3d World3D in the game, into a wall: it is turned about the grip as little as it takes (the muzzle
+ * comes up against a wall as a real one would; turned: how far, this frame; keep: false for none of that). Then
  * muzzle (a point in the world) and dir (the way it points; a thing swung: along its length) are where shots leave.
  */
 export class Wield {
@@ -373,7 +376,7 @@ export class Wield {
     g.quaternion.premultiply(P.getWorldQuaternion(_q2)).premultiply(this.spine.getWorldQuaternion(_q).invert());
   }
   /** Puts it away (how 'none'), slings it, holds it ready, at the hip, low, or up to aim; after rig.update(). */
-  update(dt, { how = this.how, pitch = 0, yaw = 0, hands = true } = {}) {
+  update(dt, { how = this.how, pitch = 0, yaw = 0, hands = true, keep = true } = {}) {
     const g = this.gun;
     if (how !== this.how) { this.from = { p: g.position.clone(), q: g.quaternion.clone() }; this.how = how; this.k = 0; }
     g.visible = how !== 'none'; if (how === 'none') return this;
@@ -382,6 +385,8 @@ export class Wield {
     this.place(h, pitch, yaw);
     if (this.from && this.k < 1) { const s = this.k * this.k * (3 - 2 * this.k); g.position.lerpVectors(this.from.p, g.position, s); g.quaternion.slerpQuaternions(this.from.q, g.quaternion, s); }
     g.updateMatrixWorld(true);
+    // (kept out of its holder's body and out of walls: turned about the grip as little as it takes, before the hands go onto it)
+    if (keep && how !== 'slung') { const sb = this.solid ||= new Solid(this.person); this.turned = sb.keepOff(g, { pivot: g.points.grip.position, local: true, ahead: true }); }
     if (hands && how !== 'slung') this.hands(h.one);
     g.points.muzzle.getWorldPosition(this.muzzle);
     this.dir.set(0, this.info.upright ? 1 : 0, this.info.upright ? 0 : -1).transformDirection(g.matrixWorld);

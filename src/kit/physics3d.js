@@ -682,13 +682,14 @@ export class World3D {
    * where its middle is, along move (a vector: how far it goes). Returns { thing, point (where they touch), normal (out
    * of what it met), distance, share (0..1 of the move), at (where the shape's middle is then) } or null. still: only what
    * never moves (the level: where a ball will bounce, whatever is driving about); not: a body, mover or rider to pass
-   * through (its own); turn: the shape's turn (a quaternion). For "where will this land" and "is there room to go there".
+   * through (its own); turn: the shape's turn (a quaternion); inside: false leaves out what it starts touching and moves away from (a body
+   * against a wall asking for room the other way). For "where will this land" and "is there room to go there".
    */
-  sweep(shape, from, move, { still = false, not = null, turn = null } = {}) {
+  sweep(shape, from, move, { still = false, not = null, turn = null, inside = true } = {}) {
     if (!this.steps) this.queries();
     const o = vec(from), m = vec(move), l = Math.hypot(m.x, m.y, m.z); if (!(l > 0)) return null;
     const S = shape.ball != null ? (this._ball?.radius === shape.ball ? this._ball : this._ball = new R.Ball(shape.ball)) : shapeDesc(shape).shape;
-    const F = R.QueryFilterFlags, hit = this.world.castShape(this.inner(o), turn || NOTURN, m, S, 0, 1, true, still ? F.EXCLUDE_SENSORS | F.ONLY_FIXED : F.EXCLUDE_SENSORS, undefined, undefined, not?.body);
+    const F = R.QueryFilterFlags, hit = this.world.castShape(this.inner(o), turn || NOTURN, m, S, 0, 1, inside, still ? F.EXCLUDE_SENSORS | F.ONLY_FIXED : F.EXCLUDE_SENSORS, undefined, undefined, not?.body);
     if (!hit) return null;
     const k = hit.time_of_impact, w = hit.witness1, n = hit.normal1;
     return { thing: hit.collider.parent()?.userData || null, point: this.outer(V(w.x, w.y, w.z)), normal: V(n.x, n.y, n.z), distance: k * l, share: k, at: V(o.x + m.x * k, o.y + m.y * k, o.z + m.z * k), part: hit.collider.userData ?? null };

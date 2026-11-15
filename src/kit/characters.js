@@ -26,6 +26,7 @@
 import { timed } from './prof.js';
 import { Vector3, Quaternion, Euler } from 'three';
 export { Face, shapes, visemes, FACE_SHAPES } from './skin.js';
+export { Solid } from './solid-body.js';
 
 const _v = new Vector3(), _w = new Vector3(), _q = new Quaternion(), _q2 = new Quaternion(), _e = new Euler(0, 0, 0, 'YXZ');
 

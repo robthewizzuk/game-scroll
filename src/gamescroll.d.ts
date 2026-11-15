@@ -1664,6 +1664,13 @@ export interface CharactersPart {
   Carry: new (person: Loose, o?: { spots?: Record<string, CarrySpot>; time?: number }) => CarryT;
   /** Where things are carried: hipL, hipR, back, backL, shield, quiver, bow, belt. */
   SPOTS: Record<string, CarrySpot>;
+  /**
+   * A person's body as solid rods (trunk, seat, thighs, shins, arms, head; the ones the cloth goes round), to keep what is posed by hand
+   * out of what is solid: acted falls and key poses out of walls (keepOut), the way with room to go down in (room), and a held gun or
+   * sword out of its holder and out of walls (keepOff; weapon.wield does it by itself). The world is the game's gs.physics3d World3D,
+   * found by itself, and what in it stands still.
+   */
+  Solid: new (person: Loose, o?: { world?: Loose | false; pad?: number; head?: boolean; link?: boolean }) => SolidT;
 }
 export interface CarrySpot { bone: string; /** where the grip sits, in the person's own space as they stand (1.8 m, facing +z, the left at +x) */ at: P3; /** which way its length points */ dir: P3; /** which way its flat faces */ face: P3; /** the hand that draws it */ hand?: 'L' | 'R' }
 export interface CarryT {
@@ -1680,6 +1687,20 @@ export interface CarryT {
   on(ev: 'grab' | 'drawn' | 'stowed', fn: (e: { name: string; to?: string }) => void): CarryT;
   update(dt: number): void;
   clear(): void;
+}
+export interface SolidRod { a: [number, number, number]; b: [number, number, number]; r: number; rb: number; part: 'trunk' | 'seat' | 'thigh' | 'shin' | 'arm' | 'fore' | 'head' }
+export interface SolidT {
+  person: Loose; readonly rods: SolidRod[]; readonly world: Loose | null;
+  /** The rods where the bones are now. */
+  update(): SolidT;
+  /** Puts the person back out of the world's still things after rig.update() (moves person.position): how far, or null if clear. up: false only along the ground; most: metres at most; ground: false leaves the ground out (a game that fits feet itself). */
+  keepOut(o?: { world?: Loose; up?: boolean; most?: number; ground?: boolean; tries?: number }): { x: number; y: number; z: number } | null;
+  /** Metres clear that way ({ x, z } or [x, z]; with y too) from the hips, up to length: for picking which way to go down. */
+  room(dir: XYZ | { x: number; z: number; y?: number } | number[], length?: number, o?: { world?: Loose; r?: number; heights?: number[] }): number;
+  /** Turns a held thing about pivot as little as it takes to get it out of this body (but the parts in skip) and out of walls: the turn made (radians). local: pivot in the thing's own space; ahead: only the longer side of the pivot; from, to, r: the line through it to test (default from its shape). */
+  keepOff(thing: Loose, o?: { pivot?: XYZ | number[] | null; local?: boolean; from?: XYZ | number[]; to?: XYZ | number[]; r?: number; skip?: string[]; ahead?: boolean; world?: Loose; walls?: boolean; most?: number; tries?: number }): number;
+  /** The box round every rod. */
+  bounds(pad?: number): { lo: XYZ; hi: XYZ };
 }
 export interface ReactionsOptions {
   /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Left out: the one the game made; false, or none made: falls are acted. */
@@ -4221,6 +4242,8 @@ export interface ClothPart {
   ball(o?: { x?: number; y?: number; z?: number; r?: number }): ClothSolid;
   /** A solid rod with round ends (a leg, a post): set(a, b) moves it; rb: its radius at b, if it narrows. */
   capsule(o?: { a?: Arr3; b?: Arr3; r?: number; rb?: number }): ClothSolid;
+  /** A solid box (a wall, a crate, a table): at its middle, size [w, h, d], turn (radians about up) or q (a quaternion); set(at, q) moves it. With a world the still boxes, balls and capsules in it are these by themselves. */
+  box(o?: { at?: Arr3; size?: Arr3; turn?: number; q?: { x: number; y: number; z: number; w: number } | null }): ClothSolid;
   /**
    * A skirt (a kilt, a long coat's skirts) worn by on, a gs.models.human: it rides their hips, cut to fit round them, and goes round their legs (body()).
    * length: metres down from the waist (.5); flare: how much wider round the hem than at the waist (.15); waist: its half widths across and front to back
@@ -4359,7 +4382,9 @@ export interface SculptShape {
 export interface Wield {
   person: Loose; gun: Loose; how: string; ease: number;
   /** Where shots leave (world) and the way it points (a thing swung: along its length). */ muzzle: Loose; dir: Loose;
-  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean }): Wield;
+  /** keep: false lets it go into its holder and walls (by default it is turned about the grip out of both: gs.characters.Solid). */
+  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean; keep?: boolean }): Wield;
+  /** How far it was turned out of the body or a wall this frame (radians). */ readonly turned?: number;
   /** Takes it off the person: the weapon. */ drop(): Loose;
 }
 export interface ModelsPart {

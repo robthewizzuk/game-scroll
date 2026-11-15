@@ -5,6 +5,8 @@
 // there are, how long the steps take a frame here, and whether the graphics chip ran them.
 //   ?cols=5 &cell=320x240 &secs=4 &wind=5 &gpu (WebGPU) &eye=x,y,z&at=x,y,z (one view of your own)
 //   &scene=people: two people walking round, then running, one in a skirt and one in a cape (the camera goes with them)
+//   &scene=walls: a banner blown at a wall, a sheet dropped on a turned crate and one on a hill, all solid in a World3D
+//   (&world=0: the same with no physics world, so nothing stops the cloth: how it was before cloth went round still things)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -19,19 +21,35 @@ try {
   const sun = gs.hd.sun('#fff2d8', 1.4, 8, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
   const pbr = gs.hd.pbr, box = (w, h, d, c, x, y, z) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), pbr(c, { rough: .9 })); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; v.scene.add(m); return m; };
   box(40, .2, 40, '#7d8274', 0, -.1, 0);
-  const PEOPLE = Q.get('scene') === 'people', folk = [];
-  if (!PEOPLE) {
+  const PEOPLE = Q.get('scene') === 'people', WALLS = Q.get('scene') === 'walls', folk = [];
+  let world = null;
+  if (WALLS) {
+    await (await import('../../src/kit/physics3d.js')).loadPhysics3D();
+    if (Q.get('world') !== '0') world = new gs.physics3d.World3D({ gravity: -9.81, link: false });
+    const wall = box(4, 3, .3, '#b8a888', 0, 1.5, -1); box(2.4, .1, .1, '#555', 0, 3.2, -.3);   // a wall, and a rail in front of it for the banner
+    const crate = box(1.1, .8, 1.1, '#8a6a4a', 3, .4, 1.6); crate.rotation.y = .6;
+    // a hill: a bump of land, solid as its own triangles
+    const hg = new T.PlaneGeometry(4, 4, 24, 24); hg.rotateX(-Math.PI / 2); const hp = hg.attributes.position;
+    for (let i = 0; i < hp.count; i++) { const x = hp.getX(i), z = hp.getZ(i); hp.setY(i, Math.max(0, .9 * Math.exp(-(x * x + z * z) / 1.6) - .02)); } hg.computeVertexNormals();
+    const hill = new T.Mesh(hg, pbr('#6f7a5c', { rough: .95 })); hill.position.set(-3.2, 0, 1.6); hill.receiveShadow = true; v.scene.add(hill);
+    if (world) { crate.updateMatrixWorld(true); world.shape(wall, { box: [4, 3, .3] }, { fixed: true }); world.shape(crate, { box: [1.1, .8, 1.1] }, { fixed: true }); hill.updateMatrixWorld(true); world.ground(hill); }
+  }
+  if (!PEOPLE && !WALLS) {
   box(.08, 6, .08, '#ccc', 0, 3, 0);                          // the flagpole
   box(6, 3.4, .3, '#b8a888', 4, 1.7, -3.15);                   // a wall with an awning
   box(2.4, .1, .1, '#555', -2.8, 3.2, -1);                     // the banner's rail
   box(.08, 2, .08, '#8a6a4a', -5, 1, 3); box(.08, 2, .08, '#8a6a4a', -1, 1, 3.6);   // the washing line's posts
   }
-  const wind = new gs.outdoors.Wind({ x: ws, z: ws * .35, gust: .4, gustSize: 20 }), cloth = new gs.outdoors.Cloth(v, { wind, ground: 0 });
+  const wind = new gs.outdoors.Wind({ x: ws, z: ws * .35, gust: .4, gustSize: 20 }), cloth = new gs.outdoors.Cloth(v, { wind: WALLS ? new gs.outdoors.Wind({ x: ws * .3, z: -ws, gust: .4, gustSize: 20 }) : wind, ground: 0, world: world || (WALLS ? false : null) });
   if (PEOPLE) {
     const looks = [{ seed: 3, build: 'medium', top: { kind: 'shirt' }, legs: { kind: 'trousers' } }, { seed: 11, build: 'medium' }];
     await gs.models.human.ready(looks);
     looks.forEach((o, k) => { const h = gs.models.human(o); h.position.set(k ? -.9 : .9, 0, 0); v.scene.add(h); h.updateMatrixWorld(true); folk.push(h); });
     cloth.skirt({ on: folk[0], length: .55, colour: '#3f5a86' }); cloth.cape({ on: folk[1], colour: '#8a2232' });
+  } else if (WALLS) {
+    cloth.banner({ from: [-1.15, 3.15, -.3], to: [1.15, 3.15, -.3], drop: 2.6, colour: '#7a2440', weight: .3 });   // (blown at the wall behind it)
+    const sh = (cx, cz, y, colour, weight) => { const n = Math.round(1.6 * cloth.fine); cloth.sheet({ cols: n, rows: n, place: (i, j) => [cx - .8 + 1.6 * i / (n - 1), y, cz - .8 + 1.6 * j / (n - 1)], colour, weight, open: .25 }); };
+    sh(3, 1.6, 1.4, '#e6dcc8', .5); sh(-3.2, 1.6, 1.3, '#c8d4e6', 3);   // (a heavy tarp on the hill, so the wind leaves it there)
   } else {
   cloth.flag({ at: [0, 5.95, 0], size: [1.8, 1.2], colours: ['#c33', '#f4f0e6', '#2a5cb0'] });
   cloth.awning({ at: [4, 2.7, -3], width: 3, depth: 1.3, fall: .5, colours: ['#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a', '#eeeae0', '#2a7a4a'] });
@@ -40,10 +58,10 @@ try {
   const ball = PEOPLE ? null : cloth.ball({ x: 2.5, y: .5, z: 2.5, r: .5 }); if (!PEOPLE) box(.6, .3, .6, '#e6dcc8', 4, .15, 2.2);   // (a box the sheet's colour, to tell its light from the sun's)
   if (!PEOPLE) { const m = new T.Mesh(new T.SphereGeometry(.48, 24, 16), pbr('#a05a30', { rough: .6 })); m.position.set(2.5, .5, 2.5); m.castShadow = true; v.scene.add(m); }
   }
-  if (!PEOPLE) cloth.sheet({ cols: Math.round(1.6 * cloth.fine), rows: Math.round(1.6 * cloth.fine), place: (i, j) => [2.5 - .8 + 1.6 * i / (Math.round(1.6 * cloth.fine) - 1), 1.3, 2.5 - .8 + 1.6 * j / (Math.round(1.6 * cloth.fine) - 1)], colour: '#e6dcc8', weight: .5, open: .25 });   // (a tarp in the lee of something)
+  if (!PEOPLE && !WALLS) cloth.sheet({ cols: Math.round(1.6 * cloth.fine), rows: Math.round(1.6 * cloth.fine), place: (i, j) => [2.5 - .8 + 1.6 * i / (Math.round(1.6 * cloth.fine) - 1), 1.3, 2.5 - .8 + 1.6 * j / (Math.round(1.6 * cloth.fine) - 1)], colour: '#e6dcc8', weight: .5, open: .25 });   // (a tarp in the lee of something)
   // (the people go round a ring of 4 m: walking for the first half, running for the second; views from beside them and from behind)
   const R = 4, STR = { idle: 0, walk: 1.3, jog: 3.3, run: 5.6 }; let ang = 0;
-  const views = PEOPLE ? [[[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]]] : Q.get('eye') ? [[Q.get('eye').split(',').map(Number), (Q.get('at') || '0,2,0').split(',').map(Number)]] : [[[7, 4, 9], [1, 2.2, 0]], [[-9, 3.2, 7], [-2.5, 2, 1]]];
+  const views = PEOPLE ? [[[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]], [[0, 0, 0], [0, 0, 0]]] : Q.get('eye') ? [[Q.get('eye').split(',').map(Number), (Q.get('at') || '0,2,0').split(',').map(Number)]] : WALLS ? [[[5, 2.6, 6], [0, 1.4, 0]], [[-1.4, 2.2, 5.6], [-3, .6, 1.4]]] : [[[7, 4, 9], [1, 2.2, 0]], [[-9, 3.2, 7], [-2.5, 2, 1]]];
   const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
   const dt = 1 / 60, N = Math.round(secs / dt), shots = Array.from({ length: cols }, (_, i) => Math.round((i + 1) / cols * N) - 1);
   let cost = 0, cpuFrames = 0;
@@ -56,7 +74,7 @@ try {
       views[1] = [[mx - fx * 3.6 + Math.sin(ang) * 1.2, 1.7, mz - fz * 3.6 + Math.cos(ang) * 1.2], [mx, 1, mz]];      // from behind
       views[2] = [[mx + fx * 3.4 + Math.sin(ang) * .4, 1.3, mz + fz * 3.4 + Math.cos(ang) * .4], [mx, .95, mz]];      // from in front
     }
-    wind.update(dt); const t0 = performance.now(); cloth.update(dt); cost += performance.now() - t0;
+    wind.update(dt); if (cloth.wind !== wind) cloth.wind.update(dt); const t0 = performance.now(); cloth.update(dt); cost += performance.now() - t0;
     if (cloth.mode === 'cpu') cpuFrames++;
     const k = shots.indexOf(i);
     // (every frame is drawn so the graphics chip takes its steps; the pictures are taken from each place in turn)
