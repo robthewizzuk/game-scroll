@@ -214,19 +214,33 @@ const Q = { gsum: 0, gcnt: 0, gmax: 0, tier: 2, lvl: 0, out: 0, outCeil: 0, cw: 
 // is full again, the last effect stepped down comes back first. Where a game settles is kept with its tier
 // and resolution.
 const FXS = { ao: [1, .7, .5], bloom: [1, .7, .5], reflections: [1, .7, .5], 'volumetric light': [1, .7, .5], 'light shafts': [1, .7, .5], 'sun mask': [1, .7, .5] };
-const FX_ORDER = ['light shafts', 'sun mask', 'volumetric light', 'bloom', 'reflections', 'ao'];   // (without the chip's times: what shows least first)
+// Which to step is a rate-distortion choice, as a video encoder makes one (Rob's pick 8 of 2026-11-15): the chip time a
+// step saves for the picture it costs. FX_SEEN is what each step costs the picture, measured on eight test scenes on
+// WebGPU with the camera still (scripts/detail-test, each effect at .7 and .5 against its full size, as a share of the
+// difference between two full-size frames a moment apart: 0 is lost in that, 1 is as much again). Bloom's smaller
+// sizes showed plainly where it is strong (the hall's lamps, the embers: 1.7 to 2.4 at .7, 6.6 to 9.6 at .5); every
+// other effect's were lost in the frame-to-frame difference everywhere. So bloom, the cheapest, steps last.
+const FX_SEEN = { ao: [0, .05, .1], bloom: [0, 2, 8], reflections: [0, .05, .1], 'volumetric light': [0, .05, .1], 'light shafts': [0, .05, .1], 'sun mask': [0, .05, .1] };
+const FX_SEEN_MIN = .25;   // (a step that shows nothing measurable still counts as this much: saved time decides between those)
+const FX_ORDER = ['ao', 'reflections', 'sun mask', 'volumetric light', 'light shafts', 'bloom'];   // (without the chip's times: by the same measure, the costliest that shows least first)
 const FX_SHARE = .12, FX_MS = .5;
 let fxOn = new Set();   // the effects the last frame drew (the frame sets it)
 /** This effect's size now (1: as the tier has it). */
 const fxK = name => Q.force != null && !Q.fxPin ? 1 : FXS[name][Q.fx[name] | 0] ?? 1;
 /**
- * Which effect to draw smaller next, or null (pure: tests). on: the effects the last frame drew (a Set);
+ * Which effect to draw smaller next (the most chip time saved for the picture lost), or null (pure: tests). on: the effects the last frame drew (a Set);
  * steps: { name: steps taken }; g: the chip's ms a frame (null where it doesn't say); parts: HD.info.gpuParts.
  */
 export function pickEffect(on, steps, g, parts) {
   let best = null, most = 0;
   if (g != null && parts) {
-    for (const k of on) { const ms = parts[k] || 0; if (FXS[k] && (steps[k] | 0) < FXS[k].length - 1 && ms >= Math.max(FX_MS, g * FX_SHARE) && ms > most) { best = k; most = ms; } }
+    for (const k of on) {
+      const ms = parts[k] || 0, i = steps[k] | 0, sz = FXS[k];
+      if (!sz || i >= sz.length - 1 || ms < Math.max(FX_MS, g * FX_SHARE)) continue;
+      // (an effect's time goes with its pictures' area: the step from size a to b saves ms (1 - (b/a)^2))
+      const saved = ms * (1 - (sz[i + 1] / sz[i]) ** 2), cost = Math.max(FX_SEEN_MIN, (FX_SEEN[k]?.[i + 1] ?? 1) - (FX_SEEN[k]?.[i] ?? 0)), v = saved / cost;
+      if (v > most) { best = k; most = v; }
+    }
   } else for (const k of FX_ORDER) if (on.has(k) && !(steps[k] > 0)) { best = k; break; }
   return best;
 }
