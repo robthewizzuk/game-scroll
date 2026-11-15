@@ -58,8 +58,7 @@ import java.util.Map;
  * GPU and compositor threads (by name, from /proc/self/task), which put each frame on the screen; the page's own
  * script runs in WebView's sandboxed renderer, another process, and can't. hintStart({ ms }) -> { ok, threads,
  * rate, why }; hintTarget({ ms }); hintReport({ cpu: [ms...], gpu: [ms or -1...] }) each frame's work (sent in
- * small batches); hintEfficient({ on }) asks for efficiency over speed (Android 15+, while saving power);
- * hintReset() after a pause, so the history before it isn't held against the frames after; hintStop().
+ * small batches); hintEfficient({ on }) asks for efficiency over speed (Android 15+, while saving power); hintStop().
  */
 @CapacitorPlugin(name = "PowerState")
 public class PowerStatePlugin extends Plugin {
@@ -233,7 +232,10 @@ public class PowerStatePlugin extends Plugin {
                 if (Build.VERSION.SDK_INT >= 35 && g >= 0) {
                     // (the frame's whole time is the longer of the two: the chip draws while the next frame's script runs)
                     long cn = nanos(c), gn = nanos(g), total = Math.max(cn, gn);
-                    hint.reportActualWorkDuration(new WorkDuration(System.nanoTime() - total, total, cn, gn));
+                    WorkDuration d = new WorkDuration();
+                    d.setWorkPeriodStartTimestampNanos(System.nanoTime() - total); d.setActualTotalDurationNanos(total);
+                    d.setActualCpuDurationNanos(cn); d.setActualGpuDurationNanos(gn);
+                    hint.reportActualWorkDuration(d);
                 } else hint.reportActualWorkDuration(nanos(c));
                 n++;
             }
@@ -244,12 +246,6 @@ public class PowerStatePlugin extends Plugin {
     @PluginMethod
     public void hintEfficient(PluginCall call) {
         try { if (hint != null && Build.VERSION.SDK_INT >= 35) hint.setPreferPowerEfficiency(call.getBoolean("on", false)); } catch (Exception e) { }
-        call.resolve();
-    }
-
-    @PluginMethod
-    public void hintReset(PluginCall call) {
-        try { if (hint != null && Build.VERSION.SDK_INT >= 33) hint.sendHint(PerformanceHintManager.Session.CPU_LOAD_RESET); } catch (Exception e) { }
         call.resolve();
     }
 
