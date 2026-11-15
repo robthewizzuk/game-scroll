@@ -5,6 +5,7 @@
 import gs from '../gamescroll.js';
 const { haptic } = gs.device;
 const { Search } = gs.solve;
+const { Dial } = gs.brains;
 const { Table, slab, ring, fuse, sounds } = gs.tabletop;
 const { pbr } = gs.hd;
 const { Mesh, SphereGeometry, CylinderGeometry, Group } = gs.THREE;
@@ -42,6 +43,9 @@ const best = (c, who) => { let n = 0; for (const l of LINES) { let a = 0, b = 0;
 const brain = new Search({ moves, play: (s, m) => { const n = play(s, m); return { c: n.c, t: n.t, win: n.win }; }, turn: s => s.t, over: s => s.win >= 0, score: worth });
 
 function make(api) {
+  // the win-rate dial (Tiny Brains): Quill plays between a looser and a sharper game, following this
+  // player's results so they win a little over half their games
+  const dial = new Dial(api, { name: 'tower-four', start: .84, range: [.6, .97] });
   let T, s, beads, state, glass, lit, hitters, marks, geo, line;
 
   function setup() {
@@ -88,13 +92,14 @@ function make(api) {
   async function finish() {
     state = 'done';
     if (line) { for (const cell of line) beads.get(cell).material = lit[s.win]; const mid = seat(line[1]), end = seat(line[2]); T.puff({ x: (mid.x + end.x) / 2, y: (mid.y + end.y) / 2, z: (mid.z + end.z) / 2 }, { col: WHO[s.win].col, glow: true, n: 22, speed: 2, up: 1.6, size: .2 }); }
+    dial.result(s.win === 0 ? true : s.win === 2 ? 'draw' : false);
     if (s.win === 0) { sounds.gong(); haptic('success'); api.score(4); api.win(); } else sounds.thud(1.2);
     await T.wait(1.9); api.clearSave(); T.stop(); api.over();
   }
   async function turn(p) {
     state = 'busy';
     await drop(p); if (s.win >= 0) return finish();
-    const reply = await T.think(brain, s, { time: 280, depth: 4, skill: .84, wait: .65 });
+    const reply = await T.think(brain, s, { time: 280, depth: 4, skill: dial, wait: .65 });
     await drop(reply); if (s.win >= 0) return finish();
     api.save({ c: s.c.join('') }); state = 'you';
   }

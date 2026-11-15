@@ -1,7 +1,9 @@
 import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { haptic, want } = gs.device;
-const { rnd } = gs.util;
+const { rnd, clamp } = gs.util;
+const { Brain, Wave } = gs.brains;
+const FLIGHTS = ['drift', 'swerve', 'rush', 'hang'];
 const { Particles, pbr, THREE } = gs.hd;
 const { ARView, arNote, FLOOR } = gs.ar;
 const { Group, Mesh, SphereGeometry, TorusGeometry, CylinderGeometry, ConeGeometry, Vector3 } = THREE;
@@ -14,6 +16,11 @@ const { Group, Mesh, SphereGeometry, TorusGeometry, CylinderGeometry, ConeGeomet
 // Shoot a blue power saucer to upgrade the laser for this run: Twin (two targets at once), then
 // Mega (double damage, three targets, faster). Getting zapped drops a level. The shop sells a
 // faster laser for good, and boosts to start on Twin or with an extra shield.
+// Every fighting saucer flies by a Tiny Brains Wave: each one is a small experiment on one brain (with a
+// memory), choosing a few times a second to drift as usual, swerve out from under your crosshair, rush
+// in or hang back. Each feels how it went: shot down just before it reached you is the close call, shot
+// the moment it showed up is dull. The brain moves towards the saucers that made the best fights for
+// this player, and the win-rate rail keeps the swarm fair.
 let W = 300, H = 460;
 const SIDE = 1.45;   // saucers stay within this angle (radians) either side of straight ahead
 
@@ -66,6 +73,16 @@ function make(api) {
   want('motion');
   let v, fx, smoke, saucers, t, score, shields, maxShields, combo, comboT, cool, spawnT, beams, hitFlash, hurt, kills, tap, level, minLevel, powerAt, note, noteT;
   const pool = {};   // spare saucer meshes by kind
+  // the swarm's brain. see: 0 how close to your crosshair it is (1 right under it), 1 how far away (1 far),
+  // 2 what it is (1 small and quick, -1 a tank), 3 your shields
+  const swarm = new Brain(api, {
+    name: 'saucer-swarm-flight', inputs: 4, actions: FLIGHTS, memory: true,
+    // the teacher: zippers and minis swerve out from under the crosshair, the rest drift in as before
+    teacher: s => s[0] > .6 && s[2] > 0 ? 'swerve' : 'drift',
+    limits: { react: .15, perSecond: 5, minNoise: .06 },
+  });
+  const wave = new Wave(swarm), seeBuf = [0, 0, 0, 0], sp = new Vector3();
+  const flies = s => s.kind !== 'gold' && s.kind !== 'power';   // bonus saucers just drift
   function setup() {
     v = new ARView();
     fx = new Particles(v, { max: 500, additive: true }); smoke = new Particles(v, { max: 140, additive: false });
@@ -83,7 +100,8 @@ function make(api) {
   }
   function add(kind, a, r, y) {
     const K = KINDS[kind], mesh = meshFor(kind); mesh.visible = true;
-    const s = { kind, K, mesh, a, r, y, spin: (Math.random() < .5 ? -1 : 1) * rnd(.15, .4) * K.speed, in: (rnd(.28, .4) + t / 160) * K.speed, ph: rnd(0, 6), born: 0, hp: K.hp };
+    const s = { kind, K, mesh, a, r, y, spin: (Math.random() < .5 ? -1 : 1) * rnd(.15, .4) * K.speed, in: (rnd(.28, .4) + t / 160) * K.speed, ph: rnd(0, 6), born: 0, hp: K.hp, mind: null, think: 0, flight: 'drift' };
+    if (flies(s)) s.mind = wave.mind();
     saucers.push(s); pos(s, mesh.position); return s;
   }
   function spawn() {
@@ -101,7 +119,21 @@ function make(api) {
     for (let i = 0; i < n; i++) fx.emit({ x: p.x, y: p.y, z: p.z, vx: rnd(-2.5, 2.5), vy: rnd(-1.5, 3), vz: rnd(-2.5, 2.5), life: rnd(.4, .9), size: rnd(.03, .07), col, drag: 2, grav: 4, floor: FLOOR });
     for (let i = 0; i < 10; i++) smoke.emit({ x: p.x, y: p.y, z: p.z, vx: rnd(-.5, .5), vy: rnd(0, .7), vz: rnd(-.5, .5), life: rnd(.8, 1.4), size: rnd(.12, .22), grow: 1.5, col: [.4, .4, .45], a: .5, drag: 1.5 });
   }
-  function remove(s) { s.mesh.visible = false; saucers.splice(saucers.indexOf(s), 1); }
+  function remove(s) { s.mesh.visible = false; saucers.splice(saucers.indexOf(s), 1); if (s.mind) { s.mind.done(); s.mind = null; } }
+  // a saucer chooses how to fly a few times a second (its mind's own reaction time on top)
+  function think(s, dt) {
+    s.think -= dt; if (!s.mind || s.think > 0) return;
+    pos(s, sp); const [sx, sy, z] = v.toScreen(sp.x, sp.y, sp.z);
+    seeBuf[0] = z >= 1 ? -1 : clamp(1 - Math.hypot(sx - W / 2, sy - H / 2) / (W * .35), -1, 1);
+    seeBuf[1] = clamp((s.r - 1.3) / 3.1 - 1, -1, 1);
+    seeBuf[2] = s.kind === 'zip' || s.kind === 'mini' ? 1 : s.kind === 'tank' ? -1 : 0;
+    seeBuf[3] = shields / maxShields * 2 - 1;
+    s.mind.act(seeBuf, .2 - s.think); s.think = .2;
+    const was = s.flight; s.flight = s.mind.action;
+    if (s.flight === 'swerve' && was !== 'swerve') s.spin = -Math.sign(s.spin || 1) * Math.max(.45, Math.abs(s.spin) * 1.6);   // dart the other way
+  }
+  // how a saucer's life went, for its mind: shot down just short of you is the close call
+  function felt(s, shot) { if (s.mind) s.mind.feel(!shot ? .1 : s.r < 2.4 ? 1 : s.r < 4 ? .4 : s.born < 1.5 ? -.3 : 0); }
   function say(s) { note = s; noteT = 1.4; }
   function setLevel(l) { level = Math.max(minLevel, Math.min(3, l)); }
   // how far from the crosshair (px) a saucer still counts as under it: its size on screen plus help
@@ -112,7 +144,7 @@ function make(api) {
     if (s.kind === 'gold') { shields = Math.min(maxShields, shields + 1); say('+1 SHIELD'); }
     if (s.kind === 'power') { setLevel(level + 1); say(`${LASER[level].name} LASER!`); sfx(520, .25, 'triangle', .06, 600); }
     if (s.kind === 'split') for (const d of [-1, 1]) { const m = add('mini', s.a + d * .12, s.r, s.y + d * .15); m.spin = d * .5; }
-    boom(bp, s.kind); remove(s); hitFlash = .25;
+    felt(s, true); boom(bp, s.kind); remove(s); hitFlash = .25;
     haptic(s.kind === 'gold' || s.kind === 'power' ? 'success' : s.kind === 'tank' ? 'heavy' : 'medium');
     sfx(s.kind === 'tank' ? 110 : 160, .3, 'square', .06, -100); if (combo > 1) sfx(500 + combo * 120, .1, 'triangle', .04, 200);
   }
@@ -140,6 +172,7 @@ function make(api) {
       v?.off(); v?.recenter();
       if (v) { fx.clear(); smoke.clear(); for (const k in pool) for (const m of pool[k]) m.visible = false; }
       maxShields = 3 + (api.has?.('shield') ? 1 : 0); minLevel = 1;
+      for (const s of saucers || []) s.mind?.done();   // last round's saucers stop being experiments
       saucers = []; t = 0; score = 0; shields = maxShields; combo = 0; comboT = 0; cool = 0; spawnT = .6; beams = null; hitFlash = 0; hurt = 0; kills = 0; tap = null;
       level = api.has?.('twin') ? 2 : 1; powerAt = 6; note = null; noteT = 0;
     },
@@ -154,15 +187,16 @@ function make(api) {
         s.born += dt; s.ph += dt;
         s.a += s.spin * dt / Math.max(1, s.r / 3);
         if (Math.abs(s.a) > SIDE) { s.a = Math.sign(s.a) * SIDE; s.spin = -s.spin; }   // turn back at your side
-        s.r -= s.in * dt;
+        think(s, dt);
+        s.r -= s.in * dt * (s.flight === 'rush' ? 1.7 : s.flight === 'hang' ? .35 : 1);
         s.mesh.rotation.y += dt * (s.kind === 'zip' ? 6 : 3); s.mesh.rotation.z = Math.sin(s.ph * 1.7) * .15;
         pos(s, s.mesh.position);
         if (s.r < 1.3) {   // close enough to zap you
           pos(s, p); shields--; hurt = 1; haptic('error'); sfx(90, .4, 'sawtooth', .07, -40);
           for (let i = 0; i < 20; i++) fx.emit({ x: p.x, y: p.y, z: p.z, vx: -p.x * rnd(.5, 2), vy: -p.y * rnd(.5, 2), vz: -p.z * rnd(.5, 2), life: .5, size: .05, col: [3, .5, 1] });
-          remove(s); combo = 0;
+          felt(s, false); remove(s); combo = 0;
           if (level > minLevel) { setLevel(level - 1); say(`${LASER[level].name} LASER`); }
-          if (shields <= 0) { v.off(); return api.over(); }
+          if (shields <= 0) { swarm.result(score >= 40); v.off(); return api.over(); }
         }
       }
       fx.update(dt); smoke.update(dt);

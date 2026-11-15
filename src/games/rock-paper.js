@@ -3,9 +3,14 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { Predict, Dial } = gs.brains;
 
 // Rock, paper, scissors against opponents with habits. Each one plays by a hidden rule you can
 // read from their history. Beat five rounds to face the next one. Three losses and you're out.
+// OWL's habit is you: a Tiny Brains habit reader (gs.brains.Predict) watches every move you make, in
+// every duel and every game on this phone, and OWL plays whatever beats the move you're most likely to
+// make next. Its read is the habit to work out (so play what beats its answer, or break your pattern),
+// and the win-rate dial (gs.brains.Dial) sets how often it trusts the read, so it stays a fair fight.
 const P = PAL.moss, W = 160, H = 160, NAMES = ['ROCK', 'PAPER', 'SCISS'];
 const beats = m => (m + 1) % 3;   // the move that beats m
 // Opponent styles: each sees both histories and returns its move.
@@ -29,10 +34,13 @@ function icon(c, x, y, m, s, col = P[0]) {
 function make(api) {
   const feel = new Feel({ pixel: true, sound: false, buzz: false });   // the game has its own sounds and buzzes
   let style, me, op, res, wins, lives, score, t, show;
-  function nextFoe() { const pool = STYLES.filter(s => s !== style); style = pool[Math.random() * pool.length | 0]; me = []; op = []; res = []; wins = 0; }
+  const habits = new Predict(api, { name: 'rock-paper-you', moves: 3 }), dial = new Dial(api, { name: 'rock-paper-owl' });
+  // OWL plays what beats your likely next move, when it trusts its read (else anything)
+  const OWL = { name: 'OWL', pick: () => { const g = habits.guess(); return g != null && habits.sure > .3 && Math.random() < .45 + .5 * dial ? beats(g) : Math.random() * 3 | 0; } };
+  function nextFoe() { const pool = [...STYLES, ...(style ? [OWL] : [])].filter(s => s !== style); style = pool[Math.random() * pool.length | 0]; me = []; op = []; res = []; wins = 0; }
   function play(m) {
     if (show) return;
-    const o = style.pick(me, op, res); me.push(m); op.push(o);
+    const o = style.pick(me, op, res); me.push(m); op.push(o); habits.see(m);
     const r = m === o ? 'tie' : beats(o) === m ? 'win' : 'lose'; res.push(r);
     if (r === 'win') { wins++; score++; api.score(score); haptic('success'); sfx(880, .1, 'square', .04, 200); feel.juice.burst(110, 84, { n: 10, speed: 55, life: .45, size: 2, color: [P[0], P[1]] }); }
     else if (r === 'lose') { lives--; haptic('error'); sfx(140, .25, 'square', .05, -40); feel.juice.shake(4); }
@@ -44,7 +52,7 @@ function make(api) {
     fx(dt) { feel.update(dt); },
     update(dt) {
       feel.update(dt); t += dt;
-      if (show) { show.l -= dt; if (show.l <= 0) { show = null; if (lives <= 0) return api.over(); if (wins >= 5) { score += 3; api.score(score); haptic('success'); nextFoe(); } } }
+      if (show) { show.l -= dt; if (show.l <= 0) { show = null; if (lives <= 0) { if (style === OWL) dial.result(false); return api.over(); } if (wins >= 5) { if (style === OWL) dial.result(true); score += 3; api.score(score); haptic('success'); nextFoe(); } } }
     },
     draw(c) {
       c.fillStyle = P[3]; c.fillRect(0, 0, W, H);
