@@ -9349,6 +9349,15 @@ console.log('physics ok');
     const keeper = { doing: 'sleep', moving: false, held: 0 }, K = new Shop({ stock: { bread: { price: 3 } }, clock: C, keeper }); assert.ok(!K.open, 'shut while the keeper sleeps'); keeper.doing = 'work'; assert.ok(K.open);
     const cheap = new Shop({ stock: { bread: { price: 10 } }, clock: C, price: (b, { selling }) => selling ? b * 1.2 : b * .8 }); assert.ok(cheap.priceOf('bread') === 8 && cheap.priceOf('bread', { selling: true }) === 6, 'the game\'s own prices (reputation)');
     const T = new Shop({ clock: C }).unpack(S.pack()); assert.equal(T.money, S.money);
+    // a shop of a faction prices by a gs.rpg Reputation's standing with it (given here; found by itself in a game)
+    const { Reputation } = await import('../src/kit/rpg.js');
+    const rep = new Reputation({ factions: { town: {} }, deeds: { help: { town: 40 }, rob: { town: -80 } }, link: false });
+    const R = new Shop({ stock: { bread: { price: 100, count: 9 } }, clock: C, faction: 'town', reputation: rep });
+    assert.ok(R.priceOf('bread') === 100 && R.priceOf('bread', { selling: true }) === 50, 'a stranger pays the list price');
+    rep.did('help'); const liked = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    rep.did('rob'); rep.did('rob'); const hated = [R.priceOf('bread'), R.priceOf('bread', { selling: true })];
+    assert.ok(liked[0] < 100 && liked[1] > 50 && hated[0] > 100 && hated[1] < 50, 'liked: cheaper and pays more; disliked: dearer and pays less ' + JSON.stringify({ liked, hated }));
+    assert.equal(new Shop({ stock: { bread: { price: 100 } }, clock: C, faction: 'town', reputation: rep, price: b => b }).priceOf('bread'), 100, 'the game\'s own price wins');
   }
   // the night: monsters come in from the edge after dusk, keep off torches, hunt a hero near, go at dawn; folk hide; no sleep with one near
   {

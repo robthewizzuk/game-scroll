@@ -13,7 +13,8 @@
 //
 // Kits find each other (links.js): a Clock drives the Sky the game made (sky.time follows the clock), and Folk, a
 // Shop and Night find the Clock; Folk find the Night (people go home when monsters are about). Reputation is the
-// rpg kit's (gs.rpg.Reputation): pass rep.price to a Shop's price and read rep.mood() for how folk meet the hero.
+// rpg kit's (gs.rpg.Reputation): a Shop finds it and prices by the standing with its faction, and rep.mood() says how
+// folk meet the hero.
 
 import { rng } from './math.js';
 import { linksFor, linked } from './links.js';
@@ -464,18 +465,21 @@ const turnTo = (a, b, k) => { let d = ((b - a + Math.PI) % TAU + TAU) % TAU - Ma
  * ([8, 18]; wraps midnight); clock (found by itself); keeper (a Folk person: shut while they are not at work, so a
  * shop shuts when its keeper hides from the night); money (what it can pay for what you sell, 300); buys (true: any
  * of the stock's ids; a list of ids; or a function (id) => base price for things it doesn't sell); sells: the share
- * of a price it pays when it buys (.5); price ((base, { id, selling }) => number: your own, such as rep.price).
+ * of a price it pays when it buys (.5); faction (whose shop it is: with a gs.rpg Reputation, found by itself or given
+ * as reputation, it is dearer to a hero they dislike and pays them less, cheaper to one they like, by rep.price);
+ * price ((base, { id, selling }) => number: your own, which wins).
  * open (now), priceOf(id, { selling }), buy(id, n, wallet, inventory) (wallet: { money }, changed; inventory: a
  * gs.items Inventory it goes into) and sell(id, n, wallet, inventory): { ok, cost or paid, why ('closed' | 'none' |
  * 'money' | 'full' | 'unwanted' | 'broke' | 'have') }. Restocks at the hour it opens each day. pack() / unpack(d).
  */
 export class Shop {
-  constructor({ name = 'Shop', stock = {}, hours = [8, 18], clock, keeper = null, money = 300, buys = true, sells = .5, price = null, link } = {}) {
-    this.name = name; this.hours = hours; this.keeper = keeper; this.money = money; this.money0 = money; this.buys = buys; this.sells = sells; this.priceFn = price;
+  constructor({ name = 'Shop', stock = {}, hours = [8, 18], clock, keeper = null, money = 300, buys = true, sells = .5, price = null, faction = null, reputation, link } = {}) {
+    this.faction = faction; this.givenRep = reputation; this.name = name; this.hours = hours; this.keeper = keeper; this.money = money; this.money0 = money; this.buys = buys; this.sells = sells; this.priceFn = price;
     this.stock = {}; for (const [id, s] of Object.entries(stock)) this.stock[id] = { price: s.price, count: s.count ?? 1, restock: s.restock ?? s.count ?? 1 };
     this.links = linksFor(null, link); this.givenClock = clock; this.day = null;
   }
   get clock() { return linked(this.givenClock, this.links, 'clock'); }
+  get reputation() { return linked(this.givenRep, this.links, 'reputation'); }
   get open() {
     const C = this.clock, h = C ? C.hour : 12;
     if (!between(h, this.hours[0], this.hours[1])) return false;
@@ -485,7 +489,10 @@ export class Shop {
   /** What one costs to buy here, or (selling: true) what the shop pays for one. */
   priceOf(id, { selling = false } = {}) {
     const b = this.base(id); if (b == null) return null;
-    const p = this.priceFn ? this.priceFn(selling ? b * this.sells : b, { id, selling }) : selling ? b * this.sells : b;
+    const rep = this.priceFn ? null : this.reputation;
+    // (rep.price pays half when selling: given twice the shop's share, it pays the share, moved by the standing)
+    const p = this.priceFn ? this.priceFn(selling ? b * this.sells : b, { id, selling })
+      : rep?.price ? rep.price(selling ? b * this.sells * 2 : b, this.faction, { sell: selling }) : selling ? b * this.sells : b;
     return Math.max(selling ? 0 : 1, Math.round(p));
   }
   restock() { for (const s of Object.values(this.stock)) s.count = Math.max(s.count, s.restock); this.money = Math.max(this.money, this.money0); return this; }

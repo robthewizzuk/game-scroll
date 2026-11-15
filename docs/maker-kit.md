@@ -4553,8 +4553,9 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
 
 `gs.town` is a village or a castle town as rules: a world clock, a layout from a seed, townsfolk who live their
 day by the clock, shops and monsters that come at night. It is plain data, so a 2D game can use it too;
-`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: pass `rep.price` to a
-shop and read `rep.mood(faction)` for how a townsperson meets the hero.
+`gs.city.Town` builds the same plan in a Next Gen view. Reputation is the `gs.rpg` kit's: a shop given a `faction`
+finds the game's Reputation and prices by the hero's standing with it (dearer when they dislike the hero, and they
+pay less), and `rep.mood(faction)` says how a townsperson meets the hero.
 
 ```js
 const { Clock, Folk, Shop, Night } = gs.town, { Town } = gs.city;
@@ -4564,7 +4565,7 @@ make() {
   town = new Town(view, { seed: 7, kind: 'castle', houses: 16 });   // solid in the game's World3D by itself
   folk = new Folk(town.plan, { crowd });                      // a gs.props.Crowd of human() kinds: moved by itself
   night = new Night(town.plan, { kinds: ['ghoul', { kind: 'wolf', speed: 2.4 }] });
-  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], price: (p, o) => rep.price(p, 'town', { sell: o.selling }) });
+  inn = new Shop({ stock: { stew: { price: 4, count: 6 }, room: { price: 10, count: 3 } }, keeper: folk.of('innkeeper')[0], faction: 'town' });
 }
 update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt, hero); }
 ```
