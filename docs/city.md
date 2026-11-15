@@ -88,14 +88,68 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
 | `city.spot(kind, { near, min, max, rnd })` | A place: `'door'` (outside a building, facing it), `'rooftop'`, `'corner'`, `'street'` (in a lane), `'pavement'`, `'park'`. |
 | `city.buildingAt(x, z)`, `city.ground(x, z)` | The building there; the height of the ground (road 0, pavement 0.15, a roof's top). |
 | `city.signal(node, axis)` | A junction's light: `'g'`, `'a'` or `'r'`. |
-| `city.cars` | `list`, `near(p, r)`, `hit(p, r)` (the car you ran into), `bump(car)` (stops it for a moment). |
-| `city.people` | `list`, `near(p, r)`, `hit(p, r)`, `scare(p, r)` (everyone near runs), `knock(person, dx, dz)` (a cartoon tumble; they get up and hurry off). |
-| `city.avoid(p, r)` | Cars brake for this point this frame: the player, a fallen sign, a parade. |
+| `city.cars` | `list`, `near(p, r)`, `hit(p, r)` (the car you ran into), `bump(car)` (stops it for a moment), `crash(car, push, { at, spin, by })` (it leaves its lane sliding and spinning; a Rapier body after `city.solid(world)`), `add({ x, z, police, keep })` (a car of your own), `chase(car, target, { how, top, keep, face })` and `release(car)` (below), `stats`. |
+| `city.people` | `list`, `near(p, r)`, `hit(p, r)`, `scare(p, r)` (everyone near runs), `cower(p, r)`, `knock(person, dx, dz, s, { speed, by })` (they stagger or fall; near the camera on Next Gen as a full person, a ragdoll after `city.solid(world)`, and get up), `witness(at, r)`, `report(person, at)`, `promote(person)`. |
+| `city.avoid(p, r)` | Cars brake for this point this frame and swerve round it when there is room: the player, a fallen sign, a parade. Give it `vx, vz` (or `v` and `heading`) when it moves, and cars and people get out of its way. |
+| `city.events`, `city.event(e)` | What happened last frame: `crash`, `wreck`, `knock`, `call` (someone phoned the police), `bang` / `shots` (people near duck, then run), and anything a game adds. Each has `at`, and `car`, `person` or `by` where it fits. |
 | `city.walls()` | The building meshes, for `gs.camera`'s `walls` so the camera never goes inside one. |
 | `city.solid(world, { buildings, floor, furniture, parked, cars, people, within })` | Makes the city solid in a `gs.physics3d` World3D: the buildings and kerbs, the street furniture, the parked cars, and bodies that follow the nearest traffic and people. |
 | `city.occluders()` | The buildings as boxes, for skipping what's hidden behind them. The city already hands them to `v.occluders` (`occlude: false` in the options to stop that); the view also finds what is hidden from each frame's own depth, by itself. |
 | `city.plan` | The whole layout as plain numbers (blocks, buildings, junctions, roads, spots). `gs.city.layout({ seed })` gives it without any 3D. |
 | `city.drawMap(c, x, y, w, h, { at, range, turn })` + `city.mapPoint(p)` | A quick top-down map for your HUD, and where a point lands on it. Or draw your own from `city.plan`. |
+
+## Traffic off its lanes
+
+Cars keep to their lanes, but not blindly. They change lanes for the turn they want and to get past a slow
+car on a two-lane road, overtake across the middle when the other way is clear, swerve round something in
+the road (what you pass to `avoid()`, a crashed car, someone fallen over) when there is room and brake when
+there isn't, swerve to the kerb from something coming at them, and pull over and stop for a siren from
+either way. `city.cars.stats` counts all of it.
+
+`cars.chase(car, target, { how })` takes a car off its lanes after something: `'pursue'` (stays `keep` metres
+behind), `'ram'`, `'go'` (to a place), `'flee'` or `'block'` (parks across the road there, facing `face`). It
+drives straight at what it can see, and along the roads when it can't, slowing for the corners it has
+coming, steering round the traffic and reversing when it is stuck. `release(car)` sends it back to the
+lanes. `cars.crash(car, push)` throws a car out of its lane: after `city.solid(world)` it is a real body
+in the World3D that tips and spins; when it stops it either drives back into the traffic or stays as a
+wreck (and its driver gets out). A car the player's World3D body hits hard crashes by itself.
+
+## Street life
+
+People walk, wait and cross, but also sit on park benches, stop on their phone, chat with someone they
+pass, look in shop windows and go in at doors. They jump out of the way of a car coming at them, gather to
+look at a crash, and phone the police about what they saw. Near the camera on a Next Gen view, a few of them
+become full people (`gs.models.human` with `gs.characters.Reactions`): they look at you, and when knocked
+they stagger, brace or fall as a ragdoll and get up. How many depends on the phone (one to three).
+
+## Police and the wanted level
+
+`gs.city.Wanted` is the police for a city:
+
+```js
+const { City, Wanted } = gs.city;
+make()   { city = new City(view, { seed: 4 }); law = new Wanted(city, api); law.on('busted', () => api.over()); }
+reset()  { city.reset(); law.reset(); }
+update(dt) {
+  city.avoid(me, 1.2); city.update(dt, me);
+  law.update(dt, { x, z, heading, v, car: true, body: kart.body });  // crashes and knocks the body causes count by themselves
+  if (robbed) law.crime('theft', me);                                  // 'police', 'reported' or 'unseen'
+}
+// law.stars (0..5), law.seen, law.search { x, z, r }, law.left (seconds to clear), law.busting (0..1), law.units
+```
+
+A crime seen by a police car or an officer counts at once. One seen only by people in the street is
+phoned in a few seconds later (if the player doesn't stop them), and the police search where it
+happened. Police cars come with sirens and lights from ahead of you, out of sight. They chase, ram (3 stars),
+cut you off and park roadblocks across the road ahead (4 stars), and their officers get out and run at you
+when you stop. Out of sight they search where they last saw you, and after a while (longer at more stars)
+you are clear. Stopped close to them, you are busted.
+
+Which tactic each car uses is a Tiny Brain (`gs.brains` `Brain` with a `Wave`: every police car a mind of
+one brain), taught at first by plain rules, that learns which tactics made the chase exciting for this
+player and keeps their escape rate near a half. A `Predict` learns which way this player turns at
+junctions, so cut-offs and roadblocks go to the road they will take. What it learns is kept in the game's
+brain slot. `brains: false` keeps to the rules alone.
 
 ## One big city: `Metro`
 

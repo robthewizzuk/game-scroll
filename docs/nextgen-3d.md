@@ -1737,7 +1737,28 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in
   `src/kit/models/human.js`); `camo: [colour, colour]` on the top, legs or hat brushes blotches of those over
-  its colour. The plain options (`body`, `legs`, `shoes`: colours) still dress a simple person. Each arm is
+  its colour. The plain options (`body`, `legs`, `shoes`: colours) still dress a simple person.
+  **Armour and the old world's clothes.** `outfit.armour: { chest, shoulders, arms, hands, thighs, shins, feet }`
+  puts rigid pieces over the clothes, each a kind: `chest: 'plate' | 'leather' | 'brigandine'` (a breastplate
+  rounded out over the chest with a fauld of strips over the hips, boiled leather, or cloth over small plates with
+  rows of rivets), `shoulders`, `arms`, `hands`, `thighs`, `shins` `'plate' | 'leather'`, `feet: 'plate'`; and
+  `colour` (the steel), `leather`, `cloth`, `rivets`. A list of kinds (`chest: ['plate', 'leather']`) has them all
+  ready, the first worn: `person.armour.wear('chest', 'leather')` or `wear('shoulders', null)` changes what is
+  worn that frame, with nothing made or built (each piece rides a bone of its own). `person.armour.over(bone)`
+  says what a hit on that bone strikes (`'plate'`, `'leather'`, or null), for the damage. Helms are hats:
+  `hat: { kind: 'nasal' | 'kettle' | 'sallet' | 'great' | 'circlet' }`, in the armour's steel. Tops add
+  `'gambeson'` (a padded, quilted coat), legs `'hose'` (close-fitting, which greaves and cuisses fit over best),
+  and a robe or a long skirt is a `gs.outdoors` Cloth `skirt({ on: person, length })` over a tunic.
+  **Carried and drawn.** `new gs.characters.Carry(person)`: `add('sword', mesh, 'hipL', { sheath: true })`
+  hangs a thing at a spot (`hipL`, `hipR`, `back`, `backL`, `shield`, `quiver`, `bow`, `belt`, or your own on any
+  bone), `draw('sword')` sends the hand to it, takes it and brings it round into the hand, `sheathe('sword')` puts
+  it back; `update(dt)` after `rig.update()`, events `grab` (the sound), `drawn`, `stowed`. **Swords, shields and bows:**
+  `gs.models.weapon('sword' | 'longsword' | 'dagger' | 'axe' | 'mace' | 'spear' | 'staff' | 'shield' | 'bow' | 'arrow' |
+  'quiver')` are made in code (a shield `{ style: 'round' | 'heater' | 'kite', finish }`); `Carry` knows each one's hand
+  and hold (a shield and a bow in the left, a spear's other hand on its shaft); `gs.fight.Melee(body, { weapon: 'sword',
+  shield: true, armour: 'auto' })` fights with them and gs.poses has the cuts, the shield up, the spear and the bow draw
+  (`docs/maker-kit.md`, "Melee in 3D"); a bow model's `pull(bow.k)` draws its string. The lab: `node scripts/arms.cjs
+  out.png rows=knight:ss:slash@.4,archer:bow:bowDraw@1,models [--webgpu]`. Each arm is
   a piece of its own that turns in the shoulder, so any pose is safe: nothing stretches at the armpit.
   **A cut of clothes this phone hasn't made yet takes a second or two to sculpt, so it happens in the
   background**: the app shows "Loading…" and makes the game again, exactly as when a big library loads, and

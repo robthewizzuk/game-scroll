@@ -335,4 +335,4 @@ export class Opponent {
 }
 
 // fights between people standing in a 3D world (src/kit/melee3d.js)
-export { Melee, Brawler, FISTS, SWINGS } from './melee3d.js';
+export { Melee, Brawler, FISTS, SWINGS, BLADES, AXES, SPEARS, STAVES, MOVESETS, ARMS, SHIELD } from './melee3d.js';

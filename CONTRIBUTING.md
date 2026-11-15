@@ -434,6 +434,15 @@ top score on a board with 20 or more players. If your game can legitimately scor
 Tests run against a build with every game inside (`--mode bundled`). Playwright with Chromium is
 needed for the browser tests: `npm i --no-save playwright && npx playwright install chromium`.
 
+One command runs them all and prints one short report, each problem with its line in your file and what to do about it:
+
+```bash
+npm run check my-game                     # every check below (about 30 s); -- --quick for the code checks alone (2 s), -- --full adds the speed budget
+npm run examples Feel.coin                # how real games use a part of gs (the shortest first), with its types and docs
+```
+
+Or one by one:
+
 ```bash
 npm run build:bundled                     # build the app with all games inside
 node scripts/smoke.cjs my-game            # plays your game with random input; fails on any error or missing goal
