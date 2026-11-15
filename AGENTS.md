@@ -119,7 +119,8 @@ Optional definition fields: `tick: 60` (fixed tick), `music: 'chase'` (a soundtr
 `touch: 'fine'` (`move()` gets every reading of the finger, several a frame: drawing and tracing games), `lcd: true` (pixel styles: an old handheld screen's grid and ghosting), `maxW` / `maxH` (fluid size), `reward`, `shop`.
 Optional game methods: `snapshot()` / `restore(data)` (keep a round across hot reload), `fx(dt)` (effects behind the game-over screen), `resize(w, h)`
 (fluid games with `maxW`, `maxH`), `debug(c)`, `pause()`, `resume()`.
-Next Gen and AR: frame generation makes the in-between frames on fast screens by itself; `frameGen: 'ahead'`
+Next Gen and AR: on a phone a 3D game aims for 60; where it can't hold 60 (and on low, warm or power-saving phones) the app
+draws 30 and frame generation (GSFG) makes the other 30, by itself; `frameGen: 'ahead'`
 (no added delay) or `frameGen: false` in the definition, `view.cut()` after a camera jump, and
 `view.aimNow(cam => ...)` for a game turning its own camera from touch (gs.camera rigs already do).
 

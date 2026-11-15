@@ -8,46 +8,46 @@ Jointed 3D people: figures, skinned people with faces, blend spaces, foot IK, ke
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PosesPart`, line 4231), where every option and field is described.
+From `src/gamescroll.d.ts` (`PosesPart`, line 4236), where every option and field is described.
 
-- `POSES: Record<string, Loose>` (:4232)
-- `GESTURES: Record<'nod' | 'shake' | 'bow' | 'shrug' | 'point' | 'cheer' | 'laugh' | 'think' | 'beckon', Loose>` Gestures every rig has, played once from standing at ease: rig.play('nod'): nod, shake, bow, shrug, point, cheer, laugh, think, beckon. (:4234)
-- `Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null }` A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go… (:4236)
-- `Bulge: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null; size: number }` A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. (:4238)
-- `LIFELIKE: Record<string, Loose>` Lifelike idle, walk, jog, run, sprint and sneak for a figure with feet and hands (heel strike, push off the toes, planted feet that don't slide): new Rig(parts, { poses: LIFELIKE, weight: 1 }). (:4240)
-- `keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] }` A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). (:4242)
-- `mirror(fn: (phase: number) => Loose): (phase: number) => Loose` A pose function mirrored, left for right: rig.add('waveL', mirror(rig.poses.wave.cycle)). (:4244)
-- `Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: …` parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). (:4246)
-  - `state: string` (:4137)
-  - `readonly done: boolean` True once a pose added with { once: true } has played through (it then holds its last frame). (:4139)
-  - `phase: number` How far through its cycle the pose is, 0..1 (blendPhase: the same for a blend space: footsteps fall at 0 and .5). (:4141)
-  - `blendPhase: number` (:4141)
-  - `weight: number` Lean and bank (0: none; 1: a person): the body tips into a change of speed and into a turn (update's speed and turn). (:4143)
-  - `play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT` Blends to a pose. at: where in the pose it stands (0..1), for a pose the game drives itself (call each frame); from: where it starts; again: start a playing pose over. (:4145)
-  - `upper(name: string | null): RigT` (:4145)
-  - `pace(name: string): { rate: number; per: number; once: boolean } | null` How a pose moves on: rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once: it plays through and holds. (:4147)
-  - `add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number; ground?: boolean; stance?: number }): RigT` Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. (:4149)
-  - `blend(space: Record<string, number>, v: number): RigT` 1D blend space: { pose: value }, mixed at v with every cycle in step. (:4151)
-  - `blend2(space: Record<string, [number, number]>, x: number, y: number): RigT` 2D blend space: { pose: [x, y] }, mixed at (x, y). (:4153)
-  - `plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT` Foot IK after update(): feet on the floor at ground(x, z); body is the character. (:4155)
-  - `fill(pose?: Record<string, number[]> | null): RigT` A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). (:4164)
-  - `fine?: boolean` A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). (:4166)
-  - `breath?: BreathT` A gs.models.human person's breathing and soft flesh (the same as person.breath); update() steps it. (:4168)
-  - `grime?: GrimeT` A gs.models.human person's wet, mud, dust and snow (the same as person.grime): drawn on WebGPU. (:4170)
-  - `idle?: IdleT` A gs.models.human person standing about: fidgets, the head after the eyes, glances, gestures (the same as person.idle). (:4172)
-  - `steps?: boolean` Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy, and your own added with { ground: true }) a foot stays where it… (:4181)
-  - `readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[]; plan: boolean } | null` The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. (:4188)
-  - `readonly lead?: { amount: number; reset(): void } | null` The eyes and the head go first into a turn (gs.models.human people; on by itself): the eyes flick round, the head follows, then the rib cage, and the hips and feet come last. (:4195)
-  - `manner?: { mood: string | Record<string, number> | null; side: 'L' | 'R'; amount: number; readonly pace: number; readonly limp: number; reset(): void } | null` A walk of one's own (gs.models.human people; on by itself): from the body (an older person takes shorter, quicker steps, swings the arms less, leans and stands wider; a heavy one walks wider and rolls more; a muscled… (:4206)
-  - `momentum?: boolean` Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. (:4213)
-  - `readonly follow?: { amount: number; reset(): void } | null` Follow-through (gs.models.human people; on by itself): what the body carries goes on a moment and settles when the game starts it, stops it, turns it or drops it. (:4220)
-  - `hang(thing: Loose, o?: { pivot?: [number, number, number]; swing?: number; bounce?: number; stiff?: number; damp?: number; most?: number; away?: [number, number, numbe…` Something that hangs from the body and swings as it moves (a slung rifle, a lantern, a satchel): thing is an Object3D on one of the joints, as it hangs at rest. (:4229)
-- `person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: numbe…` A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. (:4248)
-- `Face: CharactersPart['Face']` (:4249)
-- `shapes: CharactersPart['shapes']` (:4249)
-- `visemes: CharactersPart['visemes']` (:4249)
-- `FACE_SHAPES: string[]` (:4249)
-- `figure(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose` (:4250)
+- `POSES: Record<string, Loose>` (:4237)
+- `GESTURES: Record<'nod' | 'shake' | 'bow' | 'shrug' | 'point' | 'cheer' | 'laugh' | 'think' | 'beckon', Loose>` Gestures every rig has, played once from standing at ease: rig.play('nod'): nod, shake, bow, shrug, point, cheer, laugh, think, beckon. (:4239)
+- `Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null }` A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go… (:4241)
+- `Bulge: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null; size: number }` A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. (:4243)
+- `LIFELIKE: Record<string, Loose>` Lifelike idle, walk, jog, run, sprint and sneak for a figure with feet and hands (heel strike, push off the toes, planted feet that don't slide): new Rig(parts, { poses: LIFELIKE, weight: 1 }). (:4245)
+- `keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] }` A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). (:4247)
+- `mirror(fn: (phase: number) => Loose): (phase: number) => Loose` A pose function mirrored, left for right: rig.add('waveL', mirror(rig.poses.wave.cycle)). (:4249)
+- `Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: …` parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). (:4251)
+  - `state: string` (:4142)
+  - `readonly done: boolean` True once a pose added with { once: true } has played through (it then holds its last frame). (:4144)
+  - `phase: number` How far through its cycle the pose is, 0..1 (blendPhase: the same for a blend space: footsteps fall at 0 and .5). (:4146)
+  - `blendPhase: number` (:4146)
+  - `weight: number` Lean and bank (0: none; 1: a person): the body tips into a change of speed and into a turn (update's speed and turn). (:4148)
+  - `play(name: string, o?: { fade?: number; at?: number | null; from?: number | null; again?: boolean }): RigT` Blends to a pose. at: where in the pose it stands (0..1), for a pose the game drives itself (call each frame); from: where it starts; again: start a playing pose over. (:4150)
+  - `upper(name: string | null): RigT` (:4150)
+  - `pace(name: string): { rate: number; per: number; once: boolean } | null` How a pose moves on: rate: cycles a metre (walks and runs; 0 for the rest), per: cycles a second (0: it stands still), once: it plays through and holds. (:4152)
+  - `add(name: string, fn: Loose, rate?: number | { time?: number; once?: boolean; rate?: number; ground?: boolean; stance?: number }): RigT` Your own pose: fn(phase 0..1) => { j: { joint: [x, y, z] }, drop, shift: [x, y, z] metres }. (:4154)
+  - `blend(space: Record<string, number>, v: number): RigT` 1D blend space: { pose: value }, mixed at v with every cycle in step. (:4156)
+  - `blend2(space: Record<string, [number, number]>, x: number, y: number): RigT` 2D blend space: { pose: [x, y] }, mixed at (x, y). (:4158)
+  - `plant(ground: (x: number, z: number) => number, body: Loose, o?: { most?: number }): RigT` Foot IK after update(): feet on the floor at ground(x, z); body is the character. (:4160)
+  - `fill(pose?: Record<string, number[]> | null): RigT` A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). (:4169)
+  - `fine?: boolean` A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). (:4171)
+  - `breath?: BreathT` A gs.models.human person's breathing and soft flesh (the same as person.breath); update() steps it. (:4173)
+  - `grime?: GrimeT` A gs.models.human person's wet, mud, dust and snow (the same as person.grime): drawn on WebGPU. (:4175)
+  - `idle?: IdleT` A gs.models.human person standing about: fidgets, the head after the eyes, glances, gestures (the same as person.idle). (:4177)
+  - `steps?: boolean` Steps that are really taken (gs.models.human people; on by itself): in the poses that stand on the ground (the lifelike walks and runs, standing easy, and your own added with { ground: true }) a foot stays where it… (:4186)
+  - `readonly stride?: { readonly feet: { readonly down: boolean; readonly landed: boolean }[]; plan: boolean } | null` The feet as they stand (people with steps): feet[0] the left, feet[1] the right; landed is true on the update a foot touches the ground (a footstep sound), down while it stands. (:4193)
+  - `readonly lead?: { amount: number; reset(): void } | null` The eyes and the head go first into a turn (gs.models.human people; on by itself): the eyes flick round, the head follows, then the rib cage, and the hips and feet come last. (:4200)
+  - `manner?: { mood: string | Record<string, number> | null; side: 'L' | 'R'; amount: number; readonly pace: number; readonly limp: number; reset(): void } | null` A walk of one's own (gs.models.human people; on by itself): from the body (an older person takes shorter, quicker steps, swings the arms less, leans and stands wider; a heavy one walks wider and rolls more; a muscled… (:4211)
+  - `momentum?: boolean` Momentum between moves (gs.models.human people; on by itself): a new move begins at once and takes up what the body was doing. (:4218)
+  - `readonly follow?: { amount: number; reset(): void } | null` Follow-through (gs.models.human people; on by itself): what the body carries goes on a moment and settles when the game starts it, stops it, turns it or drops it. (:4225)
+  - `hang(thing: Loose, o?: { pivot?: [number, number, number]; swing?: number; bounce?: number; stiff?: number; damp?: number; most?: number; away?: [number, number, numbe…` Something that hangs from the body and swings as it moves (a slung rifle, a lantern, a satchel): thing is an Object3D on one of the joints, as it hangs at rest. (:4234)
+- `person(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string; lips?: string; sleeves?: 'long' | 'short'; girth?: numbe…` A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. (:4253)
+- `Face: CharactersPart['Face']` (:4254)
+- `shapes: CharactersPart['shapes']` (:4254)
+- `visemes: CharactersPart['visemes']` (:4254)
+- `FACE_SHAPES: string[]` (:4254)
+- `figure(o?: { body?: string; skin?: string; legs?: string; shoes?: string; hair?: string; mat?: (colour: string) => Loose; scale?: number; shadows?: boolean }): Loose` (:4255)
 
 ## From the maker kit
 
@@ -160,7 +160,7 @@ More in docs/maker-kit.md: "Action and adventure kits", "Vehicles made in code".
 
 1 game uses it (`node scripts/examples.mjs gs.poses` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { human, vehicle } = gs.models;

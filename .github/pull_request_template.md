@@ -1,6 +1,6 @@
 ## What is it?
 
-<!-- Game name, style (Phone / Dot matrix / Color / Advance / Console) and one line on how it plays. -->
+<!-- Game name, style (Phone / Dot matrix / Color / Advance / Classic Console / Next Gen / AR · 3D / Board) and one line on how it plays. -->
 
 ## Why it's new
 

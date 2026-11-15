@@ -10,7 +10,7 @@ Guide: [feel words: which knob a word moves](../feel-words.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TweakFn`, line 2404), where every option and field is described.
+From `src/gamescroll.d.ts` (`TweakFn`, line 2409), where every option and field is described.
 
 ## From the maker kit
 
@@ -45,4 +45,18 @@ range). [Feel words](feel-words.md) says which knob each word moves, and the usu
 
 ## In real games
 
-No game uses `gs.tweak` yet: the examples above are what there is.
+9 games use it (`node scripts/examples.mjs gs.tweak` lists them). The shortest:
+
+`src/games/fast-maths.js` (Fast Maths, Pocket · Brain, 135 lines):
+
+```js
+  const ready = new Ready({ text: 'TAP TO START' });                   // the first card stays face down until the first tap
+  const K = gs.tweak('Feel', {
+```
+
+`src/games/slide-ten.js` (Slide Ten, Pocket · Merge, 140 lines):
+
+```js
+function make(api) {
+  const K = gs.tweak('Feel', {
+```

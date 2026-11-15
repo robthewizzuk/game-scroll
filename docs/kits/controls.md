@@ -79,28 +79,7 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 
 ## In real games
 
-13 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
-
-`src/games/slide-ten.js` (Slide Ten, Pocket · Merge, 108 lines):
-
-```js
-const { Board } = gs.board;
-const { Gestures } = gs.controls;
-// …
-  let b, score, t, dead, moves, lastTen;
-  const g = new Gestures({ swipe: dir => slide(dir) });
-// …
-  return {
-    reset() { b = new Board(N, N, { speed: 16 }); score = 0; t = 0; dead = 0; moves = 0; lastTen = 0; g.release(); feel.clear(); for (let i = 0; i < 5
-// …
-    update(dt) {
-      feel.update(dt); g.update(); if (feel.frozen) return;
-// …
-    },
-    down: (x, y, id) => g.down(x, y, id),
-    move: (x, y, p, id) => g.move(x, y, p, id),
-    up: (x, y, id) => g.up(x, y, id),
-```
+12 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
 
 `src/games/ladder-climber.js` (Ladder Climber, Pocket · Reflex, 114 lines):
 
@@ -113,4 +92,22 @@ const { Keys } = gs.controls;
 // …
   return {
     reset() { rungs = []; height = 0; flood = -3; score = 0; t = 0; side = 0; slip = 0; dead = 0; combo = 0; started = false; beat = 0; keys.clear(); 
+```
+
+`src/games/ghost-torch.js` (Ghost Torch, AR · Spooky, 119 lines):
+
+```js
+const { Juice } = gs.juice;
+const { Gestures } = gs.controls;
+// …
+  let v, geo, ghosts, sparks, score, candles, t, spawnT, on, ended;
+  const g = new Gestures({
+// …
+      for (const gh of ghosts || []) drop(gh);
+      ghosts = []; score = 0; candles = 3; t = 0; spawnT = 0; on = false; ended = false; sparks.clear(); fx.clear(); g.release();
+// …
+    // the AR kit gets touches first: its floor panels (Skip, Done, the Floor chip) use them
+    down: (x, y, id) => { if (!v?.input?.('down', x, y, id)) g.down(x, y, id); },
+    move: (x, y, p, id) => { if (!v?.input?.('move', x, y, id, p)) g.move(x, y, p, id); },
+    up: (x, y, id) => { if (!v?.input?.('up', x, y, id)) g.up(x, y, id); },
 ```

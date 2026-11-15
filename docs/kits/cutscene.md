@@ -8,10 +8,10 @@ Cutscenes: camera paths, lines, and actors who walk, turn, look, gesture and spe
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CutscenePart`, line 3750), where every option and field is described.
+From `src/gamescroll.d.ts` (`CutscenePart`, line 3755), where every option and field is described.
 
-- `along(points: P3[], u: number): P3` (:3751)
-- `Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & { playing: boolean; done: boolean; bars: number; line: { text: string;…` (:3752)
+- `along(points: P3[], u: number): P3` (:3756)
+- `Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & { playing: boolean; done: boolean; bars: number; line: { text: string;…` (:3757)
 
 ## From the maker kit
 
@@ -30,7 +30,7 @@ puts everyone where they were going.
 
 1 game uses it (`node scripts/examples.mjs gs.cutscene` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Mission } = gs.missions;

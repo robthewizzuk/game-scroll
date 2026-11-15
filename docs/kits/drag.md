@@ -8,23 +8,23 @@ Drag and drop: pieces, slots, snapping, reordering lists.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DragPart`, line 3250), where every option and field is described.
+From `src/gamescroll.d.ts` (`DragPart`, line 3255), where every option and field is described.
 
-- `Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; ax…` (:3250)
-  - `pieces: DragThing[]` (:2837)
-  - `slots: DragThing[]` (:2837)
-  - `readonly busy: boolean` (:2837)
-  - `readonly order: DragThing[]` (:2837)
-  - `on(ev: 'pick' | 'over' | 'drop' | 'reject' | 'home' | 'reorder', fn: (...a: Loose[]) => void): Drag` (:2838)
-  - `piece<T extends DragThing>(p: T): T` (:2839)
-  - `slot<T extends DragThing>(s: T): T` (:2839)
-  - `remove(p: DragThing): void` (:2839)
-  - `at(x: number, y: number): DragThing | null` (:2839)
-  - `down(x: number, y: number, id?: number): DragThing | null` (:2840)
-  - `move(x: number, y: number, id?: number): void` (:2840)
-  - `up(x: number, y: number, id?: number): void` (:2840)
-  - `place(p: DragThing, s: DragThing | null): Drag` (:2841)
-  - `update(dt: number): Drag` (:2841)
+- `Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; ax…` (:3255)
+  - `pieces: DragThing[]` (:2842)
+  - `slots: DragThing[]` (:2842)
+  - `readonly busy: boolean` (:2842)
+  - `readonly order: DragThing[]` (:2842)
+  - `on(ev: 'pick' | 'over' | 'drop' | 'reject' | 'home' | 'reorder', fn: (...a: Loose[]) => void): Drag` (:2843)
+  - `piece<T extends DragThing>(p: T): T` (:2844)
+  - `slot<T extends DragThing>(s: T): T` (:2844)
+  - `remove(p: DragThing): void` (:2844)
+  - `at(x: number, y: number): DragThing | null` (:2844)
+  - `down(x: number, y: number, id?: number): DragThing | null` (:2845)
+  - `move(x: number, y: number, id?: number): void` (:2845)
+  - `up(x: number, y: number, id?: number): void` (:2845)
+  - `place(p: DragThing, s: DragThing | null): Drag` (:2846)
+  - `update(dt: number): Drag` (:2846)
 
 ## From the maker kit
 
@@ -38,7 +38,7 @@ form a row you reorder by dragging.
 
 1 game uses it (`node scripts/examples.mjs gs.drag` lists them). The shortest:
 
-`src/games/hand-sort.js` (Hand Sort, Casual · Cards, 92 lines):
+`src/games/hand-sort.js` (Hand Sort, Casual · Cards, 93 lines):
 
 ```js
 const { sfx, notes } = gs.sound;
@@ -47,7 +47,7 @@ const { Drag } = gs.drag;
     const ch = (H - 210) / n - 6, cw = Math.min(W - 80, 230);
     drag = new Drag({ list: { x: W / 2, y: 150, gap: 6, axis: 'y' } });
 // …
-    hand.sort(() => Math.random() - .5);
+    hand = shuffle(hand);
     for (const c of hand) drag.piece({ ...c, x: W / 2, y: 150, w: cw, h: ch });
     if (ordered()) { const ps = drag.order; [ps[0].index, ps[1].index] = [ps[1].index, ps[0].index]; drag.layout(); }
 // …

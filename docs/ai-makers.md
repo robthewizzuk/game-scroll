@@ -55,7 +55,7 @@ Without MCP, the same tools are commands: `npm run kit <name>`, `node scripts/ex
 
 ## Chat apps (ChatGPT, Gemini, Claude.ai)
 
-1. Run `npm run ai-prompt pocket > prompt.txt` (or `phone`, `color`, `advance`, `console`, `nextgen`, `ar`).
+1. Run `npm run ai-prompt pocket > prompt.txt` (or `phone`, `color`, `advance`, `console`, `nextgen`, `ar`, `board`).
    It joins the request (`docs/ai/game-prompt.md`), the rules and kit (`AGENTS.md`) and a starter template.
 2. Open `prompt.txt`, describe your idea where it says so, and paste the whole thing into the chat.
 3. Save the code it gives you as `src/games/<id>.js` and run the checks:

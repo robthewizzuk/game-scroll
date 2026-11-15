@@ -8,17 +8,17 @@ Made levels from a seed: dungeons, caves, mazes, islands, patterns, field of vie
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`GenPart`, line 2821), where every option and field is described.
+From `src/gamescroll.d.ts` (`GenPart`, line 2826), where every option and field is described.
 
-- `dungeon(w?: number, h?: number, o?: { seed?: number | string; kind?: 'digger' | 'uniform' | 'rogue'; doors?: boolean; dug?: number }): GenMap & { rooms: { x: number; y…` (:2822)
-- `cave(w?: number, h?: number, o?: { seed?: number | string; fill?: number; steps?: number; connect?: boolean }): GenMap` (:2823)
-- `maze(w?: number, h?: number, o?: { seed?: number | string; kind?: 'backtracker' | 'eller' | 'divided' }): GenMap` (:2824)
-- `heightmap(w?: number, h?: number, o?: { seed?: number | string; scale?: number; octaves?: number }): { w: number; h: number; data: Float32Array; at(x: number, y: numbe…` (:2825)
-- `islands(w?: number, h?: number, o?: { seed?: number | string; sea?: number; scale?: number }): GenMap & { heights: Loose }` (:2826)
-- `pattern(sample: string, w?: number, h?: number, o?: { seed?: number | string; n?: number; symmetry?: number; periodic?: boolean; tries?: number }): GenMap | null` (:2827)
-- `fov(map: string | ((col: number, row: number) => boolean), col: number, row: number, radius?: number): Set<string>` (:2828)
-- `proven<L>(make: (seed: number) => L, check: (level: L) => boolean | number | null | undefined, o?: { seed?: number | string; tries?: number; good?: number }): { level:…` Proven levels: makes levels until one passes check (false/null = throw away; true or a number, higher is better). (:2830)
-- `reach(text: string, from?: string | { col: number; row: number }, to?: string | { col: number; row: number }, o?: { walls?: string }): number` Steps from one mark to another through anything that isn't a wall, or -1. (:2832)
+- `dungeon(w?: number, h?: number, o?: { seed?: number | string; kind?: 'digger' | 'uniform' | 'rogue'; doors?: boolean; dug?: number }): GenMap & { rooms: { x: number; y…` (:2827)
+- `cave(w?: number, h?: number, o?: { seed?: number | string; fill?: number; steps?: number; connect?: boolean }): GenMap` (:2828)
+- `maze(w?: number, h?: number, o?: { seed?: number | string; kind?: 'backtracker' | 'eller' | 'divided' }): GenMap` (:2829)
+- `heightmap(w?: number, h?: number, o?: { seed?: number | string; scale?: number; octaves?: number }): { w: number; h: number; data: Float32Array; at(x: number, y: numbe…` (:2830)
+- `islands(w?: number, h?: number, o?: { seed?: number | string; sea?: number; scale?: number }): GenMap & { heights: Loose }` (:2831)
+- `pattern(sample: string, w?: number, h?: number, o?: { seed?: number | string; n?: number; symmetry?: number; periodic?: boolean; tries?: number }): GenMap | null` (:2832)
+- `fov(map: string | ((col: number, row: number) => boolean), col: number, row: number, radius?: number): Set<string>` (:2833)
+- `proven<L>(make: (seed: number) => L, check: (level: L) => boolean | number | null | undefined, o?: { seed?: number | string; tries?: number; good?: number }): { level:…` Proven levels: makes levels until one passes check (false/null = throw away; true or a number, higher is better). (:2835)
+- `reach(text: string, from?: string | { col: number; row: number }, to?: string | { col: number; row: number }, o?: { walls?: string }): number` Steps from one mark to another through anything that isn't a wall, or -1. (:2837)
 
 ## From the maker kit
 

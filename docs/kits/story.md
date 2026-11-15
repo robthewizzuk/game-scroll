@@ -8,28 +8,28 @@ Branching dialogue from ink scripts, played by people in 3D with camera shots, a
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`StoryPart`, line 1504), where every option and field is described.
+From `src/gamescroll.d.ts` (`StoryPart`, line 1509), where every option and field is described.
 
-- `Story: new (source: string) => { readonly ended: boolean; readonly choices: StoryLine['choices']; vars: Record<string, Loose>; ink: Loose; next(): StoryLine; choose(in…` Branching dialogue written in ink (lazy: make it in make() or reset()). (:1506)
-- `Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: …` (:1511)
-- `loadStory(): Promise<Loose>` (:1512)
-- `Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number…` A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other, #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide |… (:1518)
-  - `on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this` (:1521)
-  - `start(section?: string | null): this` Starts (at a section of the story, or where it is). (:1522)
-  - `readonly speaker: string | null` The speaker's cast id (null: a narrator). (:1523)
-  - `readonly who: string` Their name to draw. (:1523)
-  - `readonly shown: string` The line so far, typed out. (:1524)
-  - `readonly text: string` (:1524)
-  - `readonly choices: StoryLine['choices']` Choices open once the line is typed out. (:1525)
-  - `line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null` (:1526)
-  - `shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null` The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). (:1528)
-  - `ended: boolean` (:1529)
-  - `tap(): this` Shows the whole line, or goes on. (:1530)
-  - `choose(index: number): this` (:1530)
-  - `stop(): this` (:1530)
-  - `update(dt: number): this` (:1530)
-  - `save(): string` (:1531)
-  - `load(json: string): this` (:1531)
+- `Story: new (source: string) => { readonly ended: boolean; readonly choices: StoryLine['choices']; vars: Record<string, Loose>; ink: Loose; next(): StoryLine; choose(in…` Branching dialogue written in ink (lazy: make it in make() or reset()). (:1511)
+- `Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: …` (:1516)
+- `loadStory(): Promise<Loose>` (:1517)
+- `Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number…` A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other, #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide |… (:1523)
+  - `on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this` (:1526)
+  - `start(section?: string | null): this` Starts (at a section of the story, or where it is). (:1527)
+  - `readonly speaker: string | null` The speaker's cast id (null: a narrator). (:1528)
+  - `readonly who: string` Their name to draw. (:1528)
+  - `readonly shown: string` The line so far, typed out. (:1529)
+  - `readonly text: string` (:1529)
+  - `readonly choices: StoryLine['choices']` Choices open once the line is typed out. (:1530)
+  - `line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null` (:1531)
+  - `shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null` The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). (:1533)
+  - `ended: boolean` (:1534)
+  - `tap(): this` Shows the whole line, or goes on. (:1535)
+  - `choose(index: number): this` (:1535)
+  - `stop(): this` (:1535)
+  - `update(dt: number): this` (:1535)
+  - `save(): string` (:1536)
+  - `load(json: string): this` (:1536)
 
 ## From the maker kit
 
@@ -68,4 +68,23 @@ slots and limits, and `gs.story` for conversations.
 
 ## In real games
 
-No game uses `gs.story` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.story` lists them). The shortest:
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { NavGrid } = gs.ai;
+const { Typewriter } = gs.story;
+// …
+    talkQ = lines.map(l => typeof l === 'string' ? { who, txt: l } : l); talkThen = then; mode = 'talk';
+    tw = new Typewriter(talkQ[0].txt, { speed: K.textSpeed }); stick.release(); press = null; path = null;
+// …
+  function talkTap() {
+    if (!tw.done) { tw.skip(); return; }
+// …
+    talkQ.shift(); sounds.blip();
+    if (talkQ.length) { tw = new Typewriter(talkQ[0].txt, { speed: K.textSpeed }); return; }
+// …
+      if (mode === 'end' || mode === 'won') { endT -= dt; if (endT <= 0) { if (mode === 'won') { feel.win(); api.win(); } else api.over(); mode = 'gon
+      if (mode === 'talk') { tw.update(dt); if (!tw.done && tw.ticked && (t * 30 | 0) % 2) sounds.blip(1.6); return; }
+```

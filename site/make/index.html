@@ -34,9 +34,10 @@
     <li><a href="#rules">The rules</a></li>
     <li><a href="#setup">1. Get set up</a></li>
     <li><a href="#file">2. Write your game</a></li>
+    <li><a href="#ai">With an AI tool</a></li>
     <li><a href="#style">3. Pick a style</a></li>
     <li><a href="#ar">AR games</a></li>
-    <li><a href="#phone">4. Sound, haptics, sensors</a></li>
+    <li><a href="#phone">4. The engine: gs</a></li>
     <li><a href="#credits">5. Credits and shop items</a></li>
     <li><a href="#test">6. Test it</a></li>
     <li><a href="#submit">7. Submit it</a></li>
@@ -52,9 +53,10 @@
 
 <h2 id="how">How it works</h2>
 <ol class="steps">
-  <li><b>Write one file.</b> Your game lives in <code>src/games/your-game.js</code>. It draws on a canvas and reacts to touches. The app handles the rest: the start screen, the game-over screen, scores, credits, sizing for every phone.</li>
+  <li><b>Write one file.</b> Your game lives in <code>src/games/your-game.js</code>. It draws on a canvas and reacts to touches, and the engine (<code>gs</code>) gives it physics, sound, effects, 3D, opponents that learn and much more. The app handles the rest: the start screen, the game-over screen, scores, credits, sizing for every phone. You can write it yourself or <a href="#ai">with an AI tool</a>.</li>
   <li><b>Try it on your phone.</b> Run the app on your computer and open it on your phone over Wi-Fi.</li>
-  <li><b>Open a pull request on GitHub.</b> Automatic checks play your game in a headless browser, then Rob plays it.</li>
+  <li><b>Check it with one command.</b> <code>npm run check your-game</code> plays it, folds the screen, compares it with every game in the feed and measures its speed against real phones, and says what to fix, line by line.</li>
+  <li><b>Open a pull request on GitHub.</b> The same checks run again, then Rob plays it.</li>
   <li><b>It goes live.</b> When it's merged, your game streams into the feed for everyone, with your name on it.</li>
 </ol>
 <div class="note"><p>You'll need some JavaScript. If you've made something with an HTML canvas before, you're ready. If not, copy the starter game below and change one thing at a time.</p></div>
@@ -81,49 +83,65 @@ npm run dev</code></pre>
 <p>Fork the repository, then on your fork click <b>Code → Codespaces → Create codespace</b>. You get an editor in the browser. In its terminal, run <code>npm install</code> and <code>npm run dev</code>, then open the forwarded port it offers. GitHub gives every account free Codespaces hours each month.</p>
 
 <h2 id="file">2. Write your game</h2>
-<p><b>Quickest start:</b> <code>npm run new my-game --style pocket</code> writes a small game that already plays, in any style (<code>phone</code>, <code>pocket</code>, <code>color</code>, <code>advance</code>, <code>console</code>, <code>nextgen</code> or <code>ar</code>). Then make it your own.</p>
+<p><b>Quickest start:</b> <code>npm run new my-game --style pocket</code> writes a small game that already plays, in any style (<code>phone</code>, <code>pocket</code>, <code>color</code>, <code>advance</code>, <code>console</code>, <code>nextgen</code>, <code>ar</code> or <code>board</code>). It starts the way a finished game does: a fixed tick, a "Tap to start" gate, one-call effects, a soundtrack, a save slot and its feel numbers in one block of knobs. Then make it your own.</p>
 <p>Or start from scratch: create <code>src/games/tap-bubbles.js</code> (the file name must match the game's <code>id</code>). This is a complete, working game you can start from:</p>
 <pre><code>import gs from '../gamescroll.js';
-const { sfx } = gs.sound;
-const { haptic } = gs.device;
+const { Feel } = gs.effects;
+const { Ready } = gs.rounds;
 
 const W = 360, H = 640;
 
 function make(api) {
+  const feel = new Feel(), ready = new Ready();
+  const K = gs.tweak('Feel', {                // knobs: the numbers that set how it feels
+    rise: [90, 40, 200, 'how fast bubbles float up'],
+    faster: [4, 0, 10, 'extra speed each second'],
+    size: [24, 14, 40, 'bubble radius'],
+  });
   let bubbles, score, t, missed;
   return {
-    reset() { bubbles = []; score = 0; t = 0; missed = 0; },
-    update(dt) {                       // dt is in seconds
+    reset() { bubbles = []; score = 0; t = 0; missed = 0; feel.clear(); ready.reset(); },   // ALL round state here
+    update(dt) {                              // dt is in seconds
+      feel.update(dt);
+      if (!ready.update(dt)) return;          // nothing moves until the first tap
       t += dt;
-      if (Math.random() &lt; dt * (1 + t / 10)) bubbles.push({ x: 30 + Math.random() * (W - 60), y: H + 30, r: 24 });
-      for (const b of bubbles) b.y -= dt * (90 + t * 4);
-      missed += bubbles.filter(b =&gt; b.y &lt; -30).length;
-      bubbles = bubbles.filter(b =&gt; b.y &gt;= -30);
-      if (missed &gt;= 3) { haptic('warning'); api.over(); }
+      if (Math.random() &lt; dt * (1 + t / 10)) bubbles.push({ x: 30 + Math.random() * (W - 60), y: H + 30 });
+      for (const b of bubbles) b.y -= dt * (K.rise + t * K.faster);
+      const gone = bubbles.filter(b =&gt; b.y &lt; -30).length;
+      if (gone) { missed += gone; bubbles = bubbles.filter(b =&gt; b.y &gt;= -30); feel.hurt(); }
+      if (missed &gt;= 3) { feel.lose(); api.over(); }
     },
-    draw(c) {                          // a 2D canvas context, W x H units
+    draw(c) {                                 // a 2D canvas context, W x H units
       c.fillStyle = '#16212e'; c.fillRect(0, 0, W, H);
+      feel.begin(c);                          // everything up to feel.end() shakes
       c.fillStyle = '#5aa8ff';
-      for (const b of bubbles) { c.beginPath(); c.arc(b.x, b.y, b.r, 0, 7); c.fill(); }
+      for (const b of bubbles) { c.beginPath(); c.arc(b.x, b.y, K.size, 0, 7); c.fill(); }
+      feel.end(c, W, H);                      // particles, pop-ups, flash
+      ready.draw(c, W, H);                    // "Tap to start" until the first tap
     },
-    down(x, y) {                       // already in game units
-      const i = bubbles.findIndex(b =&gt; Math.hypot(b.x - x, b.y - y) &lt; b.r + 8);
+    down(x, y) {                              // already in game units
+      if (ready.go()) return;                 // the first tap only starts the round
+      const i = bubbles.findIndex(b =&gt; Math.hypot(b.x - x, b.y - y) &lt; K.size + 8);
       if (i &lt; 0) return;
-      bubbles.splice(i, 1); api.score(++score);
-      haptic('light'); sfx(520 + score * 10, .06, 'triangle', .04);
+      const [b] = bubbles.splice(i, 1);
+      api.score(++score);
+      feel.coin(b.x, b.y, { text: '+1' });    // particles, a sound and a buzz in one call
     },
   };
 }
 
 export default {
   id: 'tap-bubbles', title: 'Tap Bubbles',
-  tag: 'Casual · Reflex',             // "&lt;Style&gt; · &lt;Genre&gt;"
+  tag: 'Casual · Reflex',                     // "&lt;Style&gt; · &lt;Genre&gt;"
   retro: false, w: W, h: H,
-  goal: 25,                           // the score that counts as a win
+  tick: 60,                                   // the same game on every phone
+  music: 'happy',                             // a soundtrack in one line
+  goal: 25,                                   // the score that counts as a win
   hint: 'Pop the bubbles before they float away. Miss three and it is over.',
   make,
 };</code></pre>
-<p>Then jump straight to it: open the browser console and run <code>__gs.only('tap-bubbles')</code>. Press <code>`</code> (backquote) for the debug overlay: frame rate, slow motion, frame stepping and hitboxes. Save your file and the game reloads in place, and <code>gs.tweak({ speed: 3 })</code> gives you sliders to tune numbers while you play.</p>
+<p>Then jump straight to it: open the browser console and run <code>__gs.only('tap-bubbles')</code>. Press <code>`</code> (backquote) for the debug overlay: frame rate, slow motion, frame stepping and hitboxes. Save your file and the game reloads in place.</p>
+<p><b>Knobs.</b> The numbers that set how a game feels live in one <code>gs.tweak('Feel', { ... })</code> block. In <code>npm run dev</code> they show as sliders while you play, and <b>Save to file</b> writes them back. <code>npm run knobs tap-bubbles</code> lists or changes them, and the <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/feel-words.md">feel words</a> list says which knob a word like <i>floatier</i>, <i>snappier</i> or <i>fairer</i> moves. <code>npm run watch tap-bubbles rise*0.8</code> plays it before and after a change from the same start and saves a strip of frames, so you can see the difference.</p>
 
 <h3>What your game gets and gives</h3>
 <table>
@@ -135,7 +153,7 @@ export default {
   <tr><td><code>key(k, isDown)</code></td><td>Optional keyboard support for desktop.</td></tr>
   <tr><td><code>resize(w, h)</code></td><td>Optional, for games that grow to fill big screens.</td></tr>
 </table>
-<p>Your game calls <code>api.score(n)</code>, <code>api.over()</code> and <code>api.win()</code>. To remember things between plays, like unlocked levels, use its own save slot: <code>api.save(data)</code> and <code>api.load(fallback)</code>. Saves follow the player to a new phone.</p>
+<p>Your game calls <code>api.score(n)</code>, <code>api.over()</code> and <code>api.win()</code>. To remember things between plays, like unlocked levels, use its own save slot: <code>api.save(data)</code> and <code>api.load(fallback)</code>. Saves follow the player to a new phone. A bigger world the player builds can stay on the phone with <code>api.saveLocal(data)</code>. The app draws the score at the top centre: keep your own HUD out of <code>api.scoreArea()</code>.</p>
 <table>
   <tr><th>The <code>api</code></th><th>What it does</th></tr>
   <tr><td><code>api.score(n)</code></td><td>Sets the score. Reaching <code>goal</code> wins credits; the game keeps going.</td></tr>
@@ -147,8 +165,17 @@ export default {
 </table>
 <p>The <code>hint</code> and the genre in <code>tag</code> also feed the recommender, so mention the control (tap, drag, tilt...) and the genre honestly.</p>
 
+<h2 id="ai">Making it with an AI tool</h2>
+<p>Many makers use an AI helper: Claude, ChatGPT, Gemini, Copilot, Cursor and the rest. The repository is set up for them.</p>
+<ul>
+  <li><b>Coding tools that work in the repository</b> read its instructions by themselves (<code>AGENTS.md</code>, and <code>CLAUDE.md</code> or <code>GEMINI.md</code> for those two). Open the repository in the tool and ask, for example, <i>"Make a new Pocket game where you herd sheep with a dog by tilting the phone."</i> Claude Code also has a <code>/make-game</code> skill.</li>
+  <li><b>The Game Scroll MCP server</b> (<code>scripts/mcp.mjs</code>) lets the tool ask the engine instead of guessing: a short guide to any part of <code>gs</code>, how real games use it, which knob a feel word moves, a new game from a template, every check in one report, the speed report, and <b>play and watch</b>, which plays the game and sends back pictures and numbers, before and after a change. Claude Code finds it by itself (<code>.mcp.json</code>); Cursor, Codex, Gemini CLI and VS Code take one line of setup.</li>
+  <li><b>Chat apps</b>: <code>npm run ai-prompt pocket &gt; prompt.txt</code> (or any style) writes one prompt with the rules, the kit and a starter game. Paste it in with your idea, save the code it gives you as <code>src/games/&lt;id&gt;.js</code>, run <code>npm run check &lt;id&gt;</code> and paste the report back to have it fix what failed.</li>
+</ul>
+<p>So "make the jump floatier" becomes one number the tool can find, change and show you. You're still responsible for what you send in: play it, read it, and check the names and characters are your own. More in <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/ai-makers.md">making games with AI tools</a>.</p>
+
 <h2 id="style">3. Pick a style</h2>
-<p>Every game picks one of seven looks. The style sets the frame around your game, the start and game-over screens, and which tab it appears in.</p>
+<p>Every game picks one of eight looks. The style sets the frame around your game, the start and game-over screens, and which tab it appears in.</p>
 <img src="/img/make/styles.png" alt="The styles side by side: Phone, Dot matrix, Color, Advance and Console" loading="lazy">
 <table>
   <tr><th>Style</th><th>Set</th><th>Typical size</th><th>Look</th></tr>
@@ -161,7 +188,14 @@ export default {
   <tr><td><span class="chip s-ar">AR · 3D</span></td><td><code>era: 'ar'</code></td><td>300 × 460, fluid</td><td>3D objects in the player's real room, through the camera. <a href="#ar">How to make one</a>.</td></tr>
   <tr><td><span class="chip s-board">Board</span></td><td><code>era: 'board'</code></td><td>300 × 460, fluid</td><td>Board games on a table in 3D, or in the player's room with AR, from one file (the tabletop kit).</td></tr>
 </table>
-<p>Retro styles also set <code>retro: true</code> and a shell colour with <code>pal</code>. The 3D styles share one renderer, so never make your own WebGL context. The <a href="https://github.com/robthewizzuk/game-scroll/blob/main/CONTRIBUTING.md#choosing-a-style">full contributor guide</a> has the palettes, code samples for each style, and the 3D kits.</p>
+<p>Retro styles also set <code>retro: true</code> and a shell colour with <code>pal</code>. The 3D styles share one renderer (WebGPU where the phone has it, WebGL elsewhere), so never make your own. The <a href="https://github.com/robthewizzuk/game-scroll/blob/main/CONTRIBUTING.md#choosing-a-style">full contributor guide</a> has the palettes, code samples for each style, and the 3D kits.</p>
+
+<h3>3D games on phones</h3>
+<ul>
+  <li><b>60 frames a second, or 30 and 30 made.</b> On a phone, a 3D game aims for a steady 60. Where it can't hold 60, the app draws 30 and frame generation (GSFG) makes the 30 in between, and goes back to 60 when there is room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. You don't set any of this: keep your game's work light and the app picks.</li>
+  <li><b>A loading screen after Play.</b> On Next Gen, AR and Board games, Play first shows a loading screen while the app runs <code>reset()</code>, draws the first frames and builds every shader they need, so the round never stutters on its first seconds. Make what a round needs in <code>reset()</code> or its first <code>update()</code>, not a few frames in.</li>
+  <li><b>Smoothness is part of the game.</b> The speed report (in <code>npm run check</code>, or <code>npm run speed &lt;id&gt;</code> alone) times your frames on a slowed processor, names your slowest lines and the garbage they make, and for 3D games counts draw calls, triangles and shaders built mid-play against low, mid and top phones. Over the budget fails the check.</li>
+</ul>
 
 <h3>Big screens and foldables</h3>
 <p>Players use everything from small phones to unfolded Galaxy Z Fold and iPhone foldables, and can fold mid-game. By default your canvas is scaled to fit. To fill the extra space, add <code>maxW</code> and <code>maxH</code> and a <code>resize(w, h)</code> method; the app picks the best size and tells you. Keep the game fair at every size.</p>
@@ -210,44 +244,22 @@ export default {
 <p>Every AR game must play everywhere. With no camera (refused, or on a computer) the kit draws a virtual room instead. With no motion sensor, the player drags to look around (<code>v.drag(dx, dy)</code>); if dragging is already your control, keep targets in view instead. Stop the camera with <code>v.off()</code> in <code>reset()</code> and before <code>api.over()</code>. The camera picture is never saved or sent.</p>
 <p>Test the fallback path with the usual checks (<code>smoke</code>, <code>fold</code>, <code>sweep</code>), then try it on a real phone, because the camera and motion sensor only work there. The full reference, including how to fake a camera in a headless browser, is in <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/ar-3d.md">docs/ar-3d.md</a>.</p>
 
-<h2 id="phone">4. Sound, haptics and phone sensors</h2>
-<p>Everything the app offers games comes through one import, <code>import gs from '../gamescroll.js'</code>. A game can't import any other app code. The main parts:</p>
+<h2 id="phone">4. The engine: everything on <code>gs</code></h2>
+<p>Everything the app offers games comes through one import, <code>import gs from '../gamescroll.js'</code>. A game can't import any other app code. Use these rather than writing your own: games come out shorter and feel better. Every part has a <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/kits/README.md">short guide</a> (what it is, what to know, its types and the real games that use it), and <code>npm run kit physics</code> prints one.</p>
 <ul>
-  <li><code>gs.sound</code>: <code>sfx()</code> beeps, ready-made sounds like <code>sounds.coin()</code>, sounds you design with ZzFX, looping music, and Tone.js synths.</li>
-  <li><code>gs.effects</code>: one-call moments like <code>feel.coin()</code>, <code>feel.hit()</code> and <code>feel.boom()</code> (particles, shake, sound and haptics together).</li>
-  <li><code>gs.juice</code>: particles, screen shake, smooth movement and "+10" pop-ups.</li>
-  <li><code>gs.controls</code> and <code>gs.pad</code>: thumbsticks, buttons, tap, hold and swipe, and game controllers.</li>
-  <li><code>gs.physics</code> and <code>gs.physics3d</code>: real 2D and 3D physics (Rapier) with hinges, ropes, springs and a walking character.</li>
-  <li><code>gs.ai</code>: enemies that chase, flee, flock and find their way round walls (Yuka).</li>
-  <li><code>gs.pixel</code>: crisp pixel text and sprites drawn from text.</li>
-  <li><code>gs.moves</code>: swing, punch, throw, flip and twist the phone.</li>
-  <li><code>gs.things</code>, <code>gs.rounds</code>, <code>gs.pacing</code>: what hit what, scenes and levels, waves and difficulty.</li>
-  <li><code>gs.aim</code>, <code>gs.senses</code>: aim assist for thumbs; guards that see, hear and search.</li>
-  <li><code>gs.camera2d</code>, <code>gs.tiles</code>, <code>gs.movers</code>: 2D cameras, levels written as text, jumps that feel right.</li>
-  <li><code>gs.anim</code>, <code>gs.story</code>, <code>gs.replay</code>: animation states, story dialogue (ink), ghosts and replays.</li>
-  <li><code>gs.look2d</code>: lights and shadows, old-TV and bloom effects, thousands of fast sprites.</li>
-  <li><code>gs.brains</code>: Tiny Brains, opponents that learn as you play, with guard rails so they stay fun.</li>
-  <li><code>gs.board</code>, <code>gs.battle</code>, <code>gs.gen</code>: match and merge boards, turn-based fights and items, dungeons, caves and mazes made by code.</li>
-  <li><code>gs.drag</code>, <code>gs.idle</code>, <code>gs.party</code>: drag and drop, idle game maths, pass-the-phone and split-screen play.</li>
-  <li><code>gs.rhythm</code>, <code>gs.strokes</code>: notes on the beat with fair timing; draw a shape to cast it.</li>
-  <li><code>gs.vehicles</code>, <code>gs.level3d</code>, <code>gs.sky</code>: cars and karts that drift, 3D levels from text maps, time of day and weather.</li>
-  <li><code>gs.combat</code>, <code>gs.tactics</code>, <code>gs.stealth</code>: guns and recoil, health and explosions, enemies that take cover and flank, light meters and takedowns.</li>
-  <li><code>gs.climb</code>, <code>gs.poses</code>, <code>gs.gadgets</code>: ledges and ropes, a posable 3D figure, grappling hooks, zip lines and hacking puzzles.</li>
-  <li><code>gs.missions</code>, <code>gs.cutscene</code>, <code>gs.prompts</code>, <code>gs.campaign</code>: mission scripts with checkpoints, cutscenes, quick-time prompts, chapters and stars.</li>
-  <li><code>gs.destruction</code>, <code>gs.arena</code>, <code>gs.props</code>: walls that break into pieces, ball games with flipping cars, thousands of trees and big worlds on a phone.</li>
-  <li><code>gs.outdoors</code>, <code>gs.craft</code>, <code>gs.soft</code>: hills, grass and seas, planes and boats, cloth to cut and jelly to squish.</li>
-  <li><code>gs.city</code>: a whole made-up city from a seed, with lit windows, traffic that stops at the lights, people on the pavements and routes to drive.</li>
-  <li><code>gs.cards</code>, <code>gs.dice</code>, <code>gs.words</code>: decks and poker hands, dice that tumble, a dictionary for word games.</li>
-  <li><code>gs.ui</code>: menus, shops and HUDs laid out for you (flexbox), drawn in your own look.</li>
-  <li><code>gs.tweak</code>: live sliders for your numbers while you play (only in <code>npm run dev</code>).</li>
-  <li><code>gs.camera</code>, <code>gs.nav3d</code>, <code>gs.characters</code>: 3D cameras, 3D path finding, heads that look and feet that step.</li>
-  <li><code>gs.vision</code>: play with your face or hands (MediaPipe, all on the phone).</li>
-  <li><code>gs.device</code>: <code>haptic()</code>, <code>buzz()</code>, <code>tilt()</code>, <code>onShake()</code>, <code>heading()</code>, <code>startMic()</code>, <code>startCamera()</code>.</li>
-  <li><code>gs.math</code>, <code>gs.util</code>, <code>gs.geo</code>, <code>gs.palettes</code>: seeded random, daily seeds, smooth noise, timers, palettes and location maths.</li>
-  <li><code>gs.toon</code>, <code>gs.hd</code>, <code>gs.ar</code>, <code>gs.fx3d</code>: the 3D kits, plus 3D text, 3D particles and screen effects.</li>
+  <li><b>Feel and sound.</b> <code>gs.effects</code> (<code>feel.coin()</code>, <code>feel.hit()</code>, <code>feel.boom()</code>: particles, shake, sound and haptics in one call), <code>gs.juice</code>, and <code>gs.sound</code>: 98 ready-made sounds, music and tunes made in code, world sounds and voices, and a soundtrack that follows the action with one line (<code>music: 'chase'</code>).</li>
+  <li><b>Controls.</b> <code>gs.controls</code> (thumbsticks, buttons, taps, holds, swipes), <code>gs.pad</code> (game controllers), <code>gs.moves</code> (swing, punch, throw or flip the phone), <code>gs.aim</code> (aim assist for thumbs), <code>gs.strokes</code> (shapes the player draws), <code>gs.drag</code> and <code>gs.ui</code> (menus in your own look).</li>
+  <li><b>Rounds and pacing.</b> <code>gs.rounds</code> (Ready, scenes, levels), <code>gs.pacing</code> (spawners, waves, a director that eases off), <code>gs.things</code>, <code>gs.tick</code>, <code>gs.math</code> (seeded random, daily seeds, timers that pause with the game), <code>gs.history</code> (undo) and <code>gs.replay</code> (ghosts).</li>
+  <li><b>2D worlds.</b> <code>gs.physics</code> (Rapier: shapes that tumble, joints, ropes, ragdolls, grabbing), <code>gs.soft</code> (cloth, rope, jelly, liquid), <code>gs.sand</code>, <code>gs.flow</code> (rivers and floods), <code>gs.tiles</code>, <code>gs.movers</code> (jumps that feel right), <code>gs.camera2d</code>, <code>gs.look2d</code> (2D lights and shadows that glow, screen effects), <code>gs.pixel</code>, <code>gs.gfx</code>, <code>gs.sketch</code>, <code>gs.bones</code>, <code>gs.anim</code>, <code>gs.art</code>, <code>gs.icons</code> (528 icons, never emoji) and <code>gs.fonts</code>.</li>
+  <li><b>Opponents that think.</b> <code>gs.brains</code>, our Tiny Brains: opponents and helpers that learn on the phone as people play, with guard rails so they stay fun, corrections you can give them ("here the right move was this"), a memory of which moves made rounds exciting, and a dial that keeps a player winning about as often as you choose. <code>gs.battle</code>, <code>gs.fight</code> and <code>gs.vehicles</code> come with ready-made opponents; <code>gs.ai</code>, <code>gs.senses</code>, <code>gs.stealth</code> and <code>gs.solve</code> give chasers, guards that see and hear, and puzzles with one answer.</li>
+  <li><b>Kinds of game.</b> <code>gs.board</code> (match, fall, slide, flood), <code>gs.cards</code>, <code>gs.dice</code>, <code>gs.words</code>, <code>gs.trivia</code> (about 2,700 questions), <code>gs.rhythm</code>, <code>gs.idle</code>, <code>gs.party</code> (pass the phone, split screen), <code>gs.sports</code>, <code>gs.arena</code>, <code>gs.bullets</code>, <code>gs.adventure</code>, <code>gs.hex</code>, <code>gs.rts</code>, <code>gs.gen</code> (dungeons, caves and mazes from a seed), <code>gs.items</code> and <code>gs.stats</code>.</li>
+  <li><b>Stories and fantasy.</b> <code>gs.rpg</code> (levels, skill trees, reputation, quests and a journal), <code>gs.story</code> (branching talk, played by people in 3D), <code>gs.town</code> (a living town with a clock), <code>gs.dungeon</code>, <code>gs.magic</code>, <code>gs.monsters</code> (telegraphed attacks, bosses in phases), <code>gs.companions</code>, <code>gs.mounts</code> (horses and flying beasts) and <code>gs.campaign</code>.</li>
+  <li><b>Action.</b> <code>gs.combat</code> (guns, bows, explosives, health), <code>gs.fight</code> (motion inputs, 3D melee with swords and shields), <code>gs.tactics</code> (cover in 2D and 3D, squads), <code>gs.climb</code> (ledges, ropes, swimming), <code>gs.gadgets</code>, <code>gs.missions</code> (objectives, open-world jobs, phone calls), <code>gs.cutscene</code> and <code>gs.prompts</code>.</li>
+  <li><b>3D worlds.</b> <code>gs.toon</code>, <code>gs.hd</code>, <code>gs.ar</code> and <code>gs.tabletop</code> for the 3D styles, with <code>gs.camera</code>, <code>gs.physics3d</code>, <code>gs.fx3d</code>, <code>gs.sky</code> (time of day and weather), <code>gs.outdoors</code> (land, grass, sea, rivers, trees, cloth), <code>gs.city</code> (a big streamed city with rooms behind the doors, traffic, police and a GPS), <code>gs.vehicles</code> (cars to drive, get into and crash), <code>gs.craft</code>, <code>gs.models</code> (people, creatures and a character creator, made in code), <code>gs.poses</code>, <code>gs.characters</code>, <code>gs.nav3d</code>, <code>gs.props</code>, <code>gs.regions</code>, <code>gs.voxels</code>, <code>gs.fluid</code> (liquid, sand, snow and mud), <code>gs.gas</code> (smoke and fire), <code>gs.destruction</code>, <code>gs.level3d</code> and <code>gs.bricks</code>.</li>
+  <li><b>The real world.</b> <code>gs.device</code> (haptics, tilt, shake, compass, mic, camera), <code>gs.vision</code> (face, hands and body, all on the phone), <code>gs.hear</code> (sounds and spoken words), <code>gs.doodle</code> (guesses what a player drew), <code>gs.geo</code>, <code>gs.real</code> (the sun, the moon, the battery) and <code>gs.phoneai</code> (the phone's own AI, for flavour lines only).</li>
 </ul>
-<p>The <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/maker-kit.md">maker kit guide</a> explains all of these with examples.</p>
-<p>Sensors return nothing in the browser or when a player says no, so <b>every sensor game needs a touch fallback</b>: drag instead of tilt, tap instead of shout. Stop the mic or camera when the round ends. Location, camera and mic data must never leave the phone.</p>
+<p>The kits find each other: one <code>Wind</code> blows the grass, trees, rain and smoke, and a 3D world is found by the cars, guns and cloth in it, so you don't wire them together. Kits give answers (hits, timings, where to aim); how your game looks and what scores stays yours. The <a href="https://github.com/robthewizzuk/game-scroll/blob/main/docs/maker-kit.md">maker kit</a> is the long reference with examples.</p>
+<p>Sensors return nothing in the browser or when a player says no, so <b>every sensor game needs a touch fallback</b>: drag instead of tilt, tap instead of blow. Stop the mic or camera when the round ends. Location, camera and mic data must never leave the phone.</p>
 
 <h3 id="location">Location games</h3>
 <p>A game can build its level from the player's area (a daily puzzle shared with everyone nearby, local weather, monsters that live in this park) or be played by walking around. Say how precise it needs to be in the game definition:</p>
@@ -278,27 +290,26 @@ shop: [
 // in your game: if (api.has('shield')) { ... }</code></pre>
 
 <h2 id="test">6. Test it</h2>
-<p>Play it on a real phone if you can: check the controls feel good with a thumb, the hint makes sense, and the goal is reachable. Then run the same checks the pull request runs:</p>
+<p>Play it on a real phone if you can: check the controls feel good with a thumb, the hint makes sense, and the goal is reachable. Then run the same checks the pull request runs, all in one command:</p>
 <pre><code>npm i --no-save playwright &amp;&amp; npx playwright install chromium   # first time only
-npm run build:bundled
-node scripts/smoke.cjs tap-bubbles    # plays it with random input; fails on any error
-node scripts/fold.cjs tap-bubbles     # folds and unfolds the screen mid-game
-node scripts/sweep.cjs tap-bubbles    # long play at odd sizes (needed for 3D and AR games)
-npm run games                         # fails if the file name and id differ</code></pre>
+npm run check tap-bubbles             # every check, one report: each problem with its line and what to do
+npm run check tap-bubbles -- --quick  # just the code checks, in about 2 seconds</code></pre>
+<p>It checks your code uses only <code>gs</code>, and uses it the way its types describe; names the three games nearest to yours (a near-copy fails); builds it; plays it with random taps, streamed the way the app runs it, and while folding the screen; plays 3D games long at odd screen sizes; has a bot try to reach the goal; and ends with the <b>speed report</b>: frame time against the budget on a slowed processor, your slowest lines, garbage and memory, and for 3D games draw calls, triangles and shaders built mid-play against low, mid and top phones. Making your game run well on phones is your job, so fix its warnings too. A frame lab recording from a phone gets the same advice: <code>npm run speed -- --lab &lt;file&gt;</code>.</p>
+<p>To see how a real game uses a part of the engine, run <code>npm run examples Feel.coin</code> (or <code>Physics.rope</code>, <code>rope</code>...): the shortest games that use it, with the lines.</p>
 
 <h2 id="submit">7. Submit it</h2>
 <ol class="steps">
   <li>Commit your game file on a branch of your fork and push it.</li>
   <li>On GitHub, open a <b>pull request</b> against <code>main</code> of <a href="https://github.com/robthewizzuk/game-scroll">robthewizzuk/game-scroll</a>.</li>
   <li>Fill in the template: what the game is, why its mechanic is new, its style, and a screenshot or short clip.</li>
-  <li>The automatic checks build the app and play your game. Fix anything they flag.</li>
+  <li>The automatic checks run <code>npm run check</code> on your game, speed report included. Fix anything they flag. A "plays like" warning names the nearest game: say what makes yours play differently, or change it until it does.</li>
   <li>Rob plays it and may ask for changes. Games that break the rules or play too much like one already in the feed may be turned down.</li>
 </ol>
 <div class="note"><p>A game pull request should only add or change your file in <code>src/games/</code>. Changes to shared code ship inside the app and need an app update, so open those separately and explain why.</p></div>
 
 <h2 id="after">After it's merged</h2>
 <p>You don't need to do anything. Every merge builds each game as its own small file and uploads it with a new catalogue. Phones check the catalogue regularly, so your game appears in feeds within minutes, credited to you by your GitHub name. Fixes reach players the same way.</p>
-<p>Games that turn out weak or broken in play testing may be hidden or removed later.</p>
+<p>The feed is play-tested as a whole, and games that turn out weak or broken may be hidden or removed later, so the 1,000 stay worth playing.</p>
 
 <h2 id="licence">Your rights</h2>
 <p>Game Scroll's code is under the <a href="https://github.com/robthewizzuk/game-scroll/blob/main/LICENSE">PolyForm Shield licence</a>: you can read, run, fork and change it, but not use it for a product that competes with Game Scroll. When you open a pull request you confirm the game is your own original work, you keep the copyright, and you give the project a permanent licence to use, change and ship it, including in the app stores. The <a href="https://github.com/robthewizzuk/game-scroll/blob/main/CONTRIBUTING.md#licence-of-your-contribution">exact terms are here</a>.</p>

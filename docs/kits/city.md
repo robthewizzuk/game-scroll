@@ -10,99 +10,99 @@ Made-up cities: streets, lit buildings with rooms to walk into, traffic and peop
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CityPart`, line 5081), where every option and field is described.
+From `src/gamescroll.d.ts` (`CityPart`, line 5086), where every option and field is described.
 
-- `City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: …` A made-up city from a seed, in a gs.hd HDView (or any view with .scene and .cam). (:5086)
-  - `plan: CityPlan` (:5250)
-  - `group: Loose` (:5250)
-  - `seed: number` (:5250)
-  - `start: CitySpot` (:5250)
-  - `t: number` (:5250)
-  - `far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null` With { far }: the city to the horizon (stand-ins, far lamps and land), else null. (:5252)
-  - `night: number` 0 day .. 1 night: windows, shop signs, street lamps and car lights. (:5254)
-  - `cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | nul…` The traffic: cars that keep to their lanes, change lanes, overtake, swerve round what is in the way, pull over for sirens, and crash. (:5256)
-  - `people: { list: CityPerson[]; near(p: { x: number; z?: number; y?: number }, r: number): CityPerson[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityP…` The people in the street: walking, waiting and crossing, sitting on benches, on the phone, chatting, looking in windows, going in at doors; they jump out of the way, gather to look at a crash and phone the police;… (:5273)
-  - `events: CityEvent[]` What happened last frame (crashes, wrecks, knocks, calls, bangs, and anything a game or kit added with event()). (:5284)
-  - `event(e: CityEvent): CityWorld` Adds something that happened, for everything that reads city.events next frame. (:5286)
-  - `props: PropsPart['Props'] extends new (...a: Loose[]) => infer P ? P : Loose` (:5287)
-  - `reset(focus?: { x: number; z: number }): CityWorld` (:5288)
-  - `update(dt: number, focus?: { x: number; z?: number; y?: number }): CityWorld` (:5289)
-  - `avoid(p: { x: number; z?: number; y?: number; vx?: number; vz?: number; v?: number; heading?: number }, r?: number): CityWorld` Cars brake for this point (radius r) this frame and swerve round it; with vx, vz (or v and heading) cars and people get out of its way. (:5291)
-  - `warm(): CityWorld` Builds every chunk now (otherwise they're built a few a frame, nearest first). (:5293)
-  - `signal(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): 'g' | 'a' | 'r'` Traffic light state for traffic along axis at a junction: 'g' | 'a' | 'r'. (:5295)
-  - `signalLeft(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): number` (:5296)
-  - `buildingAt(x: number, z: number): CityBuilding | null` (:5297)
-  - `ground(x: number, z: number): number` (:5298)
-  - `collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | CityParkedCar | null` Pushes a circle out of the buildings and parked cars (changes p); the building (or parked car) touched, or null. (:5300)
-  - `door(b: CityBuilding, open?: number | boolean): number` Opens (1 or true) or shuts (0) building b's front door: it swings over the next frames, and after solid(world) it stops being solid while open. (:5302)
-  - `doors: { open(b: CityBuilding): number; set(b: CityBuilding, want: number): void } | null` Every building's front door (null with { doors: false }): open(b) says how far open, 0..1. (:5304)
-  - `indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null` Lamp spots lit by day and by night along with the street's (gs.city Interiors sets them for the rooms near the player). (:5306)
-  - `parked: CityParkedCar[]` The parked cars (empty without the parked option). (:5308)
-  - `ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: numb…` (:5309)
-  - `road(x: number, z: number, heading?: number | null): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number }` The nearest point in a lane. (:5311)
-  - `route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['…` (:5312)
-  - `spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?…` (:5313)
-  - `occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]` Building boxes for occlusion culling (optionally only those within r of near). (:5315)
-  - `walls(): Loose[]` (:5316)
-  - `solid(world: Loose, o?: { buildings?: boolean; floor?: boolean; furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car…` The city solid in a gs.physics3d World3D: buildings and kerbs, street furniture (trunks, posts, benches, bins, roof tanks), parked cars, and bodies for the nearest `cars` and `people` that move with them (refreshed… (:5322)
-  - `freed: number` How many blocks' chunks have been let go behind the player (keep). (:5324)
-  - `drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colou…` (:5325)
-  - `mapPoint(p: { x: number; z?: number; y?: number }): [number, number]` (:5326)
-  - `dispose(): void` (:5327)
-- `Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string |…` One big city of districts side by side (a downtown, an old town, suburbs, a harbour on the south edge with the sea past it), joined by roads across open land. (:5102)
-  - `districts: CityDistrict[]` (:5188)
-  - `connectors: CityRoad[]` (:5188)
-  - `bounds: { x0: number; x1: number; z0: number; z1: number }` (:5188)
-  - `start: { x: number; z: number }` (:5188)
-  - `night: number` (:5188)
-  - `ring: CityRoad | null` The highway round the city (null with highway: false), and the slip roads up to it. (:5189)
-  - `ramps: CityRoad[]` (:5189)
-  - `ways: { river: Loose; roads: CityRoad[]; landAt(x: number, z: number): number; natural(x: number, z: number): number; hills(x: number, z: number): number; near(x: numb…` The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). (:5191)
-  - `indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null` Lamp spots lit by day and by night in every district (gs.city Interiors sets them). (:5192)
-  - `readonly cities: CityWorld[]` The made districts. (:5193)
-  - `readonly city: CityWorld | null` The made district the player is in, or null on the roads between. (:5193)
-  - `making: CityDistrict | null` The district being made a step at a time, or null. (:5194)
-  - `cars: CityWorld['cars']` The traffic and people of every made district. (:5195)
-  - `people: CityWorld['people']` (:5195)
-  - `update(dt: number, focus?: { x: number; z?: number; y?: number }): CityMetro` (:5196)
-  - `reset(focus?: { x: number; z: number }): CityMetro` (:5196)
-  - `prepare(at?: { x: number; z?: number; y?: number }): CityMetro` Makes now every district the player at `at` wants (from reset(), under the loading screen). (:5197)
-  - `districtAt(x: number, z: number, margin?: number): CityDistrict | null` (:5198)
-  - `route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district…` A driving route across districts and the roads between: as City.route(), plus its legs in order. (:5200)
-  - `road(x: number, z: number): Loose` The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). (:5202)
-  - `along(r: CityRoad, s: number, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; kind: number; grade: number }` A point s metres along a road between districts, a slip road or the highway { x, y, z, dx, dz, kind, grade }, and the middle of its lane k (back: driving from its second end). (:5204)
-  - `lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; grade: number }` (:5204)
-  - `ground(x: number, z: number, y?: number): number` The ground at x, z: in a district as City.ground(); between them the road or the land, under height y when given (under a bridge, the land; in a tunnel, the road). (:5206)
-  - `roadY(x: number, z: number): number` The height of the road at x, z (on a bridge its deck, in a tunnel its floor), else the land: for things drawn on the road. (:5207)
-  - `avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro` (:5208)
-  - `buildingAt(x: number, z: number): CityBuilding | null` (:5208)
-  - `collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null` (:5209)
-  - `ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null` (:5209)
-  - `spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?:…` (:5210)
-  - `occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]` (:5211)
-  - `walls(): Loose[]` (:5211)
-  - `solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro` Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). (:5212)
-  - `drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colou…` (:5213)
-  - `mapPoint(p: { x: number; z?: number; y?: number }): [number, number]` (:5214)
-  - `dispose(): void` (:5215)
-- `routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number;…` A driving route across a plan's roads (from layout()), with no 3D: as City.route(). (:5108)
-- `roadOn(plan: CityPlan, x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number }` The nearest point in a lane of a plan's roads: as City.road(). (:5110)
-- `Gps: new (city: CityWorld | CityMetro, o?: { /** Metres off the route before it is worked out again (18). */ off?: number; /** Seconds between routes worked out anyway…` Finding the way round a City or a Metro: a route to where the player is going that follows them (worked out again when they leave it), the next turn, markers (a game's own, and those of anything watched, such as… (:5116)
-  - `route: { points: [number, number][]; path: Loose; length: number; at: number[]; turns: { s: number; x: number; z: number; turn: 'left' | 'right'; angle: number }[]; to…` (:5220)
-  - `left: number` Metres to go along the route; how far along it the player is (s); there yet. (:5221)
-  - `s: number` (:5221)
-  - `arrived: boolean` (:5221)
-  - `next: { turn: 'left' | 'right' | 'arrive'; in: number; at: { x: number; z: number } } | null` The next thing to do: turn left or right, keep on to the end, or arrived; in metres, and where. (:5222)
-  - `waypoint: CityMarker | null` The player's own waypoint (set by tap() on the full map), or null. (:5223)
-  - `markers: CityMarker[]` (:5223)
-  - `readonly target: { x: number; z?: number; y?: number } | null` (:5223)
-  - `readonly opened: boolean` (:5223)
-  - `routes: number` How many routes it has worked out. (:5224)
-  - `to(target: { x: number; z?: number; y?: number } | null): CityGps` (:5225)
-  - `add(m: CityMarker): CityMarker` (:5225)
-  - `remove(m: CityMarker): CityGps` (:5225)
-  - `clear(): CityGps` (:5225)
-- …more: `CityPart` at src/gamescroll.d.ts:5081
+- `City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: …` A made-up city from a seed, in a gs.hd HDView (or any view with .scene and .cam). (:5091)
+  - `plan: CityPlan` (:5255)
+  - `group: Loose` (:5255)
+  - `seed: number` (:5255)
+  - `start: CitySpot` (:5255)
+  - `t: number` (:5255)
+  - `far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null` With { far }: the city to the horizon (stand-ins, far lamps and land), else null. (:5257)
+  - `night: number` 0 day .. 1 night: windows, shop signs, street lamps and car lights. (:5259)
+  - `cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | nul…` The traffic: cars that keep to their lanes, change lanes, overtake, swerve round what is in the way, pull over for sirens, and crash. (:5261)
+  - `people: { list: CityPerson[]; near(p: { x: number; z?: number; y?: number }, r: number): CityPerson[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityP…` The people in the street: walking, waiting and crossing, sitting on benches, on the phone, chatting, looking in windows, going in at doors; they jump out of the way, gather to look at a crash and phone the police;… (:5278)
+  - `events: CityEvent[]` What happened last frame (crashes, wrecks, knocks, calls, bangs, and anything a game or kit added with event()). (:5289)
+  - `event(e: CityEvent): CityWorld` Adds something that happened, for everything that reads city.events next frame. (:5291)
+  - `props: PropsPart['Props'] extends new (...a: Loose[]) => infer P ? P : Loose` (:5292)
+  - `reset(focus?: { x: number; z: number }): CityWorld` (:5293)
+  - `update(dt: number, focus?: { x: number; z?: number; y?: number }): CityWorld` (:5294)
+  - `avoid(p: { x: number; z?: number; y?: number; vx?: number; vz?: number; v?: number; heading?: number }, r?: number): CityWorld` Cars brake for this point (radius r) this frame and swerve round it; with vx, vz (or v and heading) cars and people get out of its way. (:5296)
+  - `warm(): CityWorld` Builds every chunk now (otherwise they're built a few a frame, nearest first). (:5298)
+  - `signal(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): 'g' | 'a' | 'r'` Traffic light state for traffic along axis at a junction: 'g' | 'a' | 'r'. (:5300)
+  - `signalLeft(node: CityPlan['nodes'][number], axis: 'x' | 'z', t?: number): number` (:5301)
+  - `buildingAt(x: number, z: number): CityBuilding | null` (:5302)
+  - `ground(x: number, z: number): number` (:5303)
+  - `collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | CityParkedCar | null` Pushes a circle out of the buildings and parked cars (changes p); the building (or parked car) touched, or null. (:5305)
+  - `door(b: CityBuilding, open?: number | boolean): number` Opens (1 or true) or shuts (0) building b's front door: it swings over the next frames, and after solid(world) it stops being solid while open. (:5307)
+  - `doors: { open(b: CityBuilding): number; set(b: CityBuilding, want: number): void } | null` Every building's front door (null with { doors: false }): open(b) says how far open, 0..1. (:5309)
+  - `indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null` Lamp spots lit by day and by night along with the street's (gs.city Interiors sets them for the rooms near the player). (:5311)
+  - `parked: CityParkedCar[]` The parked cars (empty without the parked option). (:5313)
+  - `ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: numb…` (:5314)
+  - `road(x: number, z: number, heading?: number | null): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number }` The nearest point in a lane. (:5316)
+  - `route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['…` (:5317)
+  - `spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?…` (:5318)
+  - `occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]` Building boxes for occlusion culling (optionally only those within r of near). (:5320)
+  - `walls(): Loose[]` (:5321)
+  - `solid(world: Loose, o?: { buildings?: boolean; floor?: boolean; furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car…` The city solid in a gs.physics3d World3D: buildings and kerbs, street furniture (trunks, posts, benches, bins, roof tanks), parked cars, and bodies for the nearest `cars` and `people` that move with them (refreshed… (:5327)
+  - `freed: number` How many blocks' chunks have been let go behind the player (keep). (:5329)
+  - `drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colou…` (:5330)
+  - `mapPoint(p: { x: number; z?: number; y?: number }): [number, number]` (:5331)
+  - `dispose(): void` (:5332)
+- `Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string |…` One big city of districts side by side (a downtown, an old town, suburbs, a harbour on the south edge with the sea past it), joined by roads across open land. (:5107)
+  - `districts: CityDistrict[]` (:5193)
+  - `connectors: CityRoad[]` (:5193)
+  - `bounds: { x0: number; x1: number; z0: number; z1: number }` (:5193)
+  - `start: { x: number; z: number }` (:5193)
+  - `night: number` (:5193)
+  - `ring: CityRoad | null` The highway round the city (null with highway: false), and the slip roads up to it. (:5194)
+  - `ramps: CityRoad[]` (:5194)
+  - `ways: { river: Loose; roads: CityRoad[]; landAt(x: number, z: number): number; natural(x: number, z: number): number; hills(x: number, z: number): number; near(x: numb…` The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). (:5196)
+  - `indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null` Lamp spots lit by day and by night in every district (gs.city Interiors sets them). (:5197)
+  - `readonly cities: CityWorld[]` The made districts. (:5198)
+  - `readonly city: CityWorld | null` The made district the player is in, or null on the roads between. (:5198)
+  - `making: CityDistrict | null` The district being made a step at a time, or null. (:5199)
+  - `cars: CityWorld['cars']` The traffic and people of every made district. (:5200)
+  - `people: CityWorld['people']` (:5200)
+  - `update(dt: number, focus?: { x: number; z?: number; y?: number }): CityMetro` (:5201)
+  - `reset(focus?: { x: number; z: number }): CityMetro` (:5201)
+  - `prepare(at?: { x: number; z?: number; y?: number }): CityMetro` Makes now every district the player at `at` wants (from reset(), under the loading screen). (:5202)
+  - `districtAt(x: number, z: number, margin?: number): CityDistrict | null` (:5203)
+  - `route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district…` A driving route across districts and the roads between: as City.route(), plus its legs in order. (:5205)
+  - `road(x: number, z: number): Loose` The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). (:5207)
+  - `along(r: CityRoad, s: number, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; kind: number; grade: number }` A point s metres along a road between districts, a slip road or the highway { x, y, z, dx, dz, kind, grade }, and the middle of its lane k (back: driving from its second end). (:5209)
+  - `lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; grade: number }` (:5209)
+  - `ground(x: number, z: number, y?: number): number` The ground at x, z: in a district as City.ground(); between them the road or the land, under height y when given (under a bridge, the land; in a tunnel, the road). (:5211)
+  - `roadY(x: number, z: number): number` The height of the road at x, z (on a bridge its deck, in a tunnel its floor), else the land: for things drawn on the road. (:5212)
+  - `avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro` (:5213)
+  - `buildingAt(x: number, z: number): CityBuilding | null` (:5213)
+  - `collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null` (:5214)
+  - `ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null` (:5214)
+  - `spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?:…` (:5215)
+  - `occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]` (:5216)
+  - `walls(): Loose[]` (:5216)
+  - `solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro` Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). (:5217)
+  - `drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colou…` (:5218)
+  - `mapPoint(p: { x: number; z?: number; y?: number }): [number, number]` (:5219)
+  - `dispose(): void` (:5220)
+- `routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number;…` A driving route across a plan's roads (from layout()), with no 3D: as City.route(). (:5113)
+- `roadOn(plan: CityPlan, x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number }` The nearest point in a lane of a plan's roads: as City.road(). (:5115)
+- `Gps: new (city: CityWorld | CityMetro, o?: { /** Metres off the route before it is worked out again (18). */ off?: number; /** Seconds between routes worked out anyway…` Finding the way round a City or a Metro: a route to where the player is going that follows them (worked out again when they leave it), the next turn, markers (a game's own, and those of anything watched, such as… (:5121)
+  - `route: { points: [number, number][]; path: Loose; length: number; at: number[]; turns: { s: number; x: number; z: number; turn: 'left' | 'right'; angle: number }[]; to…` (:5225)
+  - `left: number` Metres to go along the route; how far along it the player is (s); there yet. (:5226)
+  - `s: number` (:5226)
+  - `arrived: boolean` (:5226)
+  - `next: { turn: 'left' | 'right' | 'arrive'; in: number; at: { x: number; z: number } } | null` The next thing to do: turn left or right, keep on to the end, or arrived; in metres, and where. (:5227)
+  - `waypoint: CityMarker | null` The player's own waypoint (set by tap() on the full map), or null. (:5228)
+  - `markers: CityMarker[]` (:5228)
+  - `readonly target: { x: number; z?: number; y?: number } | null` (:5228)
+  - `readonly opened: boolean` (:5228)
+  - `routes: number` How many routes it has worked out. (:5229)
+  - `to(target: { x: number; z?: number; y?: number } | null): CityGps` (:5230)
+  - `add(m: CityMarker): CityMarker` (:5230)
+  - `remove(m: CityMarker): CityGps` (:5230)
+  - `clear(): CityGps` (:5230)
+- …more: `CityPart` at src/gamescroll.d.ts:5086
 
 ## From the maker kit
 
@@ -195,28 +195,28 @@ update(dt) { clock.update(dt); town.update(dt); folk.update(dt); night.update(dt
 
 1 game uses it (`node scripts/examples.mjs gs.city` lists them). The shortest:
 
-`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 186 lines):
+`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 199 lines):
 
 ```js
 const { HDView, pbr, rbox, sun, THREE } = gs.hd;
-const { City } = gs.city;
+const { City, Gps } = gs.city;
 // …
   sky = new Sky(v, { time: 17.9, speed: 0, stars: 200, sun: light, physical: true, fog: true });
   city = new City(v, { seed: 7, blocks: 6, style: 'downtown', sky, traffic: 1, people: 1 });
 // …
+  // the GPS: the way to the drop, worked out again when you leave it, on the minimap, as the next turn and as arrows on the road
+  gps = new Gps(city, { icon }); gps.show(v, { reach: 160, width: 1.6, opacity: .8 });
+// …
   const pickTarget = () => {
     target = city.spot('door', { near: { x: car.x, z: car.y }, min: 110, max: 300, rnd: R }) || city.spot('door', { rnd: R });
+// …
+    ring.position.set(target.x, .2, target.z); beacon.position.set(target.x, 80, target.z);
+    drop.at = target; gps.to(target); trip = city.route({ x: car.x, z: car.y }, target)?.length || 0;   // (how far it is by road, for the bonus)
 // …
       if (!v) setup();
       city.reset(); R = rng(11);
       const st = city.spot('street', { near: city.start, max: 60, rnd: R }) || city.road(0, 0);
 // …
       camPos = new THREE.Vector3(car.x, 6, car.y - 10); camLook = new THREE.Vector3(car.x, 1, car.y);
-      pickTarget(); route = city.route({ x: car.x, z: car.y }, target);
-// …
-      // buildings push you back; cars and people make you lose time
-      const p = { x: car.x, z: car.y }, wall = city.collide(p, 1.15, .5);
-// …
-      if (person && hitT <= 0 && Math.abs(car.speed) > 2) { hitT = 1; car.speed *= .2; time -= 2; say('Watch out! -2s', '#ffb040'); sounds.hurt(); hap
-      city.avoid(p, 1.4);
+      gps.clear(); gps.add(drop); pickTarget(); gps.update(0, { x: car.x, z: car.y, heading: Math.PI / 2 - car.angle });
 ```

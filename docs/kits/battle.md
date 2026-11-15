@@ -8,70 +8,70 @@ Turn-based fights: fighters, turn order, types, statuses, items, XP, loot, a rea
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BattlePart`, line 2475), where every option and field is described.
+From `src/gamescroll.d.ts` (`BattlePart`, line 2480), where every option and field is described.
 
-- `Fighter: new (o?: { name?: string; hp?: number; atk?: number; def?: number; spd?: number; luck?: number; type?: string | null; level?: number; [k: string]: Loose }) =>…` (:2476)
-  - `moves: Record<string, FightMove>` (:3085)
-  - `x: number` (:3085)
-  - `y: number` (:3085)
-  - `facing: number` (:3085)
-  - `hp: number` (:3085)
-  - `maxHp: number` (:3085)
-  - `move: string | null` (:3085)
-  - `frame: number` (:3085)
-  - `stun: number` (:3085)
-  - `stop: number` (:3085)
-  - `blocking: boolean` (:3085)
-  - `blockLow?: boolean` (:3085)
-  - `readonly phase: 'start' | 'active' | 'recover' | 'stun' | 'idle'` (:3086)
-  - `readonly busy: boolean` (:3086)
-  - `on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block', fn: (...a: Loose[]) => void): Fighter` (:3087)
-  - `canCancel(name: string): boolean` (:3088)
-  - `start(name: string): boolean` (:3088)
-  - `update(dt: number): Fighter` (:3088)
-  - `hitboxes(): { x: number; y: number; w: number; h: number }[]` (:3088)
-  - `hurtboxes(): { x: number; y: number; w: number; h: number }[]` (:3088)
-- `Battle: new (sides: Fighter[][], o?: { types?: Record<string, Record<string, number>>; statuses?: Record<string, Loose>; rng?: () => number; crit?: number; spread?: bo…` (:2477)
-  - `sides: Fighter[][]` (:2463)
-  - `log: Loose[]` (:2463)
-  - `readonly fighters: Fighter[]` (:2463)
-  - `readonly turn: Fighter | null` (:2463)
-  - `readonly over: number | null` (:2463)
-  - `on(ev: string, fn: (e: Loose) => void): Battle` (:2464)
-  - `sideOf(f: Fighter): number` (:2464)
-  - `foes(f: Fighter): Fighter[]` (:2464)
-  - `friends(f: Fighter): Fighter[]` (:2464)
-  - `next(): Fighter | null` (:2465)
-  - `preview(by: Fighter, target: Fighter, move?: BattleMove): number` (:2465)
-  - `damage(by: Fighter, target: Fighter, move?: BattleMove, roll?: boolean): { amount: number; crit: boolean; miss: boolean; effect: number; [k: string]: Loose }` (:2466)
-  - `act(by: Fighter, o?: { move?: BattleMove | null; item?: Loose; target?: Fighter | null; wait?: boolean }): Loose` (:2467)
-  - `inflict(target: Fighter, status: string, turns?: number): Loose` (:2468)
-  - `useItem(by: Fighter, item: string, target?: Fighter): Loose` (:2468)
-  - `endTurn(f: Fighter): Loose` (:2468)
-- `Bag: new (defs?: Record<string, Loose>, o?: { slots?: number; stack?: number }) => Bag` (:2478)
-  - `defs: Record<string, Loose>` (:2471)
-  - `items: Map<string, number>` (:2471)
-  - `add(id: string, n?: number): number` (:2472)
-  - `take(id: string, n?: number): boolean` (:2472)
-  - `count(id: string): number` (:2472)
-  - `has(id: string, n?: number): boolean` (:2472)
-  - `readonly list: { id: string; n: number; def: Loose; bag: Bag }[]` (:2473)
-  - `save(): Record<string, number>` (:2473)
-  - `load(data: Record<string, number> | null): Bag` (:2473)
-- `Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** The side it plays (1). */ side?: number; /** Turns it plays ahead (2). */ ahead?: number; …` new Opponent(api, { name, skill, side, ahead, learn, rng, score }) in make(); join(fight) each fight; fight.act(fight.turn, foe.pick()). (:2480)
-  - `skill: Skill` 0..1, or a gs.brains.Dial. (:2446)
-  - `side: number` The side it plays. (:2446)
-  - `join(fight: Battle): BattleOpponent` Watches a fight, so every turn the other side takes teaches it. (:2448)
-  - `pick(by?: Fighter | null, moves?: BattleMove[] | Record<string, BattleMove> | null, o?: { items?: Loose[] | null; fight?: Battle }): BattleChoice` The turn to take for `by` (the fight's turn by default), ready for fight.act(by, choice). (:2450)
-  - `options: BattleChoice[]` Every choice the last pick() weighed, best first. (:2452)
-  - `expect(low?: number): number[]` What it expects the player to do next when their weakest fighter is at `low` (0..1 of its health): chances for hit, big, heal, status, buff, wait. (:2454)
-  - `see(by: Fighter, choice: BattleChoice, fight?: Battle): BattleOpponent` A fighter on the other side took a turn (join() has the fight tell it). (:2456)
-  - `result(playerWon: boolean | 'draw' | number): BattleOpponent` The end of a fight: did the player win? (:2458)
-  - `forget(): BattleOpponent` Forgets how the player fights. (:2460)
-- `xpFor(level: number, o?: { base?: number; power?: number }): number` (:2481)
-- `levelFor(xp: number, o?: { base?: number; power?: number }): number` (:2481)
-- `gainXp(f: Fighter, xp: number, o?: { growth?: Record<string, number>; curve?: { base?: number; power?: number } }): number` Adds XP and levels up (stats grow by growth per level). (:2483)
-- `loot<T extends { w?: number }>(table: T[], rng?: () => number): T` Picks an entry from a weighted table: [{ id: 'coin', w: 10 }, { id: 'gem', w: 1 }]. (:2485)
+- `Fighter: new (o?: { name?: string; hp?: number; atk?: number; def?: number; spd?: number; luck?: number; type?: string | null; level?: number; [k: string]: Loose }) =>…` (:2481)
+  - `moves: Record<string, FightMove>` (:3090)
+  - `x: number` (:3090)
+  - `y: number` (:3090)
+  - `facing: number` (:3090)
+  - `hp: number` (:3090)
+  - `maxHp: number` (:3090)
+  - `move: string | null` (:3090)
+  - `frame: number` (:3090)
+  - `stun: number` (:3090)
+  - `stop: number` (:3090)
+  - `blocking: boolean` (:3090)
+  - `blockLow?: boolean` (:3090)
+  - `readonly phase: 'start' | 'active' | 'recover' | 'stun' | 'idle'` (:3091)
+  - `readonly busy: boolean` (:3091)
+  - `on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block', fn: (...a: Loose[]) => void): Fighter` (:3092)
+  - `canCancel(name: string): boolean` (:3093)
+  - `start(name: string): boolean` (:3093)
+  - `update(dt: number): Fighter` (:3093)
+  - `hitboxes(): { x: number; y: number; w: number; h: number }[]` (:3093)
+  - `hurtboxes(): { x: number; y: number; w: number; h: number }[]` (:3093)
+- `Battle: new (sides: Fighter[][], o?: { types?: Record<string, Record<string, number>>; statuses?: Record<string, Loose>; rng?: () => number; crit?: number; spread?: bo…` (:2482)
+  - `sides: Fighter[][]` (:2468)
+  - `log: Loose[]` (:2468)
+  - `readonly fighters: Fighter[]` (:2468)
+  - `readonly turn: Fighter | null` (:2468)
+  - `readonly over: number | null` (:2468)
+  - `on(ev: string, fn: (e: Loose) => void): Battle` (:2469)
+  - `sideOf(f: Fighter): number` (:2469)
+  - `foes(f: Fighter): Fighter[]` (:2469)
+  - `friends(f: Fighter): Fighter[]` (:2469)
+  - `next(): Fighter | null` (:2470)
+  - `preview(by: Fighter, target: Fighter, move?: BattleMove): number` (:2470)
+  - `damage(by: Fighter, target: Fighter, move?: BattleMove, roll?: boolean): { amount: number; crit: boolean; miss: boolean; effect: number; [k: string]: Loose }` (:2471)
+  - `act(by: Fighter, o?: { move?: BattleMove | null; item?: Loose; target?: Fighter | null; wait?: boolean }): Loose` (:2472)
+  - `inflict(target: Fighter, status: string, turns?: number): Loose` (:2473)
+  - `useItem(by: Fighter, item: string, target?: Fighter): Loose` (:2473)
+  - `endTurn(f: Fighter): Loose` (:2473)
+- `Bag: new (defs?: Record<string, Loose>, o?: { slots?: number; stack?: number }) => Bag` (:2483)
+  - `defs: Record<string, Loose>` (:2476)
+  - `items: Map<string, number>` (:2476)
+  - `add(id: string, n?: number): number` (:2477)
+  - `take(id: string, n?: number): boolean` (:2477)
+  - `count(id: string): number` (:2477)
+  - `has(id: string, n?: number): boolean` (:2477)
+  - `readonly list: { id: string; n: number; def: Loose; bag: Bag }[]` (:2478)
+  - `save(): Record<string, number>` (:2478)
+  - `load(data: Record<string, number> | null): Bag` (:2478)
+- `Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** The side it plays (1). */ side?: number; /** Turns it plays ahead (2). */ ahead?: number; …` new Opponent(api, { name, skill, side, ahead, learn, rng, score }) in make(); join(fight) each fight; fight.act(fight.turn, foe.pick()). (:2485)
+  - `skill: Skill` 0..1, or a gs.brains.Dial. (:2451)
+  - `side: number` The side it plays. (:2451)
+  - `join(fight: Battle): BattleOpponent` Watches a fight, so every turn the other side takes teaches it. (:2453)
+  - `pick(by?: Fighter | null, moves?: BattleMove[] | Record<string, BattleMove> | null, o?: { items?: Loose[] | null; fight?: Battle }): BattleChoice` The turn to take for `by` (the fight's turn by default), ready for fight.act(by, choice). (:2455)
+  - `options: BattleChoice[]` Every choice the last pick() weighed, best first. (:2457)
+  - `expect(low?: number): number[]` What it expects the player to do next when their weakest fighter is at `low` (0..1 of its health): chances for hit, big, heal, status, buff, wait. (:2459)
+  - `see(by: Fighter, choice: BattleChoice, fight?: Battle): BattleOpponent` A fighter on the other side took a turn (join() has the fight tell it). (:2461)
+  - `result(playerWon: boolean | 'draw' | number): BattleOpponent` The end of a fight: did the player win? (:2463)
+  - `forget(): BattleOpponent` Forgets how the player fights. (:2465)
+- `xpFor(level: number, o?: { base?: number; power?: number }): number` (:2486)
+- `levelFor(xp: number, o?: { base?: number; power?: number }): number` (:2486)
+- `gainXp(f: Fighter, xp: number, o?: { growth?: Record<string, number>; curve?: { base?: number; power?: number } }): number` Adds XP and levels up (stats grow by growth per level). (:2488)
+- `loot<T extends { w?: number }>(table: T[], rng?: () => number): T` Picks an entry from a weighted table: [{ id: 'coin', w: 10 }, { id: 'gem', w: 1 }]. (:2490)
 
 ## From the maker kit
 
@@ -124,4 +124,30 @@ didn't fit; `take`, `count`, `has`; `move(from, to, n)` merges or swaps, and equ
 
 ## In real games
 
-No game uses `gs.battle` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.battle` lists them). The shortest:
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { Typewriter } = gs.story;
+const { Fighter, Battle, Bag, Opponent, gainXp, xpFor, loot } = gs.battle;
+// …
+const hex = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+const toHex = a => '#' + a.map(v => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('');
+// …
+  });
+  const opp = new Opponent(api, { skill: .5 });    // Tiny Brains: plays turns ahead and learns how this player fights
+// …
+    const sp = SPECIES[id], [hp, atk, def, spd] = sp.base;
+    const f = new Fighter({ name: id, hp: hp + Math.round(lvl * 3.2), atk: atk + lvl * 1.3, def: def + lvl * 1.1, spd: spd + lvl * .8, level: lvl, typ
+    f.sp = id; f.xp = xpFor(lvl, CURVE); f.learn = sp.moves.filter(m => m[0] <= lvl).map(m => MV[m[1]]).slice(-4);
+// …
+  const lead = () => party.find(f => f.alive);
+  const pickWild = z => { const e = /** @type {{ id: string, lv: number[], w: number }} */ (loot(WILD[z])); return critter(e.id, e.lv[0] + (Math.rando
+// …
+    quests.on('end', id => { addScore(4); banner = { txt: 'QUEST DONE: ' + quests.table[id].name, l: 2.6, quest: true }; sounds.fanfare(); haptic('suc
+    quests.on('reward', (id, r) => { if (r.jars) bag.add('jar', r.jars); if (r.berries) bag.add('berry', r.berries); if (r.gold) bag.add('gold', r.gol
+// …
+    vis = new Map(); shownHp = new Map(); press = null; path = null; stick.release();
+    fight = new Battle([[lead()], [foes[0]]], { types: TYPES });
+```

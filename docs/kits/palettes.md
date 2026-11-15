@@ -8,15 +8,15 @@ The fixed colour sets of the pixel styles (PAL, SHELL, C16).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PalettesPart`, line 467), where every option and field is described.
+From `src/gamescroll.d.ts` (`PalettesPart`, line 471), where every option and field is described.
 
-- `PAL: Record<string, string[]>` (:467)
-- `SHELL: Loose` (:467)
-- `C16: string[]` (:467)
+- `PAL: Record<string, string[]>` (:471)
+- `SHELL: Loose` (:471)
+- `C16: string[]` (:471)
 
 ## In real games
 
-79 games use it (`node scripts/examples.mjs gs.palettes` lists them). The shortest:
+74 games use it (`node scripts/examples.mjs gs.palettes` lists them). The shortest:
 
 `src/games/colour-flood.js` (Colour Flood, Pocket · Puzzle, 47 lines):
 

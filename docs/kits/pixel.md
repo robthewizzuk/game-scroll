@@ -61,7 +61,7 @@ a palette colour you pass. Call `ready.go()` from a tilt or a shout to start the
 
 ## In real games
 
-57 games use it (`node scripts/examples.mjs gs.pixel` lists them). The shortest:
+61 games use it (`node scripts/examples.mjs gs.pixel` lists them). The shortest:
 
 `src/games/sprint-feet.js` (Sprint Feet, Advance · Sport, 88 lines):
 

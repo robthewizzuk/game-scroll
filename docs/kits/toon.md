@@ -10,25 +10,25 @@ Guide: [Classic Console 3D guide](../console-3d.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ToonPart`, line 1606), where every option and field is described.
+From `src/gamescroll.d.ts` (`ToonPart`, line 1611), where every option and field is described.
 
-- `View: new (o?: ToonViewOptions) => Loose` (:1607)
-- `G: Loose` (:1607)
-- `part: Loose` (:1607)
-- `grp: Loose` (:1607)
-- `blob: Loose` (:1607)
-- `toon: Loose` (:1607)
-- `flat: Loose` (:1607)
-- `dude: Loose` (:1607)
-- `has3D(): boolean` (:1607)
-- `THREE: Loose` (:1607)
-- `figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT }` A jointed cel-shaded person h units tall (best 24 or more) with the gs.poses joints: figure().rig.play('walk'), rig.update(dt, { speed }) each frame. (:1609)
+- `View: new (o?: ToonViewOptions) => Loose` (:1612)
+- `G: Loose` (:1612)
+- `part: Loose` (:1612)
+- `grp: Loose` (:1612)
+- `blob: Loose` (:1612)
+- `toon: Loose` (:1612)
+- `flat: Loose` (:1612)
+- `dude: Loose` (:1612)
+- `has3D(): boolean` (:1612)
+- `THREE: Loose` (:1612)
+- `figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT }` A jointed cel-shaded person h units tall (best 24 or more) with the gs.poses joints: figure().rig.play('walk'), rig.update(dt, { speed }) each frame. (:1614)
 
 ## In real games
 
 18 games use it (`node scripts/examples.mjs gs.toon` lists them). The shortest:
 
-`src/games/fuse-pass.js` (Fuse Pass, Console · Party, 112 lines):
+`src/games/fuse-pass.js` (Fuse Pass, Console · Party, 113 lines):
 
 ```js
 const { Juice } = gs.juice;

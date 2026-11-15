@@ -8,11 +8,11 @@ Ready (wait for the first tap), Scenes with fades, Levels.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RoundsPart`, line 947), where every option and field is described.
+From `src/gamescroll.d.ts` (`RoundsPart`, line 952), where every option and field is described.
 
-- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:948)
-- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:950)
-- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:951)
+- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:953)
+- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:955)
+- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:956)
 
 ## From the maker kit
 
@@ -66,9 +66,25 @@ draw(c) { scenes.draw(c); if (scenes.changing) { c.fillStyle = `rgba(0,0,0,${sce
 
 ## In real games
 
-85 games use it (`node scripts/examples.mjs gs.rounds` lists them). The shortest:
+93 games use it (`node scripts/examples.mjs gs.rounds` lists them). The shortest:
 
-`src/games/colour-word.js` (Colour Word Trap, Casual · Brain, 61 lines):
+`src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
+
+```js
+import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
+// …
+function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
+// …
+  return {
+    reset() { n = 6; time = 60; score = 0; t = 0; dead = 0; drag = null; ready.reset(); feel.clear(); build(); },
+// …
+    },
+    down(x, y) { if (solvedT) return; let best = -1, bd = 34; pts.forEach((p, k) => { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; be
+```
+
+`src/games/colour-word.js` (Colour Word Trap, Casual · Brain, 63 lines):
 
 ```js
 const { clamp } = gs.util;
@@ -88,27 +104,4 @@ const { Feel } = gs.effects; const { Ready } = gs.rounds;
 // …
     down(x, y) {
       if (ready.go()) return;
-```
-
-`src/games/fast-maths.js` (Fast Maths, Pocket · Brain, 61 lines):
-
-```js
-const { Feel } = gs.effects;
-const { Ready } = gs.rounds;
-// …
-  const feel = new Feel({ pixel: true, sound: false, buzz: false });   // the game has its own sounds and buzzes
-  const ready = new Ready({ text: 'TAP TO START' });                   // the first sum stays hidden, and the bar full, until the first tap
-// …
-  return {
-    reset() { lives = 3; score = 0; t = 0; flash = null; feel.clear(); ready.reset(); next(); },
-// …
-    fx(dt) { feel.update(dt); },
-    update(dt) { feel.update(dt); if (!ready.update(dt)) return; t += dt; if (flash) { flash.l -= dt; if (flash.l <= 0) flash = null; } time -= dt; if
-// …
-      feel.end(c, W, H);
-      ready.draw(c, W, H, { pixel: true, color: P[0], y: 70 });
-// …
-    },
-    down(x, y) { if (ready.go()) return; if (y > 30) answer(x < 80); },
-    key(k, d) { if (!d || ready.go()) return; if (k === 'ArrowLeft' || k === 'y') answer(true); if (k === 'ArrowRight' || k === 'n') answer(false); },
 ```

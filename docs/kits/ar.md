@@ -10,13 +10,13 @@ Guide: [AR 3D guide](../ar-3d.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ArPart`, line 1646), where every option and field is described.
+From `src/gamescroll.d.ts` (`ArPart`, line 1651), where every option and field is described.
 
-- `ARView: new (...a: Loose[]) => Loose` (:1646)
-- `FLOOR: Loose` (:1646)
-- `arNote: Loose` (:1646)
-- `markerArt: (seed?: number, size?: number) => HTMLCanvasElement` (:1646)
-- `THREE: Loose` (:1646)
+- `ARView: new (...a: Loose[]) => Loose` (:1651)
+- `FLOOR: Loose` (:1651)
+- `arNote: Loose` (:1651)
+- `markerArt: (seed?: number, size?: number) => HTMLCanvasElement` (:1651)
+- `THREE: Loose` (:1651)
 
 ## In real games
 

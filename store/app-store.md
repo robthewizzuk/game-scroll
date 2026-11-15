@@ -44,7 +44,7 @@ SEVEN STYLES, FROM PIXELS TO AR
 • AR · 3D: games in your real room through the camera. Zap saucers swooping past your sofa, flick paper balls into a bin on your floor, fly a drone through hoops
 
 USES YOUR WHOLE PHONE
-Tilt to steer, shake to roll, shout to launch, walk to explore, look through the camera, and feel every hit through haptics. Every game also plays with touch alone.
+Tilt to steer, shake to roll, blow to sail, walk to explore, look through the camera, and feel every hit through haptics. Every game also plays with touch alone.
 
 WIN CREDITS, UNLOCK STUFF
 Win any game to earn credits, then spend them on boosts and unlocks. Collect trophies and climb leaderboards in Game Center. Your progress syncs across your iPhone and iPad.
@@ -99,8 +99,8 @@ Regenerate with `npm run store-shots`.
 > without app updates. They are plain JavaScript run by WebKit, use only the app's existing features, and
 > every game is written or reviewed by us before release. No native code is downloaded.
 > No login is needed. Location, camera and microphone are only optional game controls, processed on the
-> device and never sent; every game also works with touch alone. To try them: Tilt Maze (motion), Shout
-> Rocket (microphone), Saucer Swarm (camera and motion; AR · 3D), Street Lamps (location: the app asks
+> device and never sent; every game also works with touch alone. To try them: Tilt Maze (motion), Blow
+> Sail (microphone), Saucer Swarm (camera and motion; AR · 3D), Street Lamps (location: the app asks
 > only when you press Play, rounds the position to about 1 km, and uses a made-up spot if you say no;
 > Settings → "Let games use my location" turns it off).
 
