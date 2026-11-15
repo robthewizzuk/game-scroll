@@ -50,8 +50,9 @@ const path = require('path'), fs = require('fs');
       const r = await p.evaluate(async () => {
         const kit = await __gs.tourKit(); let at = null;
         const res = await __gs.tour({ scenes: true, traced: true, seconds: 6, size: .3, onStep(s) {
-          // (a second into the ray traced run, once a ray traced frame has been drawn)
-          if (/ray traced/.test(s.game.title) && s.what === '0 s' && !at) { at = {}; setTimeout(function go() { if (__hd.info.refl !== 'traced') return setTimeout(go, 100); at = { refl: __hd.info.refl, backend: __hd.info.backend }; window.__gpu.lose(); }, 1000); }
+          // (a second into the ray traced run, once a ray traced frame has been drawn: the run games get, the last, not
+          // the one before it that is ray traced with Ray Regeneration off)
+          if (/ray traced$/.test(s.game.title) && s.what === '0 s' && !at) { at = {}; setTimeout(function go() { if (__hd.info.refl !== 'traced') return setTimeout(go, 100); at = { refl: __hd.info.refl, backend: __hd.info.backend }; window.__gpu.lose(); }, 1000); }
         } });
         const hall = res.scenes[0], tr = hall?.modes.find(m => m.key === 'traced') || {};
         return { text: kit.reportText(res), at, L: window.__gpu.losses(), info: { refl: __hd.info.refl, backend: __hd.info.backend, off: __hd.info.traceOff }, tr: { lost: tr.lost, tell: tr.tell, backend: tr.backend, frames: tr.frames },
