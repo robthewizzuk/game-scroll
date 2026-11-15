@@ -1796,6 +1796,47 @@ The method is the corrections of [TinyDecide](https://huggingface.co/TheREZOR/Ti
 2.0): the average of each answer's examples, a lean towards the nearest, and a trust worked out by
 leaving each example out in turn. Only the method is used, not the model.
 
+**Memory: what worked where, from a few moments.** A brain learns from `feel()` a little at a time, so
+it rarely gets far from its teacher. Once a game calls `feel()` after most of a brain's decisions, the brain
+also remembers, for each kind of spot, which move made things exciting there, from the moment it happens,
+and makes that move next time. It switches this on by itself (after 150 decisions with `feel()` after at
+least half), so a game that calls `feel()` only now and then plays exactly as before; `memory: true` has it
+from the first decision and `memory: false` never:
+
+```js
+const rival = new Brain(api, { inputs: 4, actions: ['jab', 'feint', 'lunge', 'wait'], teacher, memory: true });
+// feel() on most decisions: a close call +1, a dull or unfair moment below 0
+if (rival.remembered) flashEyes();     // { action, better }: memory chose this move over its usual one
+```
+
+- **For games that call `feel()` often**, on most of the brain's decisions: duels, rallies, a keeper
+  facing shots. In the kit's test (a made-up game whose exciting move differs from the teacher's in
+  a third of spots, `feel()` every decision) it makes the right move about 78% of the time by its
+  1,000th decision, against 63% for the teacher alone and 74% for a simpler memory of the same size.
+  With `feel()` on one decision in five it is a few points better than without; when it comes late
+  or only ever as good news it adds about nothing, and it is careful not to cost anything there.
+- **It follows a player who changes.** When a move keeps going differently from what it remembers,
+  the same way, it forgets the moves after that choice and learns them again (in a couple of
+  thousand decisions, where fading alone took over ten thousand).
+- **The guard rails still decide.** It seeks the most exciting move while the player wins about as
+  often as the target, and the calmest move that isn't unfair while they are losing too much. Your
+  `rules`, the randomness and the reaction time all act on what it then does, and a correction wins
+  over it in spots like its examples.
+- **It also keeps trust per kind of disagreement** with the teacher: where the brain's network and
+  the teacher want different moves, it learns separately for each kind of difference which of the
+  two to follow (a starting brain from your own play that is better in some spots and worse in
+  others: 82% right against 64%). Where they agree the teacher leads.
+- Options: `memory: { margin: .2, curious: 0, erase: true }`. `margin` is how much better a move must
+  have gone, in typical `feel()`s; `curious` is the share of decisions it tries a move it never made
+  in a spot like this one. It is saved with the brain when there is room in the slot (it gives way
+  to the network, then the corrections), each enemy of a `Wave` writes its own moments to it, and
+  `reset()` forgets it. A decision and a `feel()` take about 20 microseconds.
+
+The method is Rob's "density bank" from his compression research, in real numbers: for each pair (the
+move it would have made, the move it made) a positive matrix of the spots met there and a least
+squares line through their `feel()`s, written a block at a time; how new a spot is to that matrix is
+"seen this before?"; the forgetting is a block erase that keeps the matrix positive.
+
 **Tune the feel (makers).** `gs.brains.tune({ params, trial, want })` searches number ranges for the
 ones whose `trial(params)` result is closest to `want`: run a quick bot round with your own update and
 return how long it lasted, or how often a jump was made. It's for tests and the dev console, not for

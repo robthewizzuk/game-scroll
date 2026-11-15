@@ -1843,6 +1843,15 @@ export interface BrainOptions {
   profile?: boolean;
   /** The maker's own corrections: spots where the right move is known, as [see, action] (or [see, action, false] where a move is wrong). They come with the game and stay through reset(). */
   corrections?: ([number[], number | string] | [number[], number | string, false])[];
+  /**
+   * Remember which move made things exciting in which kind of spot, learned at once from feel(), and lean on it.
+   * Unset, it switches itself on once feel() follows most of its decisions (a game that rarely calls feel() stays as it
+   * was); false never; true (or options) from the first decision. For games that call feel() on most decisions. margin: how much better a move must have gone, in typical
+   * feel()s (.2); curious: share of decisions it tries a move it never made in a spot like this (0); erase: forget a
+   * choice's moves when they keep being wrong the same way (true). It also keeps its trust per kind of disagreement
+   * with the teacher. brain.remembered says when it changed a move.
+   */
+  memory?: boolean | { margin?: number; curious?: number; erase?: boolean };
 }
 /** A Tiny Brain that learns as you play, with guard rails. */
 export declare class Brain {
@@ -1887,6 +1896,8 @@ export declare class Brain {
   avoid(action?: number | string): this;
   /** After act(): the correction that shaped the move it just chose ({ action, not: it leaned away, like: 0..1 how alike the spot was }), or null. */
   readonly recalled: { action: number | string; not: boolean; like: number } | null;
+  /** After act(), with the memory option: the move its memory chose over the one it would have made ({ action, better: how much more exciting it expects, in typical feel()s }), or null. */
+  readonly remembered: { action: number | string; better: number } | null;
   /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
   uncorrect(action?: number | string): this;
   /** Every correction it holds, as [see, action] ("not this": [see, action, false]); copy them into the corrections option to keep them in the game. */
@@ -2056,7 +2067,7 @@ export declare class Predict {
   /** Forgets every habit. */
   forget(): this;
 }
-export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; /** Corrections are the brain's, shared by every mind: these are about the spot this mind last decided on. */ correct(action: number | string): this; avoid(action?: number | string): this; readonly recalled: { action: number | string; not: boolean; like: number } | null; }
+export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; /** Corrections are the brain's, shared by every mind: these are about the spot this mind last decided on. */ correct(action: number | string): this; avoid(action?: number | string): this; readonly recalled: { action: number | string; not: boolean; like: number } | null; /** With the brain's memory option: the move memory chose for this mind's last decision, or null. */ readonly remembered: { action: number | string; better: number } | null; }
 export interface BrainsPart {
   Net: typeof TinyNet;
   Brain: typeof Brain;
