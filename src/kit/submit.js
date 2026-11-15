@@ -115,7 +115,13 @@ function flushFor(r, why) {
 /* ---------- sends put off past the refresh ---------- */
 // D: { S, items }: items in order, each a list of command buffers to send or a call to make after them
 let D = null;
-const post = typeof MessageChannel === 'function' ? (() => { const ch = new MessageChannel(); let fn = null; ch.port1.onmessage = () => { const f = fn; fn = null; f?.(); }; return f => { fn = f; ch.port2.postMessage(0); }; })() : f => setTimeout(f, 0);
+// (the channel is made on first use: one made as the module loads keeps Node, which builds and checks the games, from ever exiting)
+let ch = null, chFn = null;
+const post = f => {
+  if (typeof MessageChannel !== 'function') return void setTimeout(f, 0);
+  if (!ch) { ch = new MessageChannel(); ch.port1.onmessage = () => { const g = chFn; chFn = null; g?.(); }; }
+  chFn = f; ch.port2.postMessage(0);
+};
 // a call made after what is held now (its arguments as they are now)
 function defer(fn) {
   const S = D.S; if (S.list.length) { D.items.push(S.list); S.list = []; }
