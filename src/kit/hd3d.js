@@ -2131,7 +2131,7 @@ export class HDView {
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
   /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
-  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; }
+  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; this._far?.dispose(); this._far = null; }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -2619,6 +2619,23 @@ export class HDView {
     // (the grid's box where the drawing has it: originOff puts it back in the world's own numbers)
     const bb = b.grid.boundingBox; bb.min.copy(b.minW).sub(ORIGIN); bb.max.copy(bb.min).add(b.dims);
     b.grid.intensity = spec.strength ?? 1;
+  }
+  // The far world as a picture (v.farWorld = true or { from, every, res, slack }; WebGPU: hd3d-gpu-far.js says how): whether it
+  // stands in for the far things in this frame's scene pass. skip: a card's picture or a frame drawn off the screen (all live).
+  farStep(G, r, ph, skip, shc) {
+    const fw = this.farWorld, spec = fw && (typeof fw === 'object' ? fw : {});
+    if (!spec || this.clearBg || !G.fx.FarWorld) {
+      if (this._far) { this._far.dispose(); this._far = null; } this._farSpec = null; HD.info.far = null; return false;
+    }
+    if (skip || HD.farWorld === false) { this._farSpec = null; return false; }   // (HD.farWorld false: everything live, the pictures kept)
+    const from = Math.max(20, spec.from ?? 150);
+    this._farSpec = { from, slack: spec.slack ?? Math.max(1, from * .02), max: Math.max(256, HD.farRes || spec.res || 1024), every: spec.every ?? 6, h: ph, shadowCams: shc };
+    let F = this._far; if (F?.r !== r) { F?.dispose(); F = this._far = new G.fx.FarWorld(r, { shBits: SH_BITS, prep: m => G.fx.noAO(m) }); }
+    if (F.box.parent !== this.scene) this.scene.add(F.box);
+    const on = F.step(this.scene, this.cam, this._farSpec); HD.info.far = F.info;
+    F.draw(this.scene, this.cam, this._farSpec);   // (a picture that is due, for the frames after this one)
+    if (on) F.hide(this.cam, shc);
+    return on;
   }
   bounceRun(TK, r, spec) {
     const b = this._tb; if (!b) return;
@@ -3402,6 +3419,10 @@ export class HDView {
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
+    // the far world from its pictures (v.farWorld): its still far things leave the camera's layer for the scene's pass
+    if (pm >= 0) enter('3D: far world');
+    const farOn = this.farStep(G, r, ph, baking || off, shc);
+    if (pm >= 0) leave(pm);
     // the sky's own pictures (a gs.sky Sky on WebGPU: its air, its clouds and their shadow, hd3d-gpu-sky.js), before the scene that shows them
     const sky = this._sky?.dome.parent ? this._sky.gpu : null;
     if (sky) { if (pm >= 0) enter('3D: sky'); sky.frame(r, this.cam, { w: pw, h: ph, cut: o.cut, bake: baking || off, tier: T, t: this.t, flags: HD }); if (pm >= 0) leave(pm); }
@@ -3412,7 +3433,7 @@ export class HDView {
     fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
     sendEarly('before the scene');   // (skinning, compute, the kit's shadow maps and the sky's pictures go to the chip now, to be drawn while the scene is encoded: submit.js)
     if (nw) nw.begin();
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (nw) { nw.end(); noWaitFrame(r); } if (pm >= 0) leave(pm); }
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); if (farOn) this._far.back(); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (nw) { nw.end(); noWaitFrame(r); } if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
@@ -3615,6 +3636,7 @@ export class HDView {
     if (G) this.drawGPU(G, r, T, baking, off, now, (s2on || up) && { pw, fw, fh, s1: !s2on }, direct);
     else {
     if (this._tb) this.bounceGrid(null, null);   // (traced bounce light is WebGPU's: its grid leaves a WebGL frame's scene)
+    if (this._far) { this._far.dispose(); this._far = null; HD.info.far = null; }   // (and the far world's picture: WebGL draws it all live)
     if (!baking && !off) { speed.between = null; HD.info.framegen = false; }   // (frame generation is WebGPU only)
     gpuSwap(this, null);
     const cp = this.clearBg ? seeThrough(r, pw, ph) : chain(r, pw, ph); if (cp.cw !== pw || cp.ch !== ph) { cp.setSize(pw, ph); cp.cw = pw; cp.ch = ph; }
