@@ -477,7 +477,8 @@ export declare class Juice {
   burst(x: number, y: number, o?: BurstOpts): this;
   emit(x: number, y: number, vx: number, vy: number, o?: BurstOpts): this;
   shake(amount: number): this;
-  pop(x: number, y: number, text: string, o?: { color?: string; size?: number }): this;
+  /** A line of text that pops up and rises: font is a CSS family (the Juice's own by default), life seconds (.9), rise how far it rises (30). */
+  pop(x: number, y: number, text: string, o?: { color?: string; size?: number; font?: string; life?: number; rise?: number }): this;
   tween(obj: object, props: object, dur: number, ease?: (t: number) => number, delay?: number): Loose;
   flash(color?: string, a?: number, dur?: number): this;
   /** Hit-stop: freeze the action for a moment. */
