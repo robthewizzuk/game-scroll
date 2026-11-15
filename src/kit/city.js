@@ -58,7 +58,8 @@ import { Fleet, CITY_CARS, carKit, parkKinds, ParkedGlass } from './city-cars.js
 import { DRESS_SHAPES, signAtlas, dressBuilding, dressBits, dressShops, dressPlan, kerbs, blades, wires, drain } from './city-dress.js';
 import { Crowd } from './crowd.js';
 import { GroundPaint } from './ground-paint.js';
-import { Skyline } from './city-far.js';
+import { Skyline, Standins } from './city-far.js';
+import { memory } from './memory.js';
 import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
 import { vehicle } from './models/vehicles.js';
@@ -116,9 +117,10 @@ const pickWeighted = (R, w) => { let t = 0; for (const k in w) t += w[k]; let x 
  * The plan of a city: roads, junctions, blocks, buildings and spots, as plain numbers (no three.js),
  * so a game can draw a map or work out a route without the 3D. blocks: a number or [nx, nz];
  * block: [min, max] size; style: a name in STYLES or your own style object (missing keys from
- * downtown); side: 'right' (drive on the right) or 'left'.
+ * downtown); side: 'right' (drive on the right) or 'left'; centre: [x, z] where the city's middle is (default the
+ * origin: several cities side by side make districts of one big city).
  */
-export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right', ...over } = {}) {
+export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right', centre = null, ...over } = {}) {
   const S = { ...STYLES.downtown, ...(typeof style === 'string' ? STYLES[style] || {} : style), ...over };
   const R = rng(seed), noise = makeNoise(seed * 7 + 3);
   const [nx, nz] = Array.isArray(blocks) ? blocks : [blocks, blocks];
@@ -127,13 +129,14 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
   const sizes = n => Array.from({ length: n }, () => S.block[0] + R() * (S.block[1] - S.block[0]));
   const bx = sizes(nx), bz = sizes(nz);
   const lines = (w, b) => { const o = [0]; for (let i = 0; i < b.length; i++) o.push(o[i] + w[i] / 2 + b[i] + w[i + 1] / 2); const mid = o.at(-1) / 2; return o.map(v => v - mid); };
-  const xs = lines(wx, bx), zs = lines(wz, bz);
-  const plan = { seed, style: S, side, nx, nz, xs, zs, wx, wz, blocks: [], buildings: [], nodes: [], edges: [], trees: [], lamps: [], benches: [], spots: { door: [], rooftop: [], corner: [], park: [] } };
+  const [ox, oz] = centre ? [+(centre[0] ?? centre.x) || 0, +(centre[1] ?? centre.z) || 0] : [0, 0];
+  const xs = lines(wx, bx).map(v => v + ox), zs = lines(wz, bz).map(v => v + oz);
+  const plan = { seed, style: S, side, centre: [ox, oz], nx, nz, xs, zs, wx, wz, blocks: [], buildings: [], nodes: [], edges: [], trees: [], lamps: [], benches: [], spots: { door: [], rooftop: [], corner: [], park: [] } };
   plan.bounds = { x0: xs[0] - wx[0] / 2, x1: xs[nx] + wx[nx] / 2, z0: zs[0] - wz[0] / 2, z1: zs[nz] + wz[nz] / 2 };
   const span = Math.max(plan.bounds.x1 - plan.bounds.x0, plan.bounds.z1 - plan.bounds.z0);
   // the busy middle: tall buildings gather round it (a little off-centre, so cities differ)
-  const core = { x: (R() - .5) * span * .25, z: (R() - .5) * span * .25 };
-  const coreAt = (x, z) => { const d = Math.hypot(x - core.x, z - core.z) / (span * .55); return Math.max(0, Math.min(1, (1 - d) * (.85 + .3 * noise(x * .004, z * .004)))) ** 1.6 * S.core; };
+  const core = { x: ox + (R() - .5) * span * .25, z: oz + (R() - .5) * span * .25 };
+  const coreAt = (x, z) => { const d = Math.hypot(x - core.x, z - core.z) / (span * .55); return Math.max(0, Math.min(1, (1 - d) * (.85 + .3 * noise((x - ox) * .004, (z - oz) * .004)))) ** 1.6 * S.core; };
 
   // junctions and the roads between them (one directed edge each way)
   for (let i = 0; i <= nx; i++) for (let j = 0; j <= nz; j++) plan.nodes.push({ id: i * (nz + 1) + j, i, j, x: xs[i], z: zs[j], hx: wx[i] / 2, hz: wz[j] / 2, out: [], phase: (i * 3.1 + j * 1.7) % 25 });
@@ -926,13 +929,16 @@ export class City {
    * night; sound: the city's hum, horns and birds; at: where the player starts (built first);
    * detail: metres within which awnings, cornices and fire escapes show. paint: the ground painted
    * round the camera with no repeats (ground-paint.js; on by default on a Next Gen view). walls: posters, tags
-   * and stains on the street walls (city-walls.js).
+   * and stains on the street walls (city-walls.js). centre: [x, z] where the city's middle is. keep: metres from the player
+   * within which the blocks are built; past it (and a little more) they are let go and stand as plain boxes of their own
+   * shape and colour with lit windows (city-far.js Standins), so a big city's memory stays bounded (less while the phone is
+   * short of memory: memory.js). Infinity keeps everything once built.
    */
   constructor(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = null, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, link = true, ...over } = {}) {
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, keep = 600, link = true, ...over } = {}) {
     // (links.js: with no night and no sky given, the city follows the Sky the game made, until the game sets city.night itself)
     this.links = linksFor(view, link); this.links?.join('city', this); this.seeksSky = sky == null && night == null && !!this.links; night ??= 0;
-    this.view = view; this.seed = seed; this.sky = sky || null; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail;
+    this.view = view; this.seed = seed; this.sky = sky || null; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail; this.keep = keep == null ? Infinity : +keep;
     this.opts = { rooms, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
     if (this.opts.crowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
@@ -979,7 +985,13 @@ export class City {
       if (!c) this.chunks.set(k, c = { key: k, blocks: [], x: 0, z: 0, group: null, detail: null });
       c.blocks.push(b);
     }
-    for (const c of this.chunks.values()) { c.x = c.blocks.reduce((a, b) => a + (b.x0 + b.x1) / 2, 0) / c.blocks.length; c.z = c.blocks.reduce((a, b) => a + (b.z0 + b.z1) / 2, 0) / c.blocks.length; }
+    for (const c of this.chunks.values()) {
+      c.x = c.blocks.reduce((a, b) => a + (b.x0 + b.x1) / 2, 0) / c.blocks.length; c.z = c.blocks.reduce((a, b) => a + (b.z0 + b.z1) / 2, 0) / c.blocks.length;
+      c.r = Math.max(...c.blocks.map(b => Math.hypot(Math.max(Math.abs(b.x0 - c.x), Math.abs(b.x1 - c.x)), Math.max(Math.abs(b.z0 - c.z), Math.abs(b.z1 - c.z)))));   // (from its middle to its furthest corner)
+    }
+    // what stands where a chunk is not built (not yet, or let go behind the player): its buildings as plain boxes (city-far.js)
+    this.standins = new Standins(this.group, P, this.chunks, { colourOf: b => b.colour || FACADES[b.facade].wall });
+    this.freed = 0;
     // where buildings are, for collisions and rays: a grid of 32 m cells
     this.cell = 32; this.grid = new Map();
     for (const b of P.buildings) for (let gx = Math.floor(b.x0 / 32); gx <= Math.floor(b.x1 / 32); gx++) for (let gz = Math.floor(b.z0 / 32); gz <= Math.floor(b.z1 / 32); gz++) { const k = gx + ',' + gz; if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(b); }
@@ -1009,6 +1021,8 @@ export class City {
     this.ears = null; this.hum = null;
     this.applyNight(); this.reset();
   }
+  /** How far the blocks are kept built now: keep, less while the phone is short of memory (memory.js). */
+  keepNow() { const L = memory.level; return this.keep * (L >= 3 ? .45 : L >= 2 ? .65 : L >= 1 ? .85 : 1); }
   /** Resolves when everything a city is made from is in (the simplifier for far shapes): await City.ready() before a screenshot. */
   static ready({ crowd = true, people = 1 } = {}) { return Promise.all([simplifyReady, crowd && people > 0 ? human.ready(FOLK) : null]); }
   /** Cars and people back to the start (call from your game's reset()). */
@@ -1098,6 +1112,7 @@ export class City {
     const s = MATS.get('shop'); if (s) s.emissiveIntensity = .3 + k * 1.6;
     const g = MATS.get('signs'); if (g) g.emissiveIntensity = .15 + k * 2.2;
     if (this.lampGlow) this.lampGlow.emissiveIntensity = k * 5;
+    if (this.standins) this.standins.night = k;
   }
 
   // one chunk's meshes: pavements, parks, buildings (one mesh per material) and the near-only details
@@ -1123,10 +1138,19 @@ export class City {
       const marks = [], open = (x, z) => !this.buildingAt(x, z), busy = WALL_BUSY[this.opts.style] ?? .6;
       for (const bl of P.buildings) if (c.blocks.some(b => b.id === bl.block)) { const F = FACADES[bl.facade]; wallMarks(bl, F, ROOM_KINDS[F.kind].win, KERB + (bl.shops ? 4.6 : 0), KERB, this.seed, open, busy, marks); }
       if (marks.length) { const m = new Mesh(wallGeometry(marks), wallMat()); m.receiveShadow = true; m.name = 'city walls'; d.add(m); }
-      this.wallMarks = (this.wallMarks || 0) + marks.length;
+      this.wallMarks = (this.wallMarks || 0) + marks.length; c.marks = marks.length;
     }
     g.add(d); this.group.add(g); c.group = g; c.detail = d;
+    if (c.stand) c.stand.visible = false;
     this.applyNight(); this.view.shadowsDirty?.(); this.view.patchAir?.(true);
+  }
+  // lets a chunk's meshes go (it is far behind the player): its geometry is freed, its buildings stand as boxes again
+  unbuild(c) {
+    if (!c.group) return;
+    c.group.traverse(o => { if (o.isMesh) { this.groundPaint?.remove(o); o.geometry?.dispose(); } });
+    c.group.removeFromParent(); c.group = c.detail = null; this.wallMarks = (this.wallMarks || 0) - (c.marks || 0); c.marks = 0;
+    if (c.stand) c.stand.visible = true;
+    this.allBuilt = false; this.freed++; this.view.shadowsDirty?.();
   }
   /** Builds every chunk now (screenshots, small cities, a loading screen of your own). */
   warm() { for (const c of this.chunks.values()) this.build(c); return this; }
@@ -1139,10 +1163,13 @@ export class City {
     const f = { x: focus.x, z: focus.z ?? focus.y }; this.t += dt; this.focus = f;
     const sky = this.sky || (this.seeksSky ? this.links.one('sky') : null);
     if (sky) { this.following = true; this.night = sky.night ?? 0; this.following = false; }
-    // build what's coming into range: nearest first, within about 4 ms a frame
-    const t0 = performance.now(), want = this.allBuilt ? [] : [...this.chunks.values()].filter(c => !c.group).sort((a, b) => Math.hypot(a.x - f.x, a.z - f.z) - Math.hypot(b.x - f.x, b.z - f.z));
+    // build what's coming into range: nearest first, within about 2.5 ms a frame; and let go of one chunk a frame that is
+    // well out of range behind (a little further than it was built at, so a chunk on the line isn't built and freed in turn)
+    const t0 = performance.now(), keep = this.keepNow(), dist = c => Math.hypot(c.x - f.x, c.z - f.z) - c.r;
+    const want = this.allBuilt && keep === Infinity ? [] : [...this.chunks.values()].filter(c => !c.group && dist(c) < keep).sort((a, b) => dist(a) - dist(b));
     for (const c of want) { this.build(c); if (performance.now() - t0 > 2.5) break; }
     if (!want.length) this.allBuilt = true;
+    if (keep < Infinity) for (const c of this.chunks.values()) if (c.group && dist(c) > keep * 1.2 + 40) { this.unbuild(c); break; }
     for (const c of this.chunks.values()) if (c.detail) c.detail.visible = Math.hypot(c.x - f.x, c.z - f.z) < this.detail;
     this.cars.update(dt, f, this.t); this.people.update(dt, f, this.t);
     if (this.bodies) this.solidSync();   // (the bodies of the nearest cars and people, after city.solid(world))
@@ -1416,7 +1443,7 @@ export class City {
   }
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
-    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.far?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props.clear(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); this.groundPaint?.dispose(); this.far?.dispose(); this.standins?.dispose(); this.people.crowd?.dispose(); this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }

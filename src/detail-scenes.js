@@ -1427,7 +1427,7 @@ function opencity({ gs, HD, size }) {
       const parts = [`the city's code ${ms(sum.city)} ms`, `sky ${ms(sum.sky)} ms`];
       if (weather) parts.push(`rain and wet ${ms(sum.weather)} ms`);
       if (world) parts.push(`physics ${ms(sum.physics)} ms (${num(sum.hits)} hits)`);
-      parts.push(`${built} of ${city.chunks.size} city chunks built`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
+      parts.push(`${built} of ${city.chunks.size} city chunks built, ${num(city.freed)} let go`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
       if (heap) parts.push(`heap ${(heap / 1048576).toFixed(0)} MB`);
       return parts.join(' · ');
     },

@@ -799,7 +799,7 @@ async function scenes(b) {
     'the works yard is drawn with effects that light nothing and then with fire, sparks and blasts that light it', JSON.stringify(sby.embers));
   // the open city: everything an open-city game asks for at once, each system's time a frame and the city's memory told
   const ocDay = M('opencity', 'day').tell || '', ocChase = M('opencity', 'chase').tell || '';
-  check(/^the city's code [\d.]+ ms · sky [\d.]+ ms · \d+ of \d+ city chunks built · meshes [\d.]+ MB/.test(ocDay) && /rain and wet [\d.]+ ms · physics [\d.]+ ms \(\d+ hits\)/.test(ocChase),
+  check(/^the city's code [\d.]+ ms · sky [\d.]+ ms · \d+ of \d+ city chunks built, \d+ let go · meshes [\d.]+ MB/.test(ocDay) && /rain and wet [\d.]+ ms · physics [\d.]+ ms \(\d+ hits\)/.test(ocChase),
     'the open city is driven through at midday, at night in the rain and in a chase, and says what each system took and what the city holds', JSON.stringify({ ocDay, ocChase }));
   const made = /^(\d+) surfaces made of ([\d,]+) triangles$/.exec(M('village', 'on').note);
   check(made && +made[1] >= 3 && +made[2].replace(/,/g, '') > 100000 && M('village', 'on').build > 0, 'the village\'s walls and roofs are made into real triangles before its second run', JSON.stringify(sby.village));

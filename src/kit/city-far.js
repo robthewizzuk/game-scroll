@@ -161,3 +161,43 @@ export class Skyline {
     this.lights?.dispose(); this.lights = null;
   }
 }
+
+/**
+ * Stand-ins for the city's own chunks (city.js): while a chunk of blocks is not built, near the start or after it was let go
+ * behind the player, each of its buildings stands as plain boxes of its own footprint, storeys and wall colour, with the far
+ * stand-ins' windows (lit at night), so nothing is missing from the skyline and its memory is a few hundred bytes a building.
+ * One mesh a chunk, shown only while the chunk is not built. colourOf(building) gives a wall's colour.
+ */
+export class Standins {
+  constructor(parent, plan, chunks, { colourOf, roof = '#55575a' } = {}) {
+    const { map, lit } = pictures(), R = rng((plan.seed || 1) * 89 + 3), top = new Color(roof), col = new Color();
+    this.mat = new MeshStandardMaterial({ map, emissiveMap: lit, emissive: '#ffffff', emissiveIntensity: 0, vertexColors: true, roughness: .85, metalness: .05, name: 'city stand-ins' });
+    this.group = new Group(); this.group.name = 'city stand-ins'; parent.add(this.group);
+    const ids = new Map(); for (const c of chunks.values()) for (const b of c.blocks) ids.set(b.id, c);
+    const per = new Map();
+    for (const b of plan.buildings) { const c = ids.get(b.block); if (!c) continue; let L = per.get(c); if (!L) per.set(c, L = []); L.push(b); }
+    this.count = 0;
+    for (const [c, list] of per) {
+      const P = [], N = [], U = [], C = [], I = [];
+      const quad = (p, n, uv, k) => { const i = P.length / 3; for (let q = 0; q < 4; q++) { P.push(...p[q]); N.push(...n); U.push(...uv[q]); C.push(k.r, k.g, k.b); } I.push(i, i + 1, i + 2, i, i + 2, i + 3); };
+      for (const b of list) {
+        col.set(colourOf(b)); const du = Math.floor(R() * 8) / 8, dv = Math.floor(R() * 8) / 8;
+        for (const p of b.parts) {
+          const { x0, x1, z0, z1 } = p, y0 = p.y0 - .2, y1 = p.y1, H = (y1 - y0) / 28;
+          for (const [ax, az, bx, bz, nx, nz] of [[x0, z1, x1, z1, 0, 1], [x1, z1, x1, z0, 1, 0], [x1, z0, x0, z0, 0, -1], [x0, z0, x0, z1, -1, 0]]) {
+            const L = Math.hypot(bx - ax, bz - az) / 24;
+            quad([[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [nx, 0, nz], [[du, dv], [du + L, dv], [du + L, dv + H], [du, dv + H]], col);
+          }
+          quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [0, 1, 0], [[.01, .01], [.01, .01], [.01, .01], [.01, .01]], top);
+        }
+        this.count++;
+      }
+      const m = new Mesh(geometry(P, N, U, C, I), this.mat); m.name = 'city stand-ins ' + c.key; m.castShadow = true; m.receiveShadow = true;
+      m.matrixAutoUpdate = false; m.updateMatrix(); m.userData.noDetail = true;
+      this.group.add(m); c.stand = m;
+    }
+  }
+  /** night 0..1: the lit windows. */
+  set night(n) { this.mat.emissiveIntensity = n * 1.1; }
+  dispose() { this.group.removeFromParent(); for (const m of this.group.children) m.geometry.dispose(); this.mat.dispose(); }
+}

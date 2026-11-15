@@ -2473,6 +2473,24 @@ console.log('physics ok');
   }
   console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
 }
+// districts side by side (layout centre) and the stand-ins for chunks not built (city-far.js Standins): a city moved is the
+// same city, every building as boxes of its own footprint and height in its chunk's one mesh, lit at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Standins } = await import('../src/kit/city-far.js');
+  const a = layout({ seed: 8, blocks: [4, 3], style: 'oldtown' }), b = layout({ seed: 8, blocks: [4, 3], style: 'oldtown', centre: [1200, -800] });
+  assert.ok(a.buildings.length === b.buildings.length && a.buildings.every((q, i) => Math.abs(b.buildings[i].x0 - q.x0 - 1200) < 1e-6 && Math.abs(b.buildings[i].z1 - q.z1 + 800) < 1e-6 && b.buildings[i].h === q.h), 'a city moved by centre is the same city, moved');
+  assert.ok(Math.abs(b.bounds.x0 - a.bounds.x0 - 1200) < 1e-6 && b.nodes.every((n, i) => n.out.join() === a.nodes[i].out.join()) && b.centre.join() === '1200,-800', 'its bounds, junctions and roads moved with it');
+  const chunks = new Map(); for (const k of b.blocks) { const key = (k.i >> 1) + ',' + (k.j >> 1); if (!chunks.has(key)) chunks.set(key, { key, blocks: [] }); chunks.get(key).blocks.push(k); }
+  const g = new THREE.Group(), S = new Standins(g, b, chunks, { colourOf: () => '#a45a45' });
+  const parts = b.buildings.reduce((n, q) => n + q.parts.length, 0), meshes = [...chunks.values()].filter(c => c.stand).map(c => c.stand);
+  assert.ok(S.count === b.buildings.length && meshes.length === g.children[0].children.length && meshes.reduce((n, m) => n + m.geometry.index.count / 3, 0) === parts * 10, 'every building stands in, ten triangles a part, one mesh a chunk');
+  for (const c of chunks.values()) if (c.stand) {
+    const P = c.stand.geometry.attributes.position.array, x0 = Math.min(...c.blocks.map(k => k.x0)) - .01, x1 = Math.max(...c.blocks.map(k => k.x1)) + .01, z0 = Math.min(...c.blocks.map(k => k.z0)) - .01, z1 = Math.max(...c.blocks.map(k => k.z1)) + .01;
+    for (let i = 0; i < P.length; i += 3) assert.ok(P[i] >= x0 && P[i] <= x1 && P[i + 2] >= z0 && P[i + 2] <= z1, 'a chunk\'s stand-ins stay on its own blocks');
+  }
+  S.night = 1; assert.ok(S.mat.emissiveIntensity > 1, 'their windows light at night'); S.dispose(); assert.equal(g.children.length, 0, 'disposed: gone');
+  console.log('city districts side by side and stand-ins for chunks not built ok');
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {
