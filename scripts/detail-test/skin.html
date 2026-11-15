@@ -12,7 +12,7 @@
 //   ?bench (--bench): n people walking with a skeleton each, posed in each pass against posed once: code, chip and draws a frame (&n=300 &frames=40)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
-import { skinPool } from '../../src/kit/skin-gpu.js';
+import { skinPool, skinFits } from '../../src/kit/skin-gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -123,11 +123,13 @@ try {
     const off = differ(a, b, 12);
     check(`close up (${k}): the same picture both ways`, off <= W * H * .003, `${off} pixels differ by more than 12 of 255, ${differ(a, b, 3)} by more than 3`);
     if (!GPU) continue;
-    const P = poolOf(S), inPool = [], left = [], f = line[k === 'dog' ? 3 : 1];
-    f.traverse(o => { if (o.isSkinnedMesh && o.visible) (P.has(o) ? inPool : left).push(o.name || o.type); });
+    const P = poolOf(S), inPool = [], left = [], leftObj = [], f = line[k === 'dog' ? 3 : 1];
+    f.traverse(o => { if (o.isSkinnedMesh && o.visible) { (P.has(o) ? inPool : left).push(o.name || o.type); if (!P.has(o)) leftObj.push(o); } });
     info['meshes ' + k] = { inPool: inPool.join(', '), vertexShader: [...new Set(left)].join(', ') };
+    // left out may be only what the pool can't hold: the hair strands carry their direction along the hair (a tangent,
+    // for the ribbon's facing and the hair's sheen), which the pool doesn't pose, so they are posed in their own vertex shader
     if (k === 'dog') check('the dog\'s body is in the pool; its fur shells, shown close up, are posed in the vertex shader', inPool.length > 0 && left.length > 0 && left.every(n => /^fur/.test(n)), `in: ${inPool.length}, left: ${left.length}`);
-    else check('the real-look woman\'s body, wet eyes, eye shadow and hair strips are all in the pool', inPool.some(n => /^human0$/.test(n)) && inPool.some(n => /wet/.test(n)) && inPool.some(n => /hair/.test(n)) && left.length === 0, `in: ${inPool.length}, left: ${left.length}`);
+    else check('the real-look woman\'s body, wet eyes, eye shadow and hair strips are all in the pool (hair strands, which carry a tangent, stay out)', inPool.some(n => /^human0$/.test(n)) && inPool.some(n => /wet/.test(n)) && inPool.some(n => /hair/.test(n)) && leftObj.every(o => !skinFits(o)), `in: ${inPool.length}, left: ${left.length} (${[...new Set(left)].join(', ') || 'none'})`);
   }
   look(S, [0, 1.4, 6.2], [0, .85, 0]);
   await shot(S);
@@ -246,7 +248,7 @@ try {
       const extra = src[0].twin(), mine = []; extra.position.set(0, 0, 1.6); extra.rotation.y = .4; pin(extra, 'walk', .5); if (extra.lods) extra.lod = 0; S.v.scene.add(extra);
       const full = await shot(S); out.full = S.c.toDataURL();
       extra.traverse(o => { if (o.isSkinnedMesh && o.visible) mine.push(o); });
-      const sh = shaders(S, mine), left = P.info.left, lineSh = shaders(S, all);
+      const sh = shaders(S, mine), left = P.info.left, lineSh = shaders(S, all.filter(skinFits));   // (what the pool can't hold at all, the hair strands, is posed by its own shaders whatever the room)
       check('a pool with no room: the newcomer stays out, posed by its own shaders; those in it are read from it as before', left > 0 && HD.info.skin?.left === left && mine.length > 0 && mine.every(o => !P.has(o)) && sh.own > 0 && sh.pool === 0 && lineSh.pool > 0 && lineSh.own === 0 && P.outSpans.n === P.mostOut, `left out: ${left}; the newcomer's shaders ${JSON.stringify(sh)}, the line's ${JSON.stringify(lineSh)}`);
       HD.gpuSkin = false; const plain = await shot(S); HD.gpuSkin = true;
       check('a pool with no room: everybody is drawn, the same picture as with nobody in the pool', differ(full, plain, 12) <= W * H * .0015, differ(full, plain, 12) + ' pixels differ by more than 12 of 255');

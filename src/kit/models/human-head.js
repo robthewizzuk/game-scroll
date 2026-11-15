@@ -684,6 +684,18 @@ export function reliefOf(f) {
  * standing in a trunk's own skin, the two met in a line round the neck with the light falling differently on
  * either side of it.) 0: the neck stands in a collar, and ends inside the trunk.
  */
+// How much fuller our neck is than a GNM head's own (G, human-gnm.js gnmHead) where ours takes over from it, NA ways round the neck's middle line (x 0,
+// z NZ): { d (metres, as much as ours is drawn in that way: 0 to 2 cm, a little out at most), y (the height of that meeting, 1.2 cm under G.cut) }
+function neckFit(G, neck, NA, NZ) {
+  const d = new Float64Array(NA), y = new Float64Array(NA), rOf = (f, yy, sx, cz) => { for (let r = .11; r > .02; r -= .0005) if (f(sx * r, yy, NZ + cz * r) < 0) return r; return 0; };
+  for (let i = 0; i < NA; i++) {
+    const th = i / NA * 2 * PI, sx = sin(th), cz = cos(th);
+    let yy = 1.58; for (let k = 0; k < 6; k++) { const r = rOf(neck.d.bind(neck), yy, sx, cz) || .055; yy -= G.cut(sx * r, yy, NZ + cz * r) + .012; }
+    const rn = rOf(neck.d.bind(neck), yy, sx, cz), rg = rOf(G.d, yy, sx, cz);
+    y[i] = yy; d[i] = rn && rg ? Math.min(.02, Math.max(-.003, rn - rg)) : 0;
+  }
+  return { d, y };
+}
 export function head(a, ghosts = []) {
   const f = a.face, S = [], so = f.soft, J = f.jaw, CH = f.chin, BR = f.brow, NS = f.nose, CK = f.cheeks, nk = a.neck;
   // a real face (f.real): its folds pressed into every shape of its skin, and its age and weight in its mass (see reliefOf)
@@ -718,7 +730,14 @@ export function head(a, ghosts = []) {
   ]);
   // the neck: as deep as it is wide and nearly as wide as the jaw, standing behind it (its front a hand's width back from the chin), wider at its foot
   const neck = new Loft(neckRows(nk));
-  const base = G ? [{ field: (x, y, z) => smax(G.d(x, y, z), -G.cut(x, y, z), .012), lo: G.lo, hi: G.hi, blend: 0 }, { loft: neck, blend: .014 }]
+  // (a GNM head's own neck turns into ours over the 2.4 cm under the line where ours takes over (G.cut): one shape that is the one, then the
+  // other. The two had been put together, ours rounded into GNM's cut-off neck, and ours is fuller behind the ear and at the nape than most of
+  // GNM's heads, so it stood out of them there: a lump on the side of the neck under the ear, along the slant of that line)
+  // Ours is first drawn in to GNM's where they meet, each way round (fuller there by up to 2 cm at the nape of a slight woman), less and less
+  // down to its foot: turned straight from ours to GNM's, the nape was pinched in under the skull
+  const nl = G && [Math.min(G.lo[0], -.08), 1.43, Math.min(G.lo[2], -.1)], nh = G && [mx(G.hi[0], .08), G.hi[1], mx(G.hi[2], .07)], NA = 32, NZ = -.02, fit = G && neckFit(G, neck, NA, NZ);
+  const neckD = G && ((x, y, z) => { const a = (Math.atan2(x, z - NZ) / (2 * PI) + 1) * NA, i = Math.floor(a) % NA, u = a - Math.floor(a), j = (i + 1) % NA, yj = fit.y[i] + (fit.y[j] - fit.y[i]) * u; return neck.d(x, y, z) + (fit.d[i] + (fit.d[j] - fit.d[i]) * u) * ss(1.505, yj, y); });
+  const base = G ? [{ field: (x, y, z) => { const t = ss(-.024, 0, G.cut(x, y, z)); if (t >= 1) return G.d(x, y, z); const dn = neckD(x, y, z); return t <= 0 ? dn : dn + (G.d(x, y, z) - dn) * t; }, lo: nl, hi: nh, blend: 0 }]
     : [{ loft: face, blend: 0 }, { ball: [.0755, .09, .1], at: Hd(0, .026, -.006), blend: .008 }, { loft: neck, blend: .014 }];
   for (const s of base) A(s);
   if (a.foot) {
@@ -827,4 +846,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + GNM_HASH + [gnmHead, gnmAged, meshField, gnmMarks, eyeOf, mouthY, noseOf, lipAt, kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([LIP_U, ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + GNM_HASH + [neckFit, gnmHead, gnmAged, meshField, gnmMarks, eyeOf, mouthY, noseOf, lipAt, kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([LIP_U, ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
