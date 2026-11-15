@@ -4922,6 +4922,16 @@ console.log('physics ok');
     const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same gas, cell for cell');
     const n0 = g.view.sims.length; g.dispose(); assert.ok(g.view.sims.length === n0 - 1 && !g.puffs.soft.parent && !g.puffs.glow.parent, 'dispose()');
   }
+  {
+    // the pressure's rounds (Chebyshev's): the same count comes closer to the pressure that evens the flow out, and half as many as the chip ran before come as close
+    const { CHEB } = F, g = new Gas(view(), { box: [-2, 0, -2, 2, 3, 2], draw: false }); g.fire({ y: .4, size: .8 }); g.smoke({ x: 1, y: .3, heat: 1 }); run(g, 2);
+    const S = g.sim; S.advect(g.sources(true)); S.curl(); S.confine(); S.diverge(g.sources(false));
+    const P0 = S.P.slice(), Q0 = S.P2.slice(), solve = (cheb, n) => { CHEB.on = cheb; S.P.set(P0); S.P2.set(Q0); S.pressure(n); CHEB.on = true; return S.P.slice(); };
+    const X = solve(false, 3000), nx = S.nx, nxy = S.nx * S.ny;
+    const off = P => { let e = 0, t = 0; for (let c = nxy + nx + 1; c < S.cells - nxy - nx - 1; c++) for (const d of [1, nx, nxy]) { const a = P[c + d] - P[c] - (X[c + d] - X[c]), b = X[c + d] - X[c]; e += a * a; t += b * b; } return Math.sqrt(e / t); };
+    const p10 = off(solve(false, 10)), c10 = off(solve(true, 10)), p24 = off(solve(false, 24)), c12 = off(solve(true, 12));
+    assert.ok(c10 < p10 && c12 < p24, `Chebyshev rounds come closer: 10 of them off by ${c10.toFixed(3)}, 10 plain ${p10.toFixed(3)}; 12 of them ${c12.toFixed(3)}, 24 plain ${p24.toFixed(3)}`);
+  }
   assert.deepEqual(Object.keys(KINDS), ['smoke', 'fire', 'steam', 'dust', 'toxic', 'magic'], 'the ready-made gases');
   GAS.klass = null;
   const { HIDDEN } = await import('../src/gamescroll.js');

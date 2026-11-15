@@ -135,6 +135,24 @@ export const CONSOLE_8BIT = { on: true };
 // number in it had changed: 900 KB a frame in a scene of eight people. They are sent when they have changed (their
 // version, which every write must raise for WebGL to send it at all), as everything else is. `on: false` (HD.sendChanged
 // = false) is three's own way, to compare.
+// Cut-outs after solid things. three draws a scene's solid things nearest first, and leaves, grass, hair cards and
+// fur layers (alphaTest, alphaHash: a shader that throws pixels away) among them. A tiled phone chip (Adreno's LRZ,
+// Mali's and Apple's hidden surface removal) tests each draw against a coarse depth picture before shading it, and
+// a draw that may throw pixels away can't add to that picture: a tree near the camera left the house behind it
+// shaded where its leaves cover it. Drawn after everything solid (Unity's "AlphaTest" queue, Unreal's masked pass),
+// cut-outs are tested against all of it, and the solids fill the coarse picture first. Nearest first within each
+// half; renderOrder and groups still come first. (CUT_LAST.on false: three's own order, for a before/after.)
+export const CUT_LAST = { on: true };
+/** Whether a material may throw pixels away (its draw can't fill the chip's coarse depth test). */
+export const isCut = m => !!m && (m.alphaTest > 0 || m.alphaHash === true || m.alphaToCoverage === true || m.userData?.gsCut === true);
+/** three's opaque order with cut-outs after solid things (renderer.setOpaqueSort). */
+export function cutLast(a, b) {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
+  if (CUT_LAST.on) { const ca = isCut(a.material), cb = isCut(b.material); if (ca !== cb) return ca ? 1 : -1; }
+  if (a.z !== b.z) return a.z - b.z;
+  return a.id - b.id;
+}
 export const SEND_CHANGED = { on: true };
 function sendChanged(r) {
   const A = r._attributes, update = A?.update; if (!update || A.gsChanged) return; A.gsChanged = true;
@@ -209,7 +227,7 @@ export function prepareGPU() {
       r.gsPixelBytes = r.backend?.device?.limits?.maxColorAttachmentBytesPerSample || 32;
       r.gsHdr = hdr && (r.backend?.context?.getConfiguration?.()?.toneMapping?.mode ?? 'extended') === 'extended';
       if (!r.backend?.isWebGPUBackend) { console.warn('WebGPU: three fell back to WebGL 2'); r.dispose(); return null; }   // three fell back to WebGL 2: keep our own WebGL path
-      r.gsBackend = 'webgpu';
+      r.gsBackend = 'webgpu'; r.setOpaqueSort(cutLast);
       watchDevice(r.backend.device, W.REVISION);   // (pipelines a round makes are noted, and made ahead next time: pipes.js)
       if (STEER.submit !== false) holdSubmits(r.backend.device);   // (a frame's passes go to the chip in one submit: submit.js)
       fx.manyLights(r);
@@ -350,7 +368,7 @@ export function prepareConsoleGPU() {
       const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false, depth: SCREEN_DEPTH.on, ...(CONSOLE_8BIT.on ? { outputBufferType: G.W.UnsignedByteType } : {}) });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
-      r.gsBackend = 'webgpu'; r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); sendChanged(r); oneWrite(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)
+      r.gsBackend = 'webgpu'; r.setOpaqueSort(cutLast); r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); sendChanged(r); oneWrite(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)
       return con = { r, W: G.W, fx };
     } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
   })();
