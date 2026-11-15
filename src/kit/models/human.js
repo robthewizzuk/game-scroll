@@ -480,12 +480,12 @@ function curlOf(o, f) {
   const r = rngOf('curl:' + (o.seed ?? JSON.stringify([o.sex, o.skin, o.hair, o.age])))();
   return o.seed != null && r < .22 ? CURLS.wavy : 0;
 }
-// How far each point is from the nearest point of a head's hair (the sculpted hair's surface), up to 2 cm: a grid of 8 mm cells, each
+// How far each point is from the nearest point of a head's hair (the sculpted hair's surface; kind 'skin': of its skin), up to 2 cm: a grid of 8 mm cells, each
 // point looked for in its cell and the ones round it.
-function hairGrid(p, slots) {
+function hairGrid(p, slots, kind = 'hair') {
   const C = .008, G = new Map(), key = (a, b, c) => a * 73856093 ^ b * 19349663 ^ c * 83492791;
   const seen = new Set();   // (one point in each 2 mm: the hair's surface is finer than the shade needs)
-  for (let i = 0; i < p.n; i++) { if (slots[p.slot[i]].a !== 'hair') continue; const x = p.P[i * 3], y = p.P[i * 3 + 1], z = p.P[i * 3 + 2], f = key(Math.floor(x / .002), Math.floor(y / .002), Math.floor(z / .002)); if (seen.has(f)) continue; seen.add(f); const k = key(Math.floor(x / C), Math.floor(y / C), Math.floor(z / C)); (G.get(k) || G.set(k, []).get(k)).push(x, y, z); }
+  for (let i = 0; i < p.n; i++) { if (slots[p.slot[i]].a !== kind) continue; const x = p.P[i * 3], y = p.P[i * 3 + 1], z = p.P[i * 3 + 2], f = key(Math.floor(x / .002), Math.floor(y / .002), Math.floor(z / .002)); if (seen.has(f)) continue; seen.add(f); const k = key(Math.floor(x / C), Math.floor(y / C), Math.floor(z / C)); (G.get(k) || G.set(k, []).get(k)).push(x, y, z); }
   return (x, y, z) => {
     const a = Math.floor(x / C), b = Math.floor(y / C), c = Math.floor(z / C); let best = .02 * .02;
     for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) for (let k = -2; k <= 2; k++) { const L = G.get(key(a + i, b + j, c + k)); if (L) for (let q = 0; q < L.length; q += 3) { const dx = L[q] - x, dy = L[q + 1] - y, dz = L[q + 2] - z, d = dx * dx + dy * dy + dz * dz; if (d < best) best = d; } }
@@ -691,6 +691,7 @@ export function human(o = {}) {
   // (where the head's hair is, in a grid of 8 mm cells, for the shade it throws on the skin by it: hairShade)
   const hairUnder = hairC.clone().multiplyScalar(.5).lerp(skinC.clone().multiplyScalar(.6), .25);   // (skin under the hair's edge: its roots and its shade, the hair's colour in shadow)
   const hairNear = sp.face.real && headP && sp.hair && sp.hairStyle !== 'bald' && !sp.hat ? hairGrid(headP, slotsOf[pieces.indexOf(headP)]) : null;
+  const skinNear = hairNear && hairGrid(headP, slotsOf[pieces.indexOf(headP)], 'skin'), hairThin = hairC.clone().lerp(skinC, .65);   // (the hair at its edge, where the skin shows between its first hairs)
   let at = 0; const offs = [];
   for (let pi = 0; pi < pieces.length; pi++) {
     const p = pieces[pi], cs = slotsOf[pi], sm = seam[pi], LAY = sm.lay, bi = p.names.map(b => Math.max(0, bones.indexOf(b)));
@@ -721,6 +722,8 @@ export function human(o = {}) {
         // and stopped in a line, which read at a few paces as a grey-brown patch)
         if (stub && name !== 'brow') { let sh; if (sp.face.real) { beardArea(STUB, x, hy, hz, BA); sh = Math.max(BA[0] * BA[0], .8 * BA[1]) * stub * .6; } else { const top = -.042 + .045 * ss(.035, .07, abs(x)); sh = ss(top, top - .016, hy) * ss(-.045, -.01, hz) * ss(-.165, -.125, hy) * stub; } if (sp.face.real) { col.r *= 1 - sh * .34; col.g *= 1 - sh * .32; col.b *= 1 - sh * .27; } else { col.r *= 1 - sh * .38; col.g *= 1 - sh * .33; col.b *= 1 - sh * .24; } }
         col.multiplyScalar(.975 + .035 * lumps(x * 55, y * 55, z * 55) + .02 * lumps(x * 190, y * 190, z * 190));   // skin is never one flat colour
+        // (a real face redder in patches a centimetre or two across, not the same on its two sides: the cheeks, the nose, the chin most)
+        if (sp.face.real && !face) { const zr = .4 + .6 * Math.max(bump(hy, -.03, .03) * ss(.075, .045, abs(x)) * ss(.008, .028, abs(x)), bump(hy, -.1, .025) * ss(.035, .005, abs(x))), m = ss(.1, .7, lumps(x * 40 + 2.7, y * 40, z * 40 + 6.1)) * zr * .07 * (1 - .6 * ss(.35, .12, skinC.r)); if (m > 0) { col.r *= 1 + m * .4; col.g *= 1 - m * .55; col.b *= 1 - m * .5; } }
         // (the hair's shade on the skin beside and below it: a head of hair stands off the skin and keeps the sky off what is under its edge, so the
         // forehead under a fringe, the temples and the nape are darker for a centimetre or so. Artists paint it into a head's colour for every
         // game character; without it hair sat on the head like a cap. Darker and warmer: skin in shade glows a little red)
@@ -730,6 +733,10 @@ export function human(o = {}) {
       }
       // a man's short back and sides: clipped close over the ears and at the nape, the skin showing through, so lighter there than on top
       // (and never one flat colour). One dark block down to the hairline read as a cap of paint
+      // a real head's hairline: the hair starts with a few hairs and thickens over the first centimetre or so, with the skin showing between them;
+      // the sculpted hair under the strands is coloured so there, the skin's colour through the hair's, so its edge is not the edge of a cap.
+      // Where the hair meets the face and the temples (behind, a fringe or a bob hangs off the skin: no skin shows), and wandering along it
+      if (skinNear && s.k === HAIRK && p === headP) { const d = skinNear(x, y, z); if (d < .012) { const w = .75 + .5 * lumps(x * 90 + 1.3, y * 90, z * 90), t = Math.max(0, 1 - d / (.011 * w)) ** 1.3 * ss(-.06, -.01, y - HC[1] - (z - HC[2]) * .6); col.lerp(hairThin, Math.min(1, t)); } }
       if (s.k === HAIRK && p === headP && !sp.fem) { const hy = y - HC[1], clip = ss(.035, -.03, hy) * (.3 + .1 * ss(-.02, -.06, z - HC[2])); col.lerp(skinC, clip); col.multiplyScalar(.94 + .08 * lumps(x * 60, y * 60, z * 60)); }
       // the iris: fine streaks out from the pupil (each sliver of it a little lighter or darker than the next)
       if (s.a === 'eyes' && p === headP && !sp.face.real) { const b = +p.slots[p.slot[i]][3]; if (b >= 1 && b <= 3) col.multiplyScalar(1 + .14 * lumps(Math.round(Math.atan2(y - HC[1] - EYE[1], abs(x) - EYE[0]) / (PI * 2) * 24) * 7.31 + (x > 0 ? 3 : 11), b * .37, 2.9)); }

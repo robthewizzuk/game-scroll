@@ -248,6 +248,8 @@ export const gnmReady = () => DATA ? Promise.resolve(true) : loadP ||= import('.
 export const gnmLoaded = () => !!DATA;
 
 const FIELDS = new Map();
+// how lean a face of middle weight is drawn (gnmLean): GNM's middle head is a soft one
+export const LEAN0 = .55;
 const ss = (a, b, x) => { const t = mx(0, mn(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, bump = (x, c, r) => { const t = (x - c) / r; return t * t < 1 ? (1 - t * t) ** 2 : 0; };
 // a GNM head grown old (A: 0 at 24 .. 1 at 78; heavy: 0..1), as a real face gives way with age: GNM's heads are of adults of no particular
 // age, and its face young and smooth beside a real one of seventy. The flesh of the cheeks slides down off the cheekbones and gathers in
@@ -255,13 +257,43 @@ const ss = (a, b, x) => { const t = mx(0, mn(1, (x - a) / (b - a))); return t * 
 // folds that come with age, from the nose to the mouth, under the eyes, down from the mouth's corners, the hollows of the temples and
 // the cheeks, are pressed in on top, human-head.js reliefOf.) Each point moves along the skin's normal, and down, by smooth amounts from
 // where it lies on the face: x from the middle, hy and hz from the eyes' middle (g: f.gnm's outlines, in the same space).
-export function gnmAged(V, N, tris, g, A, heavy, at) {
+function normalsOf(V, N, tris) {
   const Nn = new Float64Array(N * 3);
   for (let t = 0; t < tris.length; t += 3) {
     const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3, ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], vx = V[c] - V[a], vy = V[c + 1] - V[a + 1], vz = V[c + 2] - V[a + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     for (const i of [a, b, c]) { Nn[i] += nx; Nn[i + 1] += ny; Nn[i + 2] += nz; }
   }
+  return Nn;
+}
+// a GNM head made leaner or fuller (L: 1 lean .. 0 as GNM drew it .. -1 heavy). GNM's heads are the middle of many people's, and the middle of
+// many faces is a soft one: the flesh that a lean face lacks evened out over the hollow under the cheekbone, the line of the jaw and the
+// underside of the chin, so every face read puffy and young beside a photograph. A lean face's cheek falls in under the cheekbone in front of
+// the chewing muscle; the jaw's lower edge stands as a line with the skin under it drawn up and in towards the throat, which the light
+// catches as a shadow under the jaw; a heavy face is full in all three. (Games' faces "cheat" the same way: their body-weight blend shapes
+// hollow these three places.) Points move along the skin's normal, by smooth amounts from where they lie (as gnmAged).
+export function gnmLean(V, N, tris, g, L, at) {
+  const Nn = normalsOf(V, N, tris), MY = g.lip.line[0], half = g.lip.half, ey = g.eye[1], ez = g.eye[2], oy = at[1] - ey, oz = at[2] - ez;
+  for (let i = 0; i < N * 3; i += 3) {
+    const ax = abs(V[i]), hy = V[i + 1] - oy, hz = V[i + 2] - oz; if (hy > -.008 || hy < -.17) continue;
+    const n = Math.hypot(Nn[i], Nn[i + 1], Nn[i + 2]) || 1, ny = Nn[i + 1] / n;
+    // the hollow of the cheek: under the cheekbone, out from the mouth's corner, in front of the chewing muscle
+    const cheek = bump(ax, half + .025, .018) * bump(hy, MY + .017, .022) * ss(.015, .045, hz);
+    // the underside of the jaw and chin, back to the throat (the skin there faces down)
+    const under = ss(.25, .75, -ny) * ss(MY - .028, MY - .052, hy) * ss(-.07, -.03, hz);
+    // over the jaw's line, out from the chin to below the cheek (where a full face gathers)
+    const jowl = bump(ax, half + .02, .02) * bump(hy, MY - .036, .016) * ss(-.005, .035, hz);
+    // the jaw's angle and the chewing muscle over it, narrower (a broad soft lower face is the middle face's fat as much as its bone)
+    const angle = ss(half + .012, half + .04, ax) * ss(MY + .02, MY - .01, hy) * ss(.06, .03, hz) * ss(-.04, -.01, hz);
+    // the cheekbone, standing out over the hollow
+    const bone = bump(ax, half + .028, .016) * bump(hy, -.024, .012) * ss(.02, .05, hz);
+    const out = -L * (.006 * cheek + .007 * under + .003 * jowl - .0015 * bone);
+    if (!out && !angle) continue;
+    V[i] += out * Nn[i] / n - Math.sign(V[i]) * .004 * L * angle; V[i + 1] += out * ny; V[i + 2] += out * Nn[i + 2] / n;
+  }
+}
+export function gnmAged(V, N, tris, g, A, heavy, at) {
+  const Nn = normalsOf(V, N, tris);
   const MY = g.lip.line[0], half = g.lip.half, ex = g.eye[0], ey = g.eye[1], ez = g.eye[2], oy = at[1] - ey, oz = at[2] - ez;
   for (let i = 0; i < N * 3; i += 3) {
     const x = V[i], ax = abs(x), hy = V[i + 1] - oy, hz = V[i + 2] - oz; if (hz < -.01 || hy > .06 || hy < -.16) continue;
@@ -287,7 +319,7 @@ export function gnmAged(V, N, tris, g, A, heavy, at) {
  */
 export function gnmHead(f, at) {
   if (!DATA) throw new Error('GNM heads not loaded (gnmReady)');
-  const c = f.gnm.c, A = ss(24, 78, f.age ?? 30), heavy = mx(0, ((f.fat ?? .5) - .5) * 2), key = c.join() + ':' + at.join() + ':' + A.toFixed(3) + ':' + heavy.toFixed(3); let G = FIELDS.get(key); if (G) return G;
+  const c = f.gnm.c, A = ss(24, 78, f.age ?? 30), heavy = mx(0, ((f.fat ?? .5) - .5) * 2), L = mn(1, mx(-1, LEAN0 + (.5 - (f.fat ?? .5)) * 2)), key = c.join() + ':' + at.join() + ':' + A.toFixed(3) + ':' + heavy.toFixed(3) + ':' + L.toFixed(3); let G = FIELDS.get(key); if (G) return G;
   const { N, P: P0, ways, steps, tris, mouth, neck } = DATA, n3 = N * 3, V = new Float64Array(n3 + 3);
   V.set(P0); for (let k = 0; k < K; k++) { const ck = c[k] * steps[k]; if (!ck) continue; const o = k * n3; for (let i = 0; i < n3; i++) V[i] += ck * ways[o + i]; }
   // the mouth closed: each point of the lips' rows where they meet halfway to the point across from it (worked out from where they all
@@ -302,6 +334,7 @@ export function gnmHead(f, at) {
   // well above it)
   for (const i of neck) for (let e = 0; e < 3; e++) V[n3 + e] += V[i * 3 + e] / neck.length;
   for (let i = 0; i < n3 + 3; i += 3) { V[i] += tx; V[i + 1] += ty; V[i + 2] += tz; }
+  if (L) gnmLean(V, N, tris, f.gnm, L, at);
   if (A > 0) gnmAged(V, N, tris, f.gnm, A, heavy, at);
   const I = new Uint32Array(tris.length + neck.length * 3); I.set(tris);
   for (let i = 0, o = tris.length; i < neck.length; i++, o += 3) { I[o] = neck[i]; I[o + 1] = neck[(i + 1) % neck.length]; I[o + 2] = N; }

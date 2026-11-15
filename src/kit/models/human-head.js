@@ -8,7 +8,7 @@
 import { Loft, ready, smin, smax, lumps, ss, bump } from './field.js';
 import { fitAt, FIT_MAX, FIT_DATA, FIT_KIN, kinTable } from './human-fit.js';
 import { row as slice, shoulderRows, neckRows, neckOpening } from './human-body.js';
-import { gnmHead, gnmAged, gnmMarks, meshField, GNM_HASH } from './human-gnm.js';
+import { gnmHead, gnmAged, gnmLean, LEAN0, gnmMarks, meshField, GNM_HASH } from './human-gnm.js';
 export { ss, bump };
 
 const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs, mx = Math.max, hyp = Math.hypot, pow = Math.pow;
@@ -846,4 +846,4 @@ export function head(a, ghosts = []) {
   return S;
 }
 // (the text of all that shapes a head, for the sculpting's version stamp)
-export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + GNM_HASH + [neckFit, gnmHead, gnmAged, meshField, gnmMarks, eyeOf, mouthY, noseOf, lipAt, kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([LIP_U, ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
+export const HEAD_STAMP = FIT_DATA + JSON.stringify(FIT_KIN) + GNM_HASH + [neckFit, gnmHead, gnmAged, gnmLean, LEAN0, meshField, gnmMarks, eyeOf, mouthY, noseOf, lipAt, kinTable, mouthHalf, beardArea, fitAt, slice0, reliefOf, scaled, esOf, rimOf, ball3, eyeOpening, eyeRim, mouthAt, mouthShape, lineAt, outside, hairShape, longShape, bobShape, browOf, head, lipLine, lidPlan, faceBones, faceShare, partLips, mouthInside, eyeParts].map(String).join('') + JSON.stringify([LIP_U, ES, RELIEF, HC, EYE, MOUTH, MOUTH_DIP, MOUTH_UP, CORNER, LINE_M, LINE_F, JAW, LID_R]);
