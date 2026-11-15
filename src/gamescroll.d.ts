@@ -155,6 +155,9 @@ export type VoiceName = 'saw' | 'sub' | 'warm' | 'pulse' | 'epiano' | 'bassguita
 /** Drum kits, for music({ voices: { drums } }). */
 export type KitName = 'kit' | '808' | 'concert';
 export type MusicMood = 'happy' | 'calm' | 'tense' | 'spooky' | 'heroic' | 'sad' | 'silly' | 'chase' | 'puzzle';
+/** A station for gs.sound Radio. talk: 0..1, how chatty. dj.take: which of the phone's voices of that kind. sign: catch phrases. */
+export interface RadioStation { name: string; freq?: string; mood?: MusicMood; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; tagline?: string; talk?: number;
+  dj?: { name: string; voice?: 'woman' | 'man'; take?: number; pitch?: number; rate?: number; persona?: string; sign?: string[] }; [k: string]: Loose }
 export interface SoundPart {
   /** One beep: frequency, duration (s), wave, volume, pitch slide (Hz). */
   sfx(f?: number, d?: number, type?: OscillatorType, vol?: number, slide?: number): void;
@@ -187,11 +190,33 @@ export interface SoundPart {
   compose(o?: { mood?: MusicMood; seed?: string | number; tempo?: number; key?: string; bars?: 4 | 8 }): { tempo: number; swing: number; layers: Record<string, number>; lead: string; bass: string; pad: string; pad2: string; arp: string; drums: string; drums2: string; lead2: string; info: { mood: string; key: string; mode: string; bars: number; chords: number[]; win: string; lose: string } };
   MOODS: Record<string, Loose>;
   /**
+   * A car radio: stations of original songs from compose(), each with a made-up DJ who talks between songs
+   * (say()), adverts, idents and the game's own news. Stations carry on while you listen to another. Inside the
+   * car it sounds like car speakers; outside it's muffled and fades with distance. The phone's AI (a gs.phoneai
+   * PhoneAI as `ai`) can write the DJs' lines; every line has a written one. On the music channel: Sound settings rule it.
+   */
+  Radio: new (o?: { stations?: RadioStation[]; seed?: string; ai?: { ask(prompt: string, o?: { fallback?: string }): Promise<string> | string } | null; on?: boolean; station?: number; volume?: number; sky?: Loose | false; weather?: Loose | false; link?: boolean }) => {
+    stations: RadioStation[]; index: number; power: boolean; volume: number; readonly station: RadioStation; readonly level: number; readonly muffle: number;
+    readonly now: { on: boolean; index: number; station: string; freq: string; dj: string; kind: 'song' | 'talk'; song: { title: string; artist: string; next?: boolean } | null; line: string | null; left: number; switching: boolean };
+    on(): Loose; off(): Loose; toggle(): Loose; tune(which: number | string): Loose; next(): Loose; prev(): Loose;
+    /** inside: true in the car, false outside, or 0..1 (a door open); distance: metres from the car. */
+    listen(o?: { inside?: boolean | number; distance?: number }): Loose;
+    /** The game's news: read at the next break on every station, or now with urgent. */
+    news(text: string, o?: { urgent?: boolean }): Loose;
+    /** true quietens it and the DJ waits (the phone ringing); false lets it go. */
+    hold(on?: boolean): Loose;
+    update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The five stations that come with Radio (all made up). */
+  STATIONS: RadioStation[];
+  /** The made-up adverts the stations play. */
+  ADVERTS: string[];
+  /**
    * Background music from patterns; start it in update(), not reset(). set: the instruments, 'chip' (the default),
    * 'synth', 'band' or 'orchestra'; voices swaps single parts: { lead: 'bell', drums: 'kit' }. A set other than chip
    * uses Tone.js, which loads by itself: the tune plays in the chip sound until it's in.
    */
-  music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; [part: string]: Loose }): { start(): Loose; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
+  music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; /** An audio node to play into instead of the music channel (one that ends up there). */ out?: AudioNode | null; [part: string]: Loose }): { /** From the top, or from step `at`. */ start(at?: number): Loose; /** Steps before it repeats. */ readonly length: number; /** Seconds a step lasts now. */ readonly stepTime: number; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
   /**
    * 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones).
    * Sound that knows the level: with `level` (a gs.physics3d World3D, a TileMap, a City, Voxels, a function
@@ -2924,16 +2949,85 @@ export interface ClimbPart {
   };
   Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: number): Loose; update(dt: number, push?: number): Loose; readonly hands: P3; feet(height?: number): P3; release(): P3 };
 }
+/** A place: x, z on the ground in 3D (y is optional), or x, y in 2D. */
+export interface Spot { x: number; y?: number; z?: number }
+/** A marker for a map, a GPS or an arrow in the world: gs.missions Mission.markers and Jobs.markers. */
+export interface MissionMarker { at: { x: number; y: number; z: number }; kind: string; text: string; icon: string | null; pinned?: boolean; job?: string }
 export interface Mission {
-  objectives: { text: string; at: P3 | null; done: boolean }[]; lines: { text: string; who: string | null; life: number }[]; flags: Record<string, Loose>; time: number;
-  done: boolean; failed: string | false; readonly current: { text: string; at: P3 | null } | null; readonly replaying: boolean;
+  objectives: { text: string; at: Spot | (() => Spot) | null; done: boolean; kind: string; icon: string | null }[]; lines: { text: string; who: string | null; life: number }[]; flags: Record<string, Loose>; time: number;
+  done: boolean; failed: string | false | null; readonly current: { text: string; at: P3 | null } | null; readonly replaying: boolean;
+  /** The objectives still to do that have a place, read now (a moving `at` is followed). */
+  readonly markers: MissionMarker[];
+  /** Where to put the player after restart(): the last checkpoint's `at`, or null. */
+  respawn: { x: number; y: number; z: number } | null;
+  /** The countdown from timer(): { left, total, reason }, or null. */
+  clock: { left: number; total: number; reason: string } | null;
+  /** Seconds left to get back while a leash() test is false, or null. */
+  away: number | null;
+  /** True after abandon(). */
+  quit: boolean;
   update(dt: number): Mission; restart(fresh?: boolean): Mission; wait(s: number): Loose; until(test: () => boolean): Loose; all(...w: Loose[]): Loose; any(...w: Loose[]): Loose;
-  objective(text: string, o?: { at?: P3; keep?: boolean }): Loose; say(text: string, o?: { who?: string; time?: number }): void; checkpoint(name?: string): Loose; flag(name: string, v?: Loose): Mission;
-  complete(): void; fail(reason?: string): void; save(): Loose; load(s: Loose): Mission; on(ev: 'objective' | 'say' | 'checkpoint' | 'complete' | 'fail' | 'restart', fn: (...a: Loose[]) => void): Mission;
+  objective(text: string, o?: { at?: Spot | (() => Spot) | null; keep?: boolean; kind?: string; icon?: string }): Loose; say(text: string, o?: { who?: string; time?: number }): void;
+  checkpoint(name?: string, o?: { at?: Spot | (() => Spot) | null }): Loose; flag(name: string, v?: Loose): Mission;
+  /** A countdown: fails with reason at 0. timer(null) stops it. */
+  timer(seconds: number | null, reason?: string): Mission;
+  /** While test() is false a countdown of `time` seconds runs (mission.away); 0 fails with reason. leash(null) lets go. */
+  leash(test: (() => boolean) | null, time?: number, reason?: string): Mission;
+  complete(): void; fail(reason?: string): void; abandon(): Mission; save(): Loose; load(s: Loose): Mission; on(ev: 'objective' | 'say' | 'checkpoint' | 'complete' | 'fail' | 'restart' | 'abandon', fn: (...a: Loose[]) => void): Mission;
 }
+/** A job in an open world (gs.missions Jobs). */
+export interface Job {
+  id: string; name?: string;
+  /** Where it starts: a point, a thing that moves, or a function. */
+  at?: Spot | (() => Spot) | null;
+  script: (m: Mission, job: Job) => Generator<Loose, void, Loose>;
+  from?: string; pay?: number; icon?: string; radius?: number; repeat?: boolean;
+  needs?: string[] | string | ((jobs: Loose) => boolean) | null;
+  /** A Phone made in the same game rings with this once the job opens. */
+  call?: { from?: string; say: string | string[]; voice?: Loose };
+  save?: () => Loose; load?: (d: Loose) => void;
+  [k: string]: Loose;
+}
+export interface PhoneCall { from: string; say: string[]; voice?: Loose; job?: string; line?: string | null; at?: number; [k: string]: Loose }
 export interface MissionsPart {
   zone(at: P3 | { x: number; y: number; w: number; h: number }, r?: number | null): { has(p: P3): boolean; any(list: P3[]): boolean; count(list: P3[]): number };
-  Mission: new (script: (m: Mission) => Generator<Loose, void, Loose>, o?: { save?: (d: Loose) => void; load?: () => Loose }) => Mission;
+  /** save() gives your state at a checkpoint, load(data) puts it back after restart(). */
+  Mission: new (script: (m: Mission, ctx?: Loose) => Generator<Loose, void, Loose>, o?: { save?: () => Loose; load?: (d: Loose) => void; ctx?: Loose }) => Mission;
+  /**
+   * The jobs of an open world: a marker for each open one, start from it (a tap, or walking on with start: 'enter'),
+   * pay, unlocks (needs), retry from a checkpoint mid-city (put the player at mission.respawn), and a Phone made in
+   * the same game rings with each job's call by itself.
+   */
+  Jobs: new (list: Job[], o?: { radius?: number; start?: 'tap' | 'enter'; phone?: Loose | false; calls?: number; link?: boolean }) => On<Loose> & {
+    list: Job[]; done: Set<string>; counts: Record<string, number>; money: number; pinned: string | null;
+    /** The job running now, its Mission, and the reason after a fail (then retry() or quit()). */
+    active: Job | null; mission: Mission | null; failed: string | null;
+    /** The open job whose marker the player is standing on. */
+    offer: Job | null;
+    readonly open: Job[]; readonly markers: MissionMarker[];
+    isOpen(job: Job | string): boolean; where(job: Job): { x: number; y: number; z: number } | null; next(): Job | null; pin(id: string | null): Loose;
+    start(id: string): Mission | null; retry(): Mission | null; quit(): Loose;
+    /** player: { x, z } (or x, y in 2D). */
+    update(dt: number, player?: Spot | null): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The player's phone: calls that ring, spoken on a phone line and shown as text, and texts. The car radio waits while it rings. */
+  Phone: new (o?: { rings?: number; every?: number; buzz?: boolean; link?: boolean; jobs?: Loose | false; radio?: Loose | false }) => On<Loose> & {
+    state: 'idle' | 'ringing' | 'call'; call: PhoneCall | null; inbox: { from: string; text: string; read: boolean }[]; missed: PhoneCall[]; readonly unread: number;
+    ring(call: { from?: string; say: string | string[]; voice?: Loose; job?: string }, o?: { after?: number }): PhoneCall;
+    text(from: string, text: string): Loose; answer(): Loose; decline(): Loose; skip(): Loose; update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone and Radio found by themselves; rounded, measured, saved when it changes. */
+  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean }) => {
+    size: number; readonly room: number; dropped: string[];
+    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean }): Loose;
+    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean };
+    load(): boolean; now(force?: boolean): boolean; update(dt: number): Loose;
+  };
+  /** Rounds every number in it to `places`. */
+  compact<T>(v: T, places?: number): T;
+  /** A list of records as rows of values (the names once, in `keys`), and back. */
+  rows(list: Record<string, Loose>[], keys: string[]): Loose[][];
+  unrows(data: Loose[][], keys: string[]): Record<string, Loose>[];
 }
 /**
  * A Next Gen view's lens (v.lens): a camera like a real one. fstop (2.8): the aperture; lower is a shallower focus. focal: the lens in mm

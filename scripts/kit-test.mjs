@@ -8329,5 +8329,82 @@ console.log('physics ok');
   console.log(`brains 6: teach by example: hand signs ${(one.right * 100).toFixed(0)}% from one example, ${(three.right * 100).toFixed(0)}% from three, ${(five.right * 100).toFixed(0)}% from five (${(five.wrong * 100).toFixed(1)}% taken for another), poses ${pOk}%, phone moves ${mOk}/40, sounds ${sOk}/60, saved ok`);
 }
 
+{
+  // open-world missions: jobs with markers, a phone that rings with them, retry mid-city, the world in 8 KB
+  const { Mission, Jobs, Phone, WorldSave, zone, rows, unrows } = await import('../src/kit/missions.js');
+  const { Radio } = await import('../src/kit/sound.js').then(() => import('../src/kit/radio.js'));
+  const { ownedBy } = await import('../src/kit/cleanup.js');
+  let store = null; const api = { save: d => { store = JSON.parse(JSON.stringify(d)); return true; }, load: f => store ?? f };
+  const me = { x: 0, z: 0 }, docks = { x: 50, z: 0 }, shop = { x: 10, z: 0 }, card = {};
+  let jobs, phone, radio, save, cash = 0;
+  const make = () => ownedBy(card, () => {
+    radio = new Radio(); phone = new Phone();
+    jobs = new Jobs([
+      { id: 'pies', name: 'Hot Pies', at: shop, pay: 150, call: { from: 'Nonna Ruth', say: ['The pies are ready!', 'Come to the shop.'] },
+        script: function* (m, job) { assert.equal(job.id, 'pies'); m.objective('Take the pies to the docks', { at: docks, kind: 'drop' }); m.timer(60); yield m.until(() => zone(docks, 6).has(me)); m.checkpoint('docks', { at: { x: 50, z: 0 } }); m.objective('Back to the shop', { at: shop }); yield m.until(() => zone(shop, 4).has(me)); } },
+      { id: 'race', name: 'Night Race', needs: ['pies'], at: { x: -20, z: 5 }, call: { say: ['Fancy a race?'] }, script: function* (m) { m.objective('Win'); yield m.wait(1); } },
+    ]);
+    save = new WorldSave(api); save.keep('world', () => ({ cash, hour: 13.456789 }), d => { cash = d.cash; });
+  });
+  make();
+  assert.ok(jobs.phone === phone && phone.jobs === jobs && phone.radio === radio, 'jobs, the phone and the radio find each other');
+  assert.deepEqual(jobs.markers.map(m => m.job), ['pies'], 'one marker: the open job (the race needs the pies first)');
+  radio.on();
+  const step = s => { for (let i = 0; i < s * 60; i++) { jobs.update(1 / 60, me); phone.update(1 / 60); radio.update(1 / 60); save.update(1 / 60); } };
+  step(7);
+  assert.ok(phone.state === 'ringing' && phone.call.from === 'Nonna Ruth' && radio.held, 'the phone rings with the open job, and the radio waits');
+  phone.answer(); assert.ok(jobs.pinned === 'pies' && jobs.markers[0].pinned, 'answering pins the job as the waypoint');
+  step(30); assert.ok(phone.state === 'idle' && !radio.held, 'the caller hangs up, the radio carries on');
+  me.x = 10; step(.2); assert.equal(jobs.offer?.id, 'pies', 'standing on the marker offers the job');
+  const m = jobs.start('pies'); assert.ok(m && jobs.markers[0].kind === 'drop' && jobs.markers[0].at.x === 50, 'the mission\'s objective is the marker now');
+  me.x = 50; step(.2); assert.ok(m.respawn?.x === 50 && m.current.text === 'Back to the shop', 'a checkpoint with a place');
+  m.fail('Pies dropped'); step(.1); assert.equal(jobs.failed, 'Pies dropped');
+  me.x = 0; jobs.retry(); assert.ok(m.respawn.x === 50 && m.current.text === 'Back to the shop' && m.clock.left > 50, 'retry: back at the docks checkpoint, mid-city');
+  cash = 77; save.now(); const mid = store;
+  assert.ok(mid.J.a?.m === 'docks' && mid.J.a.p.x === 50 && mid.world.hour === 13.46, 'the save keeps the running job\'s checkpoint, numbers rounded');
+  me.x = 10; step(.2); assert.ok(jobs.money === 150 && jobs.done.has('pies'), 'done: paid');
+  step(7); assert.ok(phone.state === 'ringing' && phone.call.job === 'race', 'the next job opens and its call comes');
+  save.now(); const after = store;
+  cash = 0; make(); assert.ok(save.load() && cash === 77 && jobs.done.has('pies') && jobs.money === 150 && jobs.isOpen('race'), 'a new phone: the world comes back from the save');
+  me.x = 0; store = mid; make(); save.load();
+  assert.ok(jobs.mission?.respawn?.x === 50 && jobs.mission.current.text === 'Back to the shop', 'loading mid-job: back at its checkpoint');
+  assert.ok(JSON.stringify(after).length < 400, 'small: ' + JSON.stringify(after));
+  const t = new Mission(function* (m) { m.timer(2); yield m.wait(10); }); for (let i = 0; i < 150; i++) t.update(1 / 60); assert.equal(t.failed, 'Out of time', 'timer()');
+  me.x = 200; const l = new Mission(function* (m) { m.leash(() => me.x < 100, 1, 'Lost'); yield m.wait(10); }); l.update(.5); assert.ok(l.away > 0); for (let i = 0; i < 40; i++) l.update(1 / 60); assert.equal(l.failed, 'Lost', 'leash()');
+  assert.deepEqual(unrows(rows([{ a: 1, b: 'x' }], ['a', 'b']), ['a', 'b']), [{ a: 1, b: 'x' }], 'rows / unrows');
+  const warn = console.warn; console.warn = () => {};
+  const s2 = new WorldSave(api, { link: false }); s2.keep('big', () => 'x'.repeat(9000), null, { optional: true }); s2.keep('core', () => ({ a: 1 }));
+  assert.ok(s2.now() && s2.dropped[0] === 'big' && store.core.a === 1 && !('big' in store), 'over 8 KB: the optional part is left out');
+  const s3 = new WorldSave(api, { link: false }); s3.keep('big', () => 'x'.repeat(9000)); assert.equal(s3.now(), false, 'and a save that can\'t fit isn\'t written');
+  console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
+  console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
+}
+{
+  // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines
+  const { Radio } = await import('../src/kit/radio.js');
+  const a = new Radio(), b = new Radio();
+  assert.deepEqual(a.stations.map(s => s.seg.song.title), b.stations.map(s => s.seg.song.title), 'the same seed, the same songs');
+  assert.notDeepEqual(new Radio({ seed: 'other' }).stations.map(s => s.seg.song.title), a.stations.map(s => s.seg.song.title), 'another seed, other songs');
+  const lines = [];
+  a.on(); let last = null;
+  for (let i = 0; i < 60 * 400; i++) { a.update(1 / 60); const n = a.now.line; if (n && n !== last) lines.push(last = n); }
+  assert.ok(lines.length >= 3 && lines.every(l => !/[{}]|undefined/.test(l)), 'the DJ talks between songs, every slot filled: ' + lines.slice(0, 3).join(' | '));
+  const s1 = a.stations[1], at = s1.seg.t + s1.n; a.tune(1); assert.ok(s1.seg.t + s1.n >= at && a.now.station === 'Owl Hours', 'a station carried on while it was off air');
+  a.tune('Redline 104'); assert.equal(a.index, 2); a.next().next().next(); assert.equal(a.index, 0, 'the dial goes round');
+  a.news('a police chase is heading over the harbour bridge', { urgent: true }); for (let i = 0; i < 60; i++) a.update(1 / 60);
+  assert.ok(/police chase/.test(a.now.line || ''), 'urgent news breaks in: ' + a.now.line);
+  a.news('the ferry is running late'); assert.ok(a.stations.every(st => [st.seg, st.after].some(x => x?.kind === 'talk' && x.parts.some(p => /ferry/.test(p.line))) || st.news?.some(p => /ferry/.test(p.news))), 'news goes on every station\'s next break');
+  const inside = a.level, hz = a.muffle; a.listen({ inside: false, distance: 4 }); assert.ok(a.level < inside * .5 && a.muffle < hz / 5, 'outside the car: quieter and muffled');
+  a.listen({ distance: 40 }); assert.equal(a.level, 0, 'out of earshot'); a.listen(); a.hold(true); for (let i = 0; i < 60; i++) a.update(1 / 60); assert.ok(a.level < inside * .3, 'held down for the phone');
+  const asked = []; const ai = { ask: (p, o) => { asked.push(p); return Promise.resolve('Fresh line from the booth!'); } };
+  const c = new Radio({ ai }); c.on(); await new Promise(r => setTimeout(r, 0));
+  assert.ok(asked.length && asked.every(p => p.includes('made-up radio station') && !/\{/.test(p)), 'the phone AI is asked for the station on air only');
+  assert.ok(c.station.after.parts.some(p => p.line === 'Fresh line from the booth!'), 'and its answer is used');
+  const none = new Radio({ ai: { ask: () => Promise.reject(new Error('no model')) } }); none.on(); await new Promise(r => setTimeout(r, 0));
+  assert.ok(none.station.after.parts.every(p => p.line && p.line.length > 5), 'no AI answer: the written lines stay');
+  a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
+  console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);
