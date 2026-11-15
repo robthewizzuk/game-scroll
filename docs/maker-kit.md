@@ -3217,6 +3217,17 @@ update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
   your own `colour`, `foam` (the colour of spray and fast liquid, or `false`), `thick` (0 water .. 1
   honey), `rough`, `glow`. `gravity`: a number (9.8) or `{ x, y, z }`; set `fluid.gravity` any time to
   tilt the world.
+- Ground that isn't a liquid: `kind: 'sand'` piles up at a slope and stands still, is shoved aside by a
+  foot and slumps back into the print; `'snow'` packs down where it is pressed (no rim, and the packed
+  snow holds harder), so footprints and wheel ruts stay, and lumps break off and tumble; `'mud'` oozes
+  into a rim round what presses it and settles where it stops. Each drop keeps how far its bit of ground
+  has been sheared and pushes back like a spring, up to a limit (friction times how hard it is squeezed,
+  plus what holds it together: Drucker-Prager plasticity on MLS-MPM, without the usual deformation
+  gradients); past it the ground gives and flows. Your own: `grain` (friction: 1.4 piles at about 25
+  degrees), `holds` (about how many drops' widths of wall stand up by themselves: snow 5, mud 1.5),
+  `packs` (how much denser it may be pressed: snow 1.8). The floor and solid things grip it. Press a
+  `fluid.box()` that `follow`s a foot or a wheel into a layer made with `fill()`; `level(x, z)` reads
+  the print back.
 - Putting liquid in: `fluid.pour({ x, y, z, dir, rate, speed, spread, r })` is a tap (change its fields
   or `tap.on` any time; `tap.remove()`), `fluid.fill({ y1: 1 })` is liquid at rest in a block (sides you
   leave out are the box's), `fluid.splash(x, y, z, { amount, speed, up })` a burst, `cup.fill(.8)` fills a
