@@ -4,7 +4,7 @@
 // faster than real time), ?part=band (the instrument sets, same way), ?part=clock (the music clock on
 // the real sound clock, with the page made busy on purpose), ?part=level (sound that knows the level:
 // walls and places, rendered the same way), ?part=cap (the voice cap), ?part=foley (the sounds a world makes by itself), ?part=speech (shaped speech: the treatments measured, then
-// say() end to end against a pretend phone). scripts/sound-test.cjs runs all five.
+// say() end to end against a pretend phone), ?part=radio (the car radio). scripts/sound-test.cjs runs them all.
 const part = new URLSearchParams(location.search).get('part') || 'sounds';
 const out = [], ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m), note = m => out.push('     ' + m);
 const db = v => (v > 0 ? 20 * Math.log10(v) : -120).toFixed(1);
@@ -430,6 +430,43 @@ try {
     ok(f2 === true && S.spoken.at(-1)?.text === 'Hm.' && S.cancels > c0 && took > 2000 && took < 5000, `a phone that never answers is given up on (after ${(took / 1000).toFixed(1)} s) and the line is spoken`);
     S.fail = null; const n2 = S.renders.length, f3 = await snd.say('Still here.', { voice: 'man', fx: 'box' });
     ok(f3 === true && S.renders.length === n2 + 1 && snd.shaped() === true, 'other voices carry on being shaped');
+  }
+  if (part === 'radio') {
+    // the car radio on the real sound clock: a song through the car speakers, muffled from outside, the dial's hiss, off is off
+    const snd = await import('/src/kit/radio.js'), { audio } = await import('/src/sfx.js');
+    const a = audio(); await a.ctx.resume();
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const an = a.ctx.createAnalyser(); an.fftSize = 2048; a.end.connect(an); const td = new Float32Array(2048), fd = new Float32Array(1024);
+    const listen = async ms => {   // the level, and how much of it is above 2 kHz
+      let lv = 0, hi = 0, all = 0, n = 0; const e = performance.now() + ms;
+      while (performance.now() < e) {
+        an.getFloatTimeDomainData(td); let s = 0; for (const v of td) s += v * v; lv = Math.max(lv, Math.sqrt(s / td.length));
+        an.getFloatFrequencyData(fd); for (let i = 1; i < fd.length; i++) { const p = 10 ** (fd[i] / 10); all += p; if (i * RATE / 2 / fd.length > 2000) hi += p; } n++;
+        await wait(20);
+      }
+      return { lv, hi: all ? hi / all : 0 };
+    };
+    const radio = new snd.Radio({ stations: [snd.STATIONS[0], snd.STATIONS[4]].map(s => ({ ...s, set: 'chip' })) });
+    const tick = setInterval(() => radio.update(1 / 60), 1000 / 60);
+    for (const st of radio.stations) if (st.seg.kind !== 'song') radio.advance(st);
+    const quiet = await listen(300);
+    ok(quiet.lv < .001, `off: nothing plays (${quiet.lv.toFixed(4)})`);
+    radio.on(); await wait(600);
+    const inCar = await listen(1500);
+    ok(inCar.lv > .004 && radio.now.kind === 'song' && radio.now.song?.title, `on: "${radio.now.song?.title}" by ${radio.now.song?.artist} on ${radio.now.station} plays (level ${inCar.lv.toFixed(4)})`);
+    radio.listen({ inside: false, distance: 3 }); await wait(400);
+    const out_ = await listen(1500);
+    ok(out_.lv < inCar.lv * .75 && out_.hi < inCar.hi * .5, `from the pavement: quieter (${out_.lv.toFixed(4)}) and muffled (above 2 kHz ${(100 * inCar.hi).toFixed(1)}% inside, ${(100 * out_.hi).toFixed(2)}% outside)`);
+    radio.listen({ inside: true });
+    const was = radio.track?.m; radio.next(); const hiss = await listen(300);
+    ok(radio.index === 1 && was && !was.playing && hiss.lv > .001, `the dial turns: the old song stops and the hiss between stations is heard (${hiss.lv.toFixed(4)})`);
+    await wait(700); const other = await listen(1000);
+    ok(other.lv > .003 && radio.now.station === snd.STATIONS[4].name, `and the next station plays (${other.lv.toFixed(4)})`);
+    const st = radio.station; radio.advance(st); radio.changed = true; await wait(400); const brk = await listen(800);
+    ok(radio.now.kind === 'talk' && radio.now.line && brk.lv > .0005, `a break: the DJ's line "${radio.now.line}" over a soft bed of the next song's chords (${brk.lv.toFixed(4)})`);
+    radio.off(); await wait(500); const off = await listen(400);
+    ok(off.lv < .002 && !radio.track, `off again: silence (${off.lv.toFixed(4)})`);
+    clearInterval(tick);
   }
 } catch (e) { out.push('FAIL threw: ' + (e && e.stack || e)); }
 window.result = out;

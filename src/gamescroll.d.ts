@@ -155,6 +155,9 @@ export type VoiceName = 'saw' | 'sub' | 'warm' | 'pulse' | 'epiano' | 'bassguita
 /** Drum kits, for music({ voices: { drums } }). */
 export type KitName = 'kit' | '808' | 'concert';
 export type MusicMood = 'happy' | 'calm' | 'tense' | 'spooky' | 'heroic' | 'sad' | 'silly' | 'chase' | 'puzzle';
+/** A station for gs.sound Radio. talk: 0..1, how chatty. dj.take: which of the phone's voices of that kind. sign: catch phrases. */
+export interface RadioStation { name: string; freq?: string; mood?: MusicMood; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; tagline?: string; talk?: number;
+  dj?: { name: string; voice?: 'woman' | 'man'; take?: number; pitch?: number; rate?: number; persona?: string; sign?: string[] }; [k: string]: Loose }
 export interface SoundPart {
   /** One beep: frequency, duration (s), wave, volume, pitch slide (Hz). */
   sfx(f?: number, d?: number, type?: OscillatorType, vol?: number, slide?: number): void;
@@ -187,11 +190,33 @@ export interface SoundPart {
   compose(o?: { mood?: MusicMood; seed?: string | number; tempo?: number; key?: string; bars?: 4 | 8 }): { tempo: number; swing: number; layers: Record<string, number>; lead: string; bass: string; pad: string; pad2: string; arp: string; drums: string; drums2: string; lead2: string; info: { mood: string; key: string; mode: string; bars: number; chords: number[]; win: string; lose: string } };
   MOODS: Record<string, Loose>;
   /**
+   * A car radio: stations of original songs from compose(), each with a made-up DJ who talks between songs
+   * (say()), adverts, idents and the game's own news. Stations carry on while you listen to another. Inside the
+   * car it sounds like car speakers; outside it's muffled and fades with distance. The phone's AI (a gs.phoneai
+   * PhoneAI as `ai`) can write the DJs' lines; every line has a written one. On the music channel: Sound settings rule it.
+   */
+  Radio: new (o?: { stations?: RadioStation[]; seed?: string; ai?: { ask(prompt: string, o?: { fallback?: string }): Promise<string> | string } | null; on?: boolean; station?: number; volume?: number; sky?: Loose | false; weather?: Loose | false; link?: boolean }) => {
+    stations: RadioStation[]; index: number; power: boolean; volume: number; readonly station: RadioStation; readonly level: number; readonly muffle: number;
+    readonly now: { on: boolean; index: number; station: string; freq: string; dj: string; kind: 'song' | 'talk'; song: { title: string; artist: string; next?: boolean } | null; line: string | null; left: number; switching: boolean };
+    on(): Loose; off(): Loose; toggle(): Loose; tune(which: number | string): Loose; next(): Loose; prev(): Loose;
+    /** inside: true in the car, false outside, or 0..1 (a door open); distance: metres from the car. */
+    listen(o?: { inside?: boolean | number; distance?: number }): Loose;
+    /** The game's news: read at the next break on every station, or now with urgent. */
+    news(text: string, o?: { urgent?: boolean }): Loose;
+    /** true quietens it and the DJ waits (the phone ringing); false lets it go. */
+    hold(on?: boolean): Loose;
+    update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The five stations that come with Radio (all made up). */
+  STATIONS: RadioStation[];
+  /** The made-up adverts the stations play. */
+  ADVERTS: string[];
+  /**
    * Background music from patterns; start it in update(), not reset(). set: the instruments, 'chip' (the default),
    * 'synth', 'band' or 'orchestra'; voices swaps single parts: { lead: 'bell', drums: 'kit' }. A set other than chip
    * uses Tone.js, which loads by itself: the tune plays in the chip sound until it's in.
    */
-  music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; [part: string]: Loose }): { start(): Loose; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
+  music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; /** An audio node to play into instead of the music channel (one that ends up there). */ out?: AudioNode | null; [part: string]: Loose }): { /** From the top, or from step `at`. */ start(at?: number): Loose; /** Steps before it repeats. */ readonly length: number; /** Seconds a step lasts now. */ readonly stepTime: number; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
   /**
    * 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones).
    * Sound that knows the level: with `level` (a gs.physics3d World3D, a TileMap, a City, Voxels, a function
@@ -286,7 +311,7 @@ export interface SoundPart {
 /** What a thing is made of, for gs.sound.Foley's knocks and steps. */
 export type FoleyMaterial = 'wood' | 'metal' | 'stone' | 'glass' | 'plastic' | 'rubber' | 'cloth' | 'body' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'leaves' | 'carpet';
 /** An engine for gs.sound.Foley.watch(vehicle, { engine }) (read from a gs.models.vehicle's kind and style by itself). */
-export type FoleyEngine = 'petrol' | 'sports' | 'van' | 'jeep' | 'kart' | 'diesel' | 'tank' | 'rail diesel' | 'steam' | 'rail' | 'outboard' | 'boat diesel' | 'rowboat' | 'prop' | 'jet' | 'electric';
+export type FoleyEngine = 'petrol' | 'sports' | 'van' | 'jeep' | 'kart' | 'diesel' | 'tank' | 'rail diesel' | 'steam' | 'rail' | 'outboard' | 'boat diesel' | 'rowboat' | 'prop' | 'jet' | 'electric' | 'bike' | 'scooter' | 'dirt' | 'bus' | 'rotor';
 export interface Foley {
   /** The World3D whose knocks sound by themselves (set it again for a new world). */
   world: Loose;
@@ -1537,6 +1562,8 @@ export interface Fx3dEffect {
   /** Takes it and its particles away at once. */ remove(): void;
 }
 /** 3D text, 3D particle effects and extra screen effects (lazy). All of it draws on WebGL and on WebGPU. */
+export type ImpactSurface = 'metal' | 'stone' | 'wood' | 'glass' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'cloth' | 'body' | 'plastic' | 'rubber' | 'leaves' | 'carpet';
+export type WeaponKind = 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton';
 export interface Fx3dPart {
   /**
    * Sharp text inside the 3D world: scores over heads, signs, labels. size: the height of a capital letter in world
@@ -1547,7 +1574,7 @@ export interface Fx3dPart {
   /** Particle effects for one scene: fx = new Particles3D(view.scene), then fx.update(dt) every frame. seed: the same particles every time (replays). In a Next Gen view, fire, explosions and sparks light what is round them and soft dots take the lamps' light (lights: false for neither). */
   Particles3D: new (scene: Loose, o?: { seed?: number | null; lights?: boolean }) => {
     /** Your own effect: life, speed and size are [min, max]; colors [from, to]; rate a second, burst at the start; glow: false for soft dots like smoke. */
-    make(pos: Fx3dPos, o?: { life?: number | [number, number]; speed?: number | [number, number]; size?: number | [number, number]; colors?: Loose[]; rate?: number; burst?: number; loop?: boolean; duration?: number; shape?: 'point' | 'sphere' | 'cone'; radius?: number; angle?: number; up?: boolean; gravity?: number; glow?: boolean; shrink?: boolean; grow?: boolean; fade?: boolean }): Fx3dEffect;
+    make(pos: Fx3dPos, o?: { life?: number | [number, number]; speed?: number | [number, number]; size?: number | [number, number]; colors?: Loose[]; rate?: number; burst?: number; loop?: boolean; duration?: number; shape?: 'point' | 'sphere' | 'cone'; radius?: number; angle?: number; up?: boolean; /** A cone points this way. */ dir?: Fx3dPos; gravity?: number; glow?: boolean; shrink?: boolean; grow?: boolean; fade?: boolean }): Fx3dEffect;
     /** A flame that keeps burning (in a Next Gen view, a wavering light that follows it). */ fire(pos: Fx3dPos, o?: { size?: number; color?: Loose; end?: Loose }): Fx3dEffect;
     /** Rising smoke (keeps going). */ smoke(pos: Fx3dPos, o?: { size?: number; color?: Loose }): Fx3dEffect;
     /** A quick shower of sparks (and a quick flash of light; light: false for none). */ sparks(pos: Fx3dPos, o?: { color?: Loose; count?: number; power?: number; light?: boolean }): Fx3dEffect;
@@ -1558,6 +1585,24 @@ export interface Fx3dPart {
     update(dt: number): void;
     /** Takes every effect and particle away. */ clear(): void;
     dispose(): void;
+  };
+  /**
+   * What a shot does where it lands and what a gun throws out: hits that look and sound of what was hit (sparks off metal, dust and chips off
+   * stone, splinters off wood, glints off glass, dirt, sand, a splash on water, a puff off cloth and people: no blood) with a mark left on
+   * the surface, muzzle flashes that light a Next Gen scene, and spent cases that bounce (on the game's World3D, else y = 0) with a tinkle.
+   * What was hit is read from the mesh (as gs.sound.Foley reads it) unless surface says. Make it in make(); clear() in reset(); update(dt).
+   */
+  Impacts: new (view: Loose, o?: { particles?: Loose; marks?: boolean; holes?: number; sounds?: boolean; cases?: number; link?: boolean }) => {
+    /** hit: a World3D ray's hit, or { point, normal, mesh }; power 1 a rifle round; from: where the shot came from. Returns the surface. */
+    hit(hit: { point: Fx3dPos; normal?: Fx3dPos; mesh?: Loose; thing?: Loose }, o?: { surface?: ImpactSurface; power?: number; from?: Fx3dPos; mark?: boolean; sound?: boolean }): ImpactSurface;
+    /** A muzzle flash at `at` pointing along dir (kind: the weapon, for its size and colour). */
+    muzzle(at: Fx3dPos, dir: Fx3dPos, o?: { kind?: WeaponKind | string; size?: number }): Loose;
+    /** A spent case out of eject (a weapon's points.eject, or a point with right): kind 'small' | 'rifle' | 'shell' or the weapon's. */
+    shell(eject: Loose, o?: { kind?: 'small' | 'rifle' | 'shell' | WeaponKind; right?: Fx3dPos; speed?: number }): Loose | null;
+    /** What a mesh is made of, as a hit reads it ('stone' when nothing says). */
+    surfaceOf(mesh: Loose): ImpactSurface;
+    cases: Loose[]; fx: Loose;
+    update(dt: number): Loose; clear(): Loose; dispose(): void;
   };
   /** A glowing edge round things (Next Gen views). pass.selectedObjects = [...] changes them; pass.remove() takes it off. */
   outline(view: Loose, objects: Loose[], o?: { color?: Loose; hidden?: Loose; strength?: number; thickness?: number; pulse?: number }): { selectedObjects: Loose[]; edgeStrength: number; edgeThickness: number; edgeGlow: number; pulsePeriod: number; visibleEdgeColor: Loose; hiddenEdgeColor: Loose; remove(): void; [k: string]: Loose };
@@ -2216,6 +2261,83 @@ export interface StatsPart {
   Stats: new (stats?: Record<string, number | { base: number; min?: number; max?: number } | { max: number; regen?: number; delay?: number; start?: number; min?: number }>, o?: { buffs?: Record<string, StatBuff> }) => Stats;
 }
 
+/** A spell in a gs.magic book. */
+export interface Spell {
+  kind: 'bolt' | 'area' | 'beam' | 'shield' | 'heal' | 'buff';
+  /** 'fire' | 'frost' | 'storm' | 'water' | 'earth' | 'nature' | 'arcane' | 'holy' | 'shadow' | 'force', or your own: statuses meet by it (REACTIONS), and targets resist it ('resist.<element>' stat, 0..1). */
+  element?: string;
+  /** Mana (or pool) it costs as it goes, and seconds before it can be cast again (charges stored). */
+  cost?: number; pool?: string; cool?: number; charges?: number; coolBy?: string;
+  /** Seconds to cast (sped by the caster's castSpeed stat). still: moving cuts it off. fragile: a big hit cuts it off (true: any hit; a share of health; false: never). */
+  cast?: number; still?: boolean; fragile?: boolean | number; gcd?: number; range?: number; free?: boolean;
+  damage?: number; heal?: number; status?: string | string[]; chance?: number; statusFor?: number;
+  /** Metres a second it shoves those it hits away (negative pulls in). */
+  push?: number; hits?: 'foes' | 'allies' | 'all'; pierceArmour?: boolean;
+  /** bolt: speed, size (radius), gravity (true: the Magic's), homing (radians a second it turns), pierce (how many it passes through), chain (jumps on to the next foe), splash (an area where it lands), life. */
+  speed?: number; size?: number; gravity?: boolean | number; homing?: number; pierce?: number; life?: number;
+  chain?: { jumps?: number; range?: number; falloff?: number }; splash?: { radius?: number; damage?: number; status?: string; push?: number; for?: number; every?: number };
+  /** area: where (self, the aimed point, the target), its shape, radius, angle (a cone's half width), width (a line's), inner (a ring's hole), delay (a warning first), for + every (it lingers), follow (an aura), blocks (foes' bolts stop at its edge), tick (damage share each tick). */
+  at?: 'self' | 'aim' | 'target'; shape?: 'circle' | 'cone' | 'line' | 'ring'; radius?: number; angle?: number; width?: number; inner?: number; delay?: number; for?: number; every?: number; follow?: boolean; blocks?: boolean; tick?: number;
+  /** beam: seconds it can be held, mana a second while held. */
+  channel?: number; drain?: number;
+  /** shield: harm it soaks up, reflect (foes' bolts turn back), only (it soaks only its element). heal: over (seconds: as regen), cleanse. buff: a status id. on: who it goes to. */
+  absorb?: number; reflect?: boolean; only?: boolean; over?: number; cleanse?: boolean; buff?: string; on?: 'self' | 'target' | 'allies';
+  [k: string]: Loose;
+}
+/** Where a spell goes: a direction, a point, or a unit. */
+export interface SpellAim { dir?: P3 | { x: number; y: number }; at?: P3 | { x: number; y: number }; target?: MagicUnit }
+/** Something spells can hit and that can cast them (Magic.unit). */
+export interface MagicUnit {
+  readonly id: number; body: Loose; stats: Stats | null; team: string | number; radius: number; height: number; hand: Loose; facing: number | (() => number) | null; thing: Loose; book: Record<string, Spell>; dead: boolean; gcd: number;
+  /** The cast going on: { name, spell, part (0..1), of (seconds) }, or null. */
+  readonly casting: { name: string; spell: Spell; part: number; of: number; t: number } | null;
+  readonly channel: { name: string; spell: Spell; t: number; of: number } | null;
+  wards: { by: MagicUnit; spell: string; amount: number; max: number; left: number; of: number; reflect: boolean }[];
+  /** The strongest ward on it ({ amount, max, part, left, reflect }) or null. */
+  readonly ward: { amount: number; max: number; part: number; left: number; reflect: boolean; spell: string } | null;
+  readonly pos: P3;
+  /** true, or why not: 'unknown' | 'dead' | 'stunned' | 'silenced' | 'busy' | 'cooling' | 'mana' | 'range'. */
+  can(name: string, aim?: SpellAim): true | string;
+  cast(name: string, aim?: SpellAim): true | string;
+  interrupt(why?: string): boolean; stop(): boolean; hurt(n: number): void; from(): P3; face(): number;
+}
+export interface MagicEvent {
+  type: 'start' | 'release' | 'hit' | 'heal' | 'shield' | 'buff' | 'reaction' | 'absorb' | 'broken' | 'reflect' | 'warn' | 'burst' | 'blocked' | 'wall' | 'fizzle' | 'interrupt' | 'end' | 'fail' | 'dead' | (string & {});
+  by?: MagicUnit; who?: MagicUnit; spell?: string; at?: P3; damage?: number; absorbed?: number; heal?: number; statuses?: string[]; reaction?: string | null; push?: P3; why?: string; [k: string]: Loose;
+}
+export interface Magic {
+  book: Record<string, Spell>; units: MagicUnit[]; gcd: number; apply: boolean; world: Loose; readonly t: number;
+  /** Bolts in flight: { x, y, z, v, size, spell, name, by, team, target }. */
+  bolts: { x: number; y: number; z?: number; v: P3; size: number; spell: Spell; name: string; by: MagicUnit; team: string | number; target: MagicUnit | null; id: number }[];
+  /** Areas: { x, y, z, shape, radius, angle, width, dir, part (how far through its warning), live, left (seconds it lingers) }. */
+  areas: { x: number; y: number; z?: number; shape: string; radius: number; angle: number; width: number; inner: number; dir: P3 | null; part: number; live: boolean; left: number; spell: Spell; name: string; by: MagicUnit; id: number }[];
+  beams: { by: MagicUnit; name: string; spell: Spell; from: P3; to: P3 | null; hit: MagicUnit | null }[];
+  /** A chain's jumps, fading: { from, to, element, life }. */
+  zaps: { from: P3; to: P3; element: string; life: number }[];
+  events: MagicEvent[];
+  unit(body: Loose, o?: { stats?: Stats; team?: string | number; radius?: number; height?: number; hand?: Loose; facing?: number | (() => number); thing?: Loose; book?: Record<string, Spell>; fragile?: number }): MagicUnit;
+  remove(u: MagicUnit): this; clear(): this;
+  on(type: MagicEvent['type'] | 'any', fn: (e: MagicEvent) => void): this;
+  /** Casts finish, bolts fly and hit, areas go off and tick, beams burn, the units' Stats run on. Returns this frame's events. */
+  update(dt: number, o?: { stats?: boolean }): MagicEvent[];
+  /** One spell landing on one unit (your own: a cursed blade's fire, a trap): reactions, resist, armour, wards, then health and statuses. */
+  hit(by: MagicUnit | null, who: MagicUnit, name: string, spell: Partial<Spell>, at?: P3, push?: P3 | null): MagicEvent;
+  status(who: MagicUnit, id: string, spell?: Partial<Spell>, o?: { for?: number; spec?: StatBuff }): string | null;
+}
+export interface MagicPart {
+  /** book: { name: Spell }; statuses (STATUSES), reactions (REACTIONS), gcd, gravity, world (a World3D or 2D Physics; found by itself; false none), apply (false: only say who was hit). */
+  Magic: new (o?: { book?: Record<string, Spell>; statuses?: Record<string, StatBuff>; reactions?: { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[]; gcd?: number; gravity?: number; world?: Loose; apply?: boolean; link?: boolean }) => Magic;
+  /** The class of what Magic.unit makes (for instanceof; make them with magic.unit()). */
+  Unit: new (magic: Magic, body: Loose, o?: Loose) => MagicUnit;
+  /** Statuses as gs.stats buffs: burn, chill (three doses: frozen), frozen, shocked, wet, poison, rooted, weak, silence, slow, regen, haste, might, stoneskin. */
+  STATUSES: Readonly<Record<string, StatBuff>>;
+  REACTIONS: readonly { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[];
+  /** [core, edge] colours for each element. */
+  ELEMENTS: Readonly<Record<string, [string, string]>>;
+  /** Ready-made 3D looks on a gs.fx3d Particles3D: hand glows, bolt trails with lights, flashes, area rings, beam sparks, ward shimmer, heal motes. update(dt) after magic.update(). */
+  Looks: new (magic: Magic, fx: Loose, o?: { colours?: Record<string, [string, string]>; lights?: boolean; size?: number }) => { update(dt: number): void; clear(): Loose };
+}
+
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
 export interface GenPart {
   dungeon(w?: number, h?: number, o?: { seed?: number | string; kind?: 'digger' | 'uniform' | 'rogue'; doors?: boolean; dug?: number }): GenMap & { rooms: { x: number; y: number; w: number; h: number; cx: number; cy: number }[]; start: { col: number; row: number }; end: { col: number; row: number } };
@@ -2333,7 +2455,35 @@ export interface Fighter {
   on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block', fn: (...a: Loose[]) => void): Fighter;
   canCancel(name: string): boolean; start(name: string): boolean; update(dt: number): Fighter; hitboxes(): { x: number; y: number; w: number; h: number }[]; hurtboxes(): { x: number; y: number; w: number; h: number }[];
 }
+/** A 3D melee move: frames (60ths) and where it lands. */
+export interface MeleeMove { button?: string; start: number; active: number; recover: number; reach: number; arc: number; height: 'high' | 'mid' | 'low'; damage: number; push: number; up?: number; stun?: number; lunge?: number; then?: Record<string, string>; knock?: boolean; trip?: boolean; unblockable?: boolean; pose?: string; armed?: boolean }
+export interface MeleeHit { who: Loose; by: MeleeT; move: MeleeMove; name: string; blocked: boolean; damage: number; at: P3; push: P3; knock: boolean; trip: boolean; combo: number; left?: number }
+export interface MeleeT {
+  body: Loose; moves: Record<string, MeleeMove>; radius: number; height: number; hp: number; maxHp: number; react: Loose; weapon: { reach?: number; damage?: number; arc?: number } | null;
+  move: MeleeMove | null; name: string | null; frame: number; stun: number; guard: boolean; target: Loose; combo: number; hits: MeleeHit[];
+  /** After update: metres a second to move the body by (stepping in, a dodge), the yaw to turn to (or null), the pose for gs.poses and how far through it (rig.play(m.pose, { at: m.at, fade: .06 })). */
+  walk: { x: number; z: number }; facing: number | null; pose: string | null; at: number;
+  readonly pos: P3; readonly yaw: number; readonly phase: 'start' | 'active' | 'recover' | 'stun' | 'dodge' | 'block' | 'idle'; readonly busy: boolean; readonly untouchable: boolean;
+  /** Presses a button ('light', 'heavy', 'low', 'push'): kept a moment, so a press early in a combo counts. */
+  attack(button: string | null | undefined): MeleeT; block(on?: boolean): MeleeT; dodge(dir: { x: number; z: number }): boolean;
+  pick(foes: Loose[]): Loose; start(name: string): boolean; stats(m: MeleeMove): MeleeMove; reset(): MeleeT;
+  /** Steps the frames, takes buffered presses, turns and steps in onto the foe locked on to, and returns what landed this frame. Hits on a Melee give it stun and take its hp; with react (Reactions) on the one hit, it staggers, trips or falls. */
+  update(dt: number, foes?: Loose[]): MeleeHit[];
+  on(ev: 'start' | 'active' | 'end' | 'hit' | 'blocked' | 'hurt' | 'block' | 'dodge', fn: (...a: Loose[]) => void): MeleeT;
+}
 export interface FightPart {
+  /**
+   * Melee between people in a 3D world: body an Object3D (position, rotation.y) or { x, y, z, yaw }. moves (FISTS, or SWINGS for something held
+   * in both hands); radius (.35), height (1.8), lock (3.5 m to lock on), turn (10 rad/s onto the target), react (a Reactions on this body),
+   * buffer (.25 s), weapon ({ reach, damage, arc } added to its moves), hp (100).
+   */
+  Melee: new (body: Loose, o?: { moves?: Record<string, MeleeMove>; radius?: number; height?: number; lock?: number; turn?: number; react?: Loose; buffer?: number; weapon?: { reach?: number; damage?: number; arc?: number } | null; hp?: number }) => MeleeT;
+  /** A ready-made 3D brawler: think(dt, me, foe) gives { walk, face, attack, block, dodge } for your game to do. skill 0..1 or a gs.brains Dial (result(playerWon) at the end). */
+  Brawler: new (o?: { skill?: Skill | number; speed?: number; rng?: () => number; mean?: number }) => { skill: Loose; think(dt: number, me: MeleeT, foe: MeleeT): { walk: { x: number; z: number }; face: number | null; attack: string | null; block: boolean; dodge: { x: number; z: number } | null }; result(playerWon: boolean): Loose };
+  /** Fists and feet: jab, cross, hook, uppercut (light chain), kick, knee (heavy), sweep (low: trips), shove (push: unblockable). */
+  FISTS: Record<string, MeleeMove>;
+  /** Swinging something held: swing, backhand, overhead, jabWith, sweep. */
+  SWINGS: Record<string, MeleeMove>;
   Reader: new (o?: { window?: number; buffer?: number; dead?: number }) => FightReader;
   Fighter: new (moves: Record<string, FightMove>, o?: { x?: number; y?: number; facing?: number; hurt?: FBox[]; hp?: number }) => Fighter;
   clash(a: Fighter, b: Fighter): { move: FightMove; name: string; blocked: boolean; x: number; y: number } | null;
@@ -2639,19 +2789,57 @@ export interface SkyCover {
 // ---------- round 7: action, stealth, traversal, missions, sport, big levels ----------
 export interface P3 { x: number; y: number; z?: number }
 type On<T> = { on(ev: string, fn: (...a: Loose[]) => void): T };
-export interface Shot { from: P3; dir: P3; range: number; speed: number; damageAt(distance: number, head?: boolean): number }
+export interface Shot { from: P3; dir: P3; range: number; speed: number; /** The speed of what it was fired from (a car), added to a flying shot's own. */ carry?: P3; damageAt(distance: number, head?: boolean): number }
 export interface Gun {
   damage: number; rate: number; mag: number; reserve: number; reload: number; ammo: number; kick: { pitch: number; yaw: number };
+  /** The kind it is (arm(kind)), the ammo it takes, the Pouch it reloads out of (else its own reserve). */ kind?: WeaponKind; ammoType: string | null; pouch: Pouch | null;
+  /** Spare rounds to reload from: in its pouch, else its reserve. */ readonly spare: number;
   justFired: boolean; empty: boolean; readonly reloading: number; readonly spreadNow: number;
-  pull(from: P3, dir: P3, pressed?: boolean): Shot[]; update(dt: number): Gun; startReload(): boolean; damageAt(distance?: number, head?: boolean): number;
+  pull(from: P3, dir: P3, pressed?: boolean): Shot[]; wobble(dir: P3, cone: number, is3?: boolean): P3; update(dt: number): Gun; startReload(): boolean; damageAt(distance?: number, head?: boolean): number;
   save(): Loose; load(d: Loose): Gun; [k: string]: Loose;
+}
+export interface ArsenalEntry {
+  /** Where a Loadout keeps it. */ slot: 'melee' | 'hand' | 'long' | 'heavy' | 'throw';
+  /** The ammo it takes (a Pouch's name for it). */ ammo?: string;
+  /** The case it throws (gs.fx3d Impacts.shell). */ shell?: 'small' | 'rifle' | 'shell' | null;
+  /** Rounds that come with it picked up. */ pickup?: number;
+  /** Options for gs.combat.Gun. */ gun?: Loose;
+  /** A grenade's throw: speed, fuse, radius, damage (for gs.combat.Explosives). */ throw?: { speed: number; fuse: number; radius: number; damage: number };
+  /** A launcher's rocket going off. */ blast?: { radius: number; damage: number };
+  /** A gs.fight.Melee weapon over SWINGS. */ melee?: { reach: number; damage: number; arc: number };
+}
+export interface Pouch { n: Record<string, number>; max: Record<string, number>; count(kind: string): number; add(kind: string, n: number): number; take(kind: string, n?: number): number; full(kind: string): boolean; save(): Record<string, number>; load(d: Loose): Pouch }
+export interface Pickup { x: number; y: number; z: number; kind: WeaponKind | 'ammo' | 'health' | string; of?: string; amount: number | null; respawn: number; here: boolean; spin: number; bob: number; [k: string]: Loose }
+export interface Loadout {
+  pouch: Pouch; carried: Record<string, { gun: Gun | null }>; kind: WeaponKind | null; switching: number; health: Health | null;
+  /** The gun out (null for a thing swung or thrown, or nothing). */ readonly gun: Gun | null;
+  /** ARSENAL's entry for the one out. */ readonly info: ArsenalEntry | null;
+  /** The kinds carried, in slot order. */ readonly list: WeaponKind[];
+  has(kind: string): boolean;
+  /** Picks one up (with its rounds): drops what was in its slot (returned). */ give(kind: WeaponKind, o?: { rounds?: number; use?: boolean }): WeaponKind | null;
+  /** What a Pickups handed over: how much it took (0: leave it lying). */ take(p: Pickup): number;
+  use(kind: WeaponKind): Loadout; next(step?: number): Loadout; prev(): Loadout; update(dt: number): Loadout;
+  /** Gun.pull with its sound (at: where), nothing while switching. */ fire(from: P3, dir: P3, pressed?: boolean, o?: { at?: P3 }): Shot[];
+  reload(o?: { at?: P3 | null }): Loadout; save(): Loose; load(d: Loose): Loadout;
 }
 export interface Health {
   hp: number; max: number; armour: number; down: boolean; dead: boolean; hits: { angle: number; amount: number; life: number }[]; readonly frac: number; readonly hurting: boolean;
   hurt(amount: number, o?: { from?: P3; at?: P3; facing?: number }): number; heal(n: number): number; addArmour(n: number): Health; revive(share?: number): Health; update(dt: number): Health; reset(): Health;
 }
 export interface CombatPart {
-  Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number }) => Gun;
+  Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number; pouch?: Pouch | null; ammoType?: string | null }) => Gun;
+  /** Each weapon's numbers (the ones gs.models.weapon makes): its Gun options, ammo, case, slot, a grenade's throw, a rocket's blast, a melee weapon. */
+  ARSENAL: Readonly<Record<WeaponKind, ArsenalEntry>>;
+  /** A Gun with a weapon's numbers (o over them: a pouch...). */
+  arm(kind: WeaponKind, o?: Loose): Gun;
+  /** Ammo carried by kind ('pistol', 'magnum', 'shells', 'rifle', 'rockets', 'grenades' or your own); max: the most of each. */
+  Pouch: new (start?: Record<string, number>, o?: { max?: Record<string, number> }) => Pouch;
+  /** The weapons one person carries (a slot each), the one out, and a pouch the guns share; sounds: false to play your own. health: where health pickups go. */
+  Loadout: new (o?: { pouch?: Pouch; sounds?: boolean; health?: Health | null }) => Loadout;
+  /** Things lying in the world to pick up (weapons, kind 'ammo' with of and amount, kind 'health'); update(dt, who) gives those in reach; collect(dt, who, loadout) takes them. */
+  Pickups: new (o?: { reach?: number; bob?: number }) => { list: Pickup[]; add(o: Partial<Pickup> & { kind: string }): Pickup; remove(p: Pickup): Loose; taken(p: Pickup): Loose; update(dt: number, who?: P3 | P3[] | null): Pickup[]; collect(dt: number, who: P3 | P3[], loadout: Loadout): Pickup[]; clear(): Loose };
+  /** A weapon's sound: 'fire', 'empty', 'reload' (over time), 'pump', 'swing', 'pin', 'draw'; at: through the game's gs.sound.Ears when there is one. */
+  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw', at?: P3 | null, o?: { time?: number; vary?: number }): void;
   /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
   Shots: new (o?: { gravity?: number; push?: number; link?: boolean }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
     /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter).
@@ -2669,6 +2857,21 @@ export interface CombatPart {
    * are knocked down, and soft ground (Marks) is dented; who is hurt and what scores stay yours (on('boom')). link: false: a blast keeps to itself.
    */
   Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose | false; knock?: number; link?: boolean }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
+  /**
+   * Shooting from a seat in a car: out of the side window on its side, through the windscreen (front) or the back window (rear). car: a
+   * gs.models vehicle (points, size) or any Object3D, or { x, y, z, yaw } / a gs.vehicles Car (angle); nose along -z. seat: [x, y, z] in the
+   * car or a name in car.points ('driver'). width (car.size.width or 1.8), screen (.7), back (1.4), side (1.3 rad arc), up (.6), down (.5),
+   * lean (.3 m out of the window), eye (.55 over the seat), shake (1).
+   */
+  DriveBy: new (car?: Loose, o?: { seat?: string | number[] | P3; width?: number | null; screen?: number; back?: number; front?: boolean; rear?: boolean; side?: number; up?: number; down?: number; lean?: number; eye?: number; shake?: number }) => {
+    car: Loose; dir: P3; from: P3; through: 'left' | 'right' | 'front' | 'back'; glass: P3 | null; pose: 'carAimL' | 'carAimR' | 'carAimF'; turn: number; pitch: number; lean: number; spread: number; vel: P3; speed: number;
+    /** After the car moved: its speed and how much the ride throws the aim. */
+    update(dt: number): Loose;
+    /** Aims as near want (a world direction) as the seat lets it. */
+    aim(want: P3): Loose;
+    /** gun.pull from the gun along the aim, spread by the ride; flying shots carry the car's speed (shot.carry). */
+    fire(gun: Gun, pressed?: boolean): (Shot & { carry: P3; through: string; glass: P3 | null })[];
+  };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
 export type SquadRole = 'suppress' | 'advance' | 'flank' | 'grenade' | 'retreat';
@@ -2691,7 +2894,53 @@ export interface TacticsPart {
     recalled(m: Loose): { action: SquadRole; not: boolean; like: number } | null;
   };
   Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: number, ally: P3, player: P3): Loose };
+  /**
+   * Cover in 3D found from the game's World3D with rays (walls, low walls, cars, crates, buildings: whatever is solid). world: left out, the
+   * one the game made. space (1 m between spots), radius (.35), crouch (.95: hides a crouched person), low (1.3: lower cover is shot over),
+   * cell (4 m squares looked over at a time), floors (3 storeys under a point), ms (1.2 a frame), top (60 m). Has CoverMap's find, take,
+   * free, peek, protects, avoid, so a Squad uses it (positions { x, y, z }, y up).
+   */
+  Cover3D: new (o?: { world?: Loose | false; space?: number; radius?: number; crouch?: number; low?: number; cell?: number; floors?: number; ms?: number; top?: number; link?: boolean }) => {
+    spots: Cover3DSpot[]; size: number; readonly world: Loose; rays: number;
+    /** Each frame: looks over the squares round a point it has not yet, nearest first. */
+    update(p: P3, o?: { reach?: number }): Loose;
+    /** Looks over everything within r metres now (while loading). */
+    around(p: P3, r?: number): Loose;
+    /** Forgets the spots near a point and looks again (something there moved or broke). */
+    touch(p: P3, r?: number): Loose; clear(): Loose;
+    /** Can a see b: eyes (eye 1.6 m over a's feet) to chest (1 m), nothing solid between. */
+    sees(a: P3, b: P3, o?: { eye?: number; chest?: number; not?: Loose }): boolean;
+    protects(spot: Cover3DSpot, threat: P3): boolean;
+    find(from: P3, threat: P3, o?: { near?: number; band?: [number, number]; flank?: number; who?: Loose; sees?: (a: P3, b: P3) => boolean }): Cover3DSpot | null;
+    take(spot: Cover3DSpot | null, who: Loose): Cover3DSpot | null; free(who: Loose): Loose;
+    avoid(spot: Cover3DSpot | P3, o?: { by?: number; near?: number }): Loose; forgive(): Loose;
+    /** Where to shoot from: up over low cover (over, eye), or out round the end nearer the threat (side -1 left, 1 right as you face out; 0: none, blind fire only). */
+    peek(spot: Cover3DSpot, threat?: P3): { x: number; y: number; z: number; over: boolean; side: -1 | 0 | 1; eye: number };
+    /** The nearest cover within reach (2.2 m) of someone's feet now, the way they face (yaw) first. */
+    snap(feet: P3, facing?: number | null, o?: { reach?: number }): Cover3DSpot | null;
+    /** The wall again d metres along from a spot (following it round a bend), or null at an end. */
+    slide(spot: Cover3DSpot, d: number): Cover3DSpot | null;
+    /** The next free cover from a spot the way someone pushes, within reach (7 m). */
+    next(spot: Cover3DSpot, dir: { x: number; z: number }, o?: { reach?: number; who?: Loose }): Cover3DSpot | null;
+    open(a: P3, b: P3): boolean;
+  };
+  /**
+   * The hero in cover: take(feet, facing) snaps to the nearest wall, then update(dt, input, feet) each frame slides along it, stops at its
+   * ends, leans out round them or pops up over it while aiming, fires blind, runs to the next cover when pushed on at an end (dash), and
+   * leaves when pulled away. Read walk (for your mover), facing (yaw), pose and upper (gs.poses: coverHighL/R, coverLowL/R, peekHighL/R,
+   * idle; upper aim, blindOver, blindSideL/R), muzzle, spread (extra aim cone), exposed (0..1 of the body showing). speed 2.4, run 5.5, peek .18 s, pull .35 s.
+   */
+  TakeCover: new (cover: Loose, o?: { speed?: number; run?: number; peek?: number; dash?: boolean; pull?: number }) => {
+    state: 'out' | 'moving' | 'in' | 'peek' | 'blind' | 'dash'; readonly busy: boolean; spot: Cover3DSpot | null; side: -1 | 1; out: number;
+    walk: { x: number; z: number }; facing: number; pose: string | null; upper: string | null; muzzle: P3 | null; spread: number; exposed: number;
+    /** One frame's news: 'enter' | 'arrive' | 'dash' | 'leave'. */
+    events: string[];
+    take(feet: P3, facing?: number | null, o?: { reach?: number }): boolean; enter(spot: Cover3DSpot, feet?: P3 | null): Loose; leave(): Loose; reset(): Loose;
+    update(dt: number, input?: { move?: { x: number; z: number } | null; aim?: boolean; blind?: boolean; threat?: P3 | null }, feet?: P3 | null): Loose;
+  };
 }
+/** A 3D cover spot: x, y (the floor), z where one stands; nx, nz out of the wall; top: the cover's height over the floor; left/right: metres to an end you can lean out of (null: none near). */
+export interface Cover3DSpot { x: number; y: number; z: number; nx: number; nz: number; low: boolean; top: number; left: number | null; right: number | null; by: Loose; bad: number }
 export interface ClimbPart {
   Ledges: { new (): { list: Loose[]; add(a: P3, b: P3, normal: { x: number; z: number }, o?: Loose): Loose; closest(p: P3, filter?: (l: Loose) => boolean): Loose }; fromLevel(level: Loose, o?: { min?: number }): Loose };
   Climber: new (ledges: Loose, o?: { height?: number; reach?: number; shimmy?: number; leap?: number; upTime?: number; leapTime?: number; out?: number }) => {
@@ -2700,16 +2949,85 @@ export interface ClimbPart {
   };
   Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: number): Loose; update(dt: number, push?: number): Loose; readonly hands: P3; feet(height?: number): P3; release(): P3 };
 }
+/** A place: x, z on the ground in 3D (y is optional), or x, y in 2D. */
+export interface Spot { x: number; y?: number; z?: number }
+/** A marker for a map, a GPS or an arrow in the world: gs.missions Mission.markers and Jobs.markers. */
+export interface MissionMarker { at: { x: number; y: number; z: number }; kind: string; text: string; icon: string | null; pinned?: boolean; job?: string }
 export interface Mission {
-  objectives: { text: string; at: P3 | null; done: boolean }[]; lines: { text: string; who: string | null; life: number }[]; flags: Record<string, Loose>; time: number;
-  done: boolean; failed: string | false; readonly current: { text: string; at: P3 | null } | null; readonly replaying: boolean;
+  objectives: { text: string; at: Spot | (() => Spot) | null; done: boolean; kind: string; icon: string | null }[]; lines: { text: string; who: string | null; life: number }[]; flags: Record<string, Loose>; time: number;
+  done: boolean; failed: string | false | null; readonly current: { text: string; at: P3 | null } | null; readonly replaying: boolean;
+  /** The objectives still to do that have a place, read now (a moving `at` is followed). */
+  readonly markers: MissionMarker[];
+  /** Where to put the player after restart(): the last checkpoint's `at`, or null. */
+  respawn: { x: number; y: number; z: number } | null;
+  /** The countdown from timer(): { left, total, reason }, or null. */
+  clock: { left: number; total: number; reason: string } | null;
+  /** Seconds left to get back while a leash() test is false, or null. */
+  away: number | null;
+  /** True after abandon(). */
+  quit: boolean;
   update(dt: number): Mission; restart(fresh?: boolean): Mission; wait(s: number): Loose; until(test: () => boolean): Loose; all(...w: Loose[]): Loose; any(...w: Loose[]): Loose;
-  objective(text: string, o?: { at?: P3; keep?: boolean }): Loose; say(text: string, o?: { who?: string; time?: number }): void; checkpoint(name?: string): Loose; flag(name: string, v?: Loose): Mission;
-  complete(): void; fail(reason?: string): void; save(): Loose; load(s: Loose): Mission; on(ev: 'objective' | 'say' | 'checkpoint' | 'complete' | 'fail' | 'restart', fn: (...a: Loose[]) => void): Mission;
+  objective(text: string, o?: { at?: Spot | (() => Spot) | null; keep?: boolean; kind?: string; icon?: string }): Loose; say(text: string, o?: { who?: string; time?: number }): void;
+  checkpoint(name?: string, o?: { at?: Spot | (() => Spot) | null }): Loose; flag(name: string, v?: Loose): Mission;
+  /** A countdown: fails with reason at 0. timer(null) stops it. */
+  timer(seconds: number | null, reason?: string): Mission;
+  /** While test() is false a countdown of `time` seconds runs (mission.away); 0 fails with reason. leash(null) lets go. */
+  leash(test: (() => boolean) | null, time?: number, reason?: string): Mission;
+  complete(): void; fail(reason?: string): void; abandon(): Mission; save(): Loose; load(s: Loose): Mission; on(ev: 'objective' | 'say' | 'checkpoint' | 'complete' | 'fail' | 'restart' | 'abandon', fn: (...a: Loose[]) => void): Mission;
 }
+/** A job in an open world (gs.missions Jobs). */
+export interface Job {
+  id: string; name?: string;
+  /** Where it starts: a point, a thing that moves, or a function. */
+  at?: Spot | (() => Spot) | null;
+  script: (m: Mission, job: Job) => Generator<Loose, void, Loose>;
+  from?: string; pay?: number; icon?: string; radius?: number; repeat?: boolean;
+  needs?: string[] | string | ((jobs: Loose) => boolean) | null;
+  /** A Phone made in the same game rings with this once the job opens. */
+  call?: { from?: string; say: string | string[]; voice?: Loose };
+  save?: () => Loose; load?: (d: Loose) => void;
+  [k: string]: Loose;
+}
+export interface PhoneCall { from: string; say: string[]; voice?: Loose; job?: string; line?: string | null; at?: number; [k: string]: Loose }
 export interface MissionsPart {
   zone(at: P3 | { x: number; y: number; w: number; h: number }, r?: number | null): { has(p: P3): boolean; any(list: P3[]): boolean; count(list: P3[]): number };
-  Mission: new (script: (m: Mission) => Generator<Loose, void, Loose>, o?: { save?: (d: Loose) => void; load?: () => Loose }) => Mission;
+  /** save() gives your state at a checkpoint, load(data) puts it back after restart(). */
+  Mission: new (script: (m: Mission, ctx?: Loose) => Generator<Loose, void, Loose>, o?: { save?: () => Loose; load?: (d: Loose) => void; ctx?: Loose }) => Mission;
+  /**
+   * The jobs of an open world: a marker for each open one, start from it (a tap, or walking on with start: 'enter'),
+   * pay, unlocks (needs), retry from a checkpoint mid-city (put the player at mission.respawn), and a Phone made in
+   * the same game rings with each job's call by itself.
+   */
+  Jobs: new (list: Job[], o?: { radius?: number; start?: 'tap' | 'enter'; phone?: Loose | false; calls?: number; link?: boolean }) => On<Loose> & {
+    list: Job[]; done: Set<string>; counts: Record<string, number>; money: number; pinned: string | null;
+    /** The job running now, its Mission, and the reason after a fail (then retry() or quit()). */
+    active: Job | null; mission: Mission | null; failed: string | null;
+    /** The open job whose marker the player is standing on. */
+    offer: Job | null;
+    readonly open: Job[]; readonly markers: MissionMarker[];
+    isOpen(job: Job | string): boolean; where(job: Job): { x: number; y: number; z: number } | null; next(): Job | null; pin(id: string | null): Loose;
+    start(id: string): Mission | null; retry(): Mission | null; quit(): Loose;
+    /** player: { x, z } (or x, y in 2D). */
+    update(dt: number, player?: Spot | null): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The player's phone: calls that ring, spoken on a phone line and shown as text, and texts. The car radio waits while it rings. */
+  Phone: new (o?: { rings?: number; every?: number; buzz?: boolean; link?: boolean; jobs?: Loose | false; radio?: Loose | false }) => On<Loose> & {
+    state: 'idle' | 'ringing' | 'call'; call: PhoneCall | null; inbox: { from: string; text: string; read: boolean }[]; missed: PhoneCall[]; readonly unread: number;
+    ring(call: { from?: string; say: string | string[]; voice?: Loose; job?: string }, o?: { after?: number }): PhoneCall;
+    text(from: string, text: string): Loose; answer(): Loose; decline(): Loose; skip(): Loose; update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
+  };
+  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone and Radio found by themselves; rounded, measured, saved when it changes. */
+  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean }) => {
+    size: number; readonly room: number; dropped: string[];
+    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean }): Loose;
+    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean };
+    load(): boolean; now(force?: boolean): boolean; update(dt: number): Loose;
+  };
+  /** Rounds every number in it to `places`. */
+  compact<T>(v: T, places?: number): T;
+  /** A list of records as rows of values (the names once, in `keys`), and back. */
+  rows(list: Record<string, Loose>[], keys: string[]): Loose[][];
+  unrows(data: Loose[][], keys: string[]): Record<string, Loose>[];
 }
 /**
  * A Next Gen view's lens (v.lens): a camera like a real one. fstop (2.8): the aperture; lower is a shallower focus. focal: the lens in mm
@@ -2788,7 +3106,8 @@ export interface ArenaPart {
 /** What gs.models.vehicle takes. Colours are '#rrggbb'. */
 export interface VehicleOptions {
   /**
-   * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep'; a truck 'flat' | 'canvas' | 'box' | 'tanker';
+   * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep' | 'police' | 'taxi' | 'ambulance'; a truck 'flat' | 'canvas' | 'box' | 'fire' (a fire engine with a ladder on a turntable: aim(turn, lift)) | 'tanker';
+   * a bus 'city' | 'double' (a double decker) | 'coach'; a motorbike ('bike') 'road' | 'sport' | 'scooter' | 'dirt'; a helicopter 'light' | 'police' (a searchlight) | 'medic';
    * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'guard' (a guard's van) | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
    */
   style?: string;
@@ -2826,6 +3145,8 @@ export interface VehicleOptions {
    * A seven-car goods train is 16 draws where it was 58, the same triangles and the same picture. It rolls, moves, lights and twins as before and its cars keep their `points`; along() throws, as its cars are one shape.
    */
   fuse?: boolean;
+  /** A bus: the side its doors are on, 'right' (where the kerb is when you drive on the right) or 'left'. */
+  side?: 'right' | 'left';
 }
 /** One wagon of a train, when a name is not enough: `cars: ['van', { style: 'open', load: 'coal', colour: '#565c50' }, 'guard']`. */
 export interface WagonOptions {
@@ -2840,16 +3161,16 @@ export interface WagonOptions {
 }
 /** What gs.models.vehicle gives back: a Group, its nose along -z and +x its right side, in metres. A road vehicle and a train stand on y = 0, a boat floats with its waterline there, a plane's origin is on its centre line. */
 export type VehicleT = Loose & {
-  kind: 'car' | 'truck' | 'tank' | 'train' | 'boat' | 'plane'; style: string;
+  kind: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'train' | 'boat' | 'plane' | 'helicopter'; style: string;
   /** Its body (a Group): everything but the wheels. */
   shell: Loose;
   /** Its wheels' pivots: front left, front right, back left, back right (then a third axle's); each has `radius`, `width` and `steers`. A tank's and a train's are drawn as copies and are not here. */
   wheels: Loose[];
   /** A tank: where its two caterpillar tracks run (x: metres either side of its middle) and how wide each is. gs.outdoors.Marks lays their marks. */
   belts?: { x: number; width: number };
-  /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a steam engine's `rods`, `mainRods`. */
+  /** The parts that turn, by name, each a Group to turn yourself: a tank's `turret` and `gun`; a rowboat's `oarL`, `oarR`; a motor boat's `motor` and its `prop`; a patrol boat's `radar`, `turret`, `gun`; a plane's `prop` (a twin's `propL`, `propR`); a helicopter's `rotor` and `tail`; a fire engine's `turntable` and `ladder`; a motorbike's `fork` (its bars and front wheel turn with it); a steam engine's `rods`, `mainRods`. */
   parts: Record<string, Loose>;
-  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`... as its kind has them. */
+  /** Places on it (Object3Ds that move with it and are turned as it is: getWorldPosition(v), or add a thing to one; a seat is the top of its cushion): `driver`, `passenger`, `exhaust`, `lampL`, `lampR`, `hitch`; a truck's `load`; a tank's `muzzle`, `commander`; a train's `front`, `back`, `smoke`, `steam`, `whistle`, `fire`, a tender's `coal`, a van's and a guard's van's `roof`, a guard's van's `veranda` and `tail`, a tank wagon's `filler`; a boat's `helm`, `bow`, `wake`; a plane's `pilot`, `guns`, `smoke`; a bus's `door` (and `door0`, `door1`...), `aisle`; a motorbike's `rider`, `pillion`, `pegL`, `pegR`, `barL`, `barR`, `stand`; a helicopter's `pilot`, `copilot`, `door`, `cabin`, `hook`, `tailRotor` (a police one's `spot`); a fire engine's `tip` (the ladder's end), `hose`, `crewL`, `crewR`; a car or truck with lights on its roof `beacon0`, `beacon1`... as its kind has them. */
   points: Record<string, Loose>;
   /** Metres over everything that does not turn. */
   size: { length: number; width: number; height: number };
@@ -2869,16 +3190,24 @@ export type VehicleT = Loose & {
    * The easy way to keep it alive each frame: rolls its wheels (or tracks) for its speed in metres a second, eases its front wheels to `steer` (-1..1, + right; lock: radians at 1), rolls its body outwards in a turn and rocks it with its speeding up and
    * slowing down (sway: how much, 1), spins its propellers up to a blur (power 0..1), turns a boat's motor and radar. A tank: `turn` -1..1 runs one track ahead of the other, `aim` [turn, lift] eases its turret and gun there. ground: false keeps a plane's wheels still in the air.
    */
-  move(dt: number, speed?: number, o?: { steer?: number; lock?: number; sway?: number; turn?: number; aim?: [number, number] | null; power?: number; ground?: boolean }): VehicleT;
+  move(dt: number, speed?: number, o?: { steer?: number; lock?: number; sway?: number; turn?: number; aim?: [number, number] | null; power?: number; ground?: boolean; /** A motorbike: lean this far (radians, + right) instead of what the turn asks. */ lean?: number }): VehicleT;
   /**
    * Cars and trucks, for gs.physics3d: `world.vehicle(car, car.chassis({ power: 14 }))` gives it springs and grip. It returns what World3D.vehicle wants (w, h, l, radius, rest, travel and its four wheels, plus anything you pass) and moves the body so its
    * origin is the middle of the chassis and not on the road. Call it once; a third axle's wheels follow the second's.
+   * A motorbike: `world.vehicle(bike, bike.chassis())` (it says bike: true): its rider keeps it upright and it leans into turns by itself, until it hits something at 8 m/s or more (fall) and goes over (`fallen`; rightUp() stands it again).
    */
   chassis?(o?: Record<string, Loose>): Record<string, Loose>;
-  /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops). */
+  /** A turret turned (radians from straight ahead, + to its left) and its gun lifted (radians up, held within its stops); a fire engine's turntable and ladder (up to 1.25). */
   aim(turn?: number, lift?: number): VehicleT;
-  /** Its lamps on or off. */
+  /** Its lamps on or off (a taxi's roof sign too). */
   lights(on?: boolean): VehicleT;
+  /** A police car, an ambulance, a fire engine, a police helicopter: its flashing lights, each its own lamp you can light a scene with (point: where it is, colour '#rrggbb', on: lit this frame). Empty on anything else. */
+  beacons: { point: Loose; colour: string; slot: string; on: boolean }[];
+  /** Its flashing lights on or off (they flash in bursts, one side then the other, in update(dt) or move()). No sound: play your own. */
+  siren(on?: boolean): VehicleT;
+  readonly sirenOn: boolean;
+  /** A motorbike: how far it leans now, radians, + to its right (move() leans it into a turn for its speed, or to o.lean). */
+  readonly lean: number;
   /** A car's and a truck's: how dirty, 0 clean .. 1 caked (road grime low down and behind, dust on top, a film on the glass the wipers cleared). With no number, how dirty it is. This car only (its twins keep theirs). */
   dirt?(v?: number): VehicleT;
   /** How wet of its own, 0..1: beading on its paint and glass (a car just out of the wash or the rain). In the rain the view's air beads it by itself (gs.sky.Weather), so this is for when the air is dry. */
@@ -3055,7 +3384,8 @@ export interface RigT {
    * toward: where the person means to go, a point { x, z } in the world or a heading (radians, as the body's rotation.y): a person with lead (see
    * lead) looks there before the body turns. Left out, the turn is read from how the body is turning.
    */
-  update(dt: number, o?: { speed?: number; aim?: number; turn?: number; toward?: { x: number; z: number } | number | null }): RigT;
+  /** aim: up and down for an aiming upper pose (aim, carAimL/R/F); aimYaw: its turn at the waist (radians, left +: aiming from a seat). */
+  update(dt: number, o?: { speed?: number; aim?: number; aimYaw?: number; turn?: number; toward?: { x: number; z: number } | number | null }): RigT;
   /** A full skeleton (gs.models.human's): brings the joints in between into line (the waist with the rib cage, the neck with the head, a collar bone with each arm, the forearm's skin with the hand). update() does it; call it after turning joints yourself. Nothing on a plain figure. */
   fill(pose?: Record<string, number[]> | null): RigT;
   /** A full skeleton: false leaves the forearm's turn and the toes alone (a person seen from further off sets it by itself: person.lod, see()). */
@@ -3134,6 +3464,8 @@ export interface PosesPart {
   LIFELIKE: Record<string, Loose>;
   /** A pose that moves through key poses on curves that never overshoot, for rig.add(): keys([[0, { spine: [.2, 0, 0] }], [.4, { armL: [-1, 0, 0], drop: .1, shift: [0, 0, .2] }], [1, {}]]). A key names only what changes. loop: the end joins the start. */
   keys(list: [number, Record<string, number[] | number>][], o?: { loop?: boolean }): (phase: number) => { j: Record<string, number[]>; drop: number; shift?: number[] };
+  /** A pose function mirrored, left for right: rig.add('waveL', mirror(rig.poses.wave.cycle)). */
+  mirror(fn: (phase: number) => Loose): (phase: number) => Loose;
   /** parts: the joints (hips, spine, head, arms, legs; hands and feet too if the figure has them). weight: lean and bank (0 none, 1 a person); size: the figure's scale (for moves in metres); joints: the names of the joints, for a body that isn't a person's. body: the object the game moves (steps that are really taken, follow-through); momentum, follow, lead: see RigT (gs.models.human asks for all of them; lead comes with follow unless false). */
   Rig: new (parts: Loose, o?: { fade?: number; height?: number; poses?: Record<string, Loose>; weight?: number; size?: number; full?: boolean; joints?: string[]; body?: Loose; momentum?: boolean; follow?: boolean; lead?: boolean }) => RigT;
   /** A skinned person: one smooth mesh over the figure's bones, with a Rig and a Face. */
@@ -3705,6 +4037,17 @@ export interface SculptShape {
   at?: [number, number, number]; rot?: [number, number, number]; scale?: number | [number, number, number];
   blend?: number; cut?: boolean; colour?: string; color?: string;
 }
+/**
+ * A weapon in someone's hands (gs.models.human, a gs.poses person or figure): each frame after rig.update(), update(dt, { how, pitch, yaw })
+ * puts it where that way of holding has it, eased from the last (how 'aim' | 'ready' | 'hip' | 'low' | 'slung', or 'none': hidden), with both
+ * hands on it for a two-handed one. Up to aim it points where the body faces, turned about the shoulder by pitch (up +) and yaw (left +).
+ */
+export interface Wield {
+  person: Loose; gun: Loose; how: string; ease: number;
+  /** Where shots leave (world) and the way it points (a thing swung: along its length). */ muzzle: Loose; dir: Loose;
+  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean }): Wield;
+  /** Takes it off the person: the weapon. */ drop(): Loose;
+}
 export interface ModelsPart {
   /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines) | 'palm' (a palm trunk: rings, leaf scars, fibres). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
   material(name: string, o?: { colour?: string; color?: string; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean; solid?: boolean | number; scatter?: boolean; [k: string]: Loose }): Loose;
@@ -3838,18 +4181,29 @@ export interface ModelsPart {
   };
   /**
    * A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots.
-   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep), 'truck' (flat, canvas, box, tanker), 'tank' (medium, light, heavy), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet).
+   * kind: 'car' (saloon, hatch, estate, sports, van, pickup, jeep, police, taxi, ambulance), 'truck' (flat, canvas, box, fire, tanker), 'tank' (medium, light, heavy), 'bus' (city, double, coach), 'bike' (road, sport, scooter, dirt), 'train' (steam, diesel; wagons van, open, flat, tanker, guard, coach), 'boat' (rowboat, motor, fishing, patrol), 'plane' (prop, biplane, twin, jet), 'helicopter' (light, police, medic).
    * Its nose points along -z, as gs.vehicles, gs.craft and World3D.vehicle push things. Each frame: move(dt, speed, { steer }) (wheels roll and steer, the body rocks on its springs, tracks run, propellers spin); or roll(d), steer(a), aim(turn, lift) yourself.
-   * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car or a truck; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
+   * Physics: world.vehicle(car, car.chassis({ power: 14 })) for a car, a truck, a bus or a motorbike; a helicopter flies on a gs.craft.Hover; a boat rides a gs.craft.Boat or Floater, a plane a gs.craft.Plane (the vehicle is only the look).
    * A train: vehicle('train', { style: 'steam', cars: ['van', { style: 'open', load: 'coal' }, 'guard'] }) is the whole train; along(track, d) lays it on your rails, or fuse: true makes one that keeps to a straight line in a third of the draws.
    * 3,000 to 21,000 triangles and 4 to 24 draws each; made in about a tenth of a second or less on a desktop, and the same vehicle asked for again is a copy that shares its shapes and materials. Make them in make().
    */
   vehicle: {
     (kind: 'train', o?: VehicleOptions): TrainT;
-    (kind?: 'car' | 'truck' | 'tank' | 'boat' | 'plane', o?: VehicleOptions): VehicleT;
+    (kind?: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'boat' | 'plane' | 'helicopter', o?: VehicleOptions): VehicleT;
     /** Every kind and its styles: { car: ['saloon', ...], truck: [...], tank, train, boat, plane }. */
     readonly kinds: Readonly<Record<string, readonly string[]>>;
   };
+  /**
+   * A weapon made in code (no model files), our own designs: 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' |
+   * 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton'. The right hand's grip at the origin, the muzzle towards -z (things swung: their length up +y),
+   * points grip, fore (the left hand), muzzle, eject, sight, stock; userData.weapon { kind, hands, long, melee, length, upright }. A few draws each;
+   * the same weapon asked for again shares its shapes. finish: the colour of its polymer parts. wield(person) holds it.
+   */
+  weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean }): Loose & { points: Record<'grip' | 'fore' | 'muzzle' | 'eject' | 'sight' | 'stock', Loose | null>; wield(person: Loose): Wield };
+  /** The weapons there are. */
+  readonly weapons: readonly WeaponKind[];
+  /** A weapon in someone's hands: weapon.wield(person) or new Wield(person, weapon). */
+  Wield: new (person: Loose, weapon: Loose) => Wield;
   /** Per-vertex curvature of a geometry (convex > 0, concave < 0) and how much each vertex faces up. */
   curvature(geometry: Loose): { curve: Float32Array; up: Float32Array };
 }
@@ -4100,7 +4454,7 @@ export interface GS {
   board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
-  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
+  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
   outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;

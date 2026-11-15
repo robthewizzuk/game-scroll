@@ -1,0 +1,56 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A sheet of poses for scripts/pose-sheet.cjs: a row for each pose, a column for each side it is seen from.
+//   ?poses=coverHighL,coverLowL+blindOver,swim@.3,idle+aim~rifle:aim   a cell: pose[+upper][@phase][~weapon[:how]] (gs.models.weapon held: how aim|ready|hip|low|slung)
+//   &who=human|person|figure   &views=three,side,front,back,top   &cell=220x260   &prop=wall|low|water|seat|none   &aim=0 (up/down)   &yaw=0 (aimYaw)   &gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'); window.DBG = Q.has('dbg');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), who = Q.get('who') || 'human';
+  const cells = (Q.get('poses') || 'idle').split(','), views = (Q.get('views') || 'three,side').split(','), [cw, ch] = (Q.get('cell') || '220x260').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const v = new gs.hd.HDView({ bg: '#9ab4d0', fog: 0, env: .4, amb: .35 }), cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sun = gs.hd.sun('#fff2d8', 1.9, 4, [.5, .9, .6]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * cells.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const info = [], opts = { seed: 3, build: 'medium' };
+  if (who === 'human') await gs.models.human.ready([opts]);
+  const VIEW = { side: [1, .16, .1], three: [.8, .35, .75], front: [.12, .2, 1], back: [.8, .3, -.75], top: [.02, 1, .2], left: [-1, .16, .1] };
+  const world = new T.Group(); v.scene.add(world);
+  const floor = new T.Mesh(new T.BoxGeometry(30, .4, 30), gs.hd.pbr('#6f7466', { rough: .9 })); floor.position.y = -.2; floor.receiveShadow = true; world.add(floor);
+  const prop = Q.get('prop') || 'none', stone = gs.hd.pbr('#8a7f72', { rough: .8 });
+  if (prop === 'wall') { const m = new T.Mesh(new T.BoxGeometry(2.2, 2.4, .3), stone); m.position.set(-.5, 1.2, -.55); m.castShadow = m.receiveShadow = true; world.add(m); }
+  if (prop === 'low') { const m = new T.Mesh(new T.BoxGeometry(2.2, 1, .3), stone); m.position.set(0, .5, -.55); m.castShadow = m.receiveShadow = true; world.add(m); }
+  if (prop === 'seat') { const m = new T.Mesh(new T.BoxGeometry(.55, .45, .55), gs.hd.pbr('#333', { rough: .6 })); m.position.set(0, .22, .02); world.add(m); const b = new T.Mesh(new T.BoxGeometry(.55, .7, .12), gs.hd.pbr('#333', { rough: .6 })); b.position.set(0, .8, -.27); world.add(b); }
+  let water = null; if (prop === 'water') { floor.position.y = -2.4; water = new T.Mesh(new T.BoxGeometry(30, .02, 30), new T.MeshStandardMaterial({ color: '#2d6f8a', transparent: true, opacity: .55, roughness: .1 })); water.position.y = 0; world.add(water); }
+  for (let r = 0; r < cells.length; r++) {
+    const m = /^([^+ @~]+)(?:[+ ]([^@~]+))?(?:@([\d.]+))?(?:~([a-z]+)(?::([a-z]+))?)?$/.exec(cells[r]); if (!m) throw new Error('bad cell ' + cells[r]);
+    const [, pose, upper, ph, kind, how] = m;
+    const body = who === 'human' ? gs.models.human(opts) : who === 'person' ? gs.poses.person({ mat: c => gs.hd.pbr(c) }) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
+    if (!body.rig.poses[pose]) throw new Error('no pose ' + pose);
+    if (upper && !body.rig.poses[upper]) throw new Error('no pose ' + upper);
+    if (prop === 'water') body.position.y = +(Q.get('float') ?? -1.35);
+    body.rig.steps = false;
+    const held = kind ? gs.models.weapon(kind).wield(body) : null;
+    for (let i = 0; i < 50; i++) { body.rig.play(pose, ph != null ? { at: +ph } : {}); body.rig.upper(upper || null); body.rig.update(1 / 60, { aim: +(Q.get('aim') || 0), aimYaw: +(Q.get('yaw') || 0) }); held?.update(1 / 60, { how: how || 'ready', pitch: +(Q.get('aim') || 0), yaw: +(Q.get('yaw') || 0) }); }
+    body.updateMatrixWorld(true);
+    const hp = body.rig.parts.hips.getWorldPosition(new T.Vector3());
+    for (let k = 0; k < views.length; k++) {
+      const view = VIEW[views[k]]; if (!view) throw new Error('no view ' + views[k]);
+      const aim = new T.Vector3(0, Math.max(.6, hp.y * .7 + .25), 0), len = Math.hypot(...view), dist = 4.2;
+      v.cam.fov = 30; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 200; v.cam.updateProjectionMatrix();
+      v.cam.position.set(aim.x + view[0] / len * dist, aim.y + view[1] / len * dist + .2, aim.z + view[2] / len * dist); v.cam.lookAt(aim); v.cam.updateMatrixWorld(); v.cut?.();
+      for (let n = 0; n < (k || r ? 2 : 6); n++) { v.t = 0; v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, k * cw, r * ch);
+      sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${cells[r]} ${views[k]}`, k * cw + 4, r * ch + 12);
+    }
+    const loc = o => { const w = o.getWorldPosition(new T.Vector3()); return body.worldToLocal(w).toArray().map(n => n.toFixed(3)).join(','); };
+    info.push(`${cells[r]}: hips ${hp.y.toFixed(2)} high` + (window.DBG ? ` armR ${loc(body.rig.parts.armR)} armL ${loc(body.rig.parts.armL)} head ${loc(body.rig.parts.head)} spine ${loc(body.rig.parts.spine)}` + (held ? ` stock ${loc(held.gun.points.stock || held.gun.points.grip)} grip ${loc(held.gun.points.grip)} muzzle ${loc(held.gun.points.muzzle)}` : "") : ''));
+    world.remove(body);
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

@@ -55,6 +55,7 @@ import { loading, later, after, pause, built } from './slices.js';
 import { surfaceMath, roughMipsMath } from './surface-math.js';
 import { run as runJob, canRun as canRunJob } from './jobs.js';
 import { copyFrame, webgpu, setGpuPick, prepareGPU, gpuMending, onGpuLoss, loseGPU, gpuLosses, canvasShows, OPAQUE, SEND_CHANGED, ONE_WRITE } from './gpu.js';
+import { noWaitFrame, NOWAIT, NOWAIT_STATS } from './nowait.js';
 import { packing } from './pack.js';
 import { ONE_SUBMIT, flushGPU, sendEarly, deferring } from './submit.js';
 import { steerFor } from './steering.js';
@@ -520,6 +521,8 @@ export const HD = {
   info: { skin: null, subgroups: '', gpuMs: null, gpuOff: false, gpuCompute: 0, gpuParts: null, calls: 0, tris: 0, cpu: 0, shadows: false, upscaled: false, backend: 'webgl', webgl: '', framegen: false, fgMs: 0, fgSteps: 0, still: false, rw: 0, rh: 0, ow: 0, oh: 0, trace: null, refl: '', origin: null, half: 'full', spread: '', sky: '', gssrNet: '' },
   /** Things needing a shader not built yet wait (hidden) at most this long while it builds in the background (v.holdNew); hold = false: build it in the frame instead. */
   holdMs: 500, hold: true,
+  /** WebGPU: a shader the view's frame would build is left out of that frame and built in the background (nowait.js). Unset: on while hold is; true / false: on / off whatever hold says. Never on a view's first frame. */
+  noWait: undefined,
   /** WebGPU: the kit's code-made textures packed into the chip's compressed formats (spark.js); false: plain (tests). */
   get pack() { return packing.on; }, set pack(v) { packing.on = v !== false; }, get packed() { return { textures: packing.packed, savedMB: +(packing.saved / 1048576).toFixed(1), failed: packing.failed }; },
   /**
@@ -666,7 +669,7 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
+if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -2479,7 +2482,7 @@ export class HDView {
   newRenderer() {
     if (this.held) { for (const o of this.held.keys()) o.layers.mask = (o.layers.mask | 1) & ~(1 << HOLD_LAYER); this.held.clear(); }
     this.shJobs?.clear(); this._fadeFrames = 0; this.shSeen?.clear(); this.shAhead = null; this.shPre = null; this.envKeys = null;
-    this.holdBase = false; this.warmed = false; this.aheadAgain = true;
+    this.holdBase = false; this.warmed = false; this.aheadAgain = true; this._nwSeen = false;
   }
   /**
    * The shadow maps' shaders, ahead (WebGPU). A thing's shadow is drawn with a shader of its own (three's shadow
@@ -3185,6 +3188,7 @@ export class HDView {
     if (this.gi || this.rooms?.length) this.bakeExtras(G, r);
     if (this.probes.length > 1) this.blendProbes();
     // (built for the screen, not the chain's own picture: a pipeline built for that picture also bound it to read, which WebGPU refuses)
+    const first = !this._nwSeen; if (!baking && !off) this._nwSeen = true;   // (the view's first frame, or the first with a new renderer: what's there draws at once, below)
     this.holdNew(r, baking || off, now);
     // (the frame lab's CPU by part, prof.js: each piece of the frame on its own while the lab is open)
     const pm = PROF.on ? mark() : -1;
@@ -3322,6 +3326,13 @@ export class HDView {
     // shadows: each light's map is drawn again only when it or a caster it sees moved (shadowLights)
     r.shadowMap.enabled = T.shadow > 0; r.shadowMap.type = PCFShadowMap;
     let shAhead = null;
+    // (a shader put off from a frame (nowait.js) and built since: the shadow maps it was left out of are drawn again)
+    // (as holdNew: not on the view's first frame, and not with the hold off (HD.hold = false: the test pages that draw a
+    // few frames and take the picture, each built in its frame), unless HD.noWait says so)
+    const nwq = r.gsNoWait, nw = !baking && !off && !first && (HD.noWait ?? HD.hold !== false) && nwq;
+    if (nwq && nwq.done !== this._nwDone) { if (this._nwDone !== undefined) this.shadowsDirty(); this._nwDone = nwq.done; }
+    if (nw) nw.begin();   // (from here to the end of the scene pass no shader is built in the frame: nowait.js)
+    try {
     if (T.shadow > 0) {
       if (pm >= 0) enter('3D: shadows');
       if ((o.shDrawn = !!this.shadowLights(lastView !== this || baking || off, true)) && !baking && !off) HD.info.shDraws = (HD.info.shDraws || 0) + 1;
@@ -3346,6 +3357,7 @@ export class HDView {
       LP.finish(T.shadow > 0 ? HD.tier : 0, s => G.fx.drawSlot(r, this.scene, s, mask));
       if (pm >= 0) leave(pm);
     }
+    } finally { if (nw) nw.end(); }
     if (!this.warmed && !off) { this.warmed = true; this.aheadAgain = true; }   // (what this frame does not draw is built over the next ones: buildAhead)
     // an instanced mesh made with room for none (an empty list in a game) has a zero-size buffer that WebGPU
     // won't bind; it draws nothing anyway, so it sits this frame out
@@ -3399,7 +3411,8 @@ export class HDView {
     const drawAt = performance.now();
     fadeOn(this, G, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)
     sendEarly('before the scene');   // (skinning, compute, the kit's shadow maps and the sky's pictures go to the chip now, to be drawn while the scene is encoded: submit.js)
-    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (pm >= 0) leave(pm); }
+    if (nw) nw.begin();
+    try { shown = ch.render(o) || false; HD.info.spread = ch.spread ? ch.spread.trim() : ''; HD.info.shared = ch.shared || 0; } finally { showAll(this); lodBack(this); fadeBack(this); G.fx.mipScale(1); for (const e of empty) e.visible = true; if (s2) o.s2.end(this.cam); this._aimJit = null; if (nw) { nw.end(); noWaitFrame(r); } if (pm >= 0) leave(pm); }
     if (pm >= 0) enter('3D: shaders ahead');
     if (!baking && !off && HD.hold !== false) { this.envCheck(r); this.buildAhead(r, ch); }
     if (pm >= 0) leave(pm);
@@ -3440,7 +3453,7 @@ export class HDView {
   // Still frames: true when this refresh can show the last frame again instead of drawing (see drawGPU).
   stillSkip(ch, now) {
     const st = ch.still, S = this._still ||= { cam: new Float64Array(32), run: 0, seen: -1, skip: 0, hurt: 0 };
-    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor || FADING.size) { S.run = 0; return false; }   // (a round getting ready: every frame is drawn, that is what they are for; nor while a detail level fades)
+    if (!st || HD.still === false || getready.warming || lastView !== this || this._cut || !ch.lastColor || FADING.size || ch.r.gsNoWait?.pending) { S.run = 0; return false; }   // (nor while a shader put off from a frame is on its way: nowait.js)   // (a round getting ready: every frame is drawn, that is what they are for; nor while a detail level fades)
     const cam = this.cam; cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }

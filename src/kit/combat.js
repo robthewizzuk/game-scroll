@@ -22,6 +22,7 @@
 // Vectors are plain { x, y } or { x, y, z } (three.js vectors work too). 2D games leave out z.
 
 import { linksFor } from './links.js';
+export { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } from './arsenal.js';
 
 const len = v => Math.hypot(v.x, v.y, v.z || 0);
 const norm = v => { const l = len(v) || 1; return { x: v.x / l, y: v.y / l, z: (v.z || 0) / l }; };
@@ -33,13 +34,15 @@ const has3 = v => v.z != null;
  * bloom per shot up to maxSpread, settles back at settle per second); pellets: shots per pull
  * (shotguns); auto: hold to keep firing; recoil: radians of kick up per shot (and a little sideways);
  * range; falloff: [from, to, keep] (full damage up to `from`, down to `keep` x at `to`); head:
- * headshot multiplier; speed: 0 for instant hits, else a flying shot (metres or units a second).
+ * headshot multiplier; speed: 0 for instant hits, else a flying shot (metres or units a second); pouch: a Pouch its
+ * reloads come out of (shared by every gun that takes the same ammo, its kind `ammoType`) instead of its own reserve.
+ * A ready-made one: arm('rifle') (see arsenal.js: ARSENAL).
  */
 export class Gun {
   constructor(o = {}) {
     Object.assign(this, {
       damage: 20, rate: 6, mag: 12, reserve: Infinity, reload: 1.4, spread: .02, bloom: .01, maxSpread: .12, settle: .25,
-      pellets: 1, auto: true, recoil: .04, sideways: .4, recover: 8, range: 100, falloff: null, head: 2, speed: 0, rng: Math.random,
+      pellets: 1, auto: true, recoil: .04, sideways: .4, recover: 8, range: 100, falloff: null, head: 2, speed: 0, rng: Math.random, pouch: null, ammoType: null,
     }, o);
     this.ammo = this.mag; this.cool = 0; this.reloadLeft = 0; this.extra = 0; this.held = false;
     this.kick = { pitch: 0, yaw: 0 }; this.owed = { pitch: 0, yaw: 0 }; this.offset = { pitch: 0, yaw: 0 }; this.justFired = false; this.empty = false;
@@ -48,14 +51,16 @@ export class Gun {
   get reloading() { return this.reloadLeft > 0 ? 1 - this.reloadLeft / this.reload : 0; }
   /** The aim cone right now (radians), for the crosshair. */
   get spreadNow() { return this.spread + this.extra; }
+  /** Spare rounds to reload from: in its pouch (of its ammoType), else its own reserve. */
+  get spare() { return this.pouch ? this.pouch.count(this.ammoType) : this.reserve; }
   /** Starts a reload (if there's room and spare rounds). */
-  startReload() { if (this.reloadLeft > 0 || this.ammo >= this.mag || this.reserve <= 0) return false; this.reloadLeft = this.reload; return true; }
+  startReload() { if (this.reloadLeft > 0 || this.ammo >= this.mag || this.spare <= 0) return false; this.reloadLeft = this.reload; return true; }
   update(dt) {
     this.cool = Math.max(0, this.cool - dt);
     this.extra = Math.max(0, this.extra - this.settle * dt);
     if (this.reloadLeft > 0) {
       this.reloadLeft -= dt;
-      if (this.reloadLeft <= 0) { const n = Math.min(this.mag - this.ammo, this.reserve); this.ammo += n; this.reserve -= n; this.reloadLeft = 0; this.reloaded = true; }
+      if (this.reloadLeft <= 0) { const n = Math.min(this.mag - this.ammo, this.spare); this.ammo += n; if (this.pouch) this.pouch.take(this.ammoType, n); else this.reserve -= n; this.reloadLeft = 0; this.reloaded = true; }
     } else this.reloaded = false;
     // recoil: kick arrives over a few frames and then the aim drifts most of the way back
     const k = Math.min(1, dt * 30), r = Math.min(1, dt * this.recover) * (this.held ? .3 : 1);
@@ -117,8 +122,8 @@ export class Gun {
  */
 export class Shots {
   constructor({ gravity = 0, push = 0, link = true } = {}) { this.list = []; this.gravity = gravity; this.push = push; this.links = linksFor(null, link); }
-  /** extra: anything to keep on the shot (who fired it; not: their body in the physics world, which the shot passes). */
-  add(s, extra = {}) { const v = { x: s.dir.x * s.speed, y: s.dir.y * s.speed, z: (s.dir.z || 0) * s.speed }; this.list.push({ ...extra, x: s.from.x, y: s.from.y, z: s.from.z || 0, v, left: s.range / Math.max(1, s.speed), shot: s }); return this; }
+  /** extra: anything to keep on the shot (who fired it; not: their body in the physics world, which the shot passes). A shot's carry ({ x, y, z }: the speed of what it was fired from, a car) is added to its own. */
+  add(s, extra = {}) { const c = s.carry, v = { x: s.dir.x * s.speed + (c?.x || 0), y: s.dir.y * s.speed + (c?.y || 0), z: (s.dir.z || 0) * s.speed + (c?.z || 0) }; this.list.push({ ...extra, x: s.from.x, y: s.from.y, z: s.from.z || 0, v, left: s.range / Math.max(1, s.speed), shot: s }); return this; }
   /**
    * Moves every shot. hits(from, to, shot) => what it hit (or null): give it your ray test, or a physics world
    * (a gs.physics3d World3D, or gs.physics' 2D Physics): each shot is then traced against everything in it, hits
@@ -312,3 +317,104 @@ export class Explosives {
     return this;
   }
 }
+
+// ---------------------------------------------------------------- shooting from a car
+
+const rot = (v, q) => {   // v turned by the quaternion q
+  const { x, y, z } = v, ix = q.w * x + q.y * z - q.z * y, iy = q.w * y + q.z * x - q.x * z, iz = q.w * z + q.x * y - q.y * x, iw = -q.x * x - q.y * y - q.z * z;
+  return { x: ix * q.w + iw * -q.x + iy * -q.z - iz * -q.y, y: iy * q.w + iw * -q.y + iz * -q.x - ix * -q.z, z: iz * q.w + iw * -q.z + ix * -q.y - iy * -q.x };
+};
+const unrot = (v, q) => rot(v, { x: -q.x, y: -q.y, z: -q.z, w: q.w });
+const clampA = (a, lo, hi) => Math.max(lo, Math.min(hi, a));
+const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Shooting from a seat in a car (or a boat, a truck's back): out of the side window on the seat's side, through the
+ * windscreen, out of the back window if you allow it. aim(dir) keeps the aim where it can go from that seat (a driver
+ * can't shoot back through his own head rest), says where the gun is (leaning out of the window, or behind the glass),
+ * which window the shot goes through and where it crosses it (car.hit(glass) breaks the glass, with gs.models vehicles),
+ * the pose for the upper body (gs.poses carAimL, carAimR, carAimF) and how much the ride throws the aim about.
+ *
+ *   const { DriveBy, Gun } = gs.combat;
+ *   reset() { shoot = new DriveBy(car, { seat: 'driver' }); gun = new Gun({ ... }); }       // car: a gs.models vehicle (its points and size) or any Object3D
+ *   update(dt) {
+ *     shoot.update(dt);                                                    // after the car has moved
+ *     shoot.aim(camDir);                                                   // where the player wants to aim (world)
+ *     rig.upper(aiming ? shoot.pose : null); rig.update(dt, { aim: shoot.pitch, aimYaw: shoot.turn });
+ *     for (const s of shoot.fire(gun, held)) { shots.add(s, { not: carBody }); if (shoot.glass) car.hit(shoot.glass, { power: .2 }); }
+ *   }
+ *
+ * The car's nose is along -z and its right along +x in its own metres (gs.models and gs.vehicles cars). seat: [x, y, z] in
+ * the car's metres (where the person sits; its side is the side of x), or a name in car.points ('driver', 'passenger'),
+ * 'driver' by default. width: the car's width (car.size.width, else 1.8); screen: metres from the seat forward to the
+ * windscreen (.7); back: metres to the back window (1.4). front, rear: may shoot through those (true, false). side: arc
+ * round from straight out of the side window the aim may go (1.3 radians); up, down: how far it may tilt (.6, .5).
+ * lean: how far out of the window the gun goes (.3). eye: height of the gun over the seat (.55). shake: how much the
+ * car's speed and bumps throw the aim (1).
+ */
+export class DriveBy {
+  constructor(car = null, { seat = 'driver', width = null, screen = .7, back = 1.4, front = true, rear = false, side = 1.3, up = .6, down = .5, lean = .3, eye = .55, shake = 1 } = {}) {
+    Object.assign(this, { car, front, rear, sideArc: side, up, down, leanOut: lean, eye, shake, screen, backTo: back });
+    this.seatName = typeof seat === 'string' ? seat : null; this.seatAt = Array.isArray(seat) ? { x: seat[0], y: seat[1], z: seat[2] } : seat && typeof seat === 'object' ? seat : null;
+    this.width = width; this.vel = { x: 0, y: 0, z: 0 }; this.was = null; this.bump = 0; this.dir = { x: 0, y: 0, z: -1 };
+    this.from = { x: 0, y: 0, z: 0 }; this.through = 'front'; this.glass = null; this.pose = 'carAimF'; this.turn = 0; this.pitch = 0; this.lean = 0; this.spread = 0;
+  }
+  // the car's place, turn and size, whatever it is
+  frame() {
+    const c = this.car || {}, p = c.position || c.pos || c, q = c.quaternion || (c.angle != null ? yawQ(-c.angle) : c.yaw != null ? yawQ(c.yaw) : { x: 0, y: 0, z: 0, w: 1 });
+    const pt = this.seatName && (c.points?.[this.seatName] || c.userData?.points?.[this.seatName]), sp = pt ? (pt.position || (Array.isArray(pt) ? { x: pt[0], y: pt[1], z: pt[2] } : pt)) : this.seatAt || { x: -.37, y: .6, z: 0 };
+    const w = this.width ?? (c.size?.width > 0 ? c.size.width : 1.8);
+    return { p: { x: p.x || 0, y: p.y || 0, z: p.z ?? 0 }, q, seat: sp, w };
+  }
+  /** After the car has moved this frame: its speed (for flying shots) and how much the ride is throwing the aim about. */
+  update(dt) {
+    const { p } = this.frame();
+    if (this.was && dt > 0) {
+      const v = { x: (p.x - this.was.x) / dt, y: (p.y - this.was.y) / dt, z: (p.z - this.was.z) / dt };
+      const jolt = Math.hypot(v.x - this.vel.x, (v.y - this.vel.y) * 2, v.z - this.vel.z) / dt;   // (a bump: the speed changing, up and down most of all)
+      this.bump = Math.max(this.bump * Math.exp(-dt * 4), Math.min(1, jolt / 60)); this.vel = v;
+    }
+    this.was = p; this.speed = Math.hypot(this.vel.x, this.vel.z);
+    this.spread = this.shake * (.012 + Math.min(.05, this.speed * .0012) + this.bump * .06);
+    return this;
+  }
+  /** Points the gun as near `want` (a direction in the world) as the seat lets it. Then: dir, from, through ('left' | 'right' | 'front' | 'back'), glass, pose, turn, pitch, lean. */
+  aim(want) {
+    const { p, q, seat, w } = this.frame(), L = unrot(want, q), sd = seat.x < 0 ? -1 : 1;
+    // in the car's own terms: yaw 0 is straight ahead (-z), to the right +; pitch up +
+    let yaw = Math.atan2(L.x, -L.z), pitch = Math.atan2(L.y, Math.hypot(L.x, L.z));
+    const out = sd * Math.PI / 2;   // straight out of the seat's side window
+    const cones = [{ name: sd < 0 ? 'left' : 'right', mid: out, half: this.sideArc }];
+    if (this.front) cones.push({ name: 'front', mid: 0, half: .65 });
+    if (this.rear) cones.push({ name: 'back', mid: Math.PI, half: .6 });
+    let best = null, bd = Infinity;
+    for (const c of cones) { const off = wrapA(yaw - c.mid), d = Math.max(0, Math.abs(off) - c.half); if (d < bd) { bd = d; best = { c, y: c.mid + clampA(off, -c.half, c.half) }; } }
+    yaw = best.y; const cone = best.c.name, side = cone === 'left' || cone === 'right';
+    pitch = clampA(pitch, -this.down, side ? this.up : this.up * .5);
+    const D = { x: Math.sin(yaw) * Math.cos(pitch), y: Math.sin(pitch), z: -Math.cos(yaw) * Math.cos(pitch) };
+    // the gun: out of the window (further the further round it points), or behind the glass
+    const eye = { x: seat.x, y: seat.y + this.eye, z: seat.z }, k = side ? Math.max(0, Math.cos(wrapA(yaw - out))) : 0;
+    this.lean = side ? .35 + .65 * k : 0;
+    const g = side ? { x: sd * (w / 2 + this.leanOut * this.lean), y: eye.y + .05, z: eye.z } : { x: eye.x * .7, y: eye.y, z: eye.z - .25 };
+    // where the line of fire crosses the glass, if it does (a gun out of the window is past it)
+    let glass = null;
+    if (cone === 'front') { const t = (this.screen - .25) / Math.max(.05, -D.z); glass = { x: g.x + D.x * t, y: g.y + D.y * t, z: g.z + D.z * t }; }
+    else if (cone === 'back') { const t = (this.backTo + .25) / Math.max(.05, D.z); glass = { x: g.x + D.x * t, y: g.y + D.y * t, z: g.z + D.z * t }; }
+    else if (this.lean < .5) { const t = Math.max(0, (sd * w / 2 - g.x) / (D.x || 1e-6)); if (t > 0 && t < 2) glass = { x: g.x + D.x * t, y: g.y + D.y * t, z: g.z + D.z * t }; }
+    const toW = v => { const r = rot(v, q); return { x: r.x + p.x, y: r.y + p.y, z: r.z + p.z }; };
+    this.dir = rot(D, q); this.from = toW(g); this.glass = glass && toW(glass); this.through = cone;
+    this.pose = cone === 'left' ? 'carAimL' : cone === 'right' ? 'carAimR' : 'carAimF';
+    this.pitch = pitch;
+    // the upper body's turn at the waist from its pose's own (carAimL is turned about 90 degrees to the left, carAimF ahead): left +
+    const base = cone === 'left' ? Math.PI / 2 : cone === 'right' ? -Math.PI / 2 : cone === 'back' ? Math.PI * sd : 0;
+    this.turn = clampA(wrapA(-yaw - base), -1, 1);
+    return this;
+  }
+  /** Pulls gun's trigger from where the gun is, along the aim, thrown about by the ride (spread); flying shots carry the car's speed. */
+  fire(gun, pressed = true) {
+    const shots = gun.pull(this.from, this.dir, pressed);
+    for (const s of shots) { if (this.spread) s.dir = gun.wobble(s.dir, this.spread, true); s.carry = { ...this.vel }; s.through = this.through; s.glass = this.glass; }
+    return shots;
+  }
+}
+const yawQ = a => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });

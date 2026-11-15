@@ -139,13 +139,21 @@ const ENGINES = {
   prop: { prop: 3, idle: 700, red: 2700, gears: 1, top: 70, bright: .9, knock: 0, vol: .07, air: 1 },
   jet: { jet: 1, top: 120, vol: .08, air: 1 },
   electric: { whine: 1, top: 40, vol: .04 },
+  bike: { cyl: 2, idle: 1100, red: 9500, gears: 6, top: 55, bright: 1.3, knock: .05, vol: .055 },
+  scooter: { cyl: 1, idle: 1600, red: 8000, gears: 1, top: 16, bright: 1.2, knock: 0, vol: .04, wave: 'square' },
+  dirt: { cyl: 1, idle: 1400, red: 11000, gears: 5, top: 32, bright: 1.5, knock: .1, vol: .055, wave: 'square' },
+  bus: { cyl: 6, idle: 550, red: 2200, gears: 6, top: 22, bright: .45, knock: .55, vol: .06 },
+  rotor: { prop: 2, idle: 280, red: 400, gears: 1, top: 60, bright: .6, knock: .2, vol: .08, air: 1 },
 };
 // which engine a gs.models.vehicle has, by its kind and style
 function engineOf(v, o) {
   if (o.engine && ENGINES[o.engine]) return o.engine;
   const k = v.kind, s = v.style;
-  if (k === 'car') return s === 'sports' ? 'sports' : s === 'van' || s === 'pickup' ? 'van' : s === 'jeep' ? 'jeep' : 'petrol';
+  if (k === 'car') return s === 'sports' ? 'sports' : s === 'van' || s === 'pickup' || s === 'ambulance' ? 'van' : s === 'jeep' ? 'jeep' : 'petrol';
   if (k === 'truck') return 'diesel';
+  if (k === 'bus') return 'bus';
+  if (k === 'bike') return s === 'scooter' ? 'scooter' : s === 'dirt' ? 'dirt' : 'bike';
+  if (k === 'helicopter') return 'rotor';
   if (k === 'tank') return 'tank';
   if (k === 'train') return s === 'steam' ? 'steam' : s === 'diesel' ? 'rail diesel' : 'rail';
   if (k === 'boat') return s === 'rowboat' ? 'rowboat' : s === 'motor' ? 'outboard' : 'boat diesel';

@@ -6,7 +6,7 @@
 //   const { sfx, sounds } = gs.sound, { haptic } = gs.device, { clamp, rnd } = gs.util;
 //
 // What's on it (docs/maker-kit.md has the full guide):
-//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say)
+//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say), a car radio (Radio: stations of original songs and made-up DJs)
 //   gs.device    haptics (and rich haptic patterns), tilt, shake, mic (level, pitch, claps, blowing), camera, compass, steps, air pressure, room light, proximity
 //   gs.util      clamp, rnd, pix, hash, fmt, disc, flickTracker
 //   gs.math      seeded random, daily seed, smooth noise, vectors, overlap tests, Grid, Timers
@@ -80,11 +80,13 @@
 //   gs.combat    guns (spread, recoil, reloads, falloff), flying shots, throw arcs, health and armour, explosives
 //   gs.tactics   cover spots, squads that suppress, flank and call out, allies that lead
 //   gs.climb     ledges, hanging, shimmying, climbing up, leaps, ropes   gs.poses  a posable 3D figure and pose blending
-//   gs.missions  mission scripts: objectives, waits, checkpoints        gs.cutscene  camera paths, lines, letterbox, skip
+//   gs.missions  mission scripts: objectives, waits, checkpoints; open-world Jobs, a Phone that rings with them, WorldSave (8 KB)
+//   gs.cutscene  camera paths, lines, letterbox, skip
 //   gs.prompts   quick-time taps, swipes, holds and mashing              gs.destruction  shatter and slice meshes; Structure: buildings that come apart
 //   gs.stealth   light meter, takedowns, bodies, noisy floors, disguises
 //   gs.gadgets   grappling hook, zip line, wire / lock / code puzzles   gs.campaign  chapters, stars, collectibles, unlocks
 //   gs.arena     ball games with cars: arena, goals, boost, flips, ball prediction, replays
+//   gs.magic     spells: casts, mana and cooldowns, bolts, areas, beams, wards, heals, statuses that meet, ready 3D looks
 //   gs.props     thousands of props with culling and detail levels (InstancedMesh2), rooms, chunked worlds
 //   gs.regions   big worlds in parts: levels made when picked, squares and land tiles round the player, freed behind
 //   gs.outdoors  3D outdoor worlds: terrain (THREE.Terrain), grass, trees, rocks, wavy water you can float on
@@ -165,6 +167,7 @@ import * as bones from './kit/bones.js';
 import { tick } from './kit/tick.js';
 import * as composer from './kit/compose.js';
 import * as foley from './kit/foley.js';
+import * as radio from './kit/radio.js';
 import * as solve from './kit/solve.js';
 import * as phoneSensors from './kit/sensors.js';
 import * as real from './kit/real.js';
@@ -240,7 +243,7 @@ const GROUPS = {
       characters: pick('characters', m.characters, m.reactions), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
       poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), THREE: m.THREE })) },
   ai: { parts: ['ai'], load: () => import('./kit/ai.js').then(m => ({ ai: pick('ai', m) })) },
-  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena'],
+  action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic'],
     load: () => import('./gs-action.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
   play: { parts: ['craft', 'soft', 'cards', 'dice', 'words', 'trivia', 'ui'],
     load: () => import('./gs-play.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
@@ -277,7 +280,7 @@ export function offers(names) {
 }
 
 const core = {
-  sound: pick('sound', sound, sfx, composer, foley),
+  sound: pick('sound', sound, sfx, composer, foley, radio),
   device: pick('device', device, phoneSensors),
   util: pick('util', util),
   math: pick('math', math),
