@@ -176,6 +176,9 @@ class FleshModel extends PhysicalLightingModel {
 const WEAVE_N = [0, 18, 11, 20, 9, 10, 30], WEAVE_SHEEN = [.12, .12, .08, .25, .06, .4, .1];
 const HAIR_MIN_PX = .5, HAIR_MOST = 40;   // (hairs: the least a strand reaches out from its middle, in pixels, and the most it is widened by)
 const ARM_OUT = .27;   // (human-shapes.js ARM: the arms out as a person's mesh was bound)
+// PORES: what the 'skin' recipe's roughness picture holds on average, squared (the shader multiplied by it twice), at its own size, at half,
+// and at a quarter and smaller (measured off the picture and its smaller copies: .525, .661 and .711 before squaring)
+const PORES = [.2767, .4413, .5055];
 const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4();   // (a mesh with no elbows or knees; a person clean and dry)
 const ridge = x => { const f = fract(x); return f.mul(f.oneMinus()).mul(4); };   // a thread's round top: 0 at its edges, 1 along its middle
 // hd3d.js swaps a mesh's material for its twin here while the view draws on WebGPU (material.userData.gsGpu
@@ -238,16 +241,24 @@ export const gpuMaterials = {
       if (S.skin) { m.sheen = 0; m.ior = 1.4; }   // (skin reflects a little less than glass or plastic: 2.8% straight on)
       // a real face's fine lines bend the light (a picture of how high the skin is, on the face's own UVs: human-paint.js paintDetail),
       // over the pores' own normals; and its oily parts (the middle of the forehead, the nose, the chin, the lips) shine more
-      const FD = S.skin && gm.userData.faceDetail;
-      if (FD) {
-        const D = texture(FD, uv(1)), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
-        // (and the lines that come with its expressions, faceWrinkles: four kinds, each sunk in as far as the person's live face shows it this
-        // frame, userData.gsWrinkle on the mesh, human-face.js; a face of the same look but another expression shares the material, not the frame)
-        const FW = gm.userData.faceWrinkles, wr = FW && uniform(new Vector4()).onObjectUpdate(({ object }) => object?.userData?.gsWrinkle ?? NO_WRINKLE);
-        m.normalNode = bumpN(FW ? D.r.sub(texture(FW, uv(1)).dot(wr).mul(2.6)) : D.r, float(.00016), pores);
+      // (one picture, human-paint.js paintLines: how high, how oily, and two numbers of the lines that come with its expressions: four kinds,
+      // two to a number and told apart by where they are, each sunk in as far as the person's live face shows it this frame, userData.gsWrinkle
+      // on the mesh, human-face.js; a face of the same look but another expression shares the material, not the frame)
+      const FL = S.skin && gm.userData.faceLines, LINES = gm.userData.faceLinesAt;
+      if (FL) {
+        const u1 = uv(1), D = texture(FL, u1), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
+        const wr = uniform(new Vector4()).onObjectUpdate(({ object }) => (object?.userData?.gsPoseOf || object)?.userData?.gsWrinkle ?? NO_WRINKLE);
+        const sunk = D.b.mul(select(u1.y.greaterThan(LINES.brow), wr.x, wr.z)).add(D.a.mul(select(u1.y.greaterThan(LINES.nose), wr.y, wr.w)));
+        m.normalNode = bumpN(D.r.sub(sunk.mul(2.6)), float(.00016), pores);
         // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
         // a pixel or two across had each caught the light as a glint of its own, so a close face glittered like wet sand, darkest skin most)
-        const r0 = materialRoughness.mul(gm.roughnessMap ? texture(gm.roughnessMap).g : float(1)).mul(D.g.mul(-.18).add(1).sub(smoothstep(.9, 1, D.g).mul(.22))), ex = dFdx(normalView), ey = dFdy(normalView);
+        // (the pores' own roughness is worked out, not read from their picture: that picture was one more than a shader could read once a
+        // game had its lights and weather. What it held, on average, at each of its sizes (PORES: itself, half, and smaller, where the pores'
+        // slopes have gone into it), by how big a dot of it is on screen; across one pore it varied by a twentieth, under what the lines do)
+        m.roughnessMap = null;
+        const pu = uv().mul(gm.roughnessMap?.image?.width || 256), lod = log2(max(max(length(dFdx(pu)), length(dFdy(pu))), 1e-6));
+        const pores2 = gm.roughnessMap ? mix(mix(float(PORES[0]), float(PORES[1]), lod.saturate()), float(PORES[2]), lod.sub(1).saturate()) : float(1);
+        const r0 = materialRoughness.mul(pores2).mul(D.g.mul(-.18).add(1).sub(smoothstep(.9, 1, D.g).mul(.22))), ex = dFdx(normalView), ey = dFdy(normalView);
         const spread = ex.dot(ex).add(ey.dot(ey)).mul(.5).min(.18).toVar();
         m.roughnessNode = sqrt(r0.mul(r0).add(spread)).min(1);
         // (and less of it where the skin is dry, and where the pores are too small to see: a pore's hollow shines little, so as they blur into

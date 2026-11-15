@@ -1,0 +1,103 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// How many pictures a shader reads, for scripts/detail-test.cjs --page pictures --webgpu.
+// WebGPU lets a fragment shader read 16 pictures (maxSampledTexturesPerShaderStage; Chrome gives 16 on every phone and
+// desktop), and a pipeline that asks for more is refused: three then leaves the mesh out with only a console error. A lit
+// material's shader reads the scene's own pictures (the sun's shadow maps, the lamps' grid and shadows, the sky's light,
+// the clouds' shade, last frame's occlusion...) before its own, so in a scene with a sky, a sun in two maps, lamps with
+// shadows and rain, a material has about four left. A real person's skin read six of its own and was left out: faces
+// with no skin (it now reads three: human.js skinOf, hd3d-gpu.js sss).
+// The scene here turns on what a game can at once, with a real person and a clean one close up, a stone floor with
+// parallax depth and a shiny one. Checked: no pipeline is refused, none asks for more than the limit, skin keeps one
+// to spare, and the skin is in the picture.
+//   ?gpu  ?tier=3  ?w=480&h=360  ?no=sky,air,rain,lamps,cascade,decal,reflect (leave parts out)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { waiting } from '../../src/kit/getready.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'), NO = new Set((Q.get('no') || '').split(',')), on = k => !NO.has(k);
+// what each pipeline's fragment shader may read: counted from its layout as the chip's driver counts it, and from its text
+const pipes = [], refused = []; let fullest = [];
+if (GPU && window.GPUDevice) {
+  const D = GPUDevice.prototype, bgl = D.createBindGroupLayout, pll = D.createPipelineLayout, sm = D.createShaderModule;
+  D.createBindGroupLayout = function (d) { const l = bgl.call(this, d); let n = 0; for (const e of d.entries || []) if ((e.texture || e.externalTexture) && (e.visibility & GPUShaderStage.FRAGMENT)) n++; l.gsPics = n; return l; };
+  D.createPipelineLayout = function (d) { const l = pll.call(this, d); l.gsPics = (d.bindGroupLayouts || []).reduce((s, g) => s + (g?.gsPics || 0), 0); return l; };
+  D.createShaderModule = function (d) { const m = sm.call(this, d); m.gsPics = (d.code.match(/var \w+ : texture_(?!storage)[^;]*;/g) || []).length; return m; };
+  const note = d => pipes.push({ label: d.label || '', n: Math.max(d.layout?.gsPics ?? 0, d.fragment?.module?.gsPics ?? 0) });
+  // (and which pictures the fullest groups hold, by name and size)
+  const cv = GPUTexture.prototype.createView, bg = D.createBindGroup; GPUTexture.prototype.createView = function (d) { const w = cv.call(this, d); w.gsOf = this; return w; };
+  D.createBindGroup = function (d) { const t = []; for (const e of d.entries || []) { const q = e.resource?.gsOf; if (q) t.push(`${q.label || '?'} ${q.width}x${q.height}${q.depthOrArrayLayers > 1 ? 'x' + q.depthOrArrayLayers : ''} ${q.format}`); } if (t.length > fullest.length) fullest = t; return bg.call(this, d); };
+  for (const k of ['createRenderPipeline', 'createRenderPipelineAsync']) { const f = D[k]; D[k] = function (d) { note(d); return f.call(this, d); }; }
+}
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+G?.r.backend.device.addEventListener('uncapturederror', e => refused.push(String(e.error?.message || e).slice(0, 300)));
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 480), H = +(Q.get('h') || 360), { human, material } = gs.models;
+HD.force = +(Q.get('tier') ?? 3); HD.upscale = false; HD.grain = 0;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const SPECS = [{ seed: 7, look: 'real', age: 44, stubble: .6, heritage: 'european' }, { seed: 3 }];
+  await human.ready(SPECS);
+  const v = new gs.hd.HDView({ bg: '#b9c4d0', env: .55, sky: '#c8d2e0', ground: '#4a4434', amb: .4, fov: 40 });
+  const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c); const x = c.getContext('2d', { willReadFrequently: true });
+  const sun = gs.hd.sun('#fff0d8', 2.8, 30, [.6, .7, .5]); sun.softShadows?.(1.4); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  // a stone floor with depth (parallax: the material with the most pictures of its own), a shiny one, and a wall
+  const yard = new T.Mesh(new T.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), material('cobbles', { repeat: [10, 10], depth: .035 })); yard.receiveShadow = true; v.scene.add(yard);
+  const own = gs.hd.surface(128, ({ col, h, r, size: S }) => { col.fillStyle = '#9a948a'; col.fillRect(0, 0, S, S); h.fillStyle = '#404040'; h.fillRect(0, 0, S, S); r.fillStyle = '#d0d0d0'; r.fillRect(0, 0, S, S); h.fillStyle = '#e0e0e0'; for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) h.fillRect(i * S / 4 + 2, j * S / 4 + 2, S / 4 - 4, S / 4 - 4); });
+  const wet = new T.Mesh(new T.PlaneGeometry(3, 3).rotateX(-Math.PI / 2), gs.hd.pbr('#30343a', { rough: .08 })); wet.position.set(2.2, .01, -1); wet.receiveShadow = true; v.scene.add(wet);
+  const wall = new T.Mesh(gs.hd.rbox(6, 3, .3), gs.hd.pbr('#ffffff', { tex: own, rep: [3, 2], rough: .9, depth: .03 }));   // (a game's own painted stone, with depth) wall.position.set(0, 1.5, -2.4); wall.castShadow = wall.receiveShadow = true; v.scene.add(wall);
+  if (on('reflect')) v.reflect(wet);
+  if (on('air')) v.air({ haze: .0008, mist: .002, mistFall: .1, clouds: .4 });   // (with the air on, a sun fitted with `near` has a second, sharper map)
+  const sky = on('sky') ? new gs.sky.Sky(v, { time: 16.5, sun, clouds: .55, physical: on('air') ? { haze: 2 } : false, env: true, fog: false }) : null;
+  const rain = on('rain') ? new gs.sky.Weather(v, { kind: 'rain', amount: .6 }) : null;
+  const spots = [{ x: -1.4, y: 2.4, z: .4, col: '#ffd9a0', i: 8, reach: 7, dir: [.3, -1, -.2], angle: .6, shadow: true, shape: 'window' }, { x: 1.6, y: 2.2, z: -1.6, col: '#a0c8ff', i: 5, reach: 6, shadow: true }];
+  const tv = gs.hd.sign(1.2, .7, (g, w, h) => { g.fillStyle = '#ff5020'; g.fillRect(0, 0, w / 2, h); g.fillStyle = '#2060ff'; g.fillRect(w / 2, 0, w / 2, h); }, { picture: true, i: 1, reach: 5, glow: 2 }); tv.position.set(-1.6, 1.4, -2.2);
+  if (on('lamps')) { v.scene.add(tv); v.lampLights(8); }
+  const people = SPECS.map((s, i) => { const p = human(s); p.position.set(i * .7 - .35, 0, 0); p.rotation.y = i ? -.3 : .3; v.scene.add(p); return p; });
+  if (on('decal')) v.decal(wall, new T.Vector3(.4, 1.5, -2.25), new T.Vector3(0, 0, 1), { size: .5, paint: (g, s) => { g.fillStyle = '#201810'; g.beginPath(); g.arc(s / 2, s / 2, s * .3, 0, 7); g.fill(); }, key: 'pictures-test' });
+  v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 600; v.cam.position.set(.1, 1.62, 1.5); v.cam.lookAt(0, 1.58, 0); v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld();
+  const draw = async () => {
+    sun.fit?.(v, on('cascade') ? { far: 300, near: 40 } : { far: 300 });
+    if (on('lamps')) v.placeLamps([...spots, ...tv.spots()], 0, 1.5, 0, 0);
+    sky?.update?.(1 / 60); rain?.update?.(1 / 60);
+    for (const p of people) { p.see(v.cam, 2000); p.rig.update(1 / 60, { speed: 0 }); }
+    v.t = 0; v.render(x, W, H); await frame();
+  };
+  // (until the shaders are in and the picture has stopped waiting on them)
+  const settle = async (least = 12) => { for (let i = 0, calm = 0; i < 600 && (i < least || calm < 4); i++) { await draw(); const w = waiting(); calm = w.hard || w.soft ? 0 : calm + 1; } };
+  const grab = () => x.getImageData(0, 0, W, H).data.slice();
+  await settle(20);
+  const a = grab(); out.all = c.toDataURL();
+  info.people = people.map(p => p.lod);
+  // the skin is in the picture: with the people taken away, all of the middle of each face changes (a face whose skin was left out
+  // shows what is behind it there, round its eyes and teeth)
+  const skins = []; for (const p of people) p.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) if (/^human:skin/.test(m?.name || '')) skins.push(m.name); });
+  const face = p => { const h = new T.Vector3(); p.bones.head.getWorldPosition(h); h.y += .08; h.project(v.cam); return [Math.round((h.x + 1) / 2 * W), Math.round((1 - h.y) / 2 * H)]; };
+  const changed = (d0, d1, [cx, cy], r = Math.round(H * .04)) => { let n = 0, all = 0; for (let y = cy - r; y <= cy + r; y++) for (let xx = cx - r; xx <= cx + r; xx++) { if (xx < 0 || y < 0 || xx >= W || y >= H) continue; const i = (y * W + xx) * 4; all++; if (Math.abs(d0[i] - d1[i]) + Math.abs(d0[i + 1] - d1[i + 1]) + Math.abs(d0[i + 2] - d1[i + 2]) > 24) n++; } return n / Math.max(1, all); };
+  const names = [...new Set(skins)], at = people.map(face);
+  for (const p of people) p.visible = false;
+  await settle(8); const b = grab(); out.none = c.toDataURL();
+  for (const p of people) p.visible = true;
+  await settle(6);
+  const seen = at.map(q => +changed(a, b, q).toFixed(2));
+  info.skin = { materials: names, meshes: skins.length, facesChanged: seen };
+  check('a real person and a clean one are drawn close up, at their finest', people.every(p => p.lod === 0) && skins.length >= 2, `levels ${info.people}, ${skins.length} skin meshes (${names.join(', ')})`);
+  check('their skin is in the picture (with the people gone, the middle of both faces changes)', seen.every(q => q > .9), `${seen.map(q => Math.round(q * 100) + '%').join(' and ')} of each face changed`);
+  if (GPU) {
+    const limit = G.r.backend.device.limits.maxSampledTexturesPerShaderStage, most = new Map();
+    for (const p of pipes) most.set(p.label, Math.max(most.get(p.label) || 0, p.n));
+    const top = [...most].sort((p, q) => q[1] - p[1]), skin = top.filter(([l]) => /human:skin/.test(l)), real = skin.filter(([l]) => /real/.test(l));
+    info.limit = limit; info.pipelines = pipes.length; info.most = top.slice(0, 8).map(([l, n]) => `${n} ${l.replace('renderPipeline_', '')}`);
+    info.fullest = fullest;   // (the scene's own pictures, in the group every lit material shares)
+    info.skinReads = skin.map(([l, n]) => `${n} ${l.replace('renderPipeline_', '')}`);
+    check('no pipeline was refused, and nothing else went wrong on the chip', !refused.length, refused.length ? `${refused.length}: ${refused[0]}` : `${pipes.length} pipelines made`);
+    check(`no shader reads more pictures than the chip allows (${limit})`, top.length && top[0][1] <= limit, top.slice(0, 3).map(([l, n]) => `${n} ${l.replace('renderPipeline_', '')}`).join(', '));
+    check('a real face\'s skin was among them', real.length > 0, skin.map(([l]) => l).join(', '));
+    check('and skin keeps one to spare (a game\'s weather, or a kit\'s next picture)', skin.length && skin.every(([, n]) => n <= limit - 1), info.skinReads.join(', '));
+  }
+  window.result = { out, info, checks };
+} catch (e) { console.error(e); window.result = { error: String(e?.stack || e) }; }
+</script>

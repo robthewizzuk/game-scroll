@@ -5,6 +5,7 @@
 // Kit use only.
 
 // defaults: P is the tile's size in noise units, look the colours a maker can change
+// (metal: true on the recipes with any metal in them: the others get no metal picture, materials.js)
 export const RECIPES = {
   wood: {
     P: 4, look: { colour: '#9a6b3f', dark: '#5e3b1e' },
@@ -87,14 +88,14 @@ export const RECIPES = {
     },
   },
   metal: {
-    P: 4, look: { colour: '#b4b8bc' },
+    metal: true, P: 4, look: { colour: '#b4b8bc' },
     f(O, p, k) {
       const streak = O.fbm(O.scale(p, 32, 1), 4, 3, 1), smudge = O.fbm(p, 4, 4, 2);
       return { col: O.mulc(k.colour, O.add(.88, O.mul(streak, .15))), rough: O.add(.25, O.add(O.mul(streak, .1), O.mul(smudge, .2))), metal: 1, h: O.mul(streak, .15) };
     },
   },
   rust: {
-    P: 4, look: { colour: '#7a6a5a', rust: '#7b3418', deep: '#3d1a0c' },
+    metal: true, P: 4, look: { colour: '#7a6a5a', rust: '#7b3418', deep: '#3d1a0c' },
     f(O, p, k) {
       const n = O.fbm(O.scale(p, 1.5), 6, 5, 1), fine = O.fbm(O.scale(p, 12), 48, 3, 2), r = O.smooth(.42, .62, O.add(n, O.mul(fine, .15)));
       const rustCol = O.mixc(k.deep, k.rust, fine);
@@ -102,7 +103,7 @@ export const RECIPES = {
     },
   },
   paint: {
-    P: 4, look: { colour: '#3b6ea5', under: '#8a8f94' },
+    metal: true, P: 4, look: { colour: '#3b6ea5', under: '#8a8f94' },
     f(O, p, k) {
       const n = O.fbm(O.scale(p, 2), 8, 5, 3), chip = O.smooth(.6, .63, n), fine = O.fbm(O.scale(p, 16), 64, 2, 4);
       return { col: O.mixc(O.mulc(k.colour, O.add(.92, O.mul(fine, .12))), k.under, chip), rough: O.mix(.45, .4, chip), metal: O.mul(chip, .9), h: O.sub(.7, O.mul(chip, .4)) };

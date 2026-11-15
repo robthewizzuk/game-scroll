@@ -893,9 +893,9 @@ try {
       // softer rim on WebGL; a face from the seed, so another seed is another sculpt and another painted face
       const ro = { ...opts, look: 'real' }, ro2 = { ...opts, look: 'real', seed: 4 }; await human.ready([ro, ro2]);
       const real = human(ro), rs = real.mesh.material[0], other2 = human(ro2).mesh.material[0];
-      ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry && rs.userData.faceDetail?.isDataTexture && rs.userData.faceDetail.channel === 1 && !M[0].userData.faceDetail
-        && rs.userData.faceWrinkles?.isDataTexture && rs.userData.faceWrinkles.channel === 1 && !M[0].userData.faceWrinkles,
-        `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint, a picture of its fine lines and oil and one of the lines its expressions bring, another seed another face`);
+      ok(rs.userData.sss?.skin === true && rs.userData.sss.thin === true && rs.name === 'human:skin:real' && rs.sheen < M[0].sheen && M[0].userData.sss.skin === false && rs.map !== M[0].map && other2.map !== rs.map && real.mesh.geometry !== plain.mesh.geometry && rs.userData.faceLines?.isDataTexture && rs.userData.faceLines.channel === 1 && rs.userData.faceLines.image.data.length === 256 * 512 * 4 && !M[0].userData.faceLines
+        && rs.userData.faceLinesAt?.brow > rs.userData.faceLinesAt?.nose && !rs.metalnessMap && !M[0].metalnessMap,
+        `real look: its own skin (light under it, a rim of ${rs.sheen.toFixed(2)} where the clean look's is ${M[0].sheen.toFixed(2)}), its own sculpt and paint, one picture of its fine lines and oil and of the lines its expressions bring, no metal picture, another seed another face`);
       // a real face's eyes: an iris painted in code under no shine of its own, and a wet film over them (the cornea, the tears along the lower
       // lid) that adds only its light, on the eyes' and the head's bones, close up only; none on the clean look
       const re = real.mesh.material[1], wet = real.wet, wg = wet?.geometry, wb = wg && new Set(Array.from(wg.attributes.skinIndex.array).filter((v, i) => i % 4 === 0).map(i => wet.skeleton.bones[i].name));

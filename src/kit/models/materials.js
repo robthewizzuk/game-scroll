@@ -56,6 +56,9 @@ export function material(name, o = {}) {
   const look = lookOf(name, o), set = bakeSet(name, look, Math.max(64, Math.min(1024, size)), seed), t = set.repeat(repeat[0], repeat[1]);
   const m = pbr('#ffffff', { rough: 1, metal: 1, tex: t, depth, ...rest });
   m.name = 'models:' + name;
+  // (a recipe with no metal in it has a metal picture of zeros: not read. On WebGPU a shader may read 16 pictures and a scene's lights, sky
+  // and air take up to 12 of them, so each one a material does without is one the scene can have: detail-test's pictures page)
+  if (!R.metal) { m.metalnessMap = null; m.metalness = 0; }
   m.userData.recipe = { name, look, seed, P: R.P, repeat, closeUp, solid, scatter };
   m.userData.recipeHeight = t.height;   // (WebGPU: bumps when laid on by position)
   if (!m.userData.gsGpu && (closeUp || solid || scatter)) m.userData.gsGpu = 'recipe';
