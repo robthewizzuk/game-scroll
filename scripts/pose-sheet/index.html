@@ -1,11 +1,11 @@
 <!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
 <script type="module">
 // A sheet of poses for scripts/pose-sheet.cjs: a row for each pose, a column for each side it is seen from.
-//   ?poses=coverHighL,coverLowL+blindOver,swim@.3   a cell: pose[+upper][@phase]
+//   ?poses=coverHighL,coverLowL+blindOver,swim@.3,idle+aim~rifle:aim   a cell: pose[+upper][@phase][~weapon[:how]] (gs.models.weapon held: how aim|ready|hip|low|slung)
 //   &who=human|person|figure   &views=three,side,front,back,top   &cell=220x260   &prop=wall|low|water|seat|none   &aim=0 (up/down)   &yaw=0 (aimYaw)   &gpu
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
-const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'); window.DBG = Q.has('dbg');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 try {
   await loadParts();
@@ -27,14 +27,15 @@ try {
   if (prop === 'seat') { const m = new T.Mesh(new T.BoxGeometry(.55, .45, .55), gs.hd.pbr('#333', { rough: .6 })); m.position.set(0, .22, .02); world.add(m); const b = new T.Mesh(new T.BoxGeometry(.55, .7, .12), gs.hd.pbr('#333', { rough: .6 })); b.position.set(0, .8, -.27); world.add(b); }
   let water = null; if (prop === 'water') { floor.position.y = -2.4; water = new T.Mesh(new T.BoxGeometry(30, .02, 30), new T.MeshStandardMaterial({ color: '#2d6f8a', transparent: true, opacity: .55, roughness: .1 })); water.position.y = 0; world.add(water); }
   for (let r = 0; r < cells.length; r++) {
-    const m = /^([^+ @]+)(?:[+ ]([^@]+))?(?:@([\d.]+))?$/.exec(cells[r]); if (!m) throw new Error('bad cell ' + cells[r]);
-    const [, pose, upper, ph] = m;
+    const m = /^([^+ @~]+)(?:[+ ]([^@~]+))?(?:@([\d.]+))?(?:~([a-z]+)(?::([a-z]+))?)?$/.exec(cells[r]); if (!m) throw new Error('bad cell ' + cells[r]);
+    const [, pose, upper, ph, kind, how] = m;
     const body = who === 'human' ? gs.models.human(opts) : who === 'person' ? gs.poses.person({ mat: c => gs.hd.pbr(c) }) : gs.poses.figure({ mat: c => gs.hd.pbr(c) }); world.add(body);
     if (!body.rig.poses[pose]) throw new Error('no pose ' + pose);
     if (upper && !body.rig.poses[upper]) throw new Error('no pose ' + upper);
     if (prop === 'water') body.position.y = +(Q.get('float') ?? -1.35);
     body.rig.steps = false;
-    for (let i = 0; i < 50; i++) { body.rig.play(pose, ph != null ? { at: +ph } : {}); body.rig.upper(upper || null); body.rig.update(1 / 60, { aim: +(Q.get('aim') || 0), aimYaw: +(Q.get('yaw') || 0) }); }
+    const held = kind ? gs.models.weapon(kind).wield(body) : null;
+    for (let i = 0; i < 50; i++) { body.rig.play(pose, ph != null ? { at: +ph } : {}); body.rig.upper(upper || null); body.rig.update(1 / 60, { aim: +(Q.get('aim') || 0), aimYaw: +(Q.get('yaw') || 0) }); held?.update(1 / 60, { how: how || 'ready', pitch: +(Q.get('aim') || 0), yaw: +(Q.get('yaw') || 0) }); }
     body.updateMatrixWorld(true);
     const hp = body.rig.parts.hips.getWorldPosition(new T.Vector3());
     for (let k = 0; k < views.length; k++) {
@@ -46,7 +47,8 @@ try {
       sx.drawImage(cell, k * cw, r * ch);
       sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${cells[r]} ${views[k]}`, k * cw + 4, r * ch + 12);
     }
-    info.push(`${cells[r]}: hips ${hp.y.toFixed(2)} high`);
+    const loc = o => { const w = o.getWorldPosition(new T.Vector3()); return body.worldToLocal(w).toArray().map(n => n.toFixed(3)).join(','); };
+    info.push(`${cells[r]}: hips ${hp.y.toFixed(2)} high` + (window.DBG ? ` armR ${loc(body.rig.parts.armR)} armL ${loc(body.rig.parts.armL)} head ${loc(body.rig.parts.head)} spine ${loc(body.rig.parts.spine)}` + (held ? ` stock ${loc(held.gun.points.stock || held.gun.points.grip)} grip ${loc(held.gun.points.grip)} muzzle ${loc(held.gun.points.muzzle)}` : "") : ''));
     world.remove(body);
   }
   window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };

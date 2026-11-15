@@ -1537,6 +1537,8 @@ export interface Fx3dEffect {
   /** Takes it and its particles away at once. */ remove(): void;
 }
 /** 3D text, 3D particle effects and extra screen effects (lazy). All of it draws on WebGL and on WebGPU. */
+export type ImpactSurface = 'metal' | 'stone' | 'wood' | 'glass' | 'dirt' | 'grass' | 'gravel' | 'sand' | 'snow' | 'mud' | 'water' | 'ice' | 'cloth' | 'body' | 'plastic' | 'rubber' | 'leaves' | 'carpet';
+export type WeaponKind = 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton';
 export interface Fx3dPart {
   /**
    * Sharp text inside the 3D world: scores over heads, signs, labels. size: the height of a capital letter in world
@@ -1547,7 +1549,7 @@ export interface Fx3dPart {
   /** Particle effects for one scene: fx = new Particles3D(view.scene), then fx.update(dt) every frame. seed: the same particles every time (replays). In a Next Gen view, fire, explosions and sparks light what is round them and soft dots take the lamps' light (lights: false for neither). */
   Particles3D: new (scene: Loose, o?: { seed?: number | null; lights?: boolean }) => {
     /** Your own effect: life, speed and size are [min, max]; colors [from, to]; rate a second, burst at the start; glow: false for soft dots like smoke. */
-    make(pos: Fx3dPos, o?: { life?: number | [number, number]; speed?: number | [number, number]; size?: number | [number, number]; colors?: Loose[]; rate?: number; burst?: number; loop?: boolean; duration?: number; shape?: 'point' | 'sphere' | 'cone'; radius?: number; angle?: number; up?: boolean; gravity?: number; glow?: boolean; shrink?: boolean; grow?: boolean; fade?: boolean }): Fx3dEffect;
+    make(pos: Fx3dPos, o?: { life?: number | [number, number]; speed?: number | [number, number]; size?: number | [number, number]; colors?: Loose[]; rate?: number; burst?: number; loop?: boolean; duration?: number; shape?: 'point' | 'sphere' | 'cone'; radius?: number; angle?: number; up?: boolean; /** A cone points this way. */ dir?: Fx3dPos; gravity?: number; glow?: boolean; shrink?: boolean; grow?: boolean; fade?: boolean }): Fx3dEffect;
     /** A flame that keeps burning (in a Next Gen view, a wavering light that follows it). */ fire(pos: Fx3dPos, o?: { size?: number; color?: Loose; end?: Loose }): Fx3dEffect;
     /** Rising smoke (keeps going). */ smoke(pos: Fx3dPos, o?: { size?: number; color?: Loose }): Fx3dEffect;
     /** A quick shower of sparks (and a quick flash of light; light: false for none). */ sparks(pos: Fx3dPos, o?: { color?: Loose; count?: number; power?: number; light?: boolean }): Fx3dEffect;
@@ -1558,6 +1560,24 @@ export interface Fx3dPart {
     update(dt: number): void;
     /** Takes every effect and particle away. */ clear(): void;
     dispose(): void;
+  };
+  /**
+   * What a shot does where it lands and what a gun throws out: hits that look and sound of what was hit (sparks off metal, dust and chips off
+   * stone, splinters off wood, glints off glass, dirt, sand, a splash on water, a puff off cloth and people: no blood) with a mark left on
+   * the surface, muzzle flashes that light a Next Gen scene, and spent cases that bounce (on the game's World3D, else y = 0) with a tinkle.
+   * What was hit is read from the mesh (as gs.sound.Foley reads it) unless surface says. Make it in make(); clear() in reset(); update(dt).
+   */
+  Impacts: new (view: Loose, o?: { particles?: Loose; marks?: boolean; holes?: number; sounds?: boolean; cases?: number; link?: boolean }) => {
+    /** hit: a World3D ray's hit, or { point, normal, mesh }; power 1 a rifle round; from: where the shot came from. Returns the surface. */
+    hit(hit: { point: Fx3dPos; normal?: Fx3dPos; mesh?: Loose; thing?: Loose }, o?: { surface?: ImpactSurface; power?: number; from?: Fx3dPos; mark?: boolean; sound?: boolean }): ImpactSurface;
+    /** A muzzle flash at `at` pointing along dir (kind: the weapon, for its size and colour). */
+    muzzle(at: Fx3dPos, dir: Fx3dPos, o?: { kind?: WeaponKind | string; size?: number }): Loose;
+    /** A spent case out of eject (a weapon's points.eject, or a point with right): kind 'small' | 'rifle' | 'shell' or the weapon's. */
+    shell(eject: Loose, o?: { kind?: 'small' | 'rifle' | 'shell' | WeaponKind; right?: Fx3dPos; speed?: number }): Loose | null;
+    /** What a mesh is made of, as a hit reads it ('stone' when nothing says). */
+    surfaceOf(mesh: Loose): ImpactSurface;
+    cases: Loose[]; fx: Loose;
+    update(dt: number): Loose; clear(): Loose; dispose(): void;
   };
   /** A glowing edge round things (Next Gen views). pass.selectedObjects = [...] changes them; pass.remove() takes it off. */
   outline(view: Loose, objects: Loose[], o?: { color?: Loose; hidden?: Loose; strength?: number; thickness?: number; pulse?: number }): { selectedObjects: Loose[]; edgeStrength: number; edgeThickness: number; edgeGlow: number; pulsePeriod: number; visibleEdgeColor: Loose; hiddenEdgeColor: Loose; remove(): void; [k: string]: Loose };
@@ -2747,16 +2767,54 @@ type On<T> = { on(ev: string, fn: (...a: Loose[]) => void): T };
 export interface Shot { from: P3; dir: P3; range: number; speed: number; /** The speed of what it was fired from (a car), added to a flying shot's own. */ carry?: P3; damageAt(distance: number, head?: boolean): number }
 export interface Gun {
   damage: number; rate: number; mag: number; reserve: number; reload: number; ammo: number; kick: { pitch: number; yaw: number };
+  /** The kind it is (arm(kind)), the ammo it takes, the Pouch it reloads out of (else its own reserve). */ kind?: WeaponKind; ammoType: string | null; pouch: Pouch | null;
+  /** Spare rounds to reload from: in its pouch, else its reserve. */ readonly spare: number;
   justFired: boolean; empty: boolean; readonly reloading: number; readonly spreadNow: number;
   pull(from: P3, dir: P3, pressed?: boolean): Shot[]; wobble(dir: P3, cone: number, is3?: boolean): P3; update(dt: number): Gun; startReload(): boolean; damageAt(distance?: number, head?: boolean): number;
   save(): Loose; load(d: Loose): Gun; [k: string]: Loose;
+}
+export interface ArsenalEntry {
+  /** Where a Loadout keeps it. */ slot: 'melee' | 'hand' | 'long' | 'heavy' | 'throw';
+  /** The ammo it takes (a Pouch's name for it). */ ammo?: string;
+  /** The case it throws (gs.fx3d Impacts.shell). */ shell?: 'small' | 'rifle' | 'shell' | null;
+  /** Rounds that come with it picked up. */ pickup?: number;
+  /** Options for gs.combat.Gun. */ gun?: Loose;
+  /** A grenade's throw: speed, fuse, radius, damage (for gs.combat.Explosives). */ throw?: { speed: number; fuse: number; radius: number; damage: number };
+  /** A launcher's rocket going off. */ blast?: { radius: number; damage: number };
+  /** A gs.fight.Melee weapon over SWINGS. */ melee?: { reach: number; damage: number; arc: number };
+}
+export interface Pouch { n: Record<string, number>; max: Record<string, number>; count(kind: string): number; add(kind: string, n: number): number; take(kind: string, n?: number): number; full(kind: string): boolean; save(): Record<string, number>; load(d: Loose): Pouch }
+export interface Pickup { x: number; y: number; z: number; kind: WeaponKind | 'ammo' | 'health' | string; of?: string; amount: number | null; respawn: number; here: boolean; spin: number; bob: number; [k: string]: Loose }
+export interface Loadout {
+  pouch: Pouch; carried: Record<string, { gun: Gun | null }>; kind: WeaponKind | null; switching: number; health: Health | null;
+  /** The gun out (null for a thing swung or thrown, or nothing). */ readonly gun: Gun | null;
+  /** ARSENAL's entry for the one out. */ readonly info: ArsenalEntry | null;
+  /** The kinds carried, in slot order. */ readonly list: WeaponKind[];
+  has(kind: string): boolean;
+  /** Picks one up (with its rounds): drops what was in its slot (returned). */ give(kind: WeaponKind, o?: { rounds?: number; use?: boolean }): WeaponKind | null;
+  /** What a Pickups handed over: how much it took (0: leave it lying). */ take(p: Pickup): number;
+  use(kind: WeaponKind): Loadout; next(step?: number): Loadout; prev(): Loadout; update(dt: number): Loadout;
+  /** Gun.pull with its sound (at: where), nothing while switching. */ fire(from: P3, dir: P3, pressed?: boolean, o?: { at?: P3 }): Shot[];
+  reload(o?: { at?: P3 | null }): Loadout; save(): Loose; load(d: Loose): Loadout;
 }
 export interface Health {
   hp: number; max: number; armour: number; down: boolean; dead: boolean; hits: { angle: number; amount: number; life: number }[]; readonly frac: number; readonly hurting: boolean;
   hurt(amount: number, o?: { from?: P3; at?: P3; facing?: number }): number; heal(n: number): number; addArmour(n: number): Health; revive(share?: number): Health; update(dt: number): Health; reset(): Health;
 }
 export interface CombatPart {
-  Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number }) => Gun;
+  Gun: new (o?: { damage?: number; rate?: number; mag?: number; reserve?: number; reload?: number; spread?: number; bloom?: number; maxSpread?: number; settle?: number; pellets?: number; auto?: boolean; recoil?: number; sideways?: number; recover?: number; range?: number; falloff?: [number, number, number]; head?: number; speed?: number; rng?: () => number; pouch?: Pouch | null; ammoType?: string | null }) => Gun;
+  /** Each weapon's numbers (the ones gs.models.weapon makes): its Gun options, ammo, case, slot, a grenade's throw, a rocket's blast, a melee weapon. */
+  ARSENAL: Readonly<Record<WeaponKind, ArsenalEntry>>;
+  /** A Gun with a weapon's numbers (o over them: a pouch...). */
+  arm(kind: WeaponKind, o?: Loose): Gun;
+  /** Ammo carried by kind ('pistol', 'magnum', 'shells', 'rifle', 'rockets', 'grenades' or your own); max: the most of each. */
+  Pouch: new (start?: Record<string, number>, o?: { max?: Record<string, number> }) => Pouch;
+  /** The weapons one person carries (a slot each), the one out, and a pouch the guns share; sounds: false to play your own. health: where health pickups go. */
+  Loadout: new (o?: { pouch?: Pouch; sounds?: boolean; health?: Health | null }) => Loadout;
+  /** Things lying in the world to pick up (weapons, kind 'ammo' with of and amount, kind 'health'); update(dt, who) gives those in reach; collect(dt, who, loadout) takes them. */
+  Pickups: new (o?: { reach?: number; bob?: number }) => { list: Pickup[]; add(o: Partial<Pickup> & { kind: string }): Pickup; remove(p: Pickup): Loose; taken(p: Pickup): Loose; update(dt: number, who?: P3 | P3[] | null): Pickup[]; collect(dt: number, who: P3 | P3[], loadout: Loadout): Pickup[]; clear(): Loose };
+  /** A weapon's sound: 'fire', 'empty', 'reload' (over time), 'pump', 'swing', 'pin', 'draw'; at: through the game's gs.sound.Ears when there is one. */
+  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw', at?: P3 | null, o?: { time?: number; vary?: number }): void;
   /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
   Shots: new (o?: { gravity?: number; push?: number; link?: boolean }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
     /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter).
@@ -3885,6 +3943,17 @@ export interface SculptShape {
   at?: [number, number, number]; rot?: [number, number, number]; scale?: number | [number, number, number];
   blend?: number; cut?: boolean; colour?: string; color?: string;
 }
+/**
+ * A weapon in someone's hands (gs.models.human, a gs.poses person or figure): each frame after rig.update(), update(dt, { how, pitch, yaw })
+ * puts it where that way of holding has it, eased from the last (how 'aim' | 'ready' | 'hip' | 'low' | 'slung', or 'none': hidden), with both
+ * hands on it for a two-handed one. Up to aim it points where the body faces, turned about the shoulder by pitch (up +) and yaw (left +).
+ */
+export interface Wield {
+  person: Loose; gun: Loose; how: string; ease: number;
+  /** Where shots leave (world) and the way it points (a thing swung: along its length). */ muzzle: Loose; dir: Loose;
+  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean }): Wield;
+  /** Takes it off the person: the weapon. */ drop(): Loose;
+}
 export interface ModelsPart {
   /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines) | 'palm' (a palm trunk: rings, leaf scars, fibres). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
   material(name: string, o?: { colour?: string; color?: string; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean; solid?: boolean | number; scatter?: boolean; [k: string]: Loose }): Loose;
@@ -4030,6 +4099,17 @@ export interface ModelsPart {
     /** Every kind and its styles: { car: ['saloon', ...], truck: [...], tank, train, boat, plane }. */
     readonly kinds: Readonly<Record<string, readonly string[]>>;
   };
+  /**
+   * A weapon made in code (no model files), our own designs: 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' |
+   * 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton'. The right hand's grip at the origin, the muzzle towards -z (things swung: their length up +y),
+   * points grip, fore (the left hand), muzzle, eject, sight, stock; userData.weapon { kind, hands, long, melee, length, upright }. A few draws each;
+   * the same weapon asked for again shares its shapes. finish: the colour of its polymer parts. wield(person) holds it.
+   */
+  weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean }): Loose & { points: Record<'grip' | 'fore' | 'muzzle' | 'eject' | 'sight' | 'stock', Loose | null>; wield(person: Loose): Wield };
+  /** The weapons there are. */
+  readonly weapons: readonly WeaponKind[];
+  /** A weapon in someone's hands: weapon.wield(person) or new Wield(person, weapon). */
+  Wield: new (person: Loose, weapon: Loose) => Wield;
   /** Per-vertex curvature of a geometry (convex > 0, concave < 0) and how much each vertex faces up. */
   curvature(geometry: Loose): { curve: Float32Array; up: Float32Array };
 }

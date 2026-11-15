@@ -1788,6 +1788,62 @@ console.log('physics ok');
   console.log('combat: shooting from a car ok');
 }
 {
+  // weapons: the arsenal's numbers, a pouch the guns share, a loadout, pickups; the models and two hands on them; hits and spent cases
+  const { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } = await import('../src/kit/combat.js');
+  const { weapon, WEAPON_KINDS, Wield } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js');
+  assert.deepEqual(Object.keys(ARSENAL).sort(), [...WEAPON_KINDS].sort(), 'a number for every weapon model');
+  const rifle = arm('rifle'); assert.ok(rifle.kind === 'rifle' && rifle.mag === 30 && rifle.auto && rifle.ammoType === 'rifle', 'arm() makes a gun from its numbers');
+  const shotgun = arm('shotgun', { rng: () => .5 }); assert.equal(shotgun.pull({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }).length, 9, 'a shotgun throws pellets');
+  const pouch = new Pouch({ rifle: 10 }), g = arm('rifle', { pouch }); g.ammo = 0; assert.ok(g.startReload() && g.spare === 10, 'reloads out of the pouch');
+  g.update(3); assert.ok(g.ammo === 10 && pouch.count('rifle') === 0 && !g.startReload(), 'the pouch empties into the magazine: ' + g.ammo);
+  assert.equal(new Pouch({ rockets: 50 }).count('rockets'), 6, 'carries no more than its max');
+  const arms = new Loadout({ pouch: new Pouch({ pistol: 20 }), sounds: false }); arms.give('pistol');
+  assert.ok(arms.kind === 'pistol' && arms.gun.ammo === 12 && arms.pouch.count('pistol') === 32, 'a weapon picked up comes loaded, with its rounds');
+  assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 0, 'no firing while it is being drawn');
+  arms.update(.5); assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 1, 'then it fires');
+  assert.equal(arms.fire({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }).length, 0, 'semi-automatic: one a pull');
+  const drops = new Pickups(), sg = drops.add({ x: 1, y: 0, z: 0, kind: 'shotgun' }), am = drops.add({ x: 30, y: 0, z: 0, kind: 'ammo', of: 'pistol', amount: 20, respawn: 5 });
+  assert.deepEqual(drops.collect(1 / 60, { x: 0, y: 0, z: 0 }, arms).map(p => p.kind), ['shotgun'], 'picks up what is in reach');
+  assert.ok(arms.has('shotgun') && arms.kind === 'pistol' && !drops.list.includes(sg), 'carried, not taken out; gone from the world');
+  drops.collect(1 / 60, { x: 30, y: 0, z: .5 }, arms); assert.ok(!am.here && arms.pouch.count('pistol') === 52, 'ammo goes in the pouch: ' + arms.pouch.count('pistol'));
+  for (let i = 0; i < 400; i++) drops.update(1 / 60); assert.ok(am.here, 'and comes back after its respawn');
+  arms.give('smg'); assert.ok(arms.list.join() === 'pistol,smg', 'one long gun: the smg takes the shotgun\'s place: ' + arms.list);
+  arms.give('bat'); arms.next(); assert.ok(arms.list[0] === 'bat' && arms.gun, 'switches in slot order');
+  const back = new Loadout().load(JSON.parse(JSON.stringify(arms.save()))); assert.ok(back.list.join() === arms.list.join() && back.kind === arms.kind && back.pouch.count('pistol') === arms.pouch.count('pistol'), 'saves and loads');
+  weaponSound('shotgun'); weaponSound('rifle', 'reload', { x: 0, y: 0, z: 0 }); weaponSound('bat', 'swing');   // (quiet here: no audio)
+  // the models: a few draws each, their points, the same one shared
+  for (const k of WEAPON_KINDS) { const w = weapon(k), info = w.userData.weapon; assert.ok(w.children.filter(c => c.isMesh).length <= 6 && w.points.grip && w.points.muzzle && info.length > .05, k + ': a model with its points'); }
+  assert.ok(weapon('rifle').children[0].geometry === weapon('rifle').children[0].geometry, 'the same weapon shares its shapes');
+  // both hands on a rifle up to aim, on a plain figure: the stock at the shoulder, the hands at the grip and fore-end, pointing ahead
+  const man = figure(), held = weapon('rifle').wield(man), V = held.gun.points.grip.position.constructor;
+  man.rig.upper('aim'); man.rig.update(1 / 60); for (let i = 0; i < 30; i++) held.update(1 / 60, { how: 'aim' });
+  man.updateMatrixWorld(true);
+  const sh = man.rig.parts.armR.getWorldPosition(new V()), stock = held.gun.points.stock.getWorldPosition(new V());
+  assert.ok(stock.distanceTo(sh) < .15 && held.dir.z > .97 && held.muzzle.z > .6, 'the rifle sits in the shoulder, pointing ahead: ' + stock.distanceTo(sh).toFixed(2) + ' ' + held.dir.z.toFixed(2));
+  const tip = s => { const f = man.rig.parts['fore' + s]; return f.localToWorld(new V(0, -f.userData.ikLength, 0)); };   // (the end of the forearm: a figure has no hand bones)
+  const grip = held.gun.points.grip.getWorldPosition(new V()), fore = held.gun.points.fore.getWorldPosition(new V());
+  assert.ok(tip('R').distanceTo(grip) < .15 && tip('L').distanceTo(fore) < .15, 'both hands on it: ' + tip('R').distanceTo(grip).toFixed(2) + ' ' + tip('L').distanceTo(fore).toFixed(2));
+  held.update(1 / 60, { how: 'aim', pitch: .4 }); for (let i = 0; i < 30; i++) held.update(1 / 60, { how: 'aim', pitch: .4 });
+  assert.ok(held.dir.y > .3, 'pitch aims it up');
+  held.update(1 / 60, { how: 'none' }); assert.ok(!held.gun.visible, 'put away');
+  // hits and spent cases (the particles and the case meshes; marks need a view that has decal())
+  const T = await import('three'), { Impacts } = await import('../src/kit/impacts.js'), scene = new T.Scene();
+  let made = 0; const dots = { make: (p, o) => { made += o.burst || 0; return {}; }, flash() {}, update() {}, clear() {} };   // (the particles draw on a page: counted here)
+  const fx = new Impacts({ scene }, { sounds: false, particles: dots });
+  const metal = new T.Mesh(new T.BoxGeometry(1, 1, 1), new T.MeshStandardMaterial({ name: 'steel plate', metalness: 1 }));
+  assert.equal(fx.hit({ point: { x: 0, y: 1, z: 0 }, normal: { x: 0, y: 0, z: 1 }, mesh: metal }), 'metal', 'what was hit is read from its mesh');
+  assert.equal(fx.hit({ point: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 1, z: 0 } }, { surface: 'grass' }), 'dirt', 'grass sprays like dirt');
+  assert.ok(made > 10, 'bits fly');
+  fx.muzzle({ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { kind: 'shotgun' });
+  const e = new T.Object3D(); e.position.set(0, 1, 0); scene.add(e); e.updateMatrixWorld(true);
+  for (let i = 0; i < 5; i++) fx.shell(e, { kind: 'pistol' }); fx.shell(e, { kind: 'revolver' });
+  assert.equal(fx.cases.length, 5, 'pistols throw cases; revolvers keep theirs');
+  for (let i = 0; i < 180; i++) fx.update(1 / 60);
+  assert.ok(fx.cases.every(c => c.still && Math.abs(c.p.y - .0045) < .01 && c.p.x > .2), 'they fly out to the right and lie on the ground');
+  fx.clear(); assert.equal(fx.cases.length, 0, 'cleared');
+  console.log('combat: weapons, ammo, pickups, holding and hits ok');
+}
+{
   const { Melee, Brawler, SWINGS } = await import('../src/kit/fight.js');
   const A = { x: 0, y: 0, z: 0, yaw: 0 }, B = { x: 0, y: 0, z: 1.6, yaw: Math.PI };   // face to face, 1.6 m apart
   const a = new Melee(A), b = new Melee(B); let hits = [];
