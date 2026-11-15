@@ -1418,11 +1418,12 @@ export interface ReplayPart {
   Replayer: new (data: { seed: number; frames: Loose[] }) => { rng: Rng; readonly done: boolean; step(game: Partial<Game>): number };
 }
 
-export interface Light { x: number; y: number; r: number; color?: string; power?: number; cone?: number; dir?: number; flicker?: number; shadows?: boolean }
+export interface Light { x: number; y: number; r: number; color?: string; power?: number; cone?: number; dir?: number; flicker?: number; shadows?: boolean; size?: number }
 export type ScreenEffect = 'crt' | 'bloom' | 'grade' | 'pixelate' | 'glitch' | 'rgbSplit' | 'film' | 'shockwave' | 'godrays' | 'zoomBlur' | 'blur' | 'outline' | 'grayscale';
 export interface Look2dPart {
   /** Darkness with lights; walls (a TileMap, anything with ray(), or [x1, y1, x2, y2] segments) cast shadows. */
-  Lights: new (w: number, h: number, o?: { dark?: number; color?: string; pixel?: boolean; rays?: number; scale?: number }) => { dark: number; color: string; draw(c: Ctx, lights: Light[], o?: { walls?: Loose; cam?: Camera2D | null; dt?: number }): Loose };
+  /** glow: true works the light out on the graphics chip (2D radiance cascades): light from each light's bright middle and from what emit(c) paints, stopped by walls and what block(c) paints, soft shadows; canvas lights where the chip can't (lights.glowing says which). */
+  Lights: new (w: number, h: number, o?: { dark?: number; color?: string; pixel?: boolean; rays?: number; scale?: number; glow?: boolean; res?: number; bright?: number; haze?: number; sky?: string | null; steady?: number }) => { dark: number; color: string; glowing: boolean; draw(c: Ctx, lights: Light[], o?: { walls?: Loose; cam?: Camera2D | null; dt?: number; emit?: ((c: Ctx) => void) | null; block?: ((c: Ctx) => void) | null }): Loose };
   /** Whole-screen effects with pixi-filters (lazy). Options are the pixi-filters filter's own. */
   Screen: new (effects?: Partial<Record<ScreenEffect, object | boolean | null>>) => { set(effects: Partial<Record<ScreenEffect, object | boolean | null>>): Loose; filter(name: ScreenEffect): Loose; apply(c: Ctx, dt?: number): Loose; shock(x: number, y: number, o?: object): Loose };
   /** Fast WebGL sprites with PixiJS (lazy). Sprites are PixiJS Sprites: x, y, rotation, scale, alpha, tint. */
