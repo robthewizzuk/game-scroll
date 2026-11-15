@@ -2,6 +2,7 @@ import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
+const { approach } = gs.juice;
 
 // A tiny farm, one season at a time. Pick a seed at the bottom, then tap a plot: tap empty soil to
 // plant, tap a dry crop to water it, tap a ripe crop to harvest and sell it. Watered crops grow
@@ -48,7 +49,7 @@ function make(api) {
       if (Math.random() < dt * (.025 + season * .02)) { const grown = plots.map((p, i) => p.crop ? i : -1).filter(i => i >= 0); if (grown.length) { const i = grown[Math.random() * grown.length | 0]; if (!crows.some(c => c.plot === i)) crows.push({ plot: i, state: 'land', x: -10, y: 10, k: 0, eat: 4 }); sfx(1300, .05, 'square', .02, -300); } }
       for (const c of crows) {
         const tx = ox() + (c.plot % cols) * PS + 10, ty = oy() + (c.plot / cols | 0) * PS + 6;
-        if (c.state === 'land') { c.x += (tx - c.x) * Math.min(1, dt * 3); c.y += (ty - c.y) * Math.min(1, dt * 3); if (Math.hypot(tx - c.x, ty - c.y) < 2) c.state = 'eat'; }
+        if (c.state === 'land') { c.x = approach(c.x, tx, 3, dt); c.y = approach(c.y, ty, 3, dt); if (Math.hypot(tx - c.x, ty - c.y) < 2) c.state = 'eat'; }
         else if (c.state === 'eat') { c.eat -= dt; if (c.eat <= 0) { plots[c.plot].crop = null; c.state = 'fly'; fx.push({ i: c.plot, txt: 'PECKED!', l: .9, col: '#f86060' }); haptic('warning'); sfx(200, .15, 'square', .04, -80); } }
         else { c.x += 120 * dt; c.y -= 80 * dt; if (c.y < -20) c.gone = true; }
       }

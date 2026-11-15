@@ -7,6 +7,7 @@ const { haptic } = gs.device;
 const { Juice } = gs.juice;
 const { View, G, part, grp, blob } = gs.toon;
 const { rnd } = gs.util;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 192, H = 176;
 const SKIN = ['#f8c890', '#d89868', '#a86840', '#f0b8a0', '#c88858'];
@@ -33,7 +34,7 @@ function make(api) {
 
   function newCake(to) { fuseMax = Math.max(2.4, 6 - passes * .06); fuse = fuseMax * rnd(.6, 1); holder = to; fly = null; if (to === 0) doze(); thinkT = holder === 0 ? 0 : rnd(.35, 1.1) * Math.max(.45, 1 - passes * .015); }
   // when the cake reaches you, one or two friends nod off: throw to them and it bounces straight back
-  function doze() { const k = [1, 2, 3, 4].sort(() => Math.random() - .5); nap = k.slice(0, passes > 14 ? 2 : 1); }
+  function doze() { const k = shuffle([1, 2, 3, 4]); nap = k.slice(0, passes > 14 ? 2 : 1); }
   function throwTo(from, to) {
     fly = { from, to, k: 0 }; holder = -1; passes++; sounds.jump?.(); haptic('light');
   }

@@ -5,6 +5,7 @@ const { PAL } = gs.palettes;
 const { haptic } = gs.device;
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
+const { approach } = gs.juice;
 
 // Fixed shooter: drag to move your cannon, it fires on its own. Clear each marching formation before it lands.
 const R = PAL.amber, W = 160, H = 160, PY = 146;
@@ -20,7 +21,7 @@ function make(api) {
     reset() { px = tx = W / 2; shots = []; bombs = []; cool = .3; wave = 1; score = 0; frame = 0; dead = 0; feel.clear(); ready.reset(); build(); },
     update(dt) {
       feel.update(dt); if (!ready.update(dt)) return;
-      px += (tx - px) * Math.min(1, dt * 18); px = clamp(px, 6, W - 6);
+      px = approach(px, tx, 21, dt); px = clamp(px, 6, W - 6);
       cool -= dt; if (cool <= 0) { cool = .38; shots.push({ x: px, y: PY - 3 }); sfx(1000, .03, 'square', .015, -500); }
       stepT -= dt;
       if (stepT <= 0) {

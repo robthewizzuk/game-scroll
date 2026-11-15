@@ -7,6 +7,7 @@ const { C16 } = gs.palettes;
 const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 160, H = 192;
 const N = 6, COLS = [C16[2], C16[3], C16[5], C16[8], C16[9], C16[10], C16[7]];
@@ -46,7 +47,7 @@ function make(api) {
       shape = grid.map(v => v >= 0);
       break;
     }
-    pieces.sort(() => Math.random() - .5);
+    pieces = shuffle(pieces);
     time = 25 + pieces.length * 8 - Math.min(10, level); done = 0; drag = null;
   }
   const fills = () => { const f = new Array(N * N).fill(null); for (const p of pieces) if (p.at) for (const [x, y] of p.cells) f[(p.at[1] + y) * N + p.at[0] + x] = p; return f; };

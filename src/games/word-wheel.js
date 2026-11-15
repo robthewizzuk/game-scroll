@@ -6,6 +6,7 @@ const { Feel } = gs.effects;
 const { Words } = gs.words;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 360, H = 640;
 
@@ -21,7 +22,7 @@ function make(api) {
     let w = null;
     for (let k = 0; k < 40 && !w; k++) { const c = words.random({ length: 6 }); if (c && words.safe(c) && words.from(c, { min: 3, common: true }).length >= 6) w = c; }
     w = (w || 'garden').toUpperCase();
-        letters = w.split('').sort(() => Math.random() - .5);
+        letters = shuffle(w.split(''));
     all = words.from(w.toLowerCase(), { min: 3, common: true }).filter(x => words.safe(x)).map(x => x.toUpperCase());
     found = []; path = []; cur = null;
   }
@@ -63,7 +64,7 @@ function make(api) {
       if (t < 5 && round === 1 && !found.length) { c.fillStyle = '#606c38'; c.font = '600 15px Rubik, sans-serif'; c.fillText('Slide across letters to spell', W / 2, H - 30); }
     },
     down(x, y) {
-      if (Math.hypot(x - CX(), y - CY()) < 28) { letters.sort(() => Math.random() - .5); sfx(500, .05, 'triangle', .03); haptic('light'); return; }
+      if (Math.hypot(x - CX(), y - CY()) < 28) { letters = shuffle(letters); sfx(500, .05, 'triangle', .03); haptic('light'); return; }
       path = []; cur = { x, y }; pick(x, y);
     },
     move(x, y, pr) { if (!pr || !cur) return; cur = { x, y }; pick(x, y); },

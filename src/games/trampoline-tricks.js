@@ -6,6 +6,7 @@ const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
 const { clamp } = gs.util;
+const { icon } = gs.icons;
 
 let W = 360, H = 640;
 const TAU = Math.PI * 2;
@@ -65,7 +66,7 @@ function make(api) {
       c.fillStyle = '#3c096c'; c.beginPath(); c.arc(0, -25 + k * 4, 8, Math.PI, TAU); c.fill();
       c.restore();
       feel.end(c, W, H);
-      c.textAlign = 'left'; c.fillStyle = '#03045e'; c.font = '700 16px Rubik, sans-serif'; c.fillText('★'.repeat(3 - falls), 16, H - 24);
+      for (let i = 0; i < 3 - falls; i++) icon(c, 'star', 24 + i * 18, H - 30, 16, { color: '#03045e' });
       c.textAlign = 'right'; c.font = '600 14px Rubik, sans-serif'; c.fillText(combo ? `streak ${combo}` : '', W - 16, H - 24);
       c.textAlign = 'center';
       if (ml > 0) { c.fillStyle = '#ff006e'; c.font = '800 28px Rubik, sans-serif'; c.fillText(msg, W / 2, 110); }

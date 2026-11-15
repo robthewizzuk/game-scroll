@@ -7,6 +7,7 @@ const { PAL } = gs.palettes;
 const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 const R = PAL.moss;
 let W = 160, H = 160;
@@ -36,7 +37,7 @@ function make(api) {
       bats = new Set(path.slice(2, -1).filter(() => Math.random() < .25).map(([a, b]) => b * N + a));
       // scramble a few arrows on the path; that many turns (+1) is the budget
       const k = Math.min(6, 1 + Math.floor(level / 1.5));
-      const idx = path.slice(0, -1).map(([a, b]) => b * N + a).sort(() => Math.random() - .5).slice(0, k);
+      const idx = shuffle(path.slice(0, -1).map(([a, b]) => b * N + a)).slice(0, k);
       let need = 0; for (const i of idx) { const r = 1 + Math.random() * 3 | 0; arrows[i] = (arrows[i] + r) % 4; need += 4 - r; }
       turns = budget0 = need + 1 + (level < 3 ? 2 : 0); orig = [...arrows]; break;
     }

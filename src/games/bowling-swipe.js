@@ -1,7 +1,7 @@
 import gs from '../gamescroll.js';
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
-const { clamp } = gs.util;
+const { clamp, flickTracker } = gs.util;
 const { Feel } = gs.effects;
 
 // Five frames of top-down bowling. Swipe up to roll: the swipe's direction aims it and a curved
@@ -9,6 +9,7 @@ const { Feel } = gs.effects;
 const W = 360, H = 640, LX = 70, LW = 220, BR = 15, PR = 9, PIN_Y = 120, FRAMES = 5;
 
 function make(api) {
+  const flick = flickTracker();   // how fast the swipe is going as it lets go
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   let ball, pins, frame, roll, score, pts, settle, msg, t, frameDown, done;
   function rack() {
@@ -103,14 +104,13 @@ function make(api) {
       if (!ball.live && frame === 0 && roll === 0 && !held) { c.fillStyle = '#ffffffaa'; c.font = '600 14px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText('swipe up · curve it to hook', W / 2, H - 20); }
       if (msg && msg.life > 0) { c.globalAlpha = clamp(msg.life * 2, 0, 1); c.fillStyle = '#ffd34a'; c.font = '400 18px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(msg.txt, W / 2, 300); c.globalAlpha = 1; }
     },
-    down(x, y) { if (ball.live || done) return; held = true; trail = [{ x, y, t: performance.now() }]; },
-    move(x, y) { if (held) trail.push({ x, y, t: performance.now() }); },
+    down(x, y) { if (ball.live || done) return; held = true; trail = [{ x, y }]; flick.start(x, y); },
+    move(x, y) { if (held) { trail.push({ x, y }); flick.add(x, y); } },
     up(x, y) {
-      if (!held) return; held = false; trail.push({ x, y, t: performance.now() });
+      if (!held) return; held = false; trail.push({ x, y }); flick.add(x, y);
       const a = trail[0], b = trail[trail.length - 1], dy = b.y - a.y, dx = b.x - a.x;
       if (dy > -50) { trail = []; return; }
-      const recent = trail.filter(p => b.t - p.t < 140), r0 = recent[0] || a;
-      const sp = Math.hypot(b.x - r0.x, b.y - r0.y) / Math.max(.03, (b.t - r0.t) / 1000);
+      const v = flick.velocity(), sp = Math.hypot(v.vx, v.vy);   // how fast the finger was going as it let go
       // Hook: how far the swipe's middle bowed away from the straight line between its ends.
       const m = trail[Math.floor(trail.length / 2)], len = Math.hypot(dx, dy);
       const bow = ((m.x - a.x) * dy - (m.y - a.y) * dx) / len;

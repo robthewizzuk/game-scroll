@@ -7,6 +7,7 @@ const { startMic, stopMic, haptic } = gs.device;
 const { sfx, bed } = gs.sound;
 const { clamp, rnd } = gs.util;
 const { approach } = gs.juice;
+const { icon } = gs.icons;
 
 let W = 360, H = 640;
 
@@ -104,7 +105,7 @@ function make(api) {
       c.restore();
       feel.end(c, W, H);
       // HUD
-      c.fillStyle = '#ffffffdd'; c.font = '700 18px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText('⛵'.repeat(Math.max(0, lives)), 14, H - 22);
+      for (let i = 0; i < lives; i++) icon(c, 'sailboat', 24 + i * 22, H - 28, 20, { color: '#ffffffdd' });
       c.fillStyle = '#ffffff30'; c.fillRect(W - 110, H - 34, 90, 10); c.fillStyle = '#9ff0ff'; c.fillRect(W - 110, H - 34, 90 * wind, 10);
       c.fillStyle = '#ffffffcc'; c.font = '600 12px Rubik, sans-serif'; c.textAlign = 'right'; c.fillText('WIND', W - 116, H - 25);
       if (t < 5) { c.textAlign = 'center'; c.font = '700 17px Rubik, sans-serif'; c.fillStyle = '#fff'; c.fillText(mic ? 'Blow on the mic to sail!' : 'Hold to blow · slide to steer', W / 2, H * .3); c.font = '500 13px Rubik, sans-serif'; c.fillText(mic ? 'Drag to steer · or hold to blow' : 'The storm is behind you', W / 2, H * .3 + 22); }
