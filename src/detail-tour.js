@@ -329,7 +329,7 @@ function fgLine(m) {
   const parts = [`${Math.round(m.fps)} pictures a second${made ? ` (${Math.round(m.drawnFps)} drawn)` : ''}`, `worst 1% ${Math.round(m.low)}`, `longest ${Math.round(m.worst)} ms`,
     m.chip != null ? `chip ${m.chip.toFixed(1)} ms a drawn frame${chipBy(fgFold(m.chipBy))}${madeBy(m)}` : 'chip time not told'];
   // how blend was paced: each made frame on a refresh of its own, or on the real frame's; made frames dropped as late; tiles the quick way
-  if (m.how === 'blend' && m.pace) parts.push(m.pace === 'first' ? 'each frame on a refresh of its own' : 'the made frame on the real one\'s refresh');
+  if (m.how === 'blend' && m.pace) parts.push(m.pace === 'first' ? 'each frame on a refresh of its own' : m.pace === 'early' ? 'each real frame given two refreshes (30 → 60)' : 'the made frame on the real one\'s refresh');
   if (m.dropped > 0) parts.push(`${m.dropped} made frames dropped as late`);
   if (m.easy != null) parts.push(`${Math.round(m.easy * 100)}% of tiles the quick way`);
   parts.push(`code ${m.work.toFixed(1)} ms`, `3D at ${m.rw} x ${m.rh}`, `screen ${m.hz} Hz`);
