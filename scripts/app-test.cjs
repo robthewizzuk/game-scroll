@@ -882,8 +882,8 @@ async function framegenScenes() {
     'frame generation is timed in the square five ways: as many drawn as the phone draws, half of them, and half with the rest blended as before, blended as now, then made ahead', JSON.stringify(fg.modes));
   check(M('half').pictures === M('half').drawn && !M('half').how && M('before').how === 'blend' && M('blend').how === 'blend' && M('ahead').how === 'ahead' && ['before', 'blend', 'ahead'].every(k => M(k).pictures > M(k).drawn * 1.5),
     'with none made only the drawn frames are new pictures; blended and ahead, the refreshes between show made frames', JSON.stringify(fg.modes));
-  check(M('before').pace === 'after' && ['first', 'after'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
-    'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times', JSON.stringify(fg.modes));
+  check(M('before').pace === 'after' && ['first', 'after', 'early'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
+    'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times ("early", 30 → 60, where the chip holds under 45 a second, as a test machine does)', JSON.stringify(fg.modes));
   const told = !/chip time not told/.test(fg.text);
   check(/^Game Scroll engine test scenes, GSFG frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · GSFG as each run says, for a \d+ Hz screen · /.test(fg.text)
     && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
