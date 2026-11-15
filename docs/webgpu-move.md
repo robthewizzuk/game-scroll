@@ -124,6 +124,23 @@ passes that load, and the pictures kept for nothing. What the kit does about it 
   little each frame needs a half float's steps: its pictures stay half floats (`hd3d-gpu-fx.js`). `sharePictures` shares a picture only between steps of one
   kind, so GSSR's small picture (four channels) no longer takes a step's. Not changed: the scene pass's
   colour, anything in `hd3d-gpu-trace.js`, GSSR's and frame generation's pictures.
+- Things that move go to the chip when they change, once (`sendChanged`, `oneWrite` in `src/kit/gpu.js`; `frameWide`
+  in `src/kit/hd3d-gpu.js`; `HD.sendChanged`, `HD.oneWrite`). Three faults, each found by counting
+  (`gpu-calls.cjs --uploads --uniforms`):
+  three r187 sends a list marked `DynamicDrawUsage` again on every render that draws with it, changed or not, and
+  once more for each shadow map it is in. The kit marks what it rewrites often that way, as WebGL wants: copies'
+  places, cloth, particles, a posed person's index list. Now they go when their version has risen, which every
+  write already did for WebGL. Eight people walking sent 915 KB a frame and now send 67 KB; a parade 1,061 KB and
+  now 79 KB; a field 972 KB and now 145 KB.
+  three sends each run of changed uniforms of a thing in a call of its own, so a thing that moved made two or
+  three calls a pass. One call from the first changed number to the last sends the same.
+  And the numbers the whole frame shares (the air's haze, mist and drift, the sky's horizon and sun, the weather's
+  wet and rain, the sun's near map) were uniforms of each thing's own, so each was written into every thing drawn,
+  every frame it changed; they are in three's per-render group now, sent once a render, and reach a thing three
+  finds unchanged too. A street made 394 writes a frame and makes 61, a field 306 and 91, the coast 251 and 74.
+  What is left is real change: the sea's own surface, made in JavaScript each frame (650 KB a frame at the coast;
+  in the vertex shader it would cost neither the sums nor the upload), posed people's lists and three's own
+  camera matrices, once a pass.
 - The 3D canvas is opaque to the page while a view fills it (`HD.opaque`, `canvasShows` in `src/kit/gpu.js`).
   three makes the canvas see-through (`alphaMode: 'premultiplied'`), which AR needs for the camera picture
   behind it; then the browser blends the whole 3D picture over what is behind it on every frame. Told the

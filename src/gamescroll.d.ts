@@ -525,8 +525,15 @@ export interface ControlsPart {
 export interface PadState { [k: string]: Loose; pressed(button: string): boolean }
 export interface PadPart { pad(i?: number): PadState | null; pads(): PadState[]; rumble(strength?: number, ms?: number, i?: number): void; padConnected(): boolean }
 
-export type MoveType = 'swing' | 'punch' | 'throw' | 'flip' | 'twist' | 'knock' | 'shake' | 'any';
-export interface MovesPart { Moves: new (o?: { sensitivity?: number }) => { on(type: MoveType, fn: (m: { type: string; dir?: string; power?: number }) => void): Loose; update(): void; stop(): void } }
+export type MoveType = 'swing' | 'punch' | 'throw' | 'flip' | 'twist' | 'knock' | 'shake' | 'any' | 'motion' | 'taught';
+export interface MovesPart { Moves: new (o?: { sensitivity?: number; /** A gs.brains.Examples (of: 'move'): moves of your own, or the player's, fire under the names it knows. */ learn?: Examples | null }) => {
+  /** A built-in move, 'any', 'motion' (every burst of movement: m.shape is 49 numbers, m.time its length), 'taught' (an example was taken: m.name, m.count), or a name the learner knows (m.sure). */
+  on(type: MoveType | (string & {}), fn: (m: { type: string; dir?: string; power?: number; shape?: number[]; time?: number; name?: string; count?: number; sure?: number }) => void): Loose;
+  /** The next burst of movement becomes an example of this name for the learner (null stops waiting). */
+  teach(name: string | null): Loose;
+  /** The name teach() is waiting for a move of, or null. */
+  teaching: string | null;
+  update(): void; stop(): void } }
 
 /** The fonts gs.pixel.text draws. */
 export type PixelFontName = 'small' | 'big' | 'silkscreen' | 'silkscreen bold' | 'tiny' | 'jersey' | 'terminal';
@@ -698,11 +705,15 @@ export interface PhysicsPart { Physics: new (o?: { gravity?: number; walls?: num
  *  (backend 'npu'), where the camera picture never reaches the game: pass `preview: true` if the game draws `picture`. */
 export interface VisionPart {
   Face: new (o?: { preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement | null; x: number; y: number; size: number; yaw: number; pitch: number; roll: number; mouth: number; smile: number; blink: boolean; winkLeft: boolean; winkRight: boolean; brows: number; [k: string]: Loose };
+  /** Each hand in list: x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, and shape: the hand as 40 numbers for
+   *  gs.brains.Examples (of: 'hand'), the same wherever the hand is, however near, and with either hand: signs of the game's or the player's own. */
   Hands: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement | null; list: Loose[]; first: Loose | null };
   /** The whole body (stand back): joints by name, armsUp, leftUp, rightUp, lean, squat, jump, clap. Web view only. */
   Body: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; picture: HTMLVideoElement | null; x: number; y: number;
     joints: Record<'nose' | 'leftShoulder' | 'rightShoulder' | 'leftElbow' | 'rightElbow' | 'leftHand' | 'rightHand' | 'leftHip' | 'rightHip' | 'leftKnee' | 'rightKnee' | 'leftFoot' | 'rightFoot', { x: number; y: number; seen: number }>;
-    armsUp: boolean; leftUp: boolean; rightUp: boolean; lean: number; squat: number; jump: boolean; clap: boolean; people: Loose[]; points: Loose[] };
+    armsUp: boolean; leftUp: boolean; rightUp: boolean; lean: number; squat: number; jump: boolean; clap: boolean; people: Loose[]; points: Loose[];
+    /** The pose as 26 numbers for gs.brains.Examples (of: 'pose'): poses of the game's or the player's own. Null with nobody there. */
+    readonly shape: number[] | null };
   /** The player cut out of the camera picture: draw cut.picture (a canvas, see-through round the person). */
   CutOut: new (o?: { soft?: number; size?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; amount: number; soft: number; picture: HTMLCanvasElement | null };
   /** Hand signs: thumbs-up, thumbs-down, victory, open-palm, fist, point-up, love. */
@@ -829,7 +840,7 @@ export interface PacingPart {
   ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number;
   Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; count: number; pause(sec: number): Loose; burst(n: number, gap?: number): Loose; update(dt: number, spawn: (i: number) => void): Loose; reset(): Loose };
   Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state: string; update(dt: number, spawn: (wave: Loose) => void, alive?: number): Loose; onStart?: Loose; [k: string]: Loose };
-  Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number }) => { readonly level: number; readonly calm: boolean; hurt(amount?: number): Loose; scored(amount?: number): Loose; update(dt: number): Loose; pick(easy: number, hard: number): number };
+  Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who usually wins, later and not all the way for one who usually loses. */ dial?: Skill | null }) => { readonly level: number; readonly calm: boolean; hurt(amount?: number): Loose; scored(amount?: number): Loose; update(dt: number): Loose; pick(easy: number, hard: number): number };
 }
 
 export interface AimResult { target: Loose | null; on: boolean; lock: number; fire: boolean; angle?: number; dir?: Loose }
@@ -870,10 +881,10 @@ export interface SearchGame<S, M> { moves(s: S): M[]; play(s: S, m: M): S; turn(
 export interface SolvePart {
   Puzzle: new () => PuzzleSolver;
   Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => {
-    best(s: S, o?: { time?: number; depth?: number; skill?: number; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): M | null;
+    best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): M | null;
     rank(s: S, o?: { time?: number; depth?: number; mode?: 'minimax' | 'mcts'; rng?: number }): { move: M; value: number; visits?: number }[];
     /** best(), a few milliseconds at a time: call job.step(ms) each frame until it returns true, then play job.move. time is the total thinking time. */
-    think(s: S, o?: { time?: number; depth?: number; skill?: number; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): SearchJob<M>;
+    think(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): SearchJob<M>;
     readonly nodes: number;
   };
 }
@@ -964,7 +975,7 @@ export interface TableT {
   /** Plays a turn written as an async function; busy is true while it runs. */
   run(fn: () => unknown): void;
   /** A gs.solve.Search opponent's move, thought about a little each frame. wait: seconds it takes at least (.5); slice: milliseconds a frame (4). */
-  think<S = Loose, M = Loose>(search: Loose, state: S, o?: { time?: number; depth?: number; skill?: number; mode?: 'minimax' | 'mcts'; rng?: number | string | (() => number); wait?: number; slice?: number }): Promise<M | null>;
+  think<S = Loose, M = Loose>(search: Loose, state: S, o?: { time?: number; depth?: number; skill?: Skill; mode?: 'minimax' | 'mcts'; rng?: number | string | (() => number); wait?: number; slice?: number }): Promise<M | null>;
   hop(obj: Loose, to: BoardPoint, o?: { h?: number; time?: number; sound?: boolean; spin?: number; ease?: TableEase }): Promise<void>;
   slide(obj: Loose, to: BoardPoint, o?: { time?: number; ease?: TableEase; sound?: boolean }): Promise<void>;
   drop(obj: Loose, o?: { from?: number; time?: number; sound?: boolean }): Promise<void>;
@@ -1019,7 +1030,7 @@ export interface ChessT {
   move(m: { from: string; to: string; promotion?: string | null }): ChessMove | null;
   undo(): ChessMove | null;
   /** The computer's move for the side to move, thought about in a worker. level 1..5. */
-  think(o?: { level?: number; time?: number | null }): Promise<{ from: string; to: string; promotion?: string | null } | null>;
+  think(o?: { level?: number; time?: number | null; /** 0..1 instead of a level: a number, or a gs.brains.Dial. */ skill?: Skill }): Promise<{ from: string; to: string; promotion?: string | null } | null>;
 }
 /** Colour or a three.js material, and the options gs.hd.pbr takes (rough, metal, clear, glow, transparent, opacity...). */
 export type PieceLook = string | Loose;
@@ -1813,6 +1824,8 @@ export interface BrainOptions {
   fun?: boolean;
   /** Start a fresh brain at the player's usual level, and add to the profile (true). */
   profile?: boolean;
+  /** The maker's own corrections: spots where the right move is known, as [see, action] (or [see, action, false] where a move is wrong). They come with the game and stay through reset(). */
+  corrections?: ([number[], number | string] | [number[], number | string, false])[];
 }
 /** A Tiny Brain that learns as you play, with guard rails. */
 export declare class Brain {
@@ -1840,6 +1853,29 @@ export declare class Brain {
   fun: number; lean: number; rounds: number;
   /** Learns from a move someone showed it (teach by playing). */
   watch(see: number[], action: number | string, amount?: number): this;
+  /**
+   * "In this spot the right move was this": correct(see, action), or correct(action) for the spot it last
+   * decided on. Kept as an example and counted from the next decision: one is a lean, a couple that agree
+   * and it does that move in spots like them and nowhere else. The newest 12 per action are saved with the
+   * brain. The limits, the randomness and the game's rules still apply.
+   */
+  correct(see: ArrayLike<number>, action: number | string): this;
+  correct(action: number | string): this;
+  /**
+   * "In this spot, not that": avoid(see, action), avoid(action) for the spot it last decided on, or avoid()
+   * for whatever it just did there. For a mistake where the right move isn't known. In spots like the
+   * examples it makes its next best move.
+   */
+  avoid(see: ArrayLike<number>, action: number | string): this;
+  avoid(action?: number | string): this;
+  /** After act(): the correction that shaped the move it just chose ({ action, not: it leaned away, like: 0..1 how alike the spot was }), or null. */
+  readonly recalled: { action: number | string; not: boolean; like: number } | null;
+  /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
+  uncorrect(action?: number | string): this;
+  /** Every correction it holds, as [see, action] ("not this": [see, action, false]); copy them into the corrections option to keep them in the game. */
+  readonly corrections: ([number[], number | string] | [number[], number | string, false])[];
+  /** How far it trusts its corrections, 0..2: full while they agree, less when examples close together name different moves. */
+  readonly heed: number;
   /** The brain as text (for start). */
   pack(): string;
 }
@@ -1848,6 +1884,89 @@ export declare class Player {
   constructor(api: GameApi | null);
   readonly skill: number; readonly reaction: number; readonly aim: number;
   get(kind: string, fallback?: number): number; count(kind: string): number; note(kind: string, value: number): this; clear(): this;
+}
+/** A skill from 0 to 1 wherever a kit takes one: a number, or a Dial that follows the player. */
+export type Skill = number | { valueOf(): number };
+/**
+ * The win-rate guard rail by itself, for an opponent that isn't a Brain (a search, a team, a director):
+ * a number 0..1 that follows this player. Pass the dial wherever a kit takes a skill; call result() at
+ * the end of each game or round.
+ */
+export declare class Dial {
+  constructor(api: GameApi | null, opts?: DialOptions);
+  constructor(opts?: DialOptions);
+  name: string;
+  /** The dial, 0..1 (within range). */
+  skill: number;
+  /** The player's win rate, smoothed, and the rate it steers to. */
+  winRate: number; readonly target: number;
+  /** Results seen. */
+  rounds: number;
+  valueOf(): number;
+  /** The dial as a level 1..n (default 5). */
+  level(n?: number): number;
+  /** The end of a game or round: did the player win? true, false, 'draw', or 0..1 for how well they did. */
+  result(playerWon: boolean | 'draw' | number): this;
+  /** The player's learned chance of winning at a skill (default: the current one). */
+  winChance(skill?: number): number;
+  /** Forgets what it learned about this player. */
+  forget(): this;
+}
+export interface DialOptions {
+  /** Its name in the game's saved brains (default 'dial'): one per opponent. */
+  name?: string;
+  /** The share of games the player should win (default .6). */
+  target?: number;
+  /** Where it starts for a player with no profile yet (default .5). */
+  start?: number;
+  /** The lowest and highest it goes (default [.05, 1]). */
+  range?: [number, number];
+  /** Learn the player's real win chance at each skill (true). */
+  odds?: boolean;
+  /** Start at the player's usual level and add to their profile (true). */
+  profile?: boolean;
+}
+/**
+ * Teach by example: show it a thing a few times under a name, and it says which name a new thing looks
+ * like, or that it looks like none. For any list of numbers: a hand's shape (gs.vision Hands), a pose
+ * (Body), a move made with the phone (gs.moves), a sound (gs.hear Sounds).
+ */
+export declare class Examples {
+  constructor(api: GameApi | null, opts?: ExamplesOptions);
+  constructor(opts?: ExamplesOptions);
+  name: string;
+  /** One more example of a name (the newest 12 of each are kept). False when the numbers aren't the length of the ones before. */
+  add(name: string, numbers: ArrayLike<number>): boolean;
+  /** Which name these numbers look like, or null when they look like none. sure: how clear of the other names and of "none" (0..1); like: how close to that name's examples (0..1). */
+  guess(numbers: ArrayLike<number> | null, o?: { among?: string[] | null }): { name: string; sure: number; like: number } | null;
+  /** Takes back the last example added (a bad take). */
+  undo(): this;
+  /** Forgets the examples given while running (all, or one name's); the maker's own stay. */
+  forget(name?: string): this;
+  /** The names it has examples of. */
+  readonly names: string[];
+  /** How many examples a name has (all of them when left out). */
+  count(name?: string): number;
+  /** Every example as text, for the start option. */
+  pack(): string;
+}
+export interface ExamplesOptions {
+  /** Its name in the game's saved brains (default 'examples'). */
+  name?: string;
+  /** What the numbers are, when they are one of the kits' shapes: sets spread and strict to suit. */
+  of?: 'hand' | 'pose' | 'move' | 'sound';
+  /** How far a number wobbles between two takes of the same thing, before it has seen any (.12; numbers about -1..1). */
+  spread?: number;
+  /** How picky it is about what counts (1; higher is pickier, lower more forgiving). */
+  strict?: number;
+  /** How many numbers an example has (taken from the first example when left out). */
+  inputs?: number;
+  /** The newest this many examples of each name are kept (12). */
+  keep?: number;
+  /** The maker's own examples, which come with the game: pack()'s text, or { name: [numbers, ...] }. */
+  start?: string | Record<string, ArrayLike<number>[]>;
+  /** Keep the examples given while running with the game's brains (true). */
+  save?: boolean;
 }
 /** A rival who remembers you between sessions. */
 export declare class Nemesis {
@@ -1881,7 +2000,7 @@ export declare class Predict {
   /** Forgets every habit. */
   forget(): this;
 }
-export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; }
+export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; /** Corrections are the brain's, shared by every mind: these are about the spot this mind last decided on. */ correct(action: number | string): this; avoid(action?: number | string): this; readonly recalled: { action: number | string; not: boolean; like: number } | null; }
 export interface BrainsPart {
   Net: typeof TinyNet;
   Brain: typeof Brain;
@@ -1890,6 +2009,8 @@ export interface BrainsPart {
   /** Learns the player's habits and guesses their next move (board, card, rhythm, turn games). */
   Predict: typeof Predict;
   Player: typeof Player;
+  Dial: typeof Dial;
+  Examples: typeof Examples;
   Nemesis: typeof Nemesis;
   Shadow: typeof Shadow;
   /** Finds game-feel numbers whose trial result is closest to want (for makers, not players' phones). */
@@ -2181,14 +2302,14 @@ export interface ArtPart {
 export interface SportsPitch { w: number; h: number; goal: number; x: number; y: number; goalFor(side: 0 | 1): { x: number; y: number; half: number }; toPitch(side: 0 | 1, u: number, v: number): { x: number; y: number }; upfield(side: 0 | 1, p: { x: number; y: number }): number }
 export interface SportsAct { do: 'chase' | 'shoot' | 'pass' | 'dribble' | 'support' | 'mark' | 'keep'; x: number; y: number; to?: Loose; kick?: { x: number; y: number; power: number } }
 export interface SportsTeam {
-  pitch: SportsPitch; side: 0 | 1; skill: number; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
+  pitch: SportsPitch; side: 0 | 1; skill: Skill; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
   home(p: Loose, ball: { x: number; y: number }): { x: number; y: number };
   think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>;
   kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number };
 }
 export interface SportsPart {
   Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch;
-  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: number; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
+  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
 }
 export interface DragPart { Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; axis?: 'x' | 'y' } | null; swap?: boolean }) => Drag }
 
@@ -2496,7 +2617,7 @@ export interface ArenaPart {
     playback(t: number): { p: P3; q: Loose }[] | null; readonly replayLength: number; readonly clockText: string;
   };
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
-  chaseBall(car: BallCar, arena: Loose, o?: { skill?: number }): { throttle: number; steer: number; boost: boolean; jump: boolean };
+  chaseBall(car: BallCar, arena: Loose, o?: { skill?: Skill }): { throttle: number; steer: number; boost: boolean; jump: boolean };
 }
 /** What gs.models.vehicle takes. Colours are '#rrggbb'. */
 export interface VehicleOptions {
@@ -3751,6 +3872,8 @@ export interface HearPart {
     heard(name: string): boolean;
     /** How sure it is that the sound is going on now, 0..1. */
     hearing(name: string): number;
+    /** What is heard now as 32 numbers for gs.brains.Examples (of: 'sound'): sounds under names of your own. Null in silence. */
+    shape: number[] | null;
   };
   /** Spoken commands. available is false on phones that can't listen on the phone itself: use touch then. */
   Voice: new (o?: { words?: string[]; also?: Record<string, string[]>; language?: string }) => {

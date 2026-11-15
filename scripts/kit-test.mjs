@@ -756,6 +756,192 @@ console.log('physics ok');
   console.log('brains 2: profile, fun lean, styles, tells, start + watch, Nemesis, Shadow, tune ok');
 }
 
+// Tiny Brains corrections: a few examples that stick (the method of TinyDecide's corrections, on a brain's inputs)
+{
+  const { Brain, Wave } = await import('../src/kit/brains.js');
+  let sd = 5; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const spot = () => [rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1];
+  const teacher = s => (s[0] < 0 ? 'left' : 'right');
+  const opts = name => ({ name, inputs: 4, actions: ['left', 'right', 'jump', 'flee'], teacher, limits: { react: 0, perSecond: 1e4, minNoise: 0 }, share: false, profile: false });
+  // the game's own AI chases; the exception it doesn't know: hurt (input 2 low) with the player near (input 3 high), flee
+  const hurt = s => s[2] < -.4 && s[3] > 0, hurtSpot = () => [rand() * 2 - 1, rand() * 2 - 1, -.4 - rand() * .6, rand()];
+  const made = name => { const b = new Brain(opts(name)); for (let i = 0; i < 2500; i++) b.act(spot(), 1 / 60); b.skill = 1; return b; };
+  const rates = b => {
+    let fixed = 0, n = 0, same = 0, m = 0; const trust = b.trust;
+    for (let i = 0; i < 1200; i++) { const x = i % 3 ? spot() : hurtSpot(); b.act(x, 1 / 60); b.trust = trust; if (hurt(x)) { n++; fixed += b.action === 'flee'; } else { m++; same += b.action === teacher(x); } }
+    return [fixed / n, same / m];
+  };
+  for (const lead of ['teacher', 'brain']) {
+    const b = made('fix-' + lead); b.trust = lead === 'teacher' ? 0 : 1;
+    assert.ok(b.heed === 0 && b.corrections.length === 0, 'no corrections to start with');
+    const [f0, s0] = rates(b); assert.ok(f0 < .05 && s0 > .95, `${lead} leads, before: flees ${f0.toFixed(2)}, plays as taught ${s0.toFixed(2)}`);
+    for (let k = 0; k < 8; k++) b.correct(hurtSpot(), 'flee');
+    const [f1, s1] = rates(b);
+    assert.ok(f1 > .6, `${lead} leads: eight examples fix most of the spots like them: ${f1.toFixed(2)}`);
+    assert.ok(s1 > .9, `${lead} leads: and leave the rest alone: ${s1.toFixed(2)}`);
+    assert.equal(b.heed, 2, 'examples that agree are trusted in full');
+    b.uncorrect(); const [f2, s2] = rates(b); assert.ok(f2 < .05 && s2 > .95 && b.corrections.length === 0, 'uncorrect() forgets them');
+  }
+  // one example is a lean, two that agree are a fix, at that spot and at once
+  const one = made('fix-one'); one.trust = 0;
+  const here = [.3, -.2, .5, .1];
+  one.act(here, 1 / 60); assert.equal(one.action, 'right');
+  one.correct('jump');                                   // "what you just saw: the right move was jump"
+  assert.deepEqual(one.corrections, [[[.3, -.2, .5, .1], 'jump']], 'correct(action) is about the spot it last decided on');
+  one.correct([.34, -.16, .46, .14], 'jump');
+  one.act(here, 1 / 60); assert.equal(one.action, 'jump', 'two examples that agree: it does the move there');
+  one.act([-.6, .7, -.5, -.6], 1 / 60); assert.equal(one.action, 'left', 'and not somewhere else');
+  // the newest word on a spot wins; examples close together that name different moves are trusted less
+  one.correct(here, 'flee');
+  assert.ok(!one.corrections.some(c => c[1] === 'jump' && c[0][0] === .3), 'a new word on the same spot replaces the old one');
+  const torn = made('fix-torn'); torn.trust = 0;
+  for (let k = 0; k < 6; k++) { const x = [.5 + rand() * .1, .5 + rand() * .1, rand() * 2 - 1, rand() * 2 - 1]; torn.correct(x, k % 2 ? 'jump' : 'flee'); }
+  assert.ok(torn.heed < 2, 'examples that contradict each other are trusted less: ' + torn.heed);
+  // unknown actions and spots are ignored; the newest twelve per action are kept
+  torn.correct(here, 'fly'); torn.correct(null, 'jump'); assert.equal(torn.corrections.length, 6, 'ignores a move it does not have');
+  const many = made('fix-many'); for (let k = 0; k < 30; k++) many.correct(hurtSpot(), 'flee');
+  assert.equal(many.corrections.length, 12, 'keeps the newest twelve per action');
+  // the guard rails still apply: the game's rules, and the limit on changes of mind
+  const ruled = new Brain({ ...opts('fix-ruled'), rules: (see, a) => (a === 'flee' ? 'left' : a) });
+  for (let k = 0; k < 8; k++) ruled.correct(hurtSpot(), 'flee');
+  ruled.trust = 0; ruled.skill = 1;
+  for (let i = 0; i < 300; i++) { ruled.act(hurtSpot(), 1 / 60); assert.notEqual(ruled.action, 'flee', 'the game\'s rules still win'); }
+  const slow = new Brain({ ...opts('fix-slow'), limits: { react: 0, perSecond: 2, minNoise: 0 } });
+  for (let k = 0; k < 8; k++) slow.correct(hurtSpot(), 'flee');
+  slow.trust = 0; let changes = 0, lastA = null;
+  for (let i = 0; i < 600; i++) { slow.act(i % 2 ? hurtSpot() : [.5, 0, .8, -.8], 1 / 60); if (slow.action !== lastA) { changes++; lastA = slow.action; } }
+  assert.ok(changes <= 22, 'no more changes of mind a second than the limit: ' + changes + ' in 10 s');
+  // the maker's own corrections come with the game and stay through reset(); the rest are saved with the brain
+  const slots = new Map(), api = { brains: { load: k => slots.get(k) ?? null, save: (k, v) => { slots.set(k, v); return true; } } };
+  const mine = [[[0, 0, -.8, .6], 'flee'], [[.4, -.3, -.7, .5], 'flee'], [[-.5, .5, -.9, .7], 'flee']];
+  const s1 = new Brain(api, { ...opts('fix-saved'), corrections: mine });
+  for (let i = 0; i < 400; i++) s1.act(spot(), 1 / 60);
+  s1.correct([.8, .8, .8, .8], 'jump').correct([.75, .82, .78, .84], 'jump'); s1.persist();
+  assert.ok(slots.get('fix-saved').length < 1200 && JSON.parse(slots.get('fix-saved')).c, 'corrections given while running are saved with the brain');
+  const s2 = new Brain(api, { ...opts('fix-saved'), corrections: mine });
+  assert.equal(s2.corrections.length, 5, 'and come back, beside the maker\'s own (not twice)');
+  s2.trust = 0; s2.skill = 1;
+  s2.act([.79, .8, .8, .81], 1 / 60); assert.equal(s2.action, 'jump', 'a saved correction still counts');
+  s2.act([.1, .1, -.8, .6], 1 / 60); assert.equal(s2.action, 'flee', 'the maker\'s corrections count');
+  s2.reset(); assert.equal(s2.corrections.length, 3, 'reset() forgets what it was shown while running, not the maker\'s own');
+  // a slot with no room keeps the brain and drops the corrections
+  const tight = new Map(), tapi = { brains: { load: k => tight.get(k) ?? null, save: (k, v) => (v.includes('"c":') ? false : (tight.set(k, v), true)) } };
+  const tb = new Brain(tapi, opts('fix-tight')); tb.correct(here, 'jump'); tb.persist();
+  assert.ok(tight.get('fix-tight') && !JSON.parse(tight.get('fix-tight')).c, 'a full slot keeps the brain without its corrections');
+  // a brain with numbered actions, a personality, and a wave of minds
+  const num = new Brain({ name: 'fix-num', inputs: 2, actions: 3, styles: ['calm', 'bold'], limits: { react: 0, perSecond: 1e4, minNoise: 0 }, share: false, profile: false });
+  num.correct([.5, .5], 2).correct([.52, .48], 2); num.skill = 1;
+  let twos = 0; for (let i = 0; i < 50; i++) twos += num.act([.5, .5], 1 / 60) === 2;
+  assert.ok(twos > 40, 'numbered actions and personalities: ' + twos + '/50');
+  const wave = new Wave(num), mind = wave.mind({ style: 'bold' }); let m2 = 0; for (let i = 0; i < 50; i++) m2 += mind.act([.5, .5], 1 / 60) === 2;
+  assert.ok(m2 > 40, 'every mind in a wave holds to them too: ' + m2 + '/50');
+  assert.ok(num.net.w.every(Number.isFinite) && one.net.w.every(Number.isFinite), 'numbers stay finite');
+  console.log('brains 3: corrections fix the spots like their examples and leave the rest, lean then fix, newest word wins, trust, rules + limits, saved, reset ok');
+
+  // two kinds of spot for one move: flee when hurt with the player near, and flee when cornered (far right and high up)
+  const cornered = s => s[0] > .5 && s[1] > .5, eitherSpot = () => (rand() < .5 ? hurtSpot() : [.5 + rand() * .5, .5 + rand() * .5, rand() * 2 - 1, rand() * 2 - 1]);
+  const kinds = made('fix-kinds'); kinds.trust = 0;
+  for (let k = 0; k < 12; k++) kinds.correct(k % 2 ? hurtSpot() : [.5 + rand() * .5, .5 + rand() * .5, rand() * 2 - 1, rand() * 2 - 1], 'flee');
+  { let fixed = 0, n = 0, same = 0, m = 0;
+    for (let i = 0; i < 1500; i++) { const x = i % 3 ? spot() : eitherSpot(); kinds.act(x, 1 / 60); kinds.trust = 0; if (hurt(x) || cornered(x)) { n++; fixed += kinds.action === 'flee'; } else { m++; same += kinds.action === teacher(x); } }
+    assert.ok(kinds.fix.fits[3].length === 2, 'it finds the two kinds by itself');
+    assert.ok(fixed / n > .65 && same / m > .85, `two kinds of spot for one move: fixed ${(fixed / n).toFixed(2)}, the rest as taught ${(same / m).toFixed(2)}`); }
+  // "not this": on the ledge (far right) going right is wrong, and the right move isn't known
+  const ledge = s => s[0] > .6 && s[3] < 0, ledgeSpot = () => [.6 + rand() * .4, rand() * 2 - 1, rand() * 2 - 1, -rand()];
+  for (const lead of ['teacher', 'brain']) {
+    const nb = made('fix-not-' + lead); nb.trust = lead === 'teacher' ? 0 : 1;
+    for (let k = 0; k < 8; k++) nb.avoid(ledgeSpot(), 'right');
+    let off = 0, n = 0, same = 0, m = 0; const keep = nb.trust;
+    for (let i = 0; i < 1500; i++) { const x = i % 3 ? spot() : ledgeSpot(); nb.act(x, 1 / 60); nb.trust = keep; if (ledge(x)) { n++; off += nb.action === 'right'; } else { m++; same += nb.action === teacher(x); } }
+    assert.ok(off / n < .3 && same / m > .9, `${lead} leads, "not this": still goes right on the ledge ${(off / n).toFixed(2)}, the rest as taught ${(same / m).toFixed(2)}`);
+  }
+  // avoid() alone is about what it just did; a "do" on the same spot takes the "not" back; recalled says what shaped a move
+  const pet = made('fix-pet'); pet.trust = 0;
+  pet.act([.8, 0, 0, -.5], 1 / 60); assert.equal(pet.action, 'right'); assert.equal(pet.recalled, null, 'nothing recalled before any correction');
+  pet.avoid(); assert.deepEqual(pet.corrections, [[[.8, 0, 0, -.5], 'right', false]], 'avoid() is about the move it just made');
+  pet.avoid([.82, .04, -.03, -.46], 'right');
+  pet.act([.8, 0, 0, -.5], 1 / 60); assert.notEqual(pet.action, 'right', 'two "not this" examples: it makes another move there');
+  assert.ok(pet.recalled && pet.recalled.action === 'right' && pet.recalled.not && pet.recalled.like > .3, 'recalled: told not to go right here');
+  pet.act([-.7, -.6, .5, .6], 1 / 60); assert.equal(pet.recalled, null, 'and nothing recalled somewhere else');
+  pet.correct([.8, 0, 0, -.5], 'right'); assert.ok(!pet.corrections.some(c => c[2] === false && c[0][0] === .8), 'a "do" on the same spot takes the "not" back');
+  // saved, and given by the maker as [see, action, false]
+  const ns2 = new Map(), napi2 = { brains: { load: k => ns2.get(k) ?? null, save: (k, v) => { ns2.set(k, v); return true; } } };
+  const g1 = new Brain(napi2, { ...opts('fix-nots'), corrections: [[[.9, .9, .9, .9], 'jump', false]] });
+  g1.avoid([.1, .2, .3, .4], 'left').correct([-.5, -.5, -.5, -.5], 'flee'); g1.persist();
+  const g2 = new Brain(napi2, { ...opts('fix-nots'), corrections: [[[.9, .9, .9, .9], 'jump', false]] });
+  assert.deepEqual(g2.corrections.map(c => c[1] + (c[2] === false ? '!' : '')).sort(), ['flee', 'jump!', 'left!'], 'both kinds are saved and come back');
+  // each mind in a wave corrects the spot it last decided on itself
+  const pack = new Brain(opts('fix-pack')), wv = new Wave(pack), ma = wv.mind(), mb = wv.mind();
+  ma.act([.5, .5, .5, .5], 1 / 60); mb.act([-.5, -.5, -.5, -.5], 1 / 60);
+  ma.correct('jump'); mb.avoid('left');
+  assert.deepEqual(pack.corrections, [[[.5, .5, .5, .5], 'jump'], [[-.5, -.5, -.5, -.5], 'left', false]], 'a mind\'s correction is about its own last spot');
+  console.log('brains 4: two kinds of spot for one move, "not this", recalled, saved, minds ok');
+}
+
+// ---- Tiny Brains: a dial for opponents that aren't brains
+{
+  const { Dial, Player } = await import('../src/kit/brains.js');
+  const { Director } = await import('../src/kit/pacing.js');
+  const { Search } = await import('../src/kit/solve.js');
+  const { Pitch, Team } = await import('../src/kit/sports.js');
+  let sd = 11; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32, sig = x => 1 / (1 + Math.exp(-x));
+  // a made-up player of strength ps against an opponent as strong as the dial says
+  const season = (ps, o = {}) => {
+    const d = new Dial(null, { name: 'dial-' + ps + (o.tag || ''), profile: false, ...o });
+    let wins = 0, run = 0, worst = 0, sum = 0;
+    for (let r = 0; r < 300; r++) {
+      const won = rand() < sig((ps - d.skill) * 7 + .4); d.result(won);
+      run = won ? 0 : run + 1; worst = Math.max(worst, run);
+      if (r >= 200) { wins += won; sum += d.skill; }
+      assert.ok(d.skill >= d.lo && d.skill <= d.hi && isFinite(d.winRate), 'the dial stays in its range');
+    }
+    return { rate: wins / 100, skill: sum / 100, worst, d };
+  };
+  const weak = season(.15), mid = season(.5), strong = season(.95);
+  assert.ok(weak.rate >= .45, 'a weak player still wins often: ' + weak.rate);
+  assert.ok(Math.abs(mid.rate - .6) <= .15, 'a middling player wins about the target: ' + mid.rate);
+  assert.ok(strong.skill > mid.skill + .1 && mid.skill > weak.skill + .1, `the dial follows the player: ${weak.skill.toFixed(2)} ${mid.skill.toFixed(2)} ${strong.skill.toFixed(2)}`);
+  assert.ok(weak.worst <= 8, 'a losing run always ends: ' + weak.worst);
+  const half = season(.5, { target: .4, tag: 't' });
+  assert.ok(Math.abs(half.rate - .4) <= .15 && half.skill > mid.skill, 'a lower target is a harder opponent: ' + half.rate);
+  const ranged = season(.95, { range: [.3, .7], tag: 'r' });
+  assert.ok(ranged.skill <= .7 + 1e-9 && ranged.d.level(5) === 5 && new Dial({ name: 'lv', range: [.3, .7], start: .3, profile: false }).level(5) === 1, 'it keeps to its range, and level() spreads the range over the levels');
+  // three losses in a row: a big step down; a draw is half a win
+  const d3 = new Dial({ name: 'three', start: .6, profile: false }); const before = d3.skill;
+  d3.result(false); d3.result(false); d3.result(false);
+  assert.ok(d3.skill <= before - .25, 'three losses in a row bring relief: ' + d3.skill.toFixed(2));
+  const dd = new Dial({ name: 'draws', profile: false, odds: false }); for (let i = 0; i < 40; i++) dd.result('draw');
+  assert.ok(Math.abs(dd.winRate - .5) < .01 && dd.skill < .5, 'a run of draws is below a 60% target, so it eases off');
+  // it stands in for a number
+  const dn = new Dial({ name: 'num', start: .7, profile: false });
+  assert.ok(Math.abs((1 - dn) - .3) < 1e-9 && dn > .4 && +dn === .7 && Math.max(0, dn) === .7, 'it stands in for its number in sums');
+  // saved and brought back; a new dial starts at the player's usual level
+  const saved = new Map(), prof = {};
+  const api = { brains: { load: n => saved.get(n) ?? null, save: (n, t) => { saved.set(n, t); return true; }, player: { read: () => JSON.parse(JSON.stringify(prof)), write: (k, v, n) => { prof[k] = { v, n }; return true; } } } };
+  const s1 = new Dial(api, { name: 'kept' }); for (let i = 0; i < 12; i++) s1.result(true);
+  const s2 = new Dial(api, { name: 'kept' });
+  assert.ok(s1.skill > .6 && Math.abs(s2.skill - s1.skill) < .002 && s2.rounds === 12 && saved.get('kept').length < 200, 'saved in a few bytes and brought back: ' + saved.get('kept').length);
+  assert.ok(new Player(api).count('skill') > 0 && new Dial(api, { name: 'next-game' }).skill > .55, 'a new game starts at the player\'s usual level');
+  assert.equal(new Dial(api, { name: 'own', start: .2 }).skill, .2, 'start wins over the profile');
+  s2.forget(); assert.ok(new Dial(api, { name: 'kept', profile: false }).skill === .5, 'forget() starts it again');
+  // the kits take it: a director, a search, a team
+  const at = (dial, t) => { const dr = new Director({ over: 60, dial }); dr.update(t); return dr.level; };
+  assert.ok(Math.abs(at(null, 30) - at(.5, 30)) < 1e-9 && Math.abs(at(null, 90) - 1) < 1e-9, 'a director with no dial, or one at the middle, is the game as made');
+  const lo = new Dial({ name: 'dlo', start: .1, profile: false }), hi = new Dial({ name: 'dhi', start: .9, profile: false });
+  assert.ok(at(hi, 30) > at(null, 30) + .1 && at(lo, 30) < at(null, 30) - .1 && at(lo, 500) < .75 && at(hi, 500) === 1, `a director climbs sooner for a winner, later and lower for a loser: ${at(lo, 30).toFixed(2)} ${at(null, 30).toFixed(2)} ${at(hi, 30).toFixed(2)}`);
+  // a counting game: take 1 to 3, the one who takes the last wins; from 21 the best move is to take 1
+  const game = { moves: s => [1, 2, 3].filter(m => m <= s.n), play: (s, m) => ({ n: s.n - m, turn: 1 - s.turn }), over: s => s.n === 0, score: (s, me) => (s.n === 0 ? (s.turn === me ? -1000 : 1000) : 0), turn: s => s.turn };
+  const dsearch = new Search(game);
+  const picks = dial => { let best = 0; for (let i = 0; i < 60; i++) if (dsearch.best({ n: 21, turn: 0 }, { skill: dial, depth: 12, time: 200, rng: () => rand() }) === 1) best++; return best; };
+  const top = picks(new Dial({ name: 'smax', start: 1, profile: false })), low = picks(new Dial({ name: 'smin', start: .05, profile: false }));
+  assert.ok(top === 60 && low < 55, `a search plays its best at a full dial and slips at a low one: ${top} ${low}`);
+  const pitch = new Pitch({ w: 200, h: 300 }), td = new Dial({ name: 'team', start: .2, profile: false }), team = new Team(pitch, 1, { skill: td });
+  const world = { ball: { x: 100, y: 150, vx: 0, vy: 0 }, foes: [] };
+  team.think(world, 1); const slow = team.thinkT; td.skill = .9; team.think(world, 1); const quick = team.thinkT;
+  assert.ok(slow > quick + .1, `a team reads the dial each time it thinks: ${slow.toFixed(2)} ${quick.toFixed(2)}`);
+  console.log(`brains 5: a dial follows the player (weak ${(weak.rate * 100).toFixed(0)}% at ${weak.skill.toFixed(2)}, middling ${(mid.rate * 100).toFixed(0)}% at ${mid.skill.toFixed(2)}, strong ${(strong.rate * 100).toFixed(0)}% at ${strong.skill.toFixed(2)}), saved, kits take it ok`);
+}
+
 // ---- round 6 game kits
 {
   const { Board } = await import('../src/kit/board.js');
@@ -6986,6 +7172,143 @@ console.log('physics ok');
         worst = Math.max(worst, wrap(a[k] - x), wrap(a[k + 1] - yy), wrap(a[k + 2] - z)); } }
     assert.ok(worst < A * 1e-5, `snow falls and sways as it did (furthest off ${worst.toExponential(1)} m in a box of ${A} m)`); w.dispose?.(); }
   console.log('the speed pass: a ray with no filter (through sensors, the same answer), a filter of the game\'s own, snow as it fell before ok');
+}
+
+// ---- Tiny Brains: teach by example (a learner for hand signs, poses, phone moves and sounds)
+{
+  // (last in the file: the motion kit needs the browser stand-ins the device tests above put in place)
+  globalThis.window ??= globalThis; globalThis.addEventListener ??= () => {}; globalThis.removeEventListener ??= () => {};
+  const { Examples } = await import('../src/kit/brains.js');
+  const { Hands, Body } = await import('../src/kit/vision.js');
+  const { Moves } = await import('../src/kit/motion.js');
+  const { Sounds } = await import('../src/kit/hear.js');
+  let sd = 5; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += rand(); return (u - 3) / Math.sqrt(.5); };
+  // a made-up hand as the tracker gives it (21 points in the camera picture) from five finger curls,
+  // with the wobble of a real take: each curl, each finger's spread, a turn of the whole hand, each point
+  const BASE = [-50, -18, -4, 10, 26].map(a => a * Math.PI / 180), LEN = [[.3, .3, .28, .24], [.95, .42, .26, .22], [1, .46, .3, .24], [.94, .42, .28, .22], [.84, .32, .2, .18]];
+  const hands = Object.create(Hands.prototype);
+  const hand = (curls, { at = [.5, .5], size = .12, turn = 0, left = false, aspect = 1 } = {}) => {
+    const t = turn + gauss() * 8 * Math.PI / 180, pts = [{ x: 0, y: 0 }];
+    for (let f = 0; f < 5; f++) {
+      let a = BASE[f] + gauss() * 4 * Math.PI / 180 + t, x = 0, y = 0; const c = Math.max(0, Math.min(1, curls[f] + gauss() * .08));
+      LEN[f].forEach((l, j) => { if (j) a += c * (f ? 1.5 : .9) * (f ? 1 : -1) * (j === 1 ? .9 : 1); x += Math.sin(a) * l; y -= Math.cos(a) * l; pts.push({ x: x + gauss() * .02, y: y + gauss() * .02 }); });
+    }
+    // the camera picture is not mirrored; a "right" hand on screen is what the tracker calls Left
+    const lm = pts.map(q => ({ x: 1 - (at[0] + (left ? -q.x : q.x) * size / aspect), y: at[1] + q.y * size }));
+    hands.read({ landmarks: [lm], handednesses: [[{ categoryName: left ? 'Right' : 'Left' }]], aspect });
+    return hands.list[0];
+  };
+  const SIGNS = { open: [0, 0, 0, 0, 0], fist: [1, 1, 1, 1, 1], point: [1, 0, 1, 1, 1], two: [1, 0, 0, 1, 1], three: [1, 0, 0, 0, 1], horns: [1, 0, 1, 1, 0], thumb: [0, 1, 1, 1, 1], call: [0, 1, 1, 1, 0], four: [1, 0, 0, 0, 0], gun: [0, 0, 1, 1, 1] };
+  const first = hand(SIGNS.two);
+  assert.ok(first.shape.length === 40 && first.side === 'right' && first.shape.every(v => Math.abs(v) < 2), 'a hand\'s shape is 40 numbers about -1..1');
+  const six = ['point', 'two', 'three', 'four', 'horns', 'gun'];
+  const score = (K, opts = {}, how = {}) => {
+    let right = 0, wrong = 0, n = 0, unseen = 0, yes = 0;
+    for (let rep = 0; rep < 4; rep++) {
+      const ex = new Examples({ name: 'signs' + K + rep, save: false, of: 'hand', ...opts });
+      for (const k of six) for (let i = 0; i < K; i++) ex.add(k, hand(SIGNS[k]).shape);
+      for (const k of six) for (let t = 0; t < 40; t++) { const g = ex.guess(hand(SIGNS[k], how).shape); n++; if (g && g.name === k) right++; else if (g) wrong++; }
+      for (const k of ['open', 'fist', 'thumb', 'call']) for (let t = 0; t < 20; t++) { unseen++; if (ex.guess(hand(SIGNS[k]).shape)) yes++; }
+    }
+    return { right: right / n, wrong: wrong / n, unseen: yes / unseen };
+  };
+  const one = score(1), three = score(3), five = score(5);
+  assert.ok(one.right > .7 && three.right > .88 && five.right > .9, `hand signs are known again: ${one.right.toFixed(2)} ${three.right.toFixed(2)} ${five.right.toFixed(2)}`);
+  assert.ok(three.wrong < .03 && five.wrong < .03, `and seldom taken for another: ${three.wrong.toFixed(3)} ${five.wrong.toFixed(3)}`);
+  assert.ok(three.unseen < .1 && five.unseen < .1, `signs it was never shown are mostly none of them: ${three.unseen.toFixed(2)} ${five.unseen.toFixed(2)}`);
+  // wherever the hand is, however near, on a wide picture, and with the other hand
+  const moved = score(3, {}, { at: [.2, .7], size: .05, aspect: 16 / 9 }), other = score(3, {}, { left: true });
+  assert.ok(moved.right > .88 && other.right > .88, `a sign is the same far away in a corner, and made with the other hand: ${moved.right.toFixed(2)} ${other.right.toFixed(2)}`);
+  // which way it points is part of the sign: thumbs up and thumbs down
+  const ud = new Examples({ name: 'updown', save: false, of: 'hand' });
+  for (let i = 0; i < 3; i++) { ud.add('up', hand(SIGNS.thumb, { turn: Math.PI / 2 }).shape); ud.add('down', hand(SIGNS.thumb, { turn: -Math.PI / 2 }).shape); }
+  let udOk = 0, udWrong = 0; for (let i = 0; i < 40; i++) { const up = i % 2 === 0, g = ud.guess(hand(SIGNS.thumb, { turn: up ? Math.PI / 2 : -Math.PI / 2 }).shape); if (g && g.name === (up ? 'up' : 'down')) udOk++; else if (g) udWrong++; }
+  assert.ok(udOk >= 32 && udWrong === 0, `thumbs up and thumbs down are told apart: ${udOk}/40, ${udWrong} mixed up`);
+  // one name, two kinds of thing
+  const tk = new Examples({ name: 'either', save: false, of: 'hand' });
+  for (let i = 0; i < 5; i++) { tk.add('go', hand(SIGNS.open).shape); tk.add('go', hand(SIGNS.point).shape); tk.add('stop', hand(SIGNS.fist).shape); }
+  let tkOk = 0, tkMid = 0;
+  for (let i = 0; i < 40; i++) { const g = tk.guess(hand(i % 2 ? SIGNS.open : SIGNS.point).shape); if (g && g.name === 'go') tkOk++; if (tk.guess(hand([.5, 0, .5, .5, .5]).shape)) tkMid++; }
+  assert.ok(tkOk >= 34 && tkMid <= 12, `a name can be two kinds of thing, and what lies between them is neither: ${tkOk}/40 ${tkMid}/40`);
+  // the rest of what it does
+  const ex = new Examples({ name: 'rest', save: false, of: 'hand' });
+  assert.equal(ex.guess(first.shape), null, 'nothing taught, nothing guessed');
+  ex.add('two', first.shape);
+  const g1 = ex.guess(hand(SIGNS.two).shape);
+  assert.ok(g1 && g1.name === 'two' && g1.sure > .5 && g1.like > 0 && g1.like <= 1, 'one example is enough to start');
+  assert.ok(!ex.add('two', [1, 2, 3]) && ex.guess([1, 2, 3]) === null && ex.count('two') === 1, 'numbers of another length are turned away');
+  for (let i = 0; i < 3; i++) { ex.add('fist', hand(SIGNS.fist).shape); ex.add('two', hand(SIGNS.two).shape); }
+  assert.deepEqual(ex.names, ['two', 'fist']); assert.ok(ex.count('two') === 4 && ex.count() === 7);
+  assert.equal(ex.guess(hand(SIGNS.two).shape, { among: ['fist'] }), null, 'among: only those names');
+  ex.add('fist', hand(SIGNS.two).shape); let muddled = 0; for (let i = 0; i < 20; i++) { const g = ex.guess(hand(SIGNS.two).shape); if (!g || g.sure < .6) muddled++; }
+  ex.undo(); let clear = 0; for (let i = 0; i < 20; i++) { const g = ex.guess(hand(SIGNS.two).shape); if (g && g.name === 'two' && g.sure > .6) clear++; }
+  assert.ok(ex.count('fist') === 3 && clear >= 16, `undo() takes back a bad take: ${clear}/20 clear again (${muddled}/20 were muddled)`);
+  for (let i = 0; i < 20; i++) ex.add('two', hand(SIGNS.two).shape);
+  assert.equal(ex.count('two'), 12, 'the newest 12 of a name are kept');
+  ex.forget('fist'); assert.deepEqual(ex.names, ['two']); ex.forget(); assert.equal(ex.count(), 0);
+  // the maker's own examples come with the game; the player's are saved with its brains
+  const made = new Examples({ name: 'made', save: false, of: 'hand' }); for (const k of ['two', 'fist']) for (let i = 0; i < 3; i++) made.add(k, hand(SIGNS[k]).shape);
+  const saved = new Map(), api = { brains: { load: n => saved.get(n) ?? null, save: (n, t) => { saved.set(n, t); return true; } } };
+  const game = new Examples(api, { name: 'kept', of: 'hand', start: made.pack() });
+  let fromStart = 0; for (let i = 0; i < 20; i++) if (game.guess(hand(SIGNS.fist).shape)?.name === 'fist') fromStart++;
+  assert.ok(game.count() === 6 && fromStart >= 15 && !saved.has('kept'), `start: the maker's examples, not saved again: ${fromStart}/20`);
+  for (let i = 0; i < 3; i++) game.add('horns', hand(SIGNS.horns).shape);
+  game.forget(); assert.equal(game.count(), 6, 'forget() keeps the maker\'s own');
+  for (let i = 0; i < 3; i++) game.add('horns', hand(SIGNS.horns).shape);
+  const again = new Examples(api, { name: 'kept', of: 'hand', start: made.pack() });
+  let back = 0; for (let i = 0; i < 20; i++) if (again.guess(hand(SIGNS.horns).shape)?.name === 'horns') back++;
+  assert.ok(again.count('horns') === 3 && back >= 15, `the player's examples are brought back: ${again.count('horns')} ${back}/20`);
+  for (let i = 0; i < 40; i++) again.add(six[i % 6], hand(SIGNS[six[i % 6]]).shape);
+  assert.ok(saved.get('kept').length <= 1500 && new Examples(api, { name: 'kept' }).count() >= 20, 'the save keeps to its size, the newest first: ' + saved.get('kept').length);
+  assert.equal(new Examples({ name: 'obj', save: false, start: { a: [[0, 0, 1]], b: [[1, 0, 0]] } }).guess([0, .05, .95]).name, 'a', 'start as plain lists');
+
+  // poses: each joint from the hips
+  const body = Object.create(Body.prototype); body.found = true;
+  const pose = (arms, { at = [.5, .6], size = .2 } = {}) => {
+    const j = {}, put = (n, x, y) => { j[n] = { x: at[0] + (x + gauss() * .03) * size, y: at[1] + (y + gauss() * .03) * size, seen: 1 }; };
+    put('nose', 0, -1.35); put('leftShoulder', -.35, -1); put('rightShoulder', .35, -1); put('leftHip', -.2, 0); put('rightHip', .2, 0);
+    put('leftKnee', -.22, .8); put('rightKnee', .22, .8); put('leftFoot', -.24, 1.6); put('rightFoot', .24, 1.6);
+    const arm = (side, a) => { const s = side === 'left' ? -1 : 1, r = a * Math.PI / 180; put(side + 'Elbow', s * (.35 + Math.sin(r) * .45), -1 - Math.cos(r) * .45); put(side + 'Hand', s * (.35 + Math.sin(r) * .9), -1 - Math.cos(r) * .9); };
+    arm('left', arms[0] + gauss() * 8); arm('right', arms[1] + gauss() * 8);
+    body.joints = j; body.shape_ = null; return body.shape;
+  };
+  const POSES = { up: [10, 10], tee: [90, 90], down: [170, 170], leftUp: [10, 170], rightUp: [170, 10] };
+  const poses = new Examples({ name: 'poses', save: false, of: 'pose' });
+  for (const k of Object.keys(POSES)) for (let i = 0; i < 3; i++) poses.add(k, pose(POSES[k]));
+  let pOk = 0, pNone = 0;
+  for (let i = 0; i < 100; i++) { const k = Object.keys(POSES)[i % 5], g = poses.guess(pose(POSES[k], { at: [.3 + rand() * .4, .5], size: .1 + rand() * .2 })); if (g && g.name === k) pOk++; if (!poses.guess(pose([50, 130]))) pNone++; }
+  assert.ok(pose(POSES.up).length === 26 && pOk >= 90 && pNone >= 85, `poses are known again wherever the player stands, and an odd one is none of them: ${pOk}/100 ${pNone}/100`);
+
+  // phone moves: a burst of movement, taught by making it
+  const stirs = new Examples({ name: 'moves', save: false, of: 'move' }), moves = new Moves({ learn: stirs });
+  const fired = []; for (const k of ['stir', 'saw', 'taught', 'motion']) moves.on(k, m => fired.push(m));
+  const play = kind => {   // half a second of movement at 60 readings a second, then stillness
+    const jit = () => 1 + gauss() * .12, ph = gauss() * .15, f = (kind === 'stir' ? 2 : 4) * jit(), amp = 9 * jit();
+    for (let i = 0; i < 60; i++) {
+      const t = i / 60, on = t < .5 * jit();
+      const ax = on ? (kind === 'stir' ? Math.cos(t * f * 6.283 + ph) : Math.sign(Math.sin(t * f * 6.283 + ph))) * amp : 0, ay = on && kind === 'stir' ? Math.sin(t * f * 6.283 + ph) * amp : 0;
+      moves.read({ dt: 1 / 60, ax: ax + gauss() * .4, ay: ay + gauss() * .4, az: gauss() * .4, ra: gauss() * 8, rb: gauss() * 8, rg: on && kind === 'saw' ? 160 * Math.sin(t * 25) : gauss() * 8 });
+    }
+    fired.length = 0; moves.update(); return fired.slice();
+  };
+  for (let i = 0; i < 3; i++) for (const k of ['stir', 'saw']) { moves.teach(k); const got = play(k); assert.ok(got.some(m => m.type === 'taught' && m.name === k && m.count === i + 1) && moves.teaching === null, 'teach(): the next move made is an example'); }
+  let mOk = 0, mShape = 0;
+  for (let i = 0; i < 40; i++) { const k = i % 2 ? 'stir' : 'saw', got = play(k); if (got.some(m => m.type === k) && !got.some(m => m.type === (i % 2 ? 'saw' : 'stir'))) mOk++; const mo = got.find(m => m.type === 'motion'); if (mo && mo.shape.length === 49 && mo.time > .2 && mo.time < .9) mShape++; }
+  assert.ok(mOk >= 34 && mShape === 40, `phone moves taught by making them fire under their names: ${mOk}/40, a shape each time ${mShape}/40`);
+  moves.stop();
+
+  // sounds: the mix of everyday sounds one is made of
+  const ears = Object.create(Sounds.prototype); Object.assign(ears, { now: new Map(), fresh: new Map(), sure: .3, want: null });
+  const MIX = { glass: { Glass: .5, 'Chink, clink': .6, Ding: .3 }, door: { Door: .6, Knock: .7, Thump: .2 }, kettle: { Steam: .6, Hiss: .5, Whistle: .25 } };
+  const hear = mix => { ears.heardCats(Object.entries(mix).map(([categoryName, v]) => ({ categoryName, score: Math.max(.03, Math.min(1, v + gauss() * .08)) }))); return ears.shape; };
+  const mine = new Examples({ name: 'sounds', save: false, of: 'sound' });
+  for (const k of Object.keys(MIX)) for (let i = 0; i < 3; i++) mine.add(k, hear(MIX[k]));
+  let sOk = 0, sNone = 0;
+  for (let i = 0; i < 60; i++) { const k = Object.keys(MIX)[i % 3], g = mine.guess(hear(MIX[k])); if (g && g.name === k) sOk++; if (!mine.guess(hear({ Speech: .7, Laughter: .4 }))) sNone++; }
+  ears.heardCats([]);
+  assert.ok(hear(MIX.glass).length === 32 && sOk >= 54 && sNone >= 54 && (ears.heardCats([]), ears.shape) === null, `sounds under names of your own: ${sOk}/60, another sound is none of them ${sNone}/60`);
+  console.log(`brains 6: teach by example: hand signs ${(one.right * 100).toFixed(0)}% from one example, ${(three.right * 100).toFixed(0)}% from three, ${(five.right * 100).toFixed(0)}% from five (${(five.wrong * 100).toFixed(1)}% taken for another), poses ${pOk}%, phone moves ${mOk}/40, sounds ${sOk}/60, saved ok`);
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

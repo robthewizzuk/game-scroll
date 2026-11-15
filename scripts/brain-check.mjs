@@ -20,14 +20,17 @@ const sig = x => 1 / (1 + Math.exp(-x));
 
 // a duel: the brain chases; the round's difficulty follows the brain's skill dial (as games use it:
 // slower reactions, more mistakes), the player's chance depends on their own skill against it
-function season(ps, { rounds = 300, badFeel = false, alwaysMore = false, fun = true } = {}) {
+function season(ps, { rounds = 300, badFeel = false, alwaysMore = false, fun = true, corrected = false } = {}) {
   const fns = [];
   const api = { brains: { load: () => null, save: () => true, onFun: (n, f) => { fns.push(f); return () => {}; } } };
   const b = new Brain(api, { name: 'duel', inputs: 2, actions: ['toward', 'away', 'wait'], teacher: s => (s[0] > 0 ? 'toward' : 'wait'), share: false, profile: false });
-  let wins = 0, run = 0, worstRun = 0, last = [];
+  // a game (or a player) that corrects it to attack wherever it is
+  if (corrected) for (let i = 0; i < 12; i++) b.correct([rand() * 2 - 1, rand() * 2 - 1], 'toward');
+  let wins = 0, run = 0, worstRun = 0, last = [], other = 0;
   for (let r = 0; r < rounds; r++) {
     for (let t = 0; t < 40; t++) {
       b.act([rand() * 2 - 1, rand() * 2 - 1], 1 / 15);
+      if (b.action !== 'toward') other++;
       const hit = b.action === 'toward' && rand() > ps;
       if (hit && badFeel) b.feel(2);                 // a game that rewards hurting the player
       else if (b.action === 'toward' && !hit) b.feel(1);   // a close call
@@ -41,7 +44,7 @@ function season(ps, { rounds = 300, badFeel = false, alwaysMore = false, fun = t
     if (b.anchor) for (let i = 0; i < b.net.w.length; i++) assert.ok(Math.abs(b.net.w[i] - b.anchor.w[i]) <= b.drift + 1e-6, 'drift rail');
     assert.ok(b.net.w.every(Number.isFinite), 'numbers stay finite');
   }
-  return { rate: wins / 100, worstRun, skill: last.reduce((a, v) => a + v, 0) / last.length, b };
+  return { rate: wins / 100, worstRun, skill: last.reduce((a, v) => a + v, 0) / last.length, b, other: other / (rounds * 40) };
 }
 
 try {
@@ -56,6 +59,15 @@ try {
   const bad = season(.15, { badFeel: true, alwaysMore: true });
   assert.ok(bad.rate >= .45, 'a game that rewards hits, and fun that always says more, still lets a weak player win: ' + bad.rate);
   ok('rewarding hits and "always more" fun signals can\'t make it cruel');
+
+  // corrections are the maker's (or the player's) word on a spot, like the teacher: the skill dial, the
+  // randomness and the losing-streak relief still act on what the brain then does
+  const fixed = season(.15, { corrected: true });
+  assert.ok(fixed.rate >= .45, 'corrected to always attack, a weak player still wins often: ' + fixed.rate);
+  assert.ok(fixed.worstRun <= 8, 'and a losing run still ends: ' + fixed.worstRun);
+  assert.ok(fixed.other > .05, 'and it still makes its share of other moves at a low skill: ' + fixed.other.toFixed(2));
+  assert.ok(fixed.b.corrections.length === 12 && fixed.b.heed === 2, 'the corrections were in force');
+  ok('corrections that say "always attack" can\'t take away the win-rate rail');
 
   // the fun lean never adds pressure while the player is losing
   const lb = new Brain({ name: 'lean', inputs: 1, actions: 2, share: false, profile: false });
@@ -118,9 +130,9 @@ if (gi >= 0) {
       await p.mouse.click(r.x + Math.random() * r.w, r.y + Math.random() * r.h); await p.waitForTimeout(60 + Math.random() * 200);
     }
     const stats = await p.evaluate(() => __gs.brains());
-    const bad = stats.filter(s => s.ok === false || (s.kind === 'brain' && s.rounds >= 3 && s.winRate < s.target && s.skill > s.skill0 + .05));
+    const bad = stats.filter(s => s.ok === false || ((s.kind === 'brain' || s.kind === 'dial') && s.rounds >= 3 && s.winRate < s.target && s.skill > s.skill0 + .05));
     if (bad.length) failed++;
-    console.log(`${bad.length ? 'FAIL' : 'PASS'} ${id.padEnd(16)} rounds=${rounds} ` + stats.map(s => s.kind === 'brain' ? `${s.name} skill ${s.skill0.toFixed(2)}→${s.skill.toFixed(2)} win ${s.winRate.toFixed(2)}` : `${s.name} (${s.kind})`).join(', ') + (bad.length ? `\n   got harder for a losing player: ${bad.map(s => s.name).join(', ')}` : ''));
+    console.log(`${bad.length ? 'FAIL' : 'PASS'} ${id.padEnd(16)} rounds=${rounds} ` + stats.map(s => s.kind === 'brain' || s.kind === 'dial' ? `${s.name} skill ${s.skill0.toFixed(2)}→${s.skill.toFixed(2)} win ${s.winRate.toFixed(2)}` : `${s.name} (${s.kind})`).join(', ') + (bad.length ? `\n   got harder for a losing player: ${bad.map(s => s.name).join(', ')}` : ''));
   }
   await br.close(); server.httpServer.close();
   process.exit(failed ? 1 : 0);

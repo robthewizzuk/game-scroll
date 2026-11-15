@@ -27,6 +27,8 @@ function free() { if (new URLSearchParams(location.search).has('nofree')) return
     for (const m of [].concat(o.material || [])) { for (const k in m) if (m[k]?.isTexture) m[k].dispose(); m.dispose(); }
   });
 }
+// ?set=oneWrite:false,sendChanged:false sets engine switches (HD) for the whole run: Q=set=... on look-compare.cjs
+for (const kv of (new URLSearchParams(location.search).get('set') || '').split(',')) if (kv) { const [k, v] = kv.split(':'); window.__hd[k] = v === 'true' ? true : v === 'false' ? false : isNaN(+v) ? v : +v; }
 window.__hd.force = 3; window.__hd.upscale = false; if (new URLSearchParams(location.search).has('nonear')) window.__hd.closeUp = false; if (new URLSearchParams(location.search).has('nopack')) window.__hd.pack = false;
 async function nextgen(tier, wet = 0, look = null) {
   window.__hd.force = tier;

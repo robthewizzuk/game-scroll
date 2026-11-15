@@ -1,0 +1,96 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// What goes to the chip each frame for things that move (src/kit/gpu.js sendChanged and oneWrite, hd3d-gpu.js
+// frameWide) for scripts/detail-test.cjs --page uploads --webgpu.
+// - A list marked as rewritten often (DynamicDrawUsage: copies' places, cloth, particles) is sent when it has changed
+//   and not otherwise, and a change still shows. HD.sendChanged = false is three's way: sent every frame.
+// - A thing that moves has its changed numbers sent in one call. HD.oneWrite = false is three's way: a call a run.
+// - A number of the whole frame's (the air's haze) is sent once a render, not once for every thing drawn, and reaches
+//   things that have not changed themselves.
+// The counts are the tripwire for a three.js update: if three stops sending unchanged lists, or sends a thing's numbers
+// in one call itself, the checks that say "three's way" fail and the patches in gpu.js can go.
+//   ?gpu  ?tier=2  ?w=240&h=320
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+await loadParts();
+const G = GPU ? await prepareGPU() : null;
+if (GPU && !G) { window.result = { error: 'WebGPU did not start in this browser' }; throw new Error(window.result.error); }
+const T = gs.THREE, HD = window.__hd, W = +(Q.get('w') || 240), H = +(Q.get('h') || 320);
+HD.force = +(Q.get('tier') ?? 2); HD.upscale = false; HD.grain = 0; HD.still = false; HD.hold = false; HD.spread = false;
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const checks = [], info = {}, out = {};
+const check = (name, ok, note = '') => checks.push({ name, ok: !!ok, note: String(note) });
+try {
+  const v = new gs.hd.HDView({ bg: '#8fa6c4', fog: .01, amb: .35 }), things = [];
+  const sun = gs.hd.sun('#fff0d6', 2.4, 14, [-.5, 1, .3]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+  const ground = new T.Mesh(new T.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), gs.hd.pbr('#7b8468', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+  const R = gs.math.rng(5);
+  for (let i = 0; i < 12; i++) { const m = new T.Mesh(new T.BoxGeometry(.8, .6 + R() * 1.6, .8), gs.hd.pbr(['#b8553d', '#3d7ab8', '#c9b458'][i % 3], { rough: .5 })); m.position.set((R() - .5) * 9, .5, -R() * 14 - 1); m.castShadow = m.receiveShadow = true; v.scene.add(m); things.push(m); }
+  // a sheet whose points are marked as rewritten often, as cloth's are
+  const sheet = new T.Mesh(new T.PlaneGeometry(2.4, 1.6, 48, 32), gs.hd.pbr('#d9d2c0', { rough: .7 })); sheet.material.side = T.DoubleSide;
+  sheet.position.set(-1.6, 1.6, 1); sheet.castShadow = true; v.scene.add(sheet);
+  const P = sheet.geometry.attributes.position, N = sheet.geometry.attributes.normal; P.setUsage(T.DynamicDrawUsage); N.setUsage(T.DynamicDrawUsage);
+  // and copies whose places are (more of them than three keeps in a group of uniforms, so their places are a list)
+  const COPIES = 1500, copies = new T.InstancedMesh(new T.BoxGeometry(.07, .07, .07), gs.hd.pbr('#e8e2d0', { rough: .6 }), COPIES), M = new T.Matrix4();
+  for (let i = 0; i < COPIES; i++) copies.setMatrixAt(i, M.makeTranslation(1 + (i % 30) * .09, .2 + Math.floor(i / 30) * .05, 1.5));
+  copies.instanceMatrix.setUsage(T.DynamicDrawUsage); copies.frustumCulled = false; v.scene.add(copies);
+  v.cam.fov = 45; v.cam.aspect = W / H; v.cam.near = .1; v.cam.far = 200; v.cam.position.set(0, 2.4, 8); v.cam.lookAt(0, 1, -2); v.cam.updateProjectionMatrix(); v.cam.updateMatrixWorld();
+  const air = v.air({ haze: .004 });
+  const c = document.createElement('canvas'); c.width = W; c.height = H; document.body.appendChild(c); const x = c.getContext('2d', { willReadFrequently: true });
+  // every write of a buffer, counted (by buffer) while C.on
+  const C = { on: false, n: 0, by: new Map() }, dev = G?.r.backend.device;
+  if (dev) { const wb = dev.queue.writeBuffer; dev.queue.writeBuffer = function (b, ...a) { if (C.on) { C.n++; C.by.set(b, (C.by.get(b) || 0) + 1); } return wb.call(this, b, ...a); }; }
+  const draw = async (n = 6, each) => { C.n = 0; C.by.clear(); for (let i = 0; i < n; i++) { each?.(i); C.on = true; x.clearRect(0, 0, W, H); v.render(x, W, H); C.on = false; await frame(); } return x.getImageData(0, 0, W, H).data; };
+  const differ = (a, b, tol = 6) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
+  const bufOf = at => G?.r.backend.get(at)?.buffer, sent = at => C.by.get(bufOf(at)) || 0;
+  const wave = k => { for (let i = 0; i < P.count; i++) P.setZ(i, Math.sin(P.getX(i) * 4) * k); P.needsUpdate = true; sheet.geometry.computeVertexNormals(); N.needsUpdate = true; };
+  for (let i = 0; i < 40 && (i < 12 || v.held || v.shJobs); i++) await draw(1);   // (shaders, shadow maps)
+
+  /* ---- a list marked as rewritten often ---- */
+  const a0 = await draw(6), noise = differ(a0, await draw(3)); out.before = c.toDataURL();
+  if (GPU) {
+    const pn = sent(P), cn = sent(copies.instanceMatrix);
+    check('a sheet whose points have not changed sends none of them', bufOf(P) && pn === 0, `${pn} sends of its points in 6 frames`);
+    if (bufOf(copies.instanceMatrix)) check('and copies that have not moved send none of their places', cn === 0, `${cn} sends of ${COPIES} copies' places in 6 frames`);
+    else check('the copies\' places are a list on the chip', false, 'three keeps them another way now: make COPIES larger, or drop this check');
+    HD.sendChanged = false; await draw(1); await draw(6);
+    const pt = sent(P), ct = sent(copies.instanceMatrix);
+    check("HD.sendChanged = false is three's way: both go again every frame", pt >= 6 && ct >= 6, `${pt} and ${ct} sends in 6 frames (if three no longer does this, gpu.js sendChanged can go)`);
+    HD.sendChanged = true; await draw(1);
+  }
+  wave(.35); for (let i = 0; i < COPIES; i += 2) { copies.getMatrixAt(i, M); M.elements[13] += 1.6; copies.setMatrixAt(i, M); } copies.instanceMatrix.needsUpdate = true;
+  const a1 = await draw(3), moved = differ(a0, a1); out.changed = c.toDataURL();
+  check('a change to the sheet and to the copies shows', moved > W * H * .01 && moved > noise * 4, `${moved} of ${W * H} pixels differ (two draws of the same: ${noise})`);
+  if (GPU) {
+    check('and each was sent once for it', sent(P) === 1 && sent(copies.instanceMatrix) === 1, `${sent(P)} and ${sent(copies.instanceMatrix)} sends in the 3 frames after`);
+    const a2 = await draw(4);
+    check('then none again', sent(P) === 0 && sent(copies.instanceMatrix) === 0 && differ(a1, a2) <= Math.max(noise, W * H * .002), `${sent(P)} and ${sent(copies.instanceMatrix)} sends, ${differ(a1, a2)} pixels differ`);
+    // the picture with three's way is the same
+    HD.sendChanged = false; const a3 = await draw(4); HD.sendChanged = true;
+    check("the same picture as three's way gives", differ(a1, a3) <= Math.max(noise, W * H * .002), `${differ(a1, a3)} pixels differ`);
+  }
+
+  if (GPU) {
+    /* ---- a thing that moves: its numbers in one call ---- */
+    const box = things[0], x0 = box.position.x, step = i => { box.position.x = x0 + (i + 1) * .03; };
+    await draw(2); const still = (await draw(6), C.n / 6);
+    await draw(6, step); const on = C.n / 6, pOn = await draw(1); box.position.x = x0; await draw(2);
+    HD.oneWrite = false; await draw(1);
+    await draw(6, step); const off = C.n / 6, pOff = await draw(1); HD.oneWrite = true; box.position.x = x0; await draw(2);
+    info.moving = { still, on, off };
+    check('a thing that moves sends its changed numbers in fewer calls', on < off && on > still, `${on.toFixed(1)} writes a frame against ${off.toFixed(1)} with HD.oneWrite = false (${still.toFixed(1)} with nothing moving; if the two are the same, three does it itself and gpu.js oneWrite can go)`);
+    check('with the same picture', differ(pOn, pOff) <= Math.max(noise, W * H * .002), `${differ(pOn, pOff)} pixels differ`);
+
+    /* ---- a number of the whole frame's ---- */
+    const b0 = await draw(4), base = C.n / 4;
+    air.haze = .05; const b1 = await draw(1), first = C.n; await draw(3); const b2 = await draw(1); out.haze = c.toDataURL();
+    info.haze = { base, first, things: things.length + 3 };
+    check('thicker haze reaches every thing, none of which changed', differ(b0, b2) > W * H * .3, `${differ(b0, b2)} of ${W * H} pixels differ`);
+    check('and it is in the first frame after', differ(b1, b2) <= Math.max(noise * 2, W * H * .01), `${differ(b1, b2)} pixels differ between the first frame and the fourth`);
+    check('sent once a render, not once for every thing drawn', first - base < things.length, `${first} writes in the frame the haze changed, ${base.toFixed(1)} a frame before, ${things.length + 3} things drawn`);
+  }
+  window.result = { out, info, checks };
+} catch (e) { console.error(e); window.result = { error: String(e?.stack || e) }; }
+</script>

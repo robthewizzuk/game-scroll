@@ -179,7 +179,10 @@ export class Face extends Tracker {
 /**
  * Up to two hands: hands.list is [{ x, y (the palm, 0..1, mirrored), tipX, tipY (index finger tip),
  * pinch (thumb and index together), pinchX, pinchY, open (all fingers out), fist, point (only the
- * index out), side ('left' | 'right'), points (21 landmarks) }]. hands.first is list[0] or null.
+ * index out), side ('left' | 'right'), points (21 landmarks), shape }]. hands.first is list[0] or null.
+ * shape is the hand as 40 numbers for gs.brains.Examples (a sign of your own: signs.add('rock',
+ * hand.shape), signs.guess(hand.shape)): its points turned upright and a palm long, a left hand
+ * turned into a right one, then which way it pointed. Wherever the hand is and however near.
  */
 export class Hands extends Tracker {
   constructor({ max = 2, preview = false } = {}) { super('hands'); this.max = max; this.preview = preview; this.list = []; }
@@ -191,7 +194,10 @@ export class Hands extends Tracker {
       const out = f => d(0, f) > d(0, f - 2) * 1.1;   // tip further from the wrist than the middle joint
       const fingers = [8, 12, 16, 20].map(out);
       const side = r.handednesses?.[i]?.[0]?.categoryName === 'Left' ? 'right' : 'left';   // mirrored
+      const aspect = r.aspect || (this.video && this.video.videoWidth / this.video.videoHeight) || 1;
+      let shape = null;
       return {
+        get shape() { return shape ||= handShape(p, side, aspect); },
         x: 1 - p[9].x, y: p[9].y, tipX: 1 - p[8].x, tipY: p[8].y,
         pinch: d(4, 8) < palm * .35, pinchX: 1 - (p[4].x + p[8].x) / 2, pinchY: (p[4].y + p[8].y) / 2,
         open: fingers.every(Boolean), fist: !fingers.some(Boolean), point: fingers[0] && !fingers[1] && !fingers[2] && !fingers[3],
@@ -199,6 +205,24 @@ export class Hands extends Tracker {
       };
     });
   }
+}
+
+// A hand as numbers that don't change with where it is, how near, or which hand: each point from the
+// wrist, turned so the middle finger's knuckle is straight up and a palm long (true proportions, as
+// on screen), then which way the hand pointed (0, 0 is up). The knuckle itself is left out.
+function handShape(p, side, aspect) {
+  const flip = side === 'left' ? -1 : 1, w = p[0], X = q => (w.x - q.x) * aspect * flip, Y = q => q.y - w.y;
+  const kx = X(p[9]), ky = Y(p[9]), L = Math.hypot(kx, ky) || 1e-3, cs = -ky / L, sn = kx / L, out = [];
+  for (let i = 1; i < 21; i++) { if (i === 9) continue; const x = X(p[i]), y = Y(p[i]); out.push((x * cs + y * sn) / L * .6, (-x * sn + y * cs) / L * .6); }
+  out.push(sn * .5, (cs - 1) * .5);
+  return out;
+}
+// A body the same way: each named joint from the middle of the hips, a torso long.
+function bodyShape(j, aspect) {
+  const hx = (j.leftHip.x + j.rightHip.x) / 2, hy = (j.leftHip.y + j.rightHip.y) / 2, sx = (j.leftShoulder.x + j.rightShoulder.x) / 2, sy = (j.leftShoulder.y + j.rightShoulder.y) / 2;
+  const L = Math.hypot((sx - hx) * aspect, sy - hy) || 1e-3, out = [];
+  for (const n of Object.keys(JOINTS)) out.push((j[n].x - hx) * aspect / L * .4, (j[n].y - hy) / L * .4);
+  return out;
 }
 
 /* ---------- whole body ---------- */
@@ -219,6 +243,8 @@ const knee = (a, b, c) => {   // the angle at b, degrees (180 = straight leg)
  * rightFoot); and moves: armsUp, leftUp, rightUp (a hand above the head), lean (-1 left .. 1 right),
  * squat (0 standing .. 1 deep), jump (true on the update a jump starts), clap (hands meet, true once),
  * points (all 33). people: every body when made with { max: 2 } or more.
+ * shape is the pose as 26 numbers for gs.brains.Examples (a pose of your own: poses.add('star',
+ * body.shape), poses.guess(body.shape)): each joint from the hips, a torso long; null with nobody there.
  */
 export class Body extends Tracker {
   constructor({ max = 1, preview = false } = {}) {
@@ -230,7 +256,7 @@ export class Body extends Tracker {
   read(r) {
     const all = r.landmarks || [];
     this.people = all.map(p => named(p, r));
-    const p = all[0]; this.found = !!p; this.jump = false; this.clap = false;
+    const p = all[0]; this.found = !!p; this.jump = false; this.clap = false; this.shape_ = null;
     if (!p) { this.lastY = null; return; }
     const j = this.joints = this.people[0]; this.points = p;
     const hip = { x: (j.leftHip.x + j.rightHip.x) / 2, y: (j.leftHip.y + j.rightHip.y) / 2 };
@@ -254,6 +280,7 @@ export class Body extends Tracker {
     const together = Math.hypot(j.leftHand.x - j.rightHand.x, j.leftHand.y - j.rightHand.y) < shoulderW * .35 && j.leftHand.seen > .5 && j.rightHand.seen > .5;
     this.clap = together && !this.wasClap; this.wasClap = together;
   }
+  get shape() { return this.found ? (this.shape_ ||= bodyShape(this.joints, (this.video && this.video.videoWidth / this.video.videoHeight) || 1)) : null; }
 }
 function named(p) {
   const out = {};

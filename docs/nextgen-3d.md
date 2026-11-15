@@ -492,7 +492,8 @@ the same clouds, Long Shadow's morning and storm skies, and the switches off dra
   things that are close together stay apart: walls a metre apart are clean at 8 km with a near plane at
   10 cm, where they flickered from about 1 km (nothing for a game to do; `HD.info.depth`). `HD.shadowColour = true`,
   `HD.shadow16 = false` (both before a
-  light's first frame), `HD.hdrSmall = false`, `HD.opaque = false` and `HD.shareTargets = false` put each back to
+  light's first frame), `HD.hdrSmall = false`, `HD.opaque = false`, `HD.shareTargets = false`, `HD.sendChanged = false`
+  and `HD.oneWrite = false` (what moves is sent to the chip when it changes, in one call) put each back to
   compare; `HD.info.shared` counts the steps sharing. `node scripts/detail-test.cjs --page memory
   --webgpu` lists every picture the view holds by what it is for and when in the frame it is used,
   which could share, and draws the scene as before and as now: less memory, the same picture.

@@ -47,6 +47,25 @@ register('hear', {
 
 // ---------------------------------------------------------------- Sounds
 
+// What is heard as a short list of numbers: each of the surest five sounds adds its own fixed pattern
+// of pluses and minuses (made from its name), as strongly as it is heard. Two takes of one sound give
+// nearly the same numbers; different sounds give unrelated ones.
+const SHAPE_N = 32, patterns = new Map();
+function pattern(name) {
+  let p = patterns.get(name); if (p) return p;
+  let h = 2166136261; for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 16777619);
+  p = new Float32Array(SHAPE_N);
+  for (let i = 0; i < SHAPE_N; i++) { h = Math.imul(h ^ (h >>> 15), 2246822519) + i | 0; h ^= h >>> 13; p[i] = h & 1 ? 1 : -1; }
+  patterns.set(name, p); return p;
+}
+function soundShape(cats) {
+  const top = cats.filter(c => (c.categoryName || c.displayName) && c.score >= .05).sort((a, b) => b.score - a.score).slice(0, 5);
+  if (!top.length) return null;
+  const out = new Array(SHAPE_N).fill(0);
+  for (const c of top) { const p = pattern(c.categoryName || c.displayName), w = Math.sqrt(c.score) * 3 / Math.sqrt(SHAPE_N); for (let i = 0; i < SHAPE_N; i++) out[i] += p[i] * w; }
+  return out;
+}
+
 /**
  * Hears everyday sounds. opts: want (names to listen for, from YAMNet's list: 'Dog', 'Cat', 'Whistling',
  * 'Clapping', 'Laughter', 'Knock', 'Speech', 'Singing', 'Music', 'Bird', 'Cough', 'Snoring', 'Bell'...;
@@ -54,6 +73,10 @@ register('hear', {
  *   heard(name)   true once for each time it's heard (since the last call)
  *   hearing(name) how sure it is that the sound is going on now (0..1)
  *   top           the loudest-and-surest sound right now: { name, sure } or null
+ *   shape         what is being heard now as 32 numbers for gs.brains.Examples (a sound of your own:
+ *                 mine.add('spoon on a glass', ears.shape), mine.guess(ears.shape)); null in silence.
+ *                 It is the mix of everyday sounds this one is made of, so it tells apart sounds
+ *                 that the list tells apart, under names of your own.
  */
 export class Sounds {
   constructor({ want = null, sure = .3, every = .25 } = {}) {
@@ -61,7 +84,7 @@ export class Sounds {
     this.want = want ? new Set(want.map(w => w.toLowerCase())) : null;
     this.sure = sure; this.every = every;
     this.ready = false; this.running = false; this.failed = null;
-    this.now = new Map(); this.fresh = new Map(); this.top = null; this.wait = 0;
+    this.now = new Map(); this.fresh = new Map(); this.top = null; this.wait = 0; this.shape = null;
   }
   /** Starts the mic and the model. Call from a tap. Resolves to this (check .ready / .failed). */
   async start() {
@@ -122,6 +145,7 @@ export class Sounds {
     return this.heardCats(res?.[0]?.classifications?.[0]?.categories || []);
   }
   heardCats(cats) {
+    this.shape = soundShape(cats);
     const seen = new Map();
     for (const c of cats) { const n = c.categoryName || c.displayName; if (!n) continue; if (this.want && !this.want.has(n.toLowerCase())) continue; seen.set(n, c.score); }
     // a sound counts once each time it starts (it has to drop below half `sure` before it counts again)

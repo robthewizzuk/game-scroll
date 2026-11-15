@@ -195,7 +195,7 @@ export class Puzzle {
  *   over(state) (optional): true when the game has ended
  * best(state, { time, depth, skill, rng, mode }): the move to make.
  *   time: milliseconds to think (default 60), depth: deepest look-ahead (default 8),
- *   skill 0..1 (default 1): lower picks good-but-not-best moves more often,
+ *   skill 0..1 (default 1; a number or a gs.brains.Dial): lower picks good-but-not-best moves more often,
  *   mode: 'minimax' (default; two players, no luck) or 'mcts' (luck, many players, or huge choice).
  */
 export class Search {
@@ -367,6 +367,7 @@ export class Search {
 
 // skill 1: the best move. Lower: a softmax over the ranked moves, so mistakes are plausible ones.
 function pickBySkill(ranked, skill, r) {
+  skill = +skill; if (!isFinite(skill)) skill = 1;   // a number, or a gs.brains.Dial that follows the player
   if (skill >= 1 || ranked.length === 1) return ranked[0].move;
   const top = ranked[0].value, spread = Math.max(1e-6, Math.abs(top - ranked[ranked.length - 1].value));
   const temp = Math.max(.02, (1 - Math.max(0, skill)) * .6);

@@ -17,7 +17,7 @@
 // Kit use only: hd3d-gpu.js gpuMaterials.skyDome builds a SkyGpu for a Sky's dome, and hd3d.js drawGPU calls its
 // frame() before the scene is drawn. WebGL, the lower tiers and a game with HD.clouds = false keep today's sky.
 import { QuadMesh, NodeMaterial, RendererUtils, RenderTarget, HalfFloatType, RGBAFormat, LinearFilter, RepeatWrapping, ClampToEdgeWrapping, Data3DTexture, DataTexture, Vector3, Vector4, Matrix4, Color } from 'three/webgpu';
-import { Fn, uniform, uv, vec2, vec3, vec4, float, texture, texture3D, Loop, If, Break, max, min, clamp, exp, sqrt, abs, mix, select, smoothstep, dot, normalize, length, pow, acos, sign, fract, screenCoordinate, interleavedGradientNoise, getViewPosition, getScreenPosition } from 'three/tsl';
+import { Fn, uniform, renderGroup, uv, vec2, vec3, vec4, float, texture, texture3D, Loop, If, Break, max, min, clamp, exp, sqrt, abs, mix, select, smoothstep, dot, normalize, length, pow, acos, sign, fract, screenCoordinate, interleavedGradientNoise, getViewPosition, getScreenPosition } from 'three/tsl';
 import { RG, RT, TW, TH, MSN, SKY_K, airOf, luts, lutTextures, skyLight, transmittance } from './atmosphere.js';
 import { ORIGIN } from './origin.js';
 
@@ -314,6 +314,9 @@ export const SKY = {
   ext: uniform(new Vector3()),   // (real air's extinction a metre near the ground, per colour: the blue of the far distance)
   sun: uniform(new Vector3(0, 1, 0)), night: uniform(0),
 };
+// (numbers of the whole frame's, read by every material under the sky: in three's per-render group they go to the chip once
+// a render, not into each thing's own numbers each frame; hd3d-gpu.js frameWide)
+for (const u of Object.values(SKY)) if (u.isUniformNode && !u.isTextureNode) u.setGroup(renderGroup);
 /** The dome's soft knee: the glow round a low sun is bright, but no brighter than a painted sky's (2.5 at most). */
 export function knee(c) { const l = max(c.r, max(c.g, c.b)), e = max(l.sub(1), 0); return c.mul(select(l.greaterThan(1), e.div(e.div(1.5).add(1)).add(1).div(max(l, 1e-4)), float(1))); }
 /** The clouds' soft knee: their light rolls off from .45 towards .76 (brightness as the bloom reads it, which starts at .77). */

@@ -1082,22 +1082,26 @@ const PEOPLE_SPEC = (() => {
   const hale = o => ({ hands: 'grip', ...o, outfit: {
     top: { kind: 'blouse', colour: '#6b6f40', collar: null, pockets: 2, buttons: '#5a5840' }, legs: { kind: 'trousers', colour: '#5a5e37' }, feet: { kind: 'gaiters', colour: '#2b231a', gaiter: '#8a8464' },
     hat: { kind: 'beret', colour: '#3f4a2c', badge: '#b8a050' }, belt: { colour: '#7d7656', buckle: '#a09060' }, webbing: { colour: '#7d7656', y: true, pouches: 1, kind: 'big' }, pack: { kind: 'pack', colour: '#5f6238', roll: '#6a6450', hide: true } } });
+  // every face is one of the kit's real ones (look: 'real': a head the shape of scanned ones, skin, eyes and hair as real as the kit makes
+  // them), each its own from its seed and age. The kit has eight men's faces of a background, the seed's place in eight says which
+  // (and the seed varies it a little), so the nine here take one each: no two soldiers in a scope are the same man
+  const real = (seed, age, o) => ({ look: 'real', heritage: 'european', seed, age, ...o });
   return {
-    grey: [grey({ skin: '#d2a583', hair: '#4a3626', iris: '#6c8296', stubble: .45, face: { jaw: 1.1, chin: 1.06, brow: 1.08, nose: .96, lips: .92, eyes: .95 } }), grey({ skin: '#c9997a', hair: '#2e241c', iris: '#5a4a34', stubble: .65, face: { jaw: 1.15, chin: 1.04, nose: 1.08, brow: 1.2, lips: .88, eyes: .92 } }),
-      grey({ skin: '#dcb394', hair: '#8a6a3c', iris: '#5f7f6a', stubble: .12, face: { jaw: .93, chin: .94, nose: .94, cheeks: .9 } })],
-    officer: [{ skin: '#d8ae8c', hair: '#3a2c20', iris: '#5a6f7a', moustache: true, stubble: .2, face: { jaw: 1.04, chin: 1.12, brow: 1.1, nose: 1.1, lips: .85, eyes: .92 }, outfit: {
+    grey: [grey(real(7, 27, { skin: '#d2a583', hair: '#4a3626', iris: '#6c8296', stubble: .45 })), grey(real(2, 43, { skin: '#c9997a', hair: '#2e241c', iris: '#5a4a34', stubble: .65 })),
+      grey(real(4, 21, { skin: '#dcb394', hair: '#8a6a3c', iris: '#5f7f6a', stubble: .12 }))],
+    officer: [real(3, 52, { skin: '#d8ae8c', hair: '#3a2c20', iris: '#5a6f7a', moustache: true, stubble: .2, outfit: {
       top: { kind: 'tunic', colour: '#3d434b', collar: '#262b31', pockets: 4, buttons: '#b0a678', straps: true, tabs: '#8a2a22', cuffs: '#262b31', band: '#d9c25a' },
       legs: { kind: 'breeches', colour: '#2f343a' }, feet: { kind: 'tall', colour: '#141210' }, hat: { kind: 'cap', colour: '#353b42', band: '#d9c25a', badge: '#c0b070' },   // (the Order's yellow on his cap too: he is the one to find)
-      belt: { colour: '#3a2416', buckle: '#b0a678' }, webbing: { colour: '#3a2416', cross: true }, extras: { holster: 'left' }, gloves: { colour: '#33261a' } } }],
-    // Sgt. Rook, their marksman: a camouflage smock, a knitted cap, a scarf against the tower's wind
-    rook: [{ hands: 'grip', skin: '#c79a7c', hair: '#57534c', iris: '#7a8a8a', stubble: .8, face: { jaw: 1.08, brow: 1.18, cheeks: .96, nose: 1.05, lips: .88, eyes: .9 }, outfit: {
+      belt: { colour: '#3a2416', buckle: '#b0a678' }, webbing: { colour: '#3a2416', cross: true }, extras: { holster: 'left' }, gloves: { colour: '#33261a' } } })],
+    // Sgt. Rook, their marksman: the oldest of them, a short beard, a camouflage smock, a knitted cap, a scarf against the tower's wind
+    rook: [real(5, 50, { hands: 'grip', skin: '#c79a7c', hair: '#57534c', iris: '#7a8a8a', stubble: .6, beard: .3, outfit: {
       top: { kind: 'smock', colour: '#4a4f3c', camo: ['#32372b', '#6b6551'], collar: null, pockets: 4 }, legs: { kind: 'trousers', colour: '#4a5057' }, feet: { kind: 'tall', colour: '#1f1c19' }, hat: { kind: 'wool', colour: '#3a3f38' },
-      belt: { colour: '#2b2723', buckle: '#6d6c62' }, webbing: { colour: '#2b2723', pouches: 2 }, extras: { scarf: '#55584a' } } }],
-    ally: [hale({ skin: '#e0b28b', hair: '#3a2a1a', iris: '#5a4a34', stubble: .5, face: { jaw: 1.12, chin: 1.08, brow: 1.12, lips: .9, cheeks: 1.03, eyes: .94 } }), hale({ skin: '#b98a68', hair: '#1e1814', iris: '#3f3428', stubble: .5, face: { jaw: 1.05, nose: 1.1, brow: 1.1, lips: .92, cheeks: 1.04 } }), hale({ skin: '#e6bea0', hair: '#9a6a3a', iris: '#5a7a8a', stubble: .1, face: { jaw: .95, chin: .95 } })],
+      belt: { colour: '#2b2723', buckle: '#6d6c62' }, webbing: { colour: '#2b2723', pouches: 2 }, extras: { scarf: '#55584a' } } })],
+    ally: [hale(real(8, 36, { skin: '#e0b28b', hair: '#3a2a1a', iris: '#5a4a34', stubble: .5 })), hale(real(20, 29, { heritage: { european: .5, 'middle-eastern': .5 }, skin: '#b98a68', hair: '#1e1814', iris: '#3f3428', stubble: .5 })), hale(real(6, 22, { skin: '#e6bea0', hair: '#9a6a3a', iris: '#5a7a8a', stubble: .1 }))],
     // Wren: a brushed camouflage smock and trousers, canvas gaiters, a knitted cap, a scarf of scrim at his neck
-    wren: [{ hands: 'grip', skin: '#d6a985', hair: '#3a2a1c', iris: '#6b7a58', stubble: .45, face: { jaw: 1.1, chin: 1.06, brow: 1.12, nose: 1.02, lips: .9, cheeks: .97, eyes: .94 }, outfit: {
+    wren: [real(1, 35, { hands: 'grip', skin: '#d6a985', hair: '#3a2a1c', iris: '#6b7a58', stubble: .5, outfit: {
       top: { kind: 'smock', colour: '#5f6742', camo: ['#3c472b', '#7b6b47'], collar: null, pockets: 4 }, legs: { kind: 'trousers', colour: '#4b4d33', camo: ['#3c472b', '#6e6444'] }, feet: { kind: 'gaiters', colour: '#2a221a', gaiter: '#6f6a4a' },
-      hat: { kind: 'wool', colour: '#4a4a34', hide: false }, belt: { colour: '#5e5640', buckle: '#8a7a50' }, webbing: { colour: '#5e5640', y: true, pouches: 2 }, extras: { scarf: '#6b6a45', bag: '#545238' } } }],
+      hat: { kind: 'wool', colour: '#4a4a34', hide: false }, belt: { colour: '#5e5640', buckle: '#8a7a50' }, webbing: { colour: '#5e5640', y: true, pouches: 2 }, extras: { scarf: '#6b6a45', bag: '#545238' } } })],
   };
 })();
 // the looks each mission needs: the Grey Order's riflemen and officer and Wren in both; Sgt. Rook and Hale's
@@ -1576,11 +1580,23 @@ function make(api) {
     score: q => (1 - q[4]) * 1.4 + q[3] * .9 + (1 - q[8]) * .25 + Math.min(1, q[0]) * .2,
   });
   const endMind = (s, feel = 0) => { if (!s.mind) return; if (feel) s.mind.feel(feel); s.mind.done(); s.mind = null; };
+  // The riflemen learn from the men who fell (Tiny Brains corrections). One dropped as he rose from cover to shoot, before he
+  // got a round off, tells them all "not that, in a spot like this"; when a few fell in spots alike (the same range, as sure
+  // of where you are), the rest stop showing themselves there and come at you another way, and one of them says so on the
+  // radio. Only the newest FELL_KEPT falls are remembered (on this phone, from one session to the next), so they know where you caught
+  // them last without ever giving up shooting from cover: falls with nothing in common teach them little.
+  const FELL_KEPT = 4;
+  const fewFell = () => {
+    const not = rifleman.corrections.filter(c => c[1] === 'peek' && c[2] === false);
+    if (not.length <= FELL_KEPT) return;
+    rifleman.uncorrect('peek'); for (const c of not.slice(-FELL_KEPT)) rifleman.avoid(c[0], 'peek');
+  };
   // what they shout to each other (on the radio, with a crackle); never over your own side's orders
   const CALLS = {
     contact: ['Contact! Sniper!', 'Sniper! Get down!'], flanking: ['Going round the side!', 'Flanking. Keep him busy!', 'I\'ll get round behind him!'],
     'falling back': ['Fall back!', 'Back, back! Find cover!'], 'man down': ['Man down!', 'They got Brenner!', 'Vogt is hit!'], grenade: ['Grenade! Cover me!', 'Throwing!'],
     covering: ['Covering fire!', 'Keep his head down!'], moving: ['Move up! Go!', 'Moving!'], 'heads down': ['Stay low, he\'s watching!', 'Heads down!'],
+    wary: ['Don\'t show yourself there! He\'s waiting.', 'Not from there. That\'s how he got the others!', 'He\'s got that spot. Find another way!'],
   };
   let lastCall = -99;
   function callout(who, what) {
@@ -1605,13 +1621,23 @@ function make(api) {
     m.userData.pack.visible = s.kind === 'radio' || s.look === 'ally';
     m.userData.helmet.visible = true; m.userData.rifle.visible = s.kind !== 'officer'; if (m.userData.handset) m.userData.handset.visible = false; if (m.userData.binos) m.userData.binos.visible = false;
     m.rig.play('idle', { fade: 0 }); m.rig.upper(null); m.rig.layers[m.rig.layers.length - 1].phase = Math.random(); m.rig.sw = null;   // (each breathes and shifts his weight in his own time)
+    faceOf(m, null);   // (a calm face: nothing left of the round before)
     m.rig.steps = s.kind !== 'cargun'; m.rig.follow?.reset();   // (the car's gunner rides: his feet go with the car; and nothing swings on from the round before)
     s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0); m.position.set(s.x, s.gy, s.y); m.rotation.set(0, s.yaw, 0);
     return s;
   }
   const alive = list => list.filter(s => !s.ko);
+  // a man's face (the live face of a gs.models.human: it blinks and looks about by itself close up): how he feels shows through the scope
+  // and in the camera's hold on a hit. how: null calm, 'alert' (he knows you are there: brows down, eyes narrowed), 'hit' (a wince as the
+  // round lands, then his eyes shut), 'scared' (a man beside him went down)
+  const faceOf = (m, how) => {
+    const f = m.face; if (!f) return;
+    f.set('angry', how === 'alert' ? .6 : 0); f.set('squint', how === 'alert' ? .35 : 0); f.set('fear', how === 'scared' ? .7 : 0); f.set('blink', how === 'hit' ? 1 : 0);
+    if (how === 'hit') f.wince(1, .9);
+  };
   const wakeUp = (s, why) => {
     if (s.ko || s.alert || s.fixed) return;
+    faceOf(s.m, 'alert');
     s.alert = true; s.sus = 1; s.alertT = 0; s.shoutT = t; if (!squad.members.includes(s)) squad.members.push(s);
     if (!squad.alerted) { squad.alerted = true; squad.call(s, 'contact'); }
     s.order = { do: 'hold' }; s.plan = null; s.thinkT = rnd(.2, 1.4); s.thinkDt = 0;   // staggered, so they don't all decide at once
@@ -1677,11 +1703,13 @@ function make(api) {
     if (m.rig.done && (s.fallT += dt) > .7) s.still = true;
   }
   // a round cracks past, or the man beside him drops: he ducks his head into his shoulders
-  function flinch(s) { if (s.ko || s.act || s.fixed || s.kind !== 'rifle') return; s.act = 'flinch'; s.m.rig.play('flinch', { fade: .08, again: true }); }
+  function flinch(s) { if (s.ko || s.act || s.fixed || s.kind !== 'rifle') return; if (!s.alert) faceOf(s.m, 'scared'); s.act = 'flinch'; s.m.rig.play('flinch', { fade: .08, again: true }); }
   function knockOut(s, head, d, viaCam, from = null) {
     if (warming) return;
     if (s.ko) return;
-    s.ko = true; fall(s, from); dropRifle(s);
+    s.ko = true; fall(s, from); dropRifle(s); faceOf(s.m, 'hit');
+    // dropped by a round as he rose from cover to shoot, before he got one off: the others learn from it (see fewFell)
+    if (from && s.alert && s.mind && s.plan === 'peek' && s.mind.action === 'peek' && s.order?.do === 'shoot' && s.order.spot && !s.peekShots) { s.mind.avoid('peek'); fewFell(); }
     // a long duel was a good fight; dropping in the open in his first seconds was a dull one
     endMind(s, s.alert ? (s.alertT > 7 ? .5 : s.alertT < 2 && s.plan !== 'hold' ? -.2 : 0) : 0);
     for (const o of men) if (o !== s && !o.ko && Math.hypot(o.x - s.x, o.y - s.y) < 16) { o.shaken = Math.max(o.shaken || 0, .75); if (Math.hypot(o.x - s.x, o.y - s.y) < 7) flinch(o); }
@@ -1991,6 +2019,9 @@ function make(api) {
     WD.sparks.emit({ x, y, z, life: .05, size: core, col: [5, 3.4, 1.5] });
     for (let i = 1; i <= 3; i++) { const o = core * i * .6; WD.sparks.emit({ x: x + dx * o, y: y + dy * o, z: z + dz * o, vx: dx * 5, vy: dy * 5, vz: dz * 5, life: .045, size: core * (1 - i * .25), col: [5, 2.8, 1] }); }
     for (let i = 0; i < 4; i++) WD.smoke.emit({ x: x + dx * .3, y, z: z + dz * .3, vx: dx * rnd(.6, 2) + rnd(-.2, .2), vy: rnd(.1, .5), vz: dz * rnd(.6, 2) + rnd(-.2, .2), life: rnd(1.2, 2), size: .22 * k, grow: 5, col: [.62, .61, .58], a: .2, drag: 1.4, fadeIn: true });
+    // the flash lights the man behind it, his wall, the sill he fires over: at dusk it is how you find who fired (by day the sun drowns it,
+    // and the valley has no lamps lit to pay for: see mood())
+    if (winLit && far < 450) WD.v.flash(x + dx * .5, y + .05, z + dz * .5, { col: '#ffc27a', i: 9 * k, reach: 7, life: .07 });
   };
   // a shot that misses you still lands close: dirt in front of you, or chips off the sill up a tower
   function nearMiss(from) {
@@ -2103,6 +2134,7 @@ function make(api) {
       setTimeout0(1, () => {
         for (let k = 0; k < 30; k++) WD.dust.emit({ x, y: y + .3, z, vx: rnd(-5, 5), vy: rnd(3, 11), vz: rnd(-5, 5), life: 2, size: 1.2, grow: 2.5, col: [.45, .38, .3], a: .9, drag: 1.5, grav: 6 });
         for (let k = 0; k < 10; k++) WD.sparks.emit({ x, y: y + .5, z, vx: rnd(-6, 6), vy: rnd(2, 9), vz: rnd(-6, 6), life: .4, size: .6, col: [5, 2.6, .8], drag: 2 });
+        if (winLit) WD.v.flash(x, y + .8, z, { col: '#ffb060', i: 70, reach: 16, life: .3 });   // (the burst lights the ground and the walls round it)
         noise(.9, { vol: .45, from: 900, to: 50 }); haptic('heavy');
         if (nest && !move) {
           const e = nestEye(nest), dd = Math.hypot(e.x - x, e.z - z); fx.shake(clamp(30 / dd, 2, 12));
@@ -2426,6 +2458,7 @@ function make(api) {
     for (let k = 0; k < 40; k++) WD.dust.emit({ x, y: y + 1, z, vx: rnd(-6, 6), vy: rnd(2, 12), vz: rnd(-6, 6), life: 2.6, size: 1.6, grow: 2.5, col: [.2, .19, .18], a: .9, drag: 1.2, grav: 3 });
     for (let k = 0; k < 30; k++) WD.sparks.emit({ x, y: y + 1, z, vx: rnd(-8, 8), vy: rnd(3, 12), vz: rnd(-8, 8), life: .7, size: 1, col: [6, 2.8, .6], drag: 1.6, grav: 4 });
     noise(1.4, { vol: .5, from: 700, to: 40 }); haptic('heavy'); fx.shake(6);
+    if (winLit) WD.v.flash(x, y + 1.5, z, { col: '#ffa850', i: 110, reach: 24, life: .5 });   // (the fuel going up lights the tower, the yard and the men in it)
     for (const s of men) if (!s.ko && Math.hypot(s.x - x, s.y - z) < e.radius) knockOut(s, false, 0, false);
     if (tower && !tower.down && Math.hypot(tower.x - x, tower.z - z) < 9) {
       tower.down = true; const pieces = [];
@@ -2692,6 +2725,8 @@ function make(api) {
     s.mind.act(see, s.thinkDt); s.thinkDt = 0;
     const a = s.mind.action, moving = o.do === 'move' && !o.arrived, at = { x: tgt.x, y: tgt.y };
     if (a === 'hold' && quietT > 20) s.mind.feel(-.1);           // a dull lull: nobody shooting, him sat in cover
+    // he'd have shown himself here, but men fell doing that in spots like this one: he says so (now and then) and does something else
+    if (a !== 'peek' && squad.t - (squad.waryAt ?? -99) > 25) { const r = s.mind.recalled; if (r && r.not && r.action === 'peek' && r.like > .4) { squad.waryAt = squad.t; squad.call(s, 'wary'); } }
     // close to a nest you're staying in: a grenade (two a mission, not too often)
     if ((a === 'rush' || a === 'flank') && nest && !move && d < 40 && squad.grenades > 0 && squad.t - squad.lastGrenade > 9) {
       squad.grenades--; squad.lastGrenade = squad.t; s.order = { do: 'throw', at }; s.plan = 'grenade'; squad.call(s, 'grenade'); return;
@@ -2706,7 +2741,7 @@ function make(api) {
       squad.call(s, 'moving');
     } else if (a === 'flank') { squad.lastFlank = squad.t; squad.order(s, 'flank', tgt, { flank: 1.3, near: 16 * C, band: [3 * C, Math.max(4 * C, d)] }); squad.call(s, 'flanking'); }
     else if (a === 'fallback') { squad.order(s, 'retreat', tgt, { near: 12 * C, band: [d + 2 * C, d + 30 * C] }); squad.call(s, 'falling back'); }
-    else if (a === 'peek') { s.order = { do: 'shoot', at: { x: tgt.x, y: tgt.y }, spot: inCover > 0 ? sp : null, from: inCover > 0 ? WD.cover.peek(sp, tgt) : null }; s.fireT = Math.max(s.fireT, rnd(.9, 1.6)); if (Math.random() < .3) squad.call(s, 'covering'); }
+    else if (a === 'peek') { s.order = { do: 'shoot', at: { x: tgt.x, y: tgt.y }, spot: inCover > 0 ? sp : null, from: inCover > 0 ? WD.cover.peek(sp, tgt) : null }; s.fireT = Math.max(s.fireT, rnd(.9, 1.6)); s.peekShots = 0; if (Math.random() < .3) squad.call(s, 'covering'); }
     else {
       const spot = inCover > 0 ? sp : WD.cover.find(s, tgt, { who: s, near: 6 * C, band: [3 * C, d + 8 * C], sees: squad.sees });
       if (spot && inCover < 0) { WD.cover.take(spot, s); s.order = { do: 'move', role: 'hold', to: { x: spot.x, y: spot.y }, spot, at: { x: tgt.x, y: tgt.y } }; }
@@ -2821,7 +2856,7 @@ function make(api) {
           const up = !o.spot || s.fireT < .9 || t - (s.shotAt ?? -9) < .6, p = (up ? o.from : o.spot) || { x: s.x, y: s.y };
           if (Math.hypot(p.x - s.x, p.y - s.y) > .4) { if (walk(s, p.x, p.y, 2.2, dt) === 'stuck') o.from = o.spot = null; else speed = 2.2; }
           s.crouch = !up; s.yaw = turnTo(s.yaw, Math.atan2(o.at.x - s.x, o.at.y - s.y), dt * 4);
-          if ((s.fireT -= dt) <= 0 && !speed) { s.fireT = rnd(1.8, 3.2); s.shotAt = t; const ally = allies && nearestAlly(s); if (ally) enemyShot(s, ally, 'rifle'); else if (located && nest && !move) enemyShot(s, 'me', 'rifle'); }
+          if ((s.fireT -= dt) <= 0 && !speed) { s.fireT = rnd(1.8, 3.2); s.shotAt = t; s.peekShots = (s.peekShots | 0) + 1; const ally = allies && nearestAlly(s); if (ally) enemyShot(s, ally, 'rifle'); else if (located && nest && !move) enemyShot(s, 'me', 'rifle'); }
         } else if (o.do === 'throw') {
           s.order = { do: 'hold' };
           if (nest && !move && Math.hypot(s.x - nest.x, s.y - nest.z) < 40) { const e = nestEye(nest); setTimeout0(2, () => { if (nestId && !move && nest && Math.hypot(e.x - nest.x, e.z - nest.z) < 1) { hurtMe(24, { x: s.x, y: s.gy, z: s.y }); fx.shake(8); noise(.8, { vol: .4, from: 800, to: 60 }); } }); say('Grenade!', null, 1.2); }
@@ -2857,7 +2892,7 @@ function make(api) {
       }
       // his body: a flinch plays right through; else his stride by how fast he goes (easing into it and out), or his stance once he stops
       s.av = (s.av || 0) + clamp(speed - (s.av || 0), -dt * 9, dt * 12);
-      if (s.act && (m.rig.done || m.rig.state !== s.act)) s.act = null;
+      if (s.act && (m.rig.done || m.rig.state !== s.act)) { if (s.act === 'flinch' && !s.alert) faceOf(m, null); s.act = null; }   // (the fright leaves his face with the flinch)
       if (!s.act) { if (s.av > .15) m.rig.blend(STRIDES, s.av); else m.rig.play(stance, { fade: .22 }); }
       s.gy = s.deck ?? groundAt(s.x, s.y) + (s.lift || 0);
       m.position.set(s.x, s.gy, s.y); m.rotation.y = s.yaw;
@@ -3216,7 +3251,10 @@ function make(api) {
     if (key !== camWas.key || (step !== camWas.step && jump) || (key[0] === 'm' && jump)) v.cut();
     camWas.key = key; camWas.step = step; camWas.p.copy(cam.position); camWas.d.copy(camD);
     const blur = key === 'c' || key === 'k' || key[0] === 'm';
-    v.motionBlur = blur && gs.prefs.motion > 0 ? (MBLUR.amount = .5 * gs.prefs.motion, MBLUR) : null;
+    // (the very first frame, under the loading screen, asks for a blur of nothing: the view makes its motion blur step, and every shader that
+    // goes with it, the first time one is asked for, and that used to be the flyover's first frame, which drew without what was still being made)
+    const first = !camWas.blurred && gs.prefs.motion > 0; camWas.blurred = true;
+    v.motionBlur = blur && gs.prefs.motion > 0 ? (MBLUR.amount = .5 * gs.prefs.motion, MBLUR) : first ? (MBLUR.amount = 0, MBLUR) : null;
     // the dusk storm is dark enough that faces vanish up close: cutscenes and the bullet cam open the
     // picture up a little, the way a film crew would light a night scene (eased, so it never pops)
     const md = MOODS[mid], lift = mid === 'm2' && (key === 'c' || key === 'h' || key === 'k' || key[0] === 'm') ? 1.4 : 1;

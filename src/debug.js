@@ -9,7 +9,7 @@
 //   B                      Tiny Brains: copy each brain's and shadow's starting brain (pack()) to the
 //                          clipboard and the console, for new Brain(api, { start }) ("teach by playing")
 //
-// Tiny Brains in this game show in the panel too: skill, the player's win rate against its target,
+// Tiny Brains in this game show in the panel too (a Dial or an Examples learner as one line): skill, the player's win rate against its target,
 // trust (how often it decides instead of its teacher), the fun lean, how torn it is, and any tell.
 // The panel shows frames per second, how long update() and draw() take, the game's size, score and
 // state. Hitboxes: give your game object a debug(c) method that outlines whatever you like, in game
@@ -19,18 +19,20 @@ const SPEEDS = [.1, .25, .5, 1, 2];
 const pct = v => (v * 100).toFixed(0).padStart(3) + '%';
 function brainLines(s) {
   return liveBrains(s).slice(0, 6).map(b => {
+    if (b.examples) return `${b.name}  examples ${b.count()} of ${b.names.length} name${b.names.length === 1 ? '' : 's'}`;
+    if (b.dial) return `${b.name}  dial ${pct(b.skill)}  win ${pct(b.winRate)}/${pct(b.target)}  rounds ${b.rounds}`;
     if (b.habits) return `${b.name}  met ${b.record.met}  you ${b.record.wins}-${b.record.losses}  habit ${b.habit ? b.habit.move : '-'}`;
     if (!b.target) return `${b.name}  copies you ${pct(b.like)}  seen ${b.seen}${b.ready ? '  ready' : ''}`;
     const t = b.telling;
     return `${b.name}${b.style ? ' (' + b.style + ')' : ''}  skill ${pct(b.skill)}  win ${pct(b.winRate)}/${pct(b.target)}\n` +
-      `  trust ${pct(b.trust)}  lean ${b.lean >= 0 ? '+' : ''}${b.lean.toFixed(2)}  torn ${pct(b.unsure)}${t ? '  tell ' + t.action : ''}`;
+      `  trust ${pct(b.trust)}  lean ${b.lean >= 0 ? '+' : ''}${b.lean.toFixed(2)}  torn ${pct(b.unsure)}${t ? '  tell ' + t.action : ''}${b.fix && b.fix.count ? `  corrections ${b.fix.count} (heeds ${b.heed})` : ''}`;
   });
 }
 function copyBrains(s) {
-  const packs = liveBrains(s).filter(b => b.pack).map(b => `${b.name}: '${b.pack()}'`);
+  const packs = liveBrains(s).filter(b => b.pack).map(b => `${b.name}: '${b.pack()}'` + (b.fix && b.fix.count ? `\n${b.name} corrections: ${JSON.stringify(b.corrections)}` : ''));
   if (!packs.length) { console.info('[debug] this game has no Tiny Brains'); return; }
   const text = packs.join('\n');
-  console.info('[debug] starting brains (use as new Brain(api, { start: ... })):\n' + text);
+  console.info('[debug] starting brains (use as new Brain(api, { start: ... }); corrections as { corrections: [...] }):\n' + text);
   try { navigator.clipboard?.writeText(text); } catch (_) {}
 }
 

@@ -20,6 +20,8 @@
 //   director.hurt(1); director.scored(1);            // ... eases off after the player gets hurt,
 //   update(dt) { director.update(dt); const d = director.level; }   // pushes on when they're cruising
 //   director.calm: true for a moment after a heavy hit, so hold back spawns.
+//   new Director({ over: 90, dial }): with a gs.brains.Dial it also remembers this player between rounds:
+//   it climbs sooner for one who usually wins, later and not all the way for one who usually loses.
 //
 // ramp(t, from, to, seconds, ease?) is the plain version: a value that goes from → to over seconds.
 
@@ -80,8 +82,8 @@ export class Waves {
 }
 
 export class Director {
-  constructor({ over = 90, start = 0, max = 1, ease = 6, calmFor = 2.5 } = {}) {
-    Object.assign(this, { over, start, max, ease, calmFor });
+  constructor({ over = 90, start = 0, max = 1, ease = 6, calmFor = 2.5, dial = null } = {}) {
+    Object.assign(this, { over, start, max, ease, calmFor, dial });
     this.t = 0; this.stress = 0; this.calmLeft = 0; this.flow = 0;
   }
   /** The player got hurt (amount ~ 1 for a normal hit). */
@@ -90,7 +92,13 @@ export class Director {
   scored(amount = 1) { this.flow = Math.min(1, this.flow + .05 * amount); return this; }
   get calm() { return this.calmLeft > 0; }
   /** Difficulty 0..max right now. */
-  get level() { const base = ramp(this.t, this.start, this.max, this.over); return Math.max(0, Math.min(this.max, base * (1 - .5 * this.stress) + .15 * this.flow)); }
+  get level() {
+    // with a dial (gs.brains.Dial, or a number 0..1): a player who usually wins gets there sooner, one who
+    // usually loses later and not all the way (.5 is the game as made)
+    const k = this.dial == null ? .5 : Math.max(0, Math.min(1, +this.dial || 0)), top = this.start + (this.max - this.start) * Math.min(1, .6 + .8 * k);
+    const base = ramp(this.t * (.5 + k), this.start, top, this.over);
+    return Math.max(0, Math.min(this.max, base * (1 - .5 * this.stress) + .15 * this.flow));
+  }
   update(dt) {
     this.t += dt; this.calmLeft = Math.max(0, this.calmLeft - dt);
     this.stress *= Math.exp(-dt / this.ease); this.flow *= Math.exp(-dt / (this.ease * 2));

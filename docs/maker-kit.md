@@ -1071,6 +1071,11 @@ Moves: `swing` (`dir` left / right / up / down), `punch`, `throw`, `flip` (forwa
 `twist` (left / right), `knock`, `shake`, and `any`. Each has `power` 0..1. `new Moves({ sensitivity: 1.3 })`
 fires more easily. On iPhones the player is asked for motion access when they tap Play.
 
+Moves of your own, or the player's: `new Moves({ learn: new gs.brains.Examples(api, { name: 'moves', of: 'move' }) })`,
+then `moves.teach('stir')` takes the next move made as an example and `moves.on('stir', fn)` fires for
+moves like it. `moves.on('motion', m => m.shape)` gets every burst of movement
+([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)).
+
 ## Game objects
 
 `const { Things } = gs.things;` A light list of your game's objects with tags, so collisions and
@@ -1147,6 +1152,7 @@ waves.update(dt, kind => spawn(kind), things.count('enemy'));   // next wave onc
 // waves.number, waves.state ('spawning' | 'fighting' | 'breather' | 'done'), waves.breatherLeft
 
 director = new Director({ over: 90 });      // difficulty 0..1 that eases off when the player is struggling
+// new Director({ over: 90, dial }): with a gs.brains.Dial it also remembers the player between rounds
 director.hurt(1); director.scored(1); director.update(dt); gap = director.pick(1.4, .4);
 ```
 
@@ -1363,7 +1369,8 @@ update(dt) {
 
 - `Face`: `found`, `x`, `y` (0..1, mirrored like a selfie), `size`, `yaw`, `pitch`, `roll`, `mouth`,
   `smile`, `blink`, `winkLeft`, `winkRight`, `brows`, `points` (478), `shapes` (52 expressions by name).
-- `Hands`: `list` of `{ x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points }`, `first`.
+- `Hands`: `list` of `{ x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, shape }`, `first`.
+  `shape` is the hand as numbers for `gs.brains.Examples`: signs of your own ([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)).
 - `ready` is true once the camera and model are running; `failed` holds the error if the player
   said no to the camera. The app stops the camera when the round ends. `backend` says where it runs
   (`'npu'` on the AI chip).
@@ -1559,6 +1566,80 @@ what it's doing, so the player can read it and react: longer when the skill dial
 torn. While `bot.telling` is set (`{ action, left, t }`), draw a glance, a crouch or a flash. Each
 wave mind has its own `mind.telling`. `bot.unsure` (0..1) is how torn its last choice was.
 
+### A dial for opponents that aren't brains
+
+`gs.brains.Dial` is the win-rate rail by itself: a number from 0 to 1 that follows this player. Pass
+it wherever a kit takes a `skill`, and tell it how each game ended.
+
+```js
+const { Dial } = gs.brains;
+function make(api) {
+  const dial = new Dial(api, { name: 'draughts', target: .55 });   // the player should win 55% of games
+  ...
+  const move = search.best(state, { skill: dial });                // gs.solve.Search, table.think(search, state, { skill: dial })
+  away = new Team(pitch, 1, { skill: dial });                      // gs.sports: it reads the dial each time it thinks
+  chaseBall(car, arena, { skill: dial });                          // gs.arena
+  chess.think({ skill: dial });                                    // gs.tabletop Chess: the dial as one of its five levels
+  director = new Director({ over: 90, dial });                     // gs.pacing: climbs sooner for a winner, later and lower for a loser
+  // when the game ends:
+  dial.result(playerWon);                                          // true, false, 'draw', or 0..1 for how well they did
+}
+```
+
+- It goes up while the player wins more than `target` (default .6) and down while they win less,
+  with a big step down after three losses in a row, and it learns the player's real chance at each
+  level the way a Brain does. In the kit test a weak made-up player wins 57% of games, a middling one
+  62% and a strong one 64%, at dials of .10, .40 and .96.
+- A new game starts where this player's other games settled (the `Player` profile); `start: .3` sets
+  it yourself, `range: [.2, .8]` keeps it between two levels, `profile: false` keeps it to itself.
+- `dial.skill` is the number and `dial.level(5)` a level from 1 to 5; the dial stands in for its
+  number in sums (`1 - dial`, `dial > .4`), so it works for your own opponent too.
+- It is saved with the game's brains in a few bytes. Give each opponent its own `name`.
+- A game with no winner (an endless runner) can use the score: `dial.result(score >= goal)`.
+
+### Teach by example: signs, poses, moves and sounds of your own
+
+`gs.brains.Examples` learns a thing from a few examples and says which one a new thing looks like, or
+that it looks like none of them. The kits give the numbers: a hand's shape, a body's pose, a move made
+with the phone, a sound. So a game can have its own hand signs, or let the player make up theirs.
+
+```js
+const { Examples } = gs.brains, { Hands } = gs.vision;
+function make(api) {
+  const hands = new Hands(), signs = new Examples(api, { name: 'signs', of: 'hand' });
+  ...
+  // teaching ("show me your rock"): when the player taps, take what the camera sees
+  if (hands.first) signs.add('rock', hands.first.shape);
+  // playing
+  const g = hands.first && signs.guess(hands.first.shape);       // { name, sure, like } or null: none of them
+  if (g && g.sure > .6) play(g.name);
+}
+```
+
+| What | The numbers | The learner |
+| --- | --- | --- |
+| A hand sign | `hand.shape` (each hand in `hands.list`): the same wherever the hand is, however near, with either hand; which way it points counts | `of: 'hand'` |
+| A pose | `body.shape` (`gs.vision.Body`) | `of: 'pose'` |
+| A move with the phone | `new Moves({ learn })`, then `moves.teach('stir')` takes the next move as an example and `moves.on('stir', fn)` fires for moves like it | `of: 'move'` |
+| A sound | `ears.shape` (`gs.hear.Sounds`): the mix of everyday sounds it is made of, so it tells apart sounds the list tells apart, under names of your own | `of: 'sound'` |
+| Anything else | your own list of numbers, about -1..1, always the same length | `spread`, `strict` |
+
+- **One example is enough to start, three make it dependable.** With made-up hands that wobble like
+  real takes, six signs a finger apart are known again 88% of the time from one example each, 94%
+  from three and 97% from five, and almost never taken for another (the kit test measures it).
+- **It works out which numbers matter** for each name (where its examples agree) and how much this
+  player's takes vary, by leaving each example out in turn. A name can be two kinds of thing.
+- **"None of them" is an answer.** A sign it was never shown is usually nothing; one that is a finger
+  away from a taught sign is sometimes taken for it, so teach that one too, or check `sure`.
+- `signs.undo()` takes back a bad take, `forget(name)` a whole name, `names` and `count(name)` say
+  what it knows, `guess(x, { among: ['rock', 'paper'] })` asks about a few.
+- **The maker's own examples come with the game**: teach it in `npm run dev`, press **B** in the debug
+  overlay to copy `signs.pack()`, and pass it as `start`. The player's examples are saved with the
+  game's brains (about 25 of a hand's shape, the newest kept).
+- A guess takes a few microseconds, and nothing is downloaded beyond what the tracker already needs.
+- Sensors still need a touch way to play. These shapes come from the camera, the mic and the motion
+  sensors, so the card says so before Play like any other sensor game.
+
 ### Nemesis, Shadow and teaching by playing
 
 **Nemesis: a rival who remembers you.** It keeps the record between sessions (meetings, wins, losses,
@@ -1601,6 +1682,50 @@ The bot then plays like you from the first frame, and learns from there inside t
 It works best when the bot plays the same role the player does (duels, races, sports). The debug
 overlay also lists each brain's skill, win rate against its target, trust, fun lean, how torn it is
 and any tell.
+
+**Corrections: a few examples that stick.** `bot.correct(see, 'flee')` says "in this spot the right
+move was flee". Where `watch()` is one small step of learning, a correction is kept as an example and
+counts from the very next decision, whatever the teacher or the network say:
+
+```js
+// the maker's own, written into the game (they stay through reset()):
+const bot = new Brain(api, { inputs: 4, actions: ['left', 'right', 'jump', 'flee'], teacher,
+  corrections: [[[0, 0, -.8, .6], 'flee'], [[.4, -.3, -.7, .5], 'flee'], [[-.5, .5, -.9, .7], 'flee']] });
+// or while the game runs, about the spot it just decided on:
+if (walkedOffTheLedge) bot.correct('jump');
+if (fellInThePit) bot.avoid();                       // "not what you just did"
+// a pet the player trains: they tap the move it should have made
+down(x, y) { const move = buttonAt(x, y); if (move) pet.correct(move); }
+```
+
+- **One example is a lean, two that agree are a fix.** With a couple of examples the brain does the
+  move in spots like them, and nowhere else: in the kit's test, eight examples of "hurt with the
+  player near" fix about three quarters of such spots and leave over 95% of other decisions as they were.
+- **It works out which inputs matter.** Where an action's examples agree on an input, that input
+  counts; where they are as spread as it usually is, it doesn't ("whatever `dx` is"). So show it the
+  move in a few different spots of the same kind.
+- **Two kinds of spot for one move are found by themselves** ("flee when hurt" and "flee when
+  cornered"): give each kind a few examples (with six of each, about four in five such spots are
+  fixed).
+- **"Not this."** `bot.avoid(see, 'right')` (or `bot.avoid()` for what it just did) is for a mistake
+  where the right move isn't known: it walked off the ledge, so not `'right'` here. In spots like the
+  examples the brain makes its next best move (eight examples: nine in ten such spots).
+- **What it recalled.** After `act()`, `bot.recalled` is `{ action, not, like }` when a correction
+  shaped the move (else `null`): draw the pet's "!" when it remembers a lesson, or find out why a bot
+  did something. Each enemy of a `Wave` has `mind.correct(action)`, `mind.avoid()` and
+  `mind.recalled` about its own last spot; the examples are the brain's, shared by all of them.
+- **The newest word on a spot wins**, and examples close together that name different moves are
+  trusted less (`bot.heed`, 2 down to 0).
+- The newest 12 per action (and as many "not this") are kept and saved with the brain, a few bytes
+  each; `bot.uncorrect()` forgets them, `bot.corrections` lists them as `[see, action]` (and
+  `[see, action, false]` for "not this") to paste into the game.
+- **The guard rails still apply**: the reaction time, the randomness, the limit on changes of mind and
+  your `rules` all act on what it then does, and the skill dial still follows the win rate.
+- A decision still takes a few microseconds, with nothing to download.
+
+The method is the corrections of [TinyDecide](https://huggingface.co/TheREZOR/TinyDecide) (Apache
+2.0): the average of each answer's examples, a lean towards the nearest, and a trust worked out by
+leaving each example out in turn. Only the method is used, not the model.
 
 **Tune the feel (makers).** `gs.brains.tune({ params, trial, want })` searches number ranges for the
 ones whose `trial(params)` result is closest to `want`: run a quick bot round with your own update and
@@ -2385,7 +2510,8 @@ update(dt) { ears.update(dt); if (ears.heard('Dog')) scareCats(); }
 ```
 
 `heard(name)` is true once each time the sound starts, `hearing(name)` is how sure it is right now
-(0..1) and `top` is the surest sound. Options: `sure` (.3) and `every` (seconds between looks, .25).
+(0..1) and `top` is the surest sound. `shape` is what is heard as numbers for `gs.brains.Examples`:
+sounds under names of your own ([Teach by example](#teach-by-example-signs-poses-moves-and-sounds-of-your-own)). Options: `sure` (.3) and `every` (seconds between looks, .25).
 Some names: `'Speech'`, `'Singing'`, `'Whistling'`, `'Clapping'`, `'Finger snapping'`, `'Laughter'`,
 `'Dog'`, `'Cat'`, `'Bird'`, `'Knock'`, `'Bell'`, `'Cough'`, `'Snoring'`, `'Music'`. In the phone apps YAMNet
 runs on the phone's AI chip with the mic read natively (a 5 MB model); on the web the MediaPipe engine

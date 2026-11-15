@@ -128,6 +128,39 @@ export function canvasShows(r, through) {
 export const REVERSED = { on: !(typeof location !== 'undefined' && /[?&]depth=forward\b/.test(location.search)) };
 /** Tests: `on: false` before the Console WebGPU renderer is made draws its passes in 16-bit float pictures, as three does by default. */
 export const CONSOLE_8BIT = { on: true };
+// three r187 sends an attribute marked DynamicDrawUsage to the chip again every time a render draws with it, changed or not
+// (Attributes.update: sent when "its version is newer, or its usage is dynamic"), and once more for each shadow map it is
+// drawn into. The kit marks what it rewrites often that way, as WebGL wants (there it is a hint to the driver, no more):
+// copies' places, cloth, particles, a posed mesh's index list. So each of those went up whole every frame whether or not a
+// number in it had changed: 900 KB a frame in a scene of eight people. They are sent when they have changed (their
+// version, which every write must raise for WebGL to send it at all), as everything else is. `on: false` (HD.sendChanged
+// = false) is three's own way, to compare.
+export const SEND_CHANGED = { on: true };
+function sendChanged(r) {
+  const A = r._attributes, update = A?.update; if (!update || A.gsChanged) return; A.gsChanged = true;
+  A.update = function (attribute, type) {
+    if (SEND_CHANGED.on) { const d = this.get(attribute); if (d.version !== undefined && d.version >= attribute.version) return; }
+    return update.call(this, attribute, type);
+  };
+}
+// three r187 sends each changed number of a group of uniforms by itself (WebGPUBindingUtils.updateBinding: a writeBuffer for
+// every run of changed numbers), so a thing that moved had its matrix and its normal matrix sent in two calls, a posed one
+// more. Each call costs far more than the few bytes it carries; the numbers between two changed ones are right in the
+// copy three keeps, so one call from the first changed number to the last sends the same. `on: false` (HD.oneWrite =
+// false) is three's own way, to compare.
+export const ONE_WRITE = { on: true };
+function oneWrite(r) {
+  const B = r.backend, update = B?.updateBinding; if (!update || B.gsOneWrite) return; B.gsOneWrite = true;
+  B.updateBinding = function (binding) {
+    const rs = binding.updateRanges, a = binding.buffer;
+    if (ONE_WRITE.on && rs && rs.length > 1 && a && a.BYTES_PER_ELEMENT) {
+      let lo = Infinity, hi = 0; for (const x of rs) { if (x.start < lo) lo = x.start; if (x.start + x.count > hi) hi = x.start + x.count; }
+      const buf = this.get(binding).buffer, by = a.BYTES_PER_ELEMENT;
+      if (buf && hi > lo && hi <= a.length && (hi - lo) * by <= 4096) { this.device.queue.writeBuffer(buf, lo * by, a, lo, hi - lo); return; }
+    }
+    return update.call(this, binding);
+  };
+}
 /**
  * Gets WebGPU ready if the device has it: loads three's WebGPU build and the
  * Next Gen WebGPU effects (hd3d-gpu.js), and makes the shared WebGPURenderer. Never rejects; resolves
@@ -181,7 +214,7 @@ export function prepareGPU() {
       if (STEER.submit !== false) holdSubmits(r.backend.device);   // (a frame's passes go to the chip in one submit: submit.js)
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
-      freeUnbuilt(r);
+      freeUnbuilt(r); sendChanged(r); oneWrite(r);
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
       fx.aoInShading(r);   // ambient occlusion on the light that bounces only, in each thing's own shading (hd3d-gpu.js)
@@ -317,7 +350,7 @@ export function prepareConsoleGPU() {
       const r = new G.W.WebGPURenderer({ canvas: document.createElement('canvas'), device: G.r.backend.device, alpha: false, antialias: false, depth: SCREEN_DEPTH.on, ...(CONSOLE_8BIT.on ? { outputBufferType: G.W.UnsignedByteType } : {}) });
       await r.init();
       if (!r.backend?.isWebGPUBackend || gpu !== G) { r.dispose(); return null; }
-      r.gsBackend = 'webgpu'; r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)
+      r.gsBackend = 'webgpu'; r.onDeviceLost = () => { r._isDeviceLost = true; }; freeUnbuilt(r); sendChanged(r); oneWrite(r); fx.setup(r); G.fx.listWalk(r);   // (its device is the Next Gen one's: lostGPU says when it goes)
       return con = { r, W: G.W, fx };
     } catch (e) { console.warn('Console WebGPU did not start:', e); return null; } finally { conTried = true; }
   })();

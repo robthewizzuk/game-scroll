@@ -64,8 +64,10 @@ export class Chess {
   /**
    * The computer's move for the side to move: resolves { from, to, promotion } (null if there's none).
    * level 1..5 (Novice, Casual, Club, Sharp, Master); time: thinking time in ms (each level has its own).
+   * skill 0..1 instead of a level: a number, or a gs.brains.Dial that follows the player.
    */
-  think({ level = 2, time = null } = {}) {
+  think({ level = 2, time = null, skill = null } = {}) {
+    if (skill != null && isFinite(+skill)) level = 1 + Math.max(0, Math.min(4, Math.floor(+skill * 5)));
     const fen = this.g.fen(), w = thinker();
     const here = () => { const { Chess: Rules } = lib.get(); return bestMove(new Rules(fen), { level, time: time ?? Math.min(LEVELS[Math.max(0, Math.min(4, level - 1))].time, 150) }); };   // no worker: a short think on the spot
     if (!w) return Promise.resolve(here());

@@ -162,7 +162,7 @@ export class HandPipe {
     }
     // two rects on the same hand: keep one
     this.rois = next.filter((r, i) => !next.slice(0, i).some(o => Math.hypot(o.cx - r.cx, o.cy - r.cy) < Math.min(o.w, r.w) * .3));
-    return { landmarks, handednesses };
+    return { landmarks, handednesses, aspect: W / H };
   }
   reset() { this.rois = []; }
 }

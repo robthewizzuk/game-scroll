@@ -24,9 +24,10 @@
 //   ?at=N  verify frame N only    ?shot=N  keep frame N's pictures    ?warm  trace the warm-up frames
 //   ?big=plain|none  the big mesh not in clusters, or not there    ?nobatch  no static batching    ?hd=pack:false,detail:false  any engine test switch
 //   (a frame's number decides what happens in it: frames=40 or 90 keep the walk as it is, a short walk is another walk)
+//   ?only=resize  just the last check: a sun's map asked for another size
 //   ?bench: the walk as it was (the sun a texel at a time, every map whole each time) and in tiles: shadow triangles and draws, and the frame's time
 import gs, { loadParts } from '../../src/gamescroll.js';
-import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu'), ONE = Q.get('one') !== '0';   // (?one=0: a pass for each step of a kept map, as before HD.shadowOne)
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -176,6 +177,27 @@ async function walk(S, whole, keep) {
   return { pics, rows, maps, S };
 }
 
+// A shadow map asked for another size (a view that steps its quality: gs.hd.sun's setTier, hd3d.js shadowSize). The
+// map on the chip must be that size, and its kept copy with it: a map of depth alone kept its old size on the chip
+// once (three sizes such a picture by its depth picture, and a resize left that one as it was), so the kit drew
+// parts of a 2048 map into one of 512 and copied between the two, each refused by the chip, frame after frame.
+async function resized() {
+  const S = village(false), l = S.sun, sh = l.shadow, r = webgpu().r, errs = [], on = e => errs.push(String(e.error?.message || e).slice(0, 220));
+  const chip = t => r.backend.get(t)?.texture?.width, frames = async n => { let px; for (let i = 0; i < n; i++) { pose(S, 0, true); px = draw(S); await nextFrame(); } return px.slice(); };
+  r.backend.device.addEventListener('uncapturederror', on);
+  try {
+    const n0 = sh.mapSize.x; for (let i = 0; i < 300 && (i < 20 || S.v.detailPending?.()); i++) await frames(1);
+    const a = await frames(3), was = { asked: n0, map: chip(sh.map.depthTexture), kept: sh.gsCache && chip(sh.gsCache.depthTexture) };
+    l.setTier({ shadow: n0 }); const big = await frames(8), up = { asked: sh.mapSize.x, map: chip(sh.map.depthTexture), kept: sh.gsCache && chip(sh.gsCache.depthTexture) };   // (a sun's map is twice the tier's size)
+    l.setTier({ shadow: n0 / 2 }); const b = await frames(8), back = { asked: sh.mapSize.x, map: chip(sh.map.depthTexture), kept: sh.gsCache && chip(sh.gsCache.depthTexture) };
+    const d = diff(a, b), d2 = diff(a, big);
+    info.resized = { was, up, back, picturesApartBack: d, picturesApartBigger: d2, refused: errs.length, first: errs[0] || '' };
+    check('a sun\'s map asked for twice the size is that size on the chip, and its kept copy too', up.asked === n0 * 2 && up.map === up.asked && up.kept === up.asked && was.map === n0, `asked ${was.asked} then ${up.asked}: the map ${was.map} then ${up.map}, the kept copy ${was.kept} then ${up.kept}`);
+    check('and back at the first size it draws the picture it drew before', back.map === n0 && back.kept === n0 && d.off <= W * H * .002, `the map ${back.map}, the kept copy ${back.kept}; ${d.off} px differ (the bigger map's picture: ${d2.off} px, its shadows are finer)`);
+    check('the chip refuses nothing while the map changes size', errs.length === 0, errs.length ? errs.length + ' refused: ' + errs[0] : 'none');
+  } finally { r.backend.device.removeEventListener('uncapturederror', on); }
+}
+
 try {
   if (Q.has('bench')) {
     const res = {}, med = a => [...a].sort((x, y) => x - y)[a.length >> 1];
@@ -186,7 +208,7 @@ try {
       res[mode] = { backend: HD.info.backend, shadowTris: Math.round(mean(r.map(q => q.shTris))), shadowDraws: Math.round(mean(r.map(q => q.shCalls))), tris: Math.round(mean(r.map(q => q.tris))), draws: Math.round(mean(r.map(q => q.calls))), cpuMs: +med(r.map(q => q.cpu)).toFixed(2), cpuMean: +mean(r.map(q => q.cpu)).toFixed(2), worstMs: +Math.max(...r.map(q => q.cpu)).toFixed(1) };
     HD.shadowTiles = true; Object.assign(info, res); window.result = { out, info, checks }; throw 'bench done';
   }
-  for (const fit of [false, true]) {
+  for (const fit of Q.get('only') === 'resize' ? [] : [false, true]) {
     const name = fit ? 'fitted to the view, with a near cascade' : 'following the camera';
     const A = await walk(village(fit), Q.has('control'), true), B = await walk(village(fit), true, true);   // (?control: both walks with their shadows whole, to see what two runs of the same thing differ by)
     const bad = []; let worst = 0, at = -1;
@@ -236,6 +258,7 @@ try {
       check('fitted: fewer shadow triangles than drawing whole', tA < tB * .75, Math.round(tA / FRAMES) + ' a frame against ' + Math.round(tB / FRAMES));
     }
   }
+  if (GPU) await resized();
   window.result = { out, info, checks };
 } catch (e) { if (e !== 'bench done') window.result = { error: String(e?.stack || e), out, info, checks }; throw e; }
 </script>
