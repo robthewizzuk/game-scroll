@@ -146,6 +146,65 @@ const PROPS = {
     b.cyl('iron', .1, .1, l, [0, .1, 0], [0, 0, Math.PI / 2], 16);
     for (const x of [-1, 1]) b.cyl('iron', .14, .14, .04, [x * (l / 2 - .02), .1, 0], [0, 0, Math.PI / 2], 16);
   } },
+  // a village and a castle: a market stall, a well, a smith's anvil, a torch on a wall, a lever, a bed, a bale of hay, an inn's hanging sign
+  stall: { slots: { wood: ['wood', { colour: '#8a6440' }], awning: ['fabric', { colour: '#a8342c' }], goods: ['fabric', { colour: '#c8a050' }] }, make(b, r, k) {
+    const w = k.size ?? 2.4, d = w * .55, h = 2.3;
+    b.box('wood', w, .06, d, [0, .85, 0], 0, .01).box('wood', w, .7, .03, [0, .5, d / 2 - .02], 0, .006);   // the counter and its front board
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.box('wood', .08, z > 0 ? h : h + .25, .08, [x * (w / 2 - .05), (z > 0 ? h : h + .25) / 2, z * (d / 2 - .05)], 0, .01);
+    const slope = Math.atan2(.25, d), len = Math.hypot(d + .5, .3);
+    b.box('awning', w + .3, .025, len, [0, h + .14, .12], [slope, 0, 0], .008);
+    const n = Math.round((w + .3) / .3); for (let i = 0; i < n; i++) b.box('awning', (w + .3) / n * .98, .22, .012, [-(w + .3) / 2 + (i + .5) * (w + .3) / n, h - .02 - (i % 2) * .03, d / 2 + .37], 0, .004);   // the scalloped edge
+    for (let i = 0; i < 5; i++) b.ball('goods', .1 + r() * .05, [-w / 2 + .3 + i * (w - .6) / 4, .97, (r() - .5) * d * .5], [1, .8, 1]);   // what is for sale
+    b.box('wood', w * .3, .2, d * .4, [w * .3, .98, -d * .1], [0, r() * .3, 0], .01);
+  } },
+  well: { slots: { stone: ['stone', { colour: '#9a9488', dark: '#6a665e' }], wood: ['wood', { colour: '#6a4a2c' }], roof: ['planks', { colour: '#5a4030', dark: '#2e2016' }], rope: ['fabric', { colour: '#a8946a' }] }, make(b, r, k) {
+    const R = (k.size ?? 1.6) / 2, h = .8;
+    b.lathe('stone', [[R - .25, 0], [R, 0], [R + .02, h * .5], [R, h], [R + .04, h + .02], [R + .04, h + .1], [R - .27, h + .1], [R - .27, h + .02], [R - .25, h]], [0, 0, 0], 24);
+    for (const x of [-1, 1]) b.box('wood', .12, 1.9, .12, [x * (R - .1), h + .95, 0], 0, .01);
+    b.cyl('wood', .07, .07, 2 * R - .1, [0, h + 1.15, 0], [0, 0, Math.PI / 2], 12);   // the winch
+    b.cyl('rope', .012, .012, .9, [0, h + .7, 0], 0, 6); b.lathe('wood', [[0, 0], [.12, 0], [.14, .22], [0, .22]], [0, h + .1, 0], 12);
+    for (const s of [-1, 1]) b.box('roof', 2 * R + .5, .05, 1.05, [0, h + 2.05, s * .38], [s * .7, 0, 0], .01);
+  } },
+  anvil: { slots: { iron: ['metal', { colour: '#3a3a3c' }], log: ['bark'] }, make(b) {
+    b.cyl('log', .28, .3, .55, [0, .275, 0], 0, 14);
+    b.box('iron', .2, .16, .16, [0, .63, 0], 0, .01).box('iron', .5, .1, .2, [.02, .76, 0], 0, .01).box('iron', .3, .06, .3, [0, .58, 0], 0, .01);
+    b.add('iron', new CylinderGeometry(.001, .06, .26, 10), [.38, .76, 0], [0, 0, Math.PI / 2]);   // the horn
+  } },
+  torch: { slots: { iron: ['metal', { colour: '#2c2a28' }], stick: ['wood', { colour: '#5a3a1e' }], flame: null }, make(b, r, k) {
+    const s = k.size ?? 1;   // on a wall facing +z, at its foot: the bracket, the stick held out and up
+    b.box('iron', .1 * s, .22 * s, .03 * s, [0, 0, .015 * s], 0, .004).box('iron', .03 * s, .03 * s, .16 * s, [0, -.02 * s, .1 * s]);
+    b.ring('iron', .045 * s, .01 * s, [0, 0, .18 * s], [Math.PI / 2, 0, 0]);
+    b.cyl('stick', .025 * s, .018 * s, .5 * s, [0, .08 * s, .2 * s], [-.35, 0, 0], 8);
+    b.cyl('iron', .045 * s, .032 * s, .1 * s, [0, .3 * s, .27 * s], [-.35, 0, 0], 10);
+    b.ball('flame', .06 * s, [0, .4 * s, .31 * s], [1, 1.8, 1]);
+  } },
+  lever: { slots: { iron: ['metal', { colour: '#4a4846' }], grip: ['wood', { colour: '#4a3018' }] }, make(b, r, k) {
+    const s = k.size ?? 1;   // a plate on a wall facing +z; the handle (named 'handle' by the dungeon kit when it turns) leans up
+    b.box('iron', .2 * s, .32 * s, .04 * s, [0, 0, .02 * s], 0, .01);
+    b.cyl('iron', .02 * s, .02 * s, .36 * s, [0, .14 * s, .1 * s], [-.5, 0, 0], 8);
+    b.ball('grip', .045 * s, [0, .3 * s, .19 * s]);
+  } },
+  bed: { slots: { wood: ['wood', { colour: '#7a5434' }], cloth: ['fabric', { colour: '#7a6a5a' }], blanket: ['fabric', { colour: '#4a5a7a' }] }, make(b, r, k) {
+    const L = k.size ?? 2, w = .95;
+    for (const [x, z, hh] of [[-1, -1, .9], [1, -1, .9], [-1, 1, .5], [1, 1, .5]]) b.box('wood', .07, hh, .07, [x * (w / 2 - .035), hh / 2, z * (L / 2 - .035)], 0, .01);
+    b.box('wood', w, .4, .04, [0, .6, -L / 2 + .02], 0, .01).box('wood', w, .16, .04, [0, .38, L / 2 - .02], 0, .01);
+    for (const x of [-1, 1]) b.box('wood', .05, .14, L - .1, [x * (w / 2 - .03), .3, 0], 0, .008);
+    b.box('cloth', w - .1, .16, L - .12, [0, .43, 0], 0, .06);   // the straw mattress
+    b.box('cloth', w * .55, .1, .32, [0, .55, -L / 2 + .3], 0, .045);   // pillow
+    b.box('blanket', w - .02, .05, L * .62, [0, .53, L * .16], 0, .02);
+  } },
+  hay: { slots: { straw: ['thatch', { colour: '#c8aa62', dark: '#8a7040' }], twine: ['fabric', { colour: '#6a5a3a' }] }, make(b, r, k) {
+    const s = k.size ?? 1;
+    b.box('straw', 1.1 * s, .45 * s, .55 * s, [0, .225 * s, 0], [0, (r() - .5) * .1, 0], .06 * s);
+    for (const x of [-.3, .3]) b.box('twine', .02 * s, .46 * s, .56 * s, [x * s, .225 * s, 0], 0, .01);
+  } },
+  signboard: { slots: { iron: ['metal', { colour: '#2c2a28' }], board: ['paint', { colour: '#2e4a3a', under: '#6a5440' }] }, make(b, r, k) {
+    const w = k.size ?? .8;   // an inn's sign hung out from a wall facing +z, its foot at the wall
+    b.box('iron', .04, .04, w + .25, [0, 0, (w + .25) / 2], 0, .005);
+    b.box('iron', .03, .03, .5, [0, -.2, .2], [Math.PI / 4, 0, 0]);
+    for (const z of [.18, w + .02]) b.cyl('iron', .006, .006, .14, [0, -.07, z], 0, 4);
+    b.box('board', .04, w * .7, w, [0, -.14 - w * .35, w / 2 + .1], 0, .01);
+  } },
 };
 export const PROP_NAMES = Object.keys(PROPS);
 
@@ -160,7 +219,8 @@ const matFor = (spec, colour, slot, first) => {
 
 /**
  * A prop: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' |
- * 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe'. Options: seed (small
+ * 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe', and for a village or a
+ * castle 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard'. Options: seed (small
  * differences), size (its main measure in metres), colour (its main material), wear (options for
  * gs.models.wear, or false: new), tile (metres per texture repeat, 1), lit (lamp: how bright, 2).
  * The same prop asked for again (same options) is a copy sharing its shapes and materials: no making cost,

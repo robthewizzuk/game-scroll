@@ -4308,7 +4308,7 @@ console.log('physics ok');
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
   { assert.deepEqual(Object.keys(RECIPES).filter(n => RECIPES[n].metal), ['metal', 'rust', 'paint'], 'the recipes with metal in them');
-    assert.ok(RECIPES.skin && RECIPES.palm && Object.keys(RECIPES).length === 19, 'a skin (and a palm trunk) among the recipes: ' + Object.keys(RECIPES).length); }
+    assert.ok(RECIPES.skin && RECIPES.palm && RECIPES.thatch && Object.keys(RECIPES).length === 20, 'a skin (and a palm trunk and thatch) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 
@@ -6021,7 +6021,7 @@ console.log('physics ok');
   const THREE = await import('three');
   const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
   const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
-  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), beam: M(), glass: M(), lit: M(), floor: M() };
   const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
   const play = (h, secs, w = h.world === h.mine ? null : h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
   const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
@@ -8604,7 +8604,7 @@ console.log('physics ok');
   const { Particles } = await import('../src/kit/hd3d.js');
   globalThis.HTMLCanvasElement ??= class {}; globalThis.Image ??= class {};
   const view = () => ({ cam: { position: new THREE.Vector3(0, 1.6, 0), far: 100 }, scene: new THREE.Scene(), hemi: null, parts: [], _air: null, air() { return this._air ||= { wet: 0, world: null }; } });
-  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
+  const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), beam: M(), glass: M(), lit: M(), floor: M() };
   // the set: one a card, the newest of a kind found, several of some kinds, gone with the card; none outside a card without a view
   {
     assert.equal(linksFor(null), null, 'outside a card, with no view: no set (a kit keeps to itself, as before)');
@@ -9055,6 +9055,82 @@ console.log('physics ok');
   assert.ok(none.station.after.parts.every(p => p.line && p.line.length > 5), 'no AI answer: the written lines stay');
   a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
   console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
+}
+
+// towns that live (src/kit/town.js: gs.town): the clock, plans from a seed, folk by the clock, shops, the night
+{
+  const { Clock, plan, route, Folk, Shop, Night, between } = await import('../src/kit/town.js'), { Inventory } = await import('../src/kit/items.js');
+  // the clock: hours, days, dark, every(), wait() at once and over seconds
+  const c = new Clock({ hour: 22, speed: 1 });
+  assert.ok(c.night && c.dark === 1 && c.part === 'night' && between(23, 22, 6) && !between(12, 22, 6));
+  const fired = []; c.every('dawn', d => fired.push(d));
+  c.update(9); assert.ok(Math.abs(c.hour - 7) < 1e-9 && c.day === 2 && fired.join() === '2' && !c.night && c.dark === 0, 'a night passes: ' + c.hour + ' ' + c.day + ' ' + fired);
+  c.speed = 0; let done = false; c.wait(5, { over: 1 }).then(() => { done = true; });
+  for (let i = 0; i < 70; i++) c.update(1 / 60);
+  await null; assert.ok(done && !c.waiting && Math.abs(c.hour - 12) < 1e-6, 'wait(5) over a second: ' + c.hour);
+  c.sleep('dawn', { over: 0 }); assert.ok(Math.abs(c.hour - 6) < 1e-6 && c.day === 3 && fired.join() === '2,3', 'sleep at once till dawn, and dawn fires: ' + c.hour + ' ' + fired);
+  const c2 = new Clock().unpack(c.pack()); assert.ok(Math.abs(c2.time - c.time) < .01, 'packs');
+  // plans: the same seed the same town; buildings off the roads and off each other; the jobs a town needs; routes that join up
+  for (const kind of ['village', 'castle']) for (const seed of [1, 2, 3, 4]) {
+    const P = plan({ seed, kind, houses: 16 }), Q = plan({ seed, kind, houses: 16 });
+    assert.equal(JSON.stringify(P.buildings), JSON.stringify(Q.buildings), 'the same seed, the same town');
+    assert.ok(P.buildings.length >= 14, `${kind} ${seed}: ${P.buildings.length} buildings`);
+    for (const r of ['inn', 'smithy', 'store', ...(kind === 'castle' ? ['keep', 'barracks'] : [])]) assert.ok(P.buildings.some(b => b.role === r), `${kind} ${seed} has a ${r}`);
+    for (const a of P.buildings) for (const b of P.buildings) if (a !== b) assert.ok(Math.hypot(a.x - b.x, a.z - b.z) > Math.min(a.w, a.d) / 2 + Math.min(b.w, b.d) / 2, `${kind} ${seed}: buildings ${a.id} and ${b.id} overlap`);
+    for (const b of P.buildings) for (const rd of P.roads) for (const [x, z] of rd.points) {
+      const cs = Math.cos(b.turn), sn = Math.sin(b.turn), lx = (x - b.x) * cs - (z - b.z) * sn, lz = (x - b.x) * sn + (z - b.z) * cs;
+      assert.ok(Math.abs(lx) > b.w / 2 || Math.abs(lz) > b.d / 2, `${kind} ${seed}: a road runs through building ${b.id}`);
+    }
+    for (const b of P.buildings) { const fx = Math.sin(b.turn), fz = Math.cos(b.turn); assert.ok(Math.abs((b.front.x - b.x) * fx + (b.front.z - b.z) * fz - b.d / 2 - 1.4) < 1e-6, 'the front is outside the door'); }
+    const inn = P.buildings.find(b => b.role === 'inn'), far = P.buildings[P.buildings.length - 1], way = route(P, inn.front, far.front);
+    let len = 0; for (let i = 1; i < way.length; i++) len += Math.hypot(way[i].x - way[i - 1].x, way[i].z - way[i - 1].z);
+    assert.ok(way.length > 2 && len < Math.hypot(inn.x - far.x, inn.z - far.z) * 3 + 30, `${kind} ${seed}: a way from the inn along the roads (${len.toFixed(0)} m)`);
+    if (kind === 'castle') assert.ok(P.gates.length === 1 && P.walls.filter(w => w.kind === 'tower').length === 10 && P.buildings.every(b => Math.hypot(b.x, b.z) < P.radius - 2), 'a castle: one gate, ten towers, every building inside');
+  }
+  // folk: in bed at night, at work by day, at the inn in the evening; they walk the roads between; held to talk
+  {
+    const P = plan({ seed: 3, kind: 'castle', houses: 16 }), C = new Clock({ hour: 3, speed: 1 / 20 }), F = new Folk(P, { clock: C });
+    assert.ok(F.people.every(p => p.inside >= 0 || p.job === 'nightwatch'), '3 am: everyone indoors but the watch');
+    const smith = F.of('smith')[0], inn = P.buildings.find(b => b.role === 'inn');
+    let arrived = 0, walked = 0; F.on('arrive', () => arrived++);
+    for (let i = 0; i < 60 * 60 * 3; i++) { C.update(1 / 60); F.update(1 / 60); if (smith.moving) walked++; }   // to 12 noon
+    assert.ok(smith.doing === 'eat' || smith.doing === 'work' || smith.moving, 'noon: the smith works or goes to eat: ' + smith.doing);
+    assert.ok(arrived >= F.people.length * .6 && walked > 30, `they walk where their day takes them (${arrived} arrivals)`);
+    C.set(19.5); F.update(1 / 60); for (let i = 0; i < 60 * 60; i++) { C.update(0); F.update(1 / 60); }
+    assert.ok(smith.inside === inn.id && smith.doing === 'drink', 'evening: the smith is at the inn: ' + smith.doing + ' ' + smith.inside);
+    const near = F.people.find(p => p.inside < 0); F.hold(near, 2, { x: near.x + 1, z: near.z }); F.update(1 / 60);
+    assert.ok(near.doing === 'talk' && !near.moving); for (let i = 0; i < 150; i++) F.update(1 / 60); assert.ok(near.doing !== 'talk', 'and goes on after');
+  }
+  // shops: open hours, buying and selling with a wallet and an inventory, a keeper away shuts it, restocks next morning, a price of the game's
+  {
+    const C = new Clock({ hour: 9, speed: 0 }), inv = new Inventory({ bread: {}, sword: { stack: 1 } }, { slots: 4 }), wallet = { money: 20 };
+    const S = new Shop({ stock: { bread: { price: 3, count: 2 }, sword: { price: 50, count: 1 } }, clock: C });
+    assert.deepEqual(S.buy('bread', 2, wallet, inv), { ok: true, cost: 6 }); assert.ok(wallet.money === 14 && inv.count('bread') === 2);
+    assert.equal(S.buy('bread', 1, wallet).why, 'none'); assert.equal(S.buy('sword', 1, wallet).why, 'money');
+    assert.deepEqual(S.sell('bread', 1, wallet, inv), { ok: true, paid: 2 }); assert.equal(S.sell('apple', 1, wallet).why, 'unwanted');
+    C.set(20); assert.equal(S.buy('bread', 1, wallet).why, 'closed');
+    C.set(9, C.day + 1); assert.ok(S.buy('bread', 2, wallet).ok, 'restocked the next morning');
+    const keeper = { doing: 'sleep', moving: false, held: 0 }, K = new Shop({ stock: { bread: { price: 3 } }, clock: C, keeper }); assert.ok(!K.open, 'shut while the keeper sleeps'); keeper.doing = 'work'; assert.ok(K.open);
+    const cheap = new Shop({ stock: { bread: { price: 10 } }, clock: C, price: (b, { selling }) => selling ? b * 1.2 : b * .8 }); assert.ok(cheap.priceOf('bread') === 8 && cheap.priceOf('bread', { selling: true }) === 6, 'the game\'s own prices (reputation)');
+    const T = new Shop({ clock: C }).unpack(S.pack()); assert.equal(T.money, S.money);
+  }
+  // the night: monsters come in from the edge after dusk, keep off torches, hunt a hero near, go at dawn; folk hide; no sleep with one near
+  {
+    const P = plan({ seed: 5, kind: 'village', houses: 14 }), C = new Clock({ hour: 21.5, speed: 1 / 60 }), N = new Night(P, { clock: C, every: 2, max: 4 }), F = new Folk(P, { clock: C, night: N });
+    const hero = { x: 0, z: 0 }; let came = 0, went = 0; N.on('spawn', () => came++).on('gone', () => went++);
+    for (let i = 0; i < 60 * 20; i++) { C.update(1 / 60); N.update(1 / 60, hero); F.update(1 / 60); }
+    assert.ok(came === 4 && N.monsters.length === 4 && N.active, 'four come: ' + came);
+    for (const m of N.monsters) assert.ok(Math.hypot(m.x - hero.x, m.z - hero.z) > 8, 'they appear away from the hero');
+    assert.ok(F.people.filter(p => p.job !== 'nightwatch').every(p => p.doing === 'hide' || p.doing === 'sleep' || p.inside >= 0 || p.moving), 'folk head home');
+    const m = N.monsters[0]; m.x = hero.x + 5; m.z = hero.z; const d0 = Math.hypot(m.x - hero.x, m.z - hero.z);
+    for (let i = 0; i < 30; i++) N.update(1 / 60, hero); assert.ok(m.state === 'hunt' && Math.hypot(m.x - hero.x, m.z - hero.z) < d0, 'one near hunts the hero');
+    assert.equal(F.rest('dawn', hero).why, 'danger', 'no sleeping with a monster near');
+    const L = P.lights[0]; m.x = L.x + 6; m.z = L.z; for (let i = 0; i < 240; i++) N.update(1 / 60, { x: L.x, z: L.z }); assert.ok(Math.hypot(m.x - L.x, m.z - L.z) >= N.light - .05, 'a torch keeps it off: ' + Math.hypot(m.x - L.x, m.z - L.z).toFixed(2));
+    C.set(6.5); for (let i = 0; i < 60 * 60; i++) { C.update(0); N.update(1 / 60, null); }
+    assert.ok(N.monsters.length === 0 && went === 4 && !N.active, 'gone by dawn: ' + N.monsters.length);
+    const r = F.rest(2, hero); assert.ok(r.ok && r.hours === 2);
+  }
+  console.log('town: clock, plans, folk, shops and the night');
 }
 
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits

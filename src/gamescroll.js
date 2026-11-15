@@ -50,6 +50,7 @@
 //   gs.drag      drag, drop and snap pieces into slots; reorderable lists
 //   gs.history   undo and redo: each step of the round, back and forward, undos counted
 //   gs.items     inventories (slots, stacks, equip slots, sort) and crafting (recipes, what's missing, timed making)
+//   gs.town      towns that live: a world clock (days, dawn, dusk, waiting, sleeping), seeded village and castle plans, townsfolk with routines, shops, night monsters
 //   gs.adventure point-and-click: rooms, hotspots, take, use X on Y, exits, flags, a map of rooms seen
 //   gs.hex       hex maps (honeycomb-grid): taps, neighbours, ranges, movement reach, paths, sight; Iso views
 //   gs.rts       strategy controls: tap and box select, formations, flow fields, build grids, tower targets
@@ -92,7 +93,7 @@
 //   gs.props     thousands of props with culling and detail levels (InstancedMesh2), rooms, chunked worlds
 //   gs.regions   big worlds in parts: levels made when picked, squares and land tiles round the player, freed behind
 //   gs.outdoors  3D outdoor worlds: terrain (THREE.Terrain), grass, trees, rocks, wavy water you can float on
-//   gs.city      made-up 3D cities from a seed: streets, buildings with lit windows, traffic at the lights, people, routes
+//   gs.city      made-up 3D cities from a seed: streets, buildings with lit windows, traffic at the lights, people, routes; Town builds a gs.town plan
 //   gs.craft     planes, boats and hover craft that feel right, and floating bodies in physics3d
 //   gs.soft      cloth, ropes, jelly and squishy blobs you can grab, cut and tear; a simple liquid
 //   gs.cards     decks, deals, hands, blackjack totals, rummy sets and runs, poker hands (pokersolver)
@@ -152,6 +153,7 @@ import * as drag from './kit/drag.js';
 import * as idle from './kit/idle.js';
 import * as history from './kit/history.js';
 import * as items from './kit/items.js';
+import * as town from './kit/town.js';
 import * as adventure from './kit/adventure.js';
 import * as hex from './kit/hex.js';
 import * as rts from './kit/rts.js';
@@ -245,7 +247,7 @@ const GROUPS = {
     load: () => Promise.all([import('./gs-3d.js').then(m => Promise.all([m.props.simplifyReady, m.models.ready()]).then(() => m)), import('./kit/gpu.js').then(g => g.prepareGPU())]).then(([m]) => ({ toon: pick('toon', m.toon), hd: pick('hd', m.hd), ar: pick('ar', m.ar), bricks: pick('bricks', m.bricks),
       physics3d: pick('physics3d', m.physics3d), fx3d: pick('fx3d', m.fx3d), camera: pick('camera', m.camera), nav3d: pick('nav3d', m.nav3d),
       characters: pick('characters', m.characters, m.reactions), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
-      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), THREE: m.THREE })) },
+      poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city, m.town3d), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), THREE: m.THREE })) },
   ai: { parts: ['ai'], load: () => import('./kit/ai.js').then(m => ({ ai: pick('ai', m) })) },
   action: { parts: ['combat', 'tactics', 'climb', 'missions', 'cutscene', 'prompts', 'stealth', 'gadgets', 'campaign', 'arena', 'magic', 'monsters'],
     load: () => import('./gs-action.js').then(m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, pick(k, v)]))) },
@@ -326,6 +328,7 @@ const core = {
   idle: pick('idle', idle),
   history: pick('history', history),
   items: pick('items', items),
+  town: pick('town', town),
   adventure: pick('adventure', adventure),
   hex: pick('hex', hex),
   rts: pick('rts', rts),

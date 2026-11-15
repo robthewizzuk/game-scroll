@@ -10,4 +10,5 @@ Read [AGENTS.md](../AGENTS.md) at the repo root: it is the full guide for AI too
 - Lazy parts (`gs.physics`, `gs.physics3d`, `gs.nav3d`, `gs.fx3d`, `gs.vision`, `gs.sound.Tone`, `gs.sound.instrument`, `api.loadLocal`) must be created or called in `make()` or `reset()`.
 - Original games only: no recreations of existing games, even renamed.
 - Start from a template (`npm run new <id> --style <style>`): it already has a fixed tick (`tick: 60`), `gs.rounds.Ready`, `Feel` and a soundtrack in one line (`music: 'chase'` in the definition).
-- Check with `node scripts/game-lint.mjs <id>`, `node scripts/game-types.mjs <id>`, `node scripts/unique.mjs <id>` (nearest games; no near-twins), `npm run games`, `npm run build:bundled && node scripts/smoke.cjs <id>`.
+- See how a gs part is used in real games: `node scripts/examples.mjs <name>` (e.g. `Feel.coin`, `gs.physics`).
+- Check with `node scripts/check.mjs <id>` (every check, one report with lines and fixes), or one by one: `node scripts/game-lint.mjs <id>`, `node scripts/game-types.mjs <id>`, `node scripts/unique.mjs <id>` (nearest games; no near-twins), `npm run games`, `npm run build:bundled && node scripts/smoke.cjs <id>`.
