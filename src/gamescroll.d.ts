@@ -2320,6 +2320,82 @@ export interface RpgPart {
   /** new Quests({ id: { name, stages, rewards, needs } }) in reset(); finds the game's Reputation, Growth, Inventory and Flags. */
   Quests: new (table: Record<string, QuestDef>, o?: { rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; flags?: Flags | null; keep?: number; link?: boolean }) => Quests;
 }
+/** A spell in a gs.magic book. */
+export interface Spell {
+  kind: 'bolt' | 'area' | 'beam' | 'shield' | 'heal' | 'buff';
+  /** 'fire' | 'frost' | 'storm' | 'water' | 'earth' | 'nature' | 'arcane' | 'holy' | 'shadow' | 'force', or your own: statuses meet by it (REACTIONS), and targets resist it ('resist.<element>' stat, 0..1). */
+  element?: string;
+  /** Mana (or pool) it costs as it goes, and seconds before it can be cast again (charges stored). */
+  cost?: number; pool?: string; cool?: number; charges?: number; coolBy?: string;
+  /** Seconds to cast (sped by the caster's castSpeed stat). still: moving cuts it off. fragile: a big hit cuts it off (true: any hit; a share of health; false: never). */
+  cast?: number; still?: boolean; fragile?: boolean | number; gcd?: number; range?: number; free?: boolean;
+  damage?: number; heal?: number; status?: string | string[]; chance?: number; statusFor?: number;
+  /** Metres a second it shoves those it hits away (negative pulls in). */
+  push?: number; hits?: 'foes' | 'allies' | 'all'; pierceArmour?: boolean;
+  /** bolt: speed, size (radius), gravity (true: the Magic's), homing (radians a second it turns), pierce (how many it passes through), chain (jumps on to the next foe), splash (an area where it lands), life. */
+  speed?: number; size?: number; gravity?: boolean | number; homing?: number; pierce?: number; life?: number;
+  chain?: { jumps?: number; range?: number; falloff?: number }; splash?: { radius?: number; damage?: number; status?: string; push?: number; for?: number; every?: number };
+  /** area: where (self, the aimed point, the target), its shape, radius, angle (a cone's half width), width (a line's), inner (a ring's hole), delay (a warning first), for + every (it lingers), follow (an aura), blocks (foes' bolts stop at its edge), tick (damage share each tick). */
+  at?: 'self' | 'aim' | 'target'; shape?: 'circle' | 'cone' | 'line' | 'ring'; radius?: number; angle?: number; width?: number; inner?: number; delay?: number; for?: number; every?: number; follow?: boolean; blocks?: boolean; tick?: number;
+  /** beam: seconds it can be held, mana a second while held. */
+  channel?: number; drain?: number;
+  /** shield: harm it soaks up, reflect (foes' bolts turn back), only (it soaks only its element). heal: over (seconds: as regen), cleanse. buff: a status id. on: who it goes to. */
+  absorb?: number; reflect?: boolean; only?: boolean; over?: number; cleanse?: boolean; buff?: string; on?: 'self' | 'target' | 'allies';
+  [k: string]: Loose;
+}
+/** Where a spell goes: a direction, a point, or a unit. */
+export interface SpellAim { dir?: P3 | { x: number; y: number }; at?: P3 | { x: number; y: number }; target?: MagicUnit }
+/** Something spells can hit and that can cast them (Magic.unit). */
+export interface MagicUnit {
+  readonly id: number; body: Loose; stats: Stats | null; team: string | number; radius: number; height: number; hand: Loose; facing: number | (() => number) | null; thing: Loose; book: Record<string, Spell>; dead: boolean; gcd: number;
+  /** The cast going on: { name, spell, part (0..1), of (seconds) }, or null. */
+  readonly casting: { name: string; spell: Spell; part: number; of: number; t: number } | null;
+  readonly channel: { name: string; spell: Spell; t: number; of: number } | null;
+  wards: { by: MagicUnit; spell: string; amount: number; max: number; left: number; of: number; reflect: boolean }[];
+  /** The strongest ward on it ({ amount, max, part, left, reflect }) or null. */
+  readonly ward: { amount: number; max: number; part: number; left: number; reflect: boolean; spell: string } | null;
+  readonly pos: P3;
+  /** true, or why not: 'unknown' | 'dead' | 'stunned' | 'silenced' | 'busy' | 'cooling' | 'mana' | 'range'. */
+  can(name: string, aim?: SpellAim): true | string;
+  cast(name: string, aim?: SpellAim): true | string;
+  interrupt(why?: string): boolean; stop(): boolean; hurt(n: number): void; from(): P3; face(): number;
+}
+export interface MagicEvent {
+  type: 'start' | 'release' | 'hit' | 'heal' | 'shield' | 'buff' | 'reaction' | 'absorb' | 'broken' | 'reflect' | 'warn' | 'burst' | 'blocked' | 'wall' | 'fizzle' | 'interrupt' | 'end' | 'fail' | 'dead' | (string & {});
+  by?: MagicUnit; who?: MagicUnit; spell?: string; at?: P3; damage?: number; absorbed?: number; heal?: number; statuses?: string[]; reaction?: string | null; push?: P3; why?: string; [k: string]: Loose;
+}
+export interface Magic {
+  book: Record<string, Spell>; units: MagicUnit[]; gcd: number; apply: boolean; world: Loose; readonly t: number;
+  /** Bolts in flight: { x, y, z, v, size, spell, name, by, team, target }. */
+  bolts: { x: number; y: number; z?: number; v: P3; size: number; spell: Spell; name: string; by: MagicUnit; team: string | number; target: MagicUnit | null; id: number }[];
+  /** Areas: { x, y, z, shape, radius, angle, width, dir, part (how far through its warning), live, left (seconds it lingers) }. */
+  areas: { x: number; y: number; z?: number; shape: string; radius: number; angle: number; width: number; inner: number; dir: P3 | null; part: number; live: boolean; left: number; spell: Spell; name: string; by: MagicUnit; id: number }[];
+  beams: { by: MagicUnit; name: string; spell: Spell; from: P3; to: P3 | null; hit: MagicUnit | null }[];
+  /** A chain's jumps, fading: { from, to, element, life }. */
+  zaps: { from: P3; to: P3; element: string; life: number }[];
+  events: MagicEvent[];
+  unit(body: Loose, o?: { stats?: Stats; team?: string | number; radius?: number; height?: number; hand?: Loose; facing?: number | (() => number); thing?: Loose; book?: Record<string, Spell>; fragile?: number }): MagicUnit;
+  remove(u: MagicUnit): this; clear(): this;
+  on(type: MagicEvent['type'] | 'any', fn: (e: MagicEvent) => void): this;
+  /** Casts finish, bolts fly and hit, areas go off and tick, beams burn, the units' Stats run on. Returns this frame's events. */
+  update(dt: number, o?: { stats?: boolean }): MagicEvent[];
+  /** One spell landing on one unit (your own: a cursed blade's fire, a trap): reactions, resist, armour, wards, then health and statuses. */
+  hit(by: MagicUnit | null, who: MagicUnit, name: string, spell: Partial<Spell>, at?: P3, push?: P3 | null): MagicEvent;
+  status(who: MagicUnit, id: string, spell?: Partial<Spell>, o?: { for?: number; spec?: StatBuff }): string | null;
+}
+export interface MagicPart {
+  /** book: { name: Spell }; statuses (STATUSES), reactions (REACTIONS), gcd, gravity, world (a World3D or 2D Physics; found by itself; false none), apply (false: only say who was hit). */
+  Magic: new (o?: { book?: Record<string, Spell>; statuses?: Record<string, StatBuff>; reactions?: { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[]; gcd?: number; gravity?: number; world?: Loose; apply?: boolean; link?: boolean }) => Magic;
+  /** The class of what Magic.unit makes (for instanceof; make them with magic.unit()). */
+  Unit: new (magic: Magic, body: Loose, o?: Loose) => MagicUnit;
+  /** Statuses as gs.stats buffs: burn, chill (three doses: frozen), frozen, shocked, wet, poison, rooted, weak, silence, slow, regen, haste, might, stoneskin. */
+  STATUSES: Readonly<Record<string, StatBuff>>;
+  REACTIONS: readonly { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[];
+  /** [core, edge] colours for each element. */
+  ELEMENTS: Readonly<Record<string, [string, string]>>;
+  /** Ready-made 3D looks on a gs.fx3d Particles3D: hand glows, bolt trails with lights, flashes, area rings, beam sparks, ward shimmer, heal motes. update(dt) after magic.update(). */
+  Looks: new (magic: Magic, fx: Loose, o?: { colours?: Record<string, [string, string]>; lights?: boolean; size?: number }) => { update(dt: number): void; clear(): Loose };
+}
 
 export interface GenMap { grid: string[]; readonly text: string; w: number; h: number }
 export interface GenPart {
@@ -4300,7 +4376,7 @@ export interface GS {
   board: BoardPart; battle: BattlePart; stats: StatsPart; rpg: RpgPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
-  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
+  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
   outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
