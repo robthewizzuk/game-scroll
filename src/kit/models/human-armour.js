@@ -182,6 +182,8 @@ const PAIRED = new Set(['arm', 'elbow', 'fore', 'hand', 'leg', 'knee', 'shin', '
 export const ARMOUR = { slots: Object.fromEntries(Object.entries(SLOTS).map(([k, v]) => [k, Object.keys(v)])) };
 /** Only a table's own entries: names from a game never reach what objects inherit. */
 const isOwn = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+/** The pieces' makers by name, as a Map: a name only ever finds a maker. */
+const MAKERS = new Map(Object.entries(PIECES));
 /**
  * What an outfit's armour asks for, as pieces to sculpt: [{ slot, kind, piece, bone, side, worn }]. armour: { chest: 'plate' | ['plate', 'leather'], ... }:
  * a kind, or a list of kinds to have ready (the first is worn). Throws on a slot or kind there is none of.
@@ -201,7 +203,7 @@ export function armourPieces(armour) {
 }
 /** Sculpts a piece's shapes (human-shapes.js sculpt, kind 'armour'): the left's, or the right's flipped. */
 export function armourShapes(a) {
-  const make = isOwn(PIECES, a.piece) ? PIECES[a.piece] : null; if (!make) throw new Error(`gs.models.human: no armour piece '${a.piece}'`);
+  const make = MAKERS.get(a.piece); if (typeof make !== 'function') throw new Error(`gs.models.human: no armour piece '${a.piece}'`);
   const S = make(a);
   if (a.side === 'R') {
     const F = S.map(s => s.mirror ? s : { ...s, flip: true });
