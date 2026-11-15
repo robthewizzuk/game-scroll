@@ -61,6 +61,8 @@ Make the city once (in `make()` or the first `reset()`, like the view) and call 
 | `dress` | Street dressing and depth on the fronts (default on): stone ledges along each storey of the old blocks, fins between the glass towers' bays, balconies, sills, air-con boxes, shopfronts with pilasters and a fascia with each shop's sign (made-up names, lit at night), stair huts, vents and dishes on the roofs; kerb stones, drains, worn road paint, a name sign at each corner (made-up street names), bins, bollards round the squares, parking signs, wires across the old town's streets and along the suburb's poles. `false`: as before. |
 | `paint` | The ground with no repeats (default on a Next Gen view): the roads, pavements, plazas and parks round the camera are painted from what each is into two pictures that follow the camera (a fine one 32 m across and a coarser one 128 m across, a strip at a time as it moves), and read in place of the tiled ground pictures: patches, cracks and tar lines in the asphalt, slabs laid in a bond with a cracked or newer one here and there, gum and stains, oil under some parked cars and skid marks before some stop lines. Past 64 m the tiles are read as before. `false`: the tiles everywhere. |
 | `far` | The city to the horizon (default off; `true` for 6 km, or how far in metres): past the last street a made-up city goes on as stand-ins in this one's colours and storeys (blocks of 90 m out to 1.5 km, 180 m to 3.5 km, 360 m beyond, thinning out into the country), each block on a pad of street, with windows that light at night, their street lights one batch of dots that fade into the haze, and land round it all out to 10 km, flat and then hills. About 20,000 to 30,000 triangles in ten or eleven draws, made in about 50 ms; nothing of it is solid. It makes the camera see 10.8 km if it didn't already. To see it, the air must be thin: fog about `.00012` and `v.air({ haze: .00025 })` (the street scenes' `.0022` hides everything past a kilometre). |
+| `keep` | Metres from the player within which the blocks stay built (default 600). Past it, and a little more, a block is let go: its meshes and their memory freed, and its buildings stand as plain boxes of their own shape and colour with lit windows, so the skyline stays whole and a long drive's memory stays bounded. Less while the phone is short of memory. `Infinity` keeps everything once built. `city.freed` counts what was let go. |
+| `centre` | Where the city's middle is, `[x, z]` (default the origin). A city moved is the same city, moved: districts side by side (see One big city, below). |
 | `walls` | What the street walls wear (default on): posters pasted between the ground floor's windows (made-up bands, fairs and a lost cat, some pasted over others, torn and faded), a few tags in made-up words low on the walls, each its own colour, a big painted piece across the harbour's sheds, damp streaks and rust runs under some sills, and grime along the foot of every street wall. One picture made in code, one mesh a chunk, shown within `detail` metres. `false`: bare walls. |
 | `parked` | Parked cars along the kerbs where a road is wide enough for them, and on the suburb's drives (default on a Next Gen view): the city's three commonest styles, whole close by (seats behind see-through glass, its glass one draw a style) and simpler further off, each its own colour. They are solid: `city.collide()` pushes out of them and returns the car (`{ parked: true, ... }`); `city.parked` lists them. |
 | `crowd` | The pavements full of sculpted people (`gs.models.human` in a `gs.props.Crowd`, default on a Next Gen view): walking, running from a scare, waiting at the lights, lying where they were knocked. They are sculpted the first time a phone meets them (the card says "Loading…" a few seconds, once) and kept. `false`: figures of boxes. |
@@ -90,10 +92,44 @@ by name: `stone`, `brick`, `plaster`, `concrete`, `glass`, `dark`, `silver`, `ho
 | `city.people` | `list`, `near(p, r)`, `hit(p, r)`, `scare(p, r)` (everyone near runs), `knock(person, dx, dz)` (a cartoon tumble; they get up and hurry off). |
 | `city.avoid(p, r)` | Cars brake for this point this frame: the player, a fallen sign, a parade. |
 | `city.walls()` | The building meshes, for `gs.camera`'s `walls` so the camera never goes inside one. |
-| `city.solid(world)` | Makes the buildings and kerbs solid in a `gs.physics3d` World3D. |
+| `city.solid(world, { buildings, floor, furniture, parked, cars, people, within })` | Makes the city solid in a `gs.physics3d` World3D: the buildings and kerbs, the street furniture, the parked cars, and bodies that follow the nearest traffic and people. |
 | `city.occluders()` | The buildings as boxes, for skipping what's hidden behind them. The city already hands them to `v.occluders` (`occlude: false` in the options to stop that); the view also finds what is hidden from each frame's own depth, by itself. |
 | `city.plan` | The whole layout as plain numbers (blocks, buildings, junctions, roads, spots). `gs.city.layout({ seed })` gives it without any 3D. |
 | `city.drawMap(c, x, y, w, h, { at, range, turn })` + `city.mapPoint(p)` | A quick top-down map for your HUD, and where a point lands on it. Or draw your own from `city.plan`. |
+
+## One big city: `Metro`
+
+A city of several districts side by side, with open land and roads between them, for a game the player drives
+across for minutes:
+
+```js
+const { Metro } = gs.city;
+reset() {
+  if (!metro) metro = new Metro(view, { seed: 7, districts: ['downtown', 'oldtown', 'suburb', 'harbour'], far: true });
+  metro.prepare(player).reset(player);       // the districts round the start made now, under the loading screen
+}
+update(dt) { metro.avoid(player, 1.2); metro.update(dt, player); }
+```
+
+- The first district is the middle; each next one is placed beside one already there (east, west or north), as near
+  the middle as it fits, with `between` metres of land between (`[120, 240]`). A harbour always goes on the south edge,
+  with the sea past it. `districts: 4` picks styles for you; `{ style, blocks, seed, name }` sets one district.
+- Roads join the districts: from the outer junction of one to the one of the next most nearly in line, curving across the land
+  between (with its lines painted). Every district is joined to the rest.
+- Only the districts within `live` metres of the player (380) are real cities, each a `City` with its traffic, people,
+  rooms and lamps. A district coming into range is made a step at a time, within `budget` ms a frame (3), so driving up to one
+  doesn't stop the game; one well behind is let go. The others stand as their buildings in lit boxes, and with `far: true`
+  the city goes on to the horizon past them all.
+- The districts share one crowd of people, one ground painter and one set of lamps, so a district made late costs only its
+  own streets and buildings, and every district's cars are shaped when the Metro is made.
+- Each district's own blocks are let go behind the player too (`keep`, as a `City`'s).
+- `metro.route(a, b)` is a driving route across districts and the roads between (as `city.route()`, with its `legs`);
+  `metro.road(x, z)` the nearest lane anywhere. `collide`, `ray`, `ground`, `buildingAt`, `spot(kind, { in: 'harbour' })`,
+  `cars`, `people`, `avoid`, `solid(world)`, `drawMap` and `mapPoint` work as a city's, across all of them.
+- `metro.districts` lists them (`name`, `style`, `plan`, `rect`, `city` while made); `metro.city` is the made district the
+  player is in, `metro.connectors` the roads between (`points`, `len`, `lanes`; `metro.lanePos(road, lane, s, back)`).
+  `gs.city.metroPlan({ seed, districts })` places them without any 3D.
+- The traffic keeps to each district's own streets for now; the roads between are for the player.
 
 ## How it stays quick on a phone
 

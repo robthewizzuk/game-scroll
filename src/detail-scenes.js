@@ -1338,7 +1338,7 @@ function skyline({ gs, size }) {
 // drive comes to it, as a game's would. tell() gives each system's own time a frame and what the city holds in memory,
 // so a phone says what a city game can spend where (the budgets in docs/open-city.md).
 function opencity({ gs, HD, size }) {
-  const T = gs.THREE, { City } = gs.city, { vehicle } = gs.models, k = Math.min(1, Math.max(.2, size));
+  const T = gs.THREE, { City, Metro } = gs.city, { vehicle } = gs.models, k = Math.min(1, Math.max(.2, size));
   const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0009, env: .5, amb: .5, fov: 62 });
   v.cam.near = .2; v.cam.far = 10800; v.cam.updateProjectionMatrix();
   const sun = gs.hd.sun('#fff0d8', 2.6, 70, [-.5, .8, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
@@ -1349,10 +1349,12 @@ function opencity({ gs, HD, size }) {
   v.scene.add(car); for (const c of chasers) { c.visible = false; v.scene.add(c); }
   let city = null, weather = null, world = null, body = null, path = null, mode = '', ready = false, crates = [];
   const crateGeo = new T.BoxGeometry(.8, .8, .8), crateMat = gs.hd.pbr('#8a6a44', { rough: .8 });
-  const sum = { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, heading: 0, scare: 0, hits: 0 }, P = {}, Q = {}, ahead = new T.Vector3();
+  const sum = { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, heading: 0, scare: 0, hits: 0, making: 0, made: 0 }, P = {}, Q = {}, ahead = new T.Vector3();
+  // the whole city: four districts side by side with land and roads between, each made as the drive comes near it (gs.city Metro)
+  const DISTRICTS = [['downtown', 6], ['oldtown', 5], ['suburb', 5], ['harbour', [5, 3]]].map(([style, b]) => ({ style, blocks: size < .15 ? 2 : Array.isArray(b) ? b.map(n => Math.max(2, Math.round(n * Math.sqrt(k)))) : Math.max(2, Math.round(b * Math.sqrt(k))) }));
   const drop = () => { for (const m of crates) m.removeFromParent(); crates = []; weather?.dispose(); weather = null; world?.dispose?.(); world = body = null; city?.dispose(); city = null; if (v.drops) v.drops.on = false; };
   const enter = key => async draw => {
-    const t0 = performance.now(), night = key !== 'day';
+    const t0 = performance.now(), night = key === 'night' || key === 'chase';
     const opts = { seed: 23, blocks, style: 'downtown', sky, traffic: busy, people: busy, sound: false, far: true };
     if (!ready) {   // (the people are sculpted the first time a phone meets them, and kept)
       let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
@@ -1360,10 +1362,19 @@ function opencity({ gs, HD, size }) {
     }
     drop(); mode = key;
     if (key === 'chase') { let done = false; gs.physics3d.loadPhysics3D().then(() => { done = true; }, () => { done = true; }); await until(draw, () => done); }
-    // corner to corner across the city and back, on the driving side of the roads (gs.city route), smoothed at the corners
-    const plan = gs.city.layout(opts), xs = plan.nodes.map(n => n.x), zs = plan.nodes.map(n => n.z);
-    const lo = { x: Math.min(...xs) + 20, z: Math.min(...zs) + 20 }, hi = { x: Math.max(...xs) - 20, z: Math.max(...zs) - 20 };
-    city = new City(v, { ...opts, at: lo });
+    // corner to corner across the city and back, on the driving side of the roads (gs.city route), smoothed at the corners;
+    // the whole city: from the south of downtown down to the harbour's quay and back
+    let lo, hi;
+    if (key === 'metro') {
+      city = new Metro(v, { seed: 23, districts: DISTRICTS, sky, traffic: busy, people: busy, sound: false, far: true });
+      const a = city.districts[0].rect, h = city.districts.find(d => d.harbour).rect;
+      lo = { x: (a.x0 + a.x1) / 2, z: (a.z0 + a.z1) / 2 }; hi = { x: (h.x0 + h.x1) / 2, z: h.z1 - 20 };
+      city.prepare(lo);   // (what a game's loading screen makes: the districts near the start; the harbour is made on the way, a step at a time, in a full-size city)
+    } else {
+      const plan = gs.city.layout(opts), xs = plan.nodes.map(n => n.x), zs = plan.nodes.map(n => n.z);
+      lo = { x: Math.min(...xs) + 20, z: Math.min(...zs) + 20 }; hi = { x: Math.max(...xs) - 20, z: Math.max(...zs) - 20 };
+      city = new City(v, { ...opts, at: lo });
+    }
     const go = city.route(lo, hi), back = city.route(hi, lo), pts = go.points.concat(back.points.slice(1));
     path = new gs.paths.Path(pts.filter((p, i) => !i || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 2).map(([x, z]) => ({ x, y: 0, z })), { loop: true, kind: 'smooth', tension: .3 });
     sky.time = night ? 22.5 : 13; sky.update(0);
@@ -1380,9 +1391,10 @@ function opencity({ gs, HD, size }) {
       }
     }
     for (const c of chasers) c.visible = key === 'chase';
-    Object.assign(sum, { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, scare: 0, hits: 0 });
+    Object.assign(sum, { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, scare: 0, hits: 0, making: 0, made: 0 });
     const build = performance.now() - t0;
     for (let i = 0; i < 4; i++) await draw();
+    if (key === 'metro') return { build, note: `${city.districts.length} districts of ${num(city.districts.reduce((n, d) => n + d.plan.buildings.length, 0))} buildings, ${city.connectors.length} roads between them, a drive of ${num(path.length)} m` };
     return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.parked.length)} parked, ${num(city.people.list.length)} people, a drive of ${num(path.length)} m` };
   };
   const place = (m, d, dt) => {
@@ -1391,13 +1403,14 @@ function opencity({ gs, HD, size }) {
     return Math.atan2(Q.x - P.x, Q.z - P.z);
   };
   return {
-    v, holds: `a drive at ${SPEED} m/s across a made-up downtown of ${blocks} blocks a side and back, behind a car, the city to the horizon, its traffic and people round it`,
+    v, holds: `a drive at ${SPEED} m/s across a made-up downtown of ${blocks} blocks a side and back, behind a car, the city to the horizon, its traffic and people round it; then down from downtown to the harbour of a city of four districts`,
     modes: [
       { key: 'day', name: 'the city at midday, dry', enter: enter('day') },
       { key: 'night', name: 'at night in the rain: lamps, headlights, wet streets, drops on the lens', enter: enter('night') },
       { key: 'chase', name: 'a chase at night in the rain: three cars behind, the city solid in physics, people running', enter: enter('chase') },
+      { key: 'metro', name: 'the whole city at midday: four districts with roads between, each made as the drive comes near', enter: enter('metro') },
     ],
-    pairs: [['day', 'night', 'night in the rain against a dry midday'], ['night', 'chase', 'a chase in physics against the drive alone']],
+    pairs: [['day', 'night', 'night in the rain against a dry midday'], ['night', 'chase', 'a chase in physics against the drive alone'], ['day', 'metro', 'the whole city against downtown alone']],
     path(t, cam) {
       if (!city) return;
       const back = t < sum.t, dt = back ? 1 / 60 : Math.min(.1, t - sum.t); sum.t = t;
@@ -1412,7 +1425,8 @@ function opencity({ gs, HD, size }) {
         city.avoid(car.position, 1.2); for (const c of chasers) city.avoid(c.position, 1.2);
         if ((sum.scare -= dt) <= 0) { city.people.scare(car.position, 14, 3); sum.scare = 1; }
       }
-      t0 = performance.now(); city.update(dt, car.position); sum.city += performance.now() - t0;
+      const making = !!city.making; t0 = performance.now(); city.update(dt, car.position); const took = performance.now() - t0; sum.city += took;
+      if (making) sum.making = Math.max(sum.making, took);
       if (weather) { t0 = performance.now(); weather.update(dt); sum.weather += performance.now() - t0; }
       if (world) {
         t0 = performance.now();
@@ -1423,11 +1437,13 @@ function opencity({ gs, HD, size }) {
     },
     tell() {
       if (!city || !sum.n) return null;
-      const n = sum.n, ms = x => (x / n).toFixed(2), B = HD.meshBytes(v.scene), built = [...city.chunks.values()].filter(c => c.group).length, heap = performance.memory?.usedJSHeapSize;
+      const n = sum.n, ms = x => (x / n).toFixed(2), B = HD.meshBytes(v.scene), heap = performance.memory?.usedJSHeapSize, all = city.districts ? city.cities : [city];
+      const built = all.reduce((m, c) => m + [...c.chunks.values()].filter(c => c.group).length, 0), chunks = all.reduce((m, c) => m + c.chunks.size, 0), freed = all.reduce((m, c) => m + c.freed, 0);
       const parts = [`the city's code ${ms(sum.city)} ms`, `sky ${ms(sum.sky)} ms`];
       if (weather) parts.push(`rain and wet ${ms(sum.weather)} ms`);
       if (world) parts.push(`physics ${ms(sum.physics)} ms (${num(sum.hits)} hits)`);
-      parts.push(`${built} of ${city.chunks.size} city chunks built, ${num(city.freed)} let go`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
+      if (city.districts) parts.push(`${all.length} of ${city.districts.length} districts made` + (sum.making ? `, the city's code at most ${sum.making.toFixed(1)} ms a frame while making one` : ''));
+      parts.push(`${built} of ${chunks} city chunks built, ${num(freed)} let go`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
       if (heap) parts.push(`heap ${(heap / 1048576).toFixed(0)} MB`);
       return parts.join(' · ');
     },

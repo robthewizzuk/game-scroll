@@ -2892,7 +2892,8 @@ shops, roof tanks and fire escapes, parks, trees and lamps, cars that keep to th
 red, and people who cross at the corners. `city.update(dt, player)` each frame; `city.avoid(player)`
 makes cars brake for you. It answers `collide`, `ray`, `route(a, b)` (a `gs.paths` Path along the
 roads), `spot('door' | 'rooftop' | ...)`, `cars.hit`, `people.scare`, and gives the plan as plain
-numbers for your own map. The full guide is [docs/city.md](city.md).
+numbers for your own map. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
+roads between, each made over a few frames as the player comes near and let go behind. The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and

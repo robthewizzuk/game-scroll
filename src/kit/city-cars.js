@@ -175,7 +175,7 @@ function block(x0, y0, z0, x1, y1, z1, colour, pal = -1) {
 }
 // a parked car's shapes: whole close by, then simpler, then a body and a cabin far off (city.js puts them in gs.props, which picks by distance)
 const PARK = new Map();
-function parkKit(style) {
+export function parkKit(style) {
   let p = PARK.get(style); if (p) return p;
   const k = carKit(style); pause('Models');
   const { length: L, width: W, height: H } = k.size, w = Math.min(W, 2) / 2;

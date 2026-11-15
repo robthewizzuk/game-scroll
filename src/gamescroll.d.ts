@@ -4372,13 +4372,56 @@ export interface CityPart {
     /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;
     /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
     /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean;
-    /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number; [style: string]: Loose }) => CityWorld;
+    /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number;
+    /** Metres from the player within which the blocks are built (600); past it they are let go and stand as lit boxes, so a big city's memory stays bounded (less while the phone is short of memory; Infinity keeps all). */ keep?: number;
+    /** Where the city's middle is, [x, z] (a moved city is the same city, moved: districts side by side). */ centre?: [number, number] | null; [style: string]: Loose }) => CityWorld;
+  /**
+   * One big city of districts side by side (a downtown, an old town, suburbs, a harbour on the south edge with the sea past it),
+   * joined by roads across open land. Only the districts near the player are made (each a City), a few milliseconds a frame as
+   * the player comes near, and let go once well past; the rest stand as lit boxes, and with { far } the city goes on to the horizon.
+   * The districts share one crowd of people, one ground painter and one set of lamps. update(dt, player) each frame.
+   */
+  Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string | { style?: string; blocks?: number | [number, number]; seed?: number; name?: string; [style: string]: Loose })[];
+    /** [least, most] metres of land between districts ([120, 240]). */ between?: [number, number]; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
+    side?: 'right' | 'left'; at?: { x: number; z: number } | null; keep?: number; far?: boolean | number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; traffic?: number; people?: number; paint?: boolean; crowd?: boolean; link?: boolean; [option: string]: Loose }) => CityMetro;
+  /** A driving route across a plan's roads (from layout()), with no 3D: as City.route(). */
+  routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };
+  /** The nearest point in a lane of a plan's roads: as City.road(). */
+  roadOn(plan: CityPlan, x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };
+  /** Where a big city's districts go, as plain numbers (no view). */
+  metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number } };
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
   STYLES: Record<'downtown' | 'oldtown' | 'harbour' | 'suburb', Record<string, Loose>>;
   /** Facade looks: kind, wall, trim, glass, win (window width m), floor (storey m), lit, warm. */
   FACADES: Record<string, Record<string, Loose>>;
+}
+export interface CityDistrict { name: string; style: string; plan: CityPlan; rect: { x0: number; x1: number; z0: number; z1: number }; harbour: boolean; /** The City while it is made, else null. */ city: CityWorld | null }
+/** A road between two districts: points along it every few metres, from junction `from` of district a to junction `to` of b. */
+export interface CityRoad { id: number; a: CityDistrict; b: CityDistrict; from: Loose; to: Loose; points: [number, number][]; len: number; width: number; lanes: number; speed: number }
+export interface CityMetro {
+  districts: CityDistrict[]; connectors: CityRoad[]; bounds: { x0: number; x1: number; z0: number; z1: number }; start: { x: number; z: number }; night: number;
+  /** The made districts. */ readonly cities: CityWorld[]; /** The made district the player is in, or null on the roads between. */ readonly city: CityWorld | null;
+  /** The district being made a step at a time, or null. */ making: CityDistrict | null;
+  /** The traffic and people of every made district. */ cars: CityWorld['cars']; people: CityWorld['people'];
+  update(dt: number, focus?: { x: number; z?: number; y?: number }): CityMetro; reset(focus?: { x: number; z: number }): CityMetro;
+  /** Makes now every district the player at `at` wants (from reset(), under the loading screen). */ prepare(at?: { x: number; z?: number; y?: number }): CityMetro;
+  districtAt(x: number, z: number, margin?: number): CityDistrict | null;
+  /** A driving route across districts and the roads between: as City.route(), plus its legs in order. */
+  route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district: CityDistrict; from: Loose; to: Loose } | { road: CityRoad; from: number; to: number })[] } | null;
+  /** The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). */
+  road(x: number, z: number): Loose;
+  /** A point s metres along a road between districts { x, z, dx, dz }, and the middle of its lane k (back: driving from its second district). */
+  along(r: CityRoad, s: number, out?: Loose): { x: number; z: number; dx: number; dz: number }; lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; z: number; dx: number; dz: number };
+  avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro; buildingAt(x: number, z: number): CityBuilding | null; ground(x: number, z: number): number;
+  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null; ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null;
+  spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?: () => number }): CitySpot | null;
+  occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]; walls(): Loose[];
+  /** Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). */ solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro;
+  drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water' | 'land', string>> }): void;
+  mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
+  dispose(): void;
 }
 export interface CityWorld {
   plan: CityPlan; group: Loose; seed: number; start: CitySpot; t: number;
@@ -4420,7 +4463,9 @@ export interface CityWorld {
    * and bodies for the nearest `cars` and `people` that move with them (refreshed in update()): a car hit hard stops a moment and a
    * person hit falls over by themselves. A hit body's .car or .person says which.
    */
-  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
+  solid(world: Loose, o?: { buildings?: boolean; floor?: boolean; furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
+  /** How many blocks' chunks have been let go behind the player (keep). */
+  freed: number;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
   dispose(): void;
