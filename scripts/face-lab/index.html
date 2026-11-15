@@ -44,6 +44,8 @@ try {
   if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
   const T = gs.THREE, human = gs.models.human, frame = () => new Promise(r => requestAnimationFrame(r));
   const pick = Q.has('who') ? Q.get('who').split(',').map(Number) : LAB.map((_, i) => i);
+  // &vary=jaw:-1,jaw:1,weight:1+muscle:1,mark=tattoo/cheekL/spiral (a row of each person for each: person.looks.set, or a mark, human-looks.js)
+  if (Q.has('vary')) { const rows = []; for (const i of pick) for (const vs of ['', ...Q.get('vary').split(',')]) { LAB.push({ ...LAB[i], name: LAB[i].name + (vs ? ' ' + vs : ''), _looks: vs }); rows.push(LAB.length - 1); } pick.splice(0, pick.length, ...rows); }
   if (Q.has('ref')) { LAB.push({ name: 'Scan (reference)', scan: true }); pick.push(LAB.length - 1); }
   for (const g of (Q.get('gnm') || '').split(',').filter(Boolean)) { LAB.push({ name: 'GNM ' + g, gnm: g }); pick.push(LAB.length - 1); }
   const cols = (Q.get('cols') || 'sun:face,overcast:face,lamp:face,indoor:face').split(',').map(c => { const [light, view = 'face', expr = '', pose = '', dirt = ''] = c.split(':'); return { light, view, expr, pose, dirt }; });
@@ -76,7 +78,7 @@ try {
   sheet.width = cw * WRAP; sheet.height = (ch + LABEL) * Math.ceil(cells / WRAP); const sx = sheet.getContext('2d'); document.body.append(sheet);
   sx.fillStyle = '#1c1c1e'; sx.fillRect(0, 0, sheet.width, sheet.height);
   const info = [], t0 = performance.now();
-  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('gnmface')) o.gnm = Q.get('gnmface') !== 'off'; if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); if (Q.get('kin') === 'off') o.heritage = false; return o; };
+  const optsOf = i => { const o = { ...LAB[i] }; delete o.name; delete o._looks; if (Q.has('look')) o.look = Q.get('look'); if (Q.has('gnmface')) o.gnm = Q.get('gnmface') !== 'off'; if (Q.has('strands')) o.strands = Q.get('strands') !== 'off'; if (o.hairStyle === 'bald') o.hair = null; if (Q.has('sleeves')) o.sleeves = Q.get('sleeves'); if (Q.get('kin') === 'off') o.heritage = false; return o; };
   await human.ready(pick.filter(i => !LAB[i].scan && !LAB[i].gnm).map(optsOf));
   const scan = Q.has('ref') ? await refHead(T, v) : null;
   info.push('sculpted ' + pick.length + ' in ' + Math.round(performance.now() - t0) + ' ms');
@@ -84,6 +86,10 @@ try {
   for (let r = 0; r < pick.length; r++) {
     const p = LAB[pick[r]].scan ? scan : LAB[pick[r]].gnm ? await gnmHead(T, LAB[pick[r]].gnm) : human(optsOf(pick[r])); v.scene.add(p); p.lod = 0;
     p.traverse(o => { if (o.isMesh) { if (Q.has('noao')) o.userData.noAO = true; if (Q.has('nocontact')) o.userData.noContact = true; if (Q.has('noshadow')) o.castShadow = false; } });   // (&noao, &nocontact: the person left out of the ambient occlusion, the contact shadows)
+    for (const e of (LAB[pick[r]]._looks || '').split(/[+ ]/).filter(Boolean)) {   // (&vary: this row's looks)
+      if (e.startsWith('mark=')) { const [kind, at, design] = e.slice(5).split('/'); p.looks.mark({ kind, at, design }); continue; }
+      const [k, a] = e.split(':'); p.looks.set({ [k]: isNaN(+a) ? a : +a });
+    }
     if (Q.has('noocc') && p.eyeShadow) p.eyeShadow.visible = false;   // (&noocc: the lids' shadow over the eyes left out)
     if (Q.has('nowet') && p.wet) p.wet.visible = false;   // (&nowet: a real face's wet film over the eyes left out)
     if (Q.has('facelight')) v.faceLight(p, { strength: +Q.get('facelight') || .5 });   // (&facelight=.5: a soft light beside the camera on the face, HDView.faceLight)

@@ -4473,3 +4473,36 @@ draw(c) { dg.drawMap(c, 250, 10, 100, 80, { at: hero.position, turn }); }   // o
 - `pack()` / `unpack(data)` keep what is open, found and looted, and the map, for `api.save()`.
 - `gs.dungeon.layout(map, { seed })` and `DungeonRules` are the same rules with no 3D, for a 2D game.
 
+
+## People who change, and a character creator
+
+A person from `gs.models.human()` can change while the game runs, with nothing sculpted again: `person.looks`.
+
+```js
+hero.looks.set({ weight: .4, muscle: .7 });              // -1..1 (muscle 0..1): at once, the clothes go with the body
+hero.looks.set({ jaw: .5, chin: -.3, nose: .2, eyes: .3 }); // the face: jaw, chin, cheeks, nose, lips, brow, eyes (-1..1)
+hero.looks.set({ age: .6 });                              // 0..1: grey hair, sagging a little, a real face's lines stay in
+hero.looks.set({ lean: -.8 });                            // -1 evil (pale, a red glint in the eyes) .. 1 good (warm)
+hero.looks.set({ skin: '#8a5a3c', hair: '#c9a35a', height: 1.05 });
+const scar = hero.looks.mark({ kind: 'scar', at: 'cheekL', design: 'claw' });   // rides the body as it moves
+scar.strength = .4;                                       // fades as it heals; scar.remove()
+hero.looks.mark({ kind: 'tattoo', at: 'armR', design: 'band', colour: '#1c2433' });
+api.save({ looks: hero.looks.pack() });  /* later */  hero.looks.unpack(api.load({}).looks);
+```
+
+- Marks: `kind` `'tattoo'` (`band`, `spiral`, `star`, `rune`, `leaf`, `wing`, `dots`), `'scar'` (`slash`, `claw`, `burn`,
+  `stitch`) or `'paint'` (`stripes`, `mask`); `at` `cheekL`/`R`, `brow`, `chin`, `eyeL`/`R`, `neck`, `armL`/`R`,
+  `foreL`/`R`, `handL`/`R`, `chest`, `back`, or `{ bone, off: [x, y, z] }`; `size` (metres across), `turn`.
+- The person gets its own copy of its points and its skin, hair and eye materials the first time; its twins keep theirs.
+
+`gs.models.Creator` is a character creator's state: the person to show, sliders that show at once (build, face, age,
+skin, hair colour, good or evil) and picks (body, hair style, heritage, face, beard) that make the person again in the
+background a moment after the last change and swap them in. The kit draws nothing: your panel reads `sliders` and
+`picks`.
+
+```js
+make() { cr = new gs.models.Creator({ sex: 'f', seed: 3 }, { onSwap: (old, now) => { old.removeFromParent(); view.scene.add(now); } }); view.scene.add(cr.person); }
+update(dt) { cr.update(dt); cr.person.rig.update(dt); }
+// your sliders: for (const s of cr.sliders) ... cr.set(s.id, value);  your picks: cr.set('hairStyle', 'long')
+// done: api.save({ hero: cr.options() })  then  hero = gs.models.human(saved.hero); hero.looks.unpack(saved.hero.looks)
+```

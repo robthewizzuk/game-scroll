@@ -4402,6 +4402,32 @@ export interface Wield {
   update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean }): Wield;
   /** Takes it off the person: the weapon. */ drop(): Loose;
 }
+export type LookShape = 'weight' | 'muscle' | 'age' | 'jaw' | 'chin' | 'cheeks' | 'nose' | 'lips' | 'brow' | 'eyes';
+export interface LookValues { weight?: number; muscle?: number; age?: number; jaw?: number; chin?: number; cheeks?: number; nose?: number; lips?: number; brow?: number; eyes?: number; lean?: number; skin?: string | null; hair?: string | null; height?: number }
+export interface LookMarkOptions {
+  kind?: 'tattoo' | 'scar' | 'paint'; at?: 'cheekL' | 'cheekR' | 'brow' | 'chin' | 'eyeL' | 'eyeR' | 'neck' | 'armL' | 'armR' | 'foreL' | 'foreR' | 'handL' | 'handR' | 'chest' | 'back' | { bone: string; off?: [number, number, number]; facing?: [number, number, number] };
+  design?: 'band' | 'spiral' | 'star' | 'rune' | 'leaf' | 'wing' | 'dots' | 'slash' | 'claw' | 'burn' | 'stitch' | 'stripes' | 'mask'; colour?: string; size?: number; turn?: number; seed?: number; strength?: number;
+}
+export interface LookMark { strength: number; readonly o: LookMarkOptions; mesh: Loose; remove(): void }
+/** person.looks (gs.models.human): how a person looks, changed while the game runs with no sculpting again. */
+export interface PersonLooks {
+  /** Shapes -1..1 (muscle and age 0..1), lean -1 (evil) .. 1 (good), skin / hair colours (null: as made), height a scale (1 as made). Only what is named changes. */
+  set(o: LookValues): PersonLooks; get(k: keyof LookValues): number | string | null;
+  /** A scar, a tattoo or paint on the skin that rides the body; strength fades it. */
+  mark(o: LookMarkOptions): LookMark; readonly marks: LookMark[];
+  pack(): Loose; unpack(d: Loose): PersonLooks;
+}
+export interface CreatorSlider { id: string; group: string; label: string; min: number; max: number; live: boolean }
+export interface CreatorPick { id: string; group: string; label: string; choices: (string | number)[] }
+export interface CharacterCreator {
+  /** The person to show (a new one after each swap). */
+  person: Loose; readonly sliders: CreatorSlider[]; readonly picks: CreatorPick[]; readonly busy: boolean;
+  set(id: string, value: number | string): CharacterCreator; value(id: string): number | string;
+  /** Each frame: a moment after the last pick (or colour) the person is made again in the background, then onSwap(old, now). */
+  update(dt?: number): CharacterCreator;
+  /** What to give gs.models.human for this person (and looks: person.looks.unpack(o.looks) after). */
+  options(): Loose; pack(): Loose; unpack(d: Loose): CharacterCreator;
+}
 export interface ModelsPart {
   /** A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' | 'fabric' | 'leather' | 'marble' | 'dirt' | 'sand' | 'snow' | 'skin' (pores and fine lines) | 'palm' (a palm trunk: rings, leaf scars, fibres). Options: the recipe's colours (colour, dark, mortar, gap, rust, deep, under, vein, grout), seed, repeat [u, v], size (texture pixels, 256), depth (parallax, WebGPU); WebGPU: closeUp (sharp detail near the camera, default on), solid (laid on by world position, metres per tile), scatter (no visible repeat). Others go to gs.hd.pbr. */
   material(name: string, o?: { colour?: string; color?: string; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean; solid?: boolean | number; scatter?: boolean; [k: string]: Loose }): Loose;
@@ -4448,6 +4474,11 @@ export interface ModelsPart {
    * 'gate' (width of the way through 3.4: a gatehouse with a tower each side and a portcullis, the child named 'portcullis', userData.lift metres up to open it). colour, seed, wear,
    * materials ({ wall, trim, roof, wood, iron }). userData.solid: [{ at, size }] boxes for physics in its own frame; userData.walk: the height of its wall walk.
    */
+  /** A character creator on human(): sliders that show at once (person.looks), picks that make the person again in the background and swap them in (onSwap). Draw your own panel from sliders and picks. */
+  Creator: new (o?: Loose, opts?: { onSwap?: (old: Loose, now: Loose) => void; wait?: number }) => CharacterCreator;
+  /** The shapes person.looks can set. */
+  readonly looks: readonly LookShape[];
+  readonly CREATOR_SLIDERS: readonly CreatorSlider[]; readonly CREATOR_PICKS: readonly CreatorPick[];
   fort(o?: { kind?: 'wall' | 'tower' | 'gate'; length?: number; height?: number; thick?: number; radius?: number; width?: number; roof?: boolean; colour?: string; color?: string; seed?: number; wear?: false | Record<string, Loose>; materials?: Record<string, Loose> }): Loose;
   /** The castle pieces fort() makes. */
   readonly forts: readonly string[];

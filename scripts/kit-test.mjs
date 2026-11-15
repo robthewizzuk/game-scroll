@@ -8972,5 +8972,39 @@ console.log('physics ok');
   console.log('dungeon: maps dressed, keys, levers, gates, traps, plates, secrets, saves');
 }
 
+{
+  // person.looks (human-looks.js) on a bare skeleton and a small skin of our own: points move by their bones' share and come back
+  const T = await import('three'), { skeleton } = await import('../src/kit/models/human.js'), { Looks } = await import('../src/kit/models/human-looks.js');
+  const man = skeleton({ sex: 'm' }), skel = new T.Skeleton(Object.values(man.bones)), names = skel.bones.map(b => b.name);
+  const g = new T.SphereGeometry(.1, 12, 8), n = g.attributes.position.count, SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+  // the top half on the belly, the bottom half on the jaw
+  for (let i = 0; i < n; i++) { SI[i * 4] = names.indexOf(g.attributes.position.getY(i) > 0 ? 'belly' : 'jaw'); SW[i * 4] = 1; }
+  g.setAttribute('skinIndex', new T.BufferAttribute(SI, 4)); g.setAttribute('skinWeight', new T.BufferAttribute(SW, 4)); g.addGroup(0, g.index.count, 0);
+  const mats = [0, 1, 2, 3, 4, 5, 6].map(() => new T.MeshStandardMaterial()), mesh = new T.SkinnedMesh(g, mats); man.add(mesh); mesh.bind(skel);
+  man.mesh = mesh; man.lods = [mesh];
+  const L = new Looks(man, { skin: '#c89878', hair: '#3a2a1e' }), before = g.attributes.position.array.slice();
+  L.set({ weight: 1 });
+  const P = mesh.geometry.attributes.position.array, moved = i => Math.hypot(P[i * 3] - before[i * 3], P[i * 3 + 1] - before[i * 3 + 1], P[i * 3 + 2] - before[i * 3 + 2]);
+  const top = [...Array(n).keys()].filter(i => before[i * 3 + 1] > .02), bottom = [...Array(n).keys()].filter(i => before[i * 3 + 1] < -.02);
+  assert.ok(mesh.geometry !== g && g.attributes.position.array[0] === before[0], 'the person gets its own points (twins keep theirs)');
+  assert.ok(top.every(i => Math.abs(moved(i) - .05) < 1e-4) && bottom.every(i => moved(i) < 1e-6), 'weight: the belly out by its measure, the jaw not at all');
+  L.set({ weight: 0, jaw: 1 }); assert.ok(top.every(i => moved(i) < 1e-6) && bottom.some(i => moved(i) > .001), 'back as made, and the jaw wider');
+  L.set({ jaw: 0, lean: -1, age: 1, skin: '#5c3a26' });
+  const skin = mesh.material[0]; assert.ok(skin !== mats[0] && skin.color.r < mats[0].color.r, 'its own skin, tinted');
+  const d = JSON.parse(JSON.stringify(L.pack())), L2 = new Looks(man, { skin: '#c89878' }); L2.unpack(d); assert.ok(L2.get('lean') === -1 && L2.get('skin') === '#5c3a26' && L2.get('age') === 1, 'pack / unpack');
+  console.log('looks: weight, the face, colours, saves');
+  // the creator: sliders show at once on the person's looks; a pick makes the person again in the background and swaps them in
+  const { Creator } = await import('../src/kit/models/human-looks.js'), made = [];
+  const fake = o => { const sets = [], p = new T.Group(); p.looks = { set: v => sets.push(v), marks: [], base: { height: 1 }, mark() {}, pack: () => ({ v: {} }) }; p.sets = sets; p.o = o; made.push(p); return p; };
+  fake.ready = () => Promise.resolve(true);
+  let swapped = null; const cr = new Creator(fake, { sex: 'm', seed: 2 }, { onSwap: (a, b) => { swapped = [a, b]; } });
+  cr.set('jaw', .5); assert.ok(cr.person.sets.some(v => v.jaw === .5) && !cr.busy, 'a live slider shows at once');
+  assert.throws(() => cr.set('hairStyle', 'mohawk')); cr.set('hairStyle', 'long'); assert.ok(cr.busy);
+  cr.update(.1); assert.equal(made.length, 1, 'waits for the last change'); cr.update(.5); await null; await null;
+  assert.ok(made.length === 2 && made[1].o.hairStyle === 'long' && swapped?.[1] === cr.person && cr.person.sets.some(v => v.jaw === .5), 'made again with the pick, and the looks kept');
+  assert.equal(cr.set('jaw', 9).value('jaw'), 1, 'sliders keep to their range');
+  console.log('creator: live sliders, picks made again in the background');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

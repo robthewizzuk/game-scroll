@@ -24,6 +24,7 @@ import { Rig, LIFELIKE, Between, Bulge } from '../poses.js';
 import { Manner } from '../manner.js';
 import { Breath, Grime } from './human-life.js';
 import { Idle } from './human-idle.js';
+import { Looks } from './human-looks.js';
 import { reach } from '../characters.js';
 import { LiveFace, MOVES } from './human-face.js';
 import { FACE, FACE_REAL, LINES, HAIR, IRIS, SEAM, CARD, faceUV, paintFace, paintLines, paintHair, paintIris, paintSeams, paintCards } from './human-paint.js';
@@ -864,6 +865,8 @@ export function human(o = {}) {
     root.face = root.rig.face = new LiveFace(root, B, { lid: headP?.lid, droop: sp.face.real ? .14 : 0 });   // blinks, eyes, brows and mouth: the rig steps it with the body
     root.breath = root.rig.breath;   // (breathing and soft flesh: it runs by itself; set breath.on = false to hold it, breath.puff for a winded one)
     root.idle = root.rig.idle = new Idle(root, root.rig);   // (fidgets, the head after the eyes, glances, gestures: person.idle)
+    // (looks that change while the game runs, made the first time they are asked for: human-looks.js)
+    let looks = null; Object.defineProperty(root, 'looks', { get: () => (looks ||= new Looks(root, { skin: pal.skin, hair: pal.hair, fem: sp.fem })) });
     // (a real face's eyeballs a hair smaller than the lids were sculpted round: the lower lid lies on the ball, and where it dipped a fraction
     // of a millimetre into it the white showed through the lid's edge as the eye turned and the iris, set back in the ball, went by)
     if (sp.face.real) root.face.eyeSize = .975;
