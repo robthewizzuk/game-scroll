@@ -74,7 +74,7 @@ export class LiveFace extends Face {
     /** How far the upper lids hang at rest, a share of their whole closing (a real face's .14: over the top of the iris, as relaxed lids are; eyeWide lifts them). */
     this.droop = droop;
     this.sides = SIDE.map(S => ({ S, b: S.b.map(n => B[n]), r: S.b.map(n => this.rest[n]) }));
-    this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4();
+    this.A = new Float32Array(MOVES.length); this.talk.press = this.talk.tuck = 0; this.bt = Math.random() * 9; this.wr = new Vector4(0, 0, 0, 0);
   }
   /** One blink now: shut in a twentieth of a second, open again in a little longer. */
   blink() { this.blinking = .2; this.since = 0; return this; }

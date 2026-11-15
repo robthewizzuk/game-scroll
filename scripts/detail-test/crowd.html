@@ -12,6 +12,7 @@
 //   the engine's own time a frame (&n=300 &frames=40)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { looksOf, lookPatch, lookSpec } from '../../src/kit/looks.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
 setGpuPick(GPU ? 'webgpu' : 'webgl');
 await loadParts();
@@ -43,7 +44,15 @@ try {
     return last;
   };
   const differ = (a, b, tol = 12) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > tol || Math.abs(a[i + 1] - b[i + 1]) > tol || Math.abs(a[i + 2] - b[i + 2]) > tol) n++; return n; };
-  const pin = (f, move, phase) => { const r = f.rig; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0); };
+  // a figure held in one pose of a move, as the crowd's rows are made (crowd.js bake): the move as it is drawn, with nothing of
+  // the person's own on top (no feet kept where they stood, no weight carried over from the move before, nothing swinging,
+  // no head leading a turn, no walk of its own, a face at rest, no creases in the clothes where a joint bends)
+  const pin = (f, move, phase) => {
+    const r = f.rig, g = r.grime || f.grime; r.grime = null; if (g?.bends) for (const q of g.bends) q.w = 0;
+    r.weight = 0; r.blendOn = false; r.blendK = 0; r.bw = null; r.top = null; r.topOn = false; r.topW = 0; r.fadeT = 0; r.steps = false;
+    r.momentum = false; r.follow?.reset(); r.follow = null; r.face?.still?.(); r.face = null; r.lead?.reset(); r.lead = null; r.manner = null; if (r.mom) r.mom.has = r.mom.live = false;
+    r.layers = [{ name: move, w: 1, phase, pin: true }]; r.update(0);
+  };
 
   if (Q.has('bench')) {
     // n people with a skeleton each against n in a crowd, walking round a field
@@ -79,6 +88,11 @@ try {
   }
 
   /* ---------- 1. the same picture as skeletons ---------- */
+  // On WebGPU a person close up wears cloth woven at the size of its threads and skin the light goes a little way into (a material's
+  // userData.gsGpu: hd3d-gpu.js cloth, sss). A crowd's members wear the same materials without those (crowd.js mat), so the people the
+  // crowd is held against wear what it wears: this weighs where the members are and what shape, not the close-up looks they leave out.
+  const PLAIN = new Map(), plain = m => { let c = PLAIN.get(m); if (!c) { c = m.clone(); c.userData = { ...m.userData }; delete c.userData.gsLooks; delete c.userData.gsGpu; for (const n of looksOf(m)) lookPatch(c, n, lookSpec(m, n)); PLAIN.set(m, c); } return c; };
+  const asCrowd = f => { f.traverse(x => { if (x.isMesh && x.material) x.material = Array.isArray(x.material) ? x.material.map(plain) : plain(x.material); }); return f; };
   const S = stage(), src = figures(), crowd = new Crowd(S.v, { of: src, moves: ['idle', 'walk', 'run'] });
   info.kinds = crowd.kinds.map((k, i) => ({ kind: i, moves: Object.keys(k.plan).join(' '), triangles: k.levels.map(l => l.tris).join('/'), tall: +(k.h * k.size).toFixed(2) }));
   info.texture = { wide: crowd.tex.image.width, rows: crowd.tex.image.height, kb: Math.round(crowd.tex.image.data.byteLength / 1024) };
@@ -97,7 +111,8 @@ try {
   const level = (f, L) => { const m = f.lods?.[L], whole = f.lods?.[0]?.skeleton; if (!L || !m || !whole || m.skeleton === whole) { f.lod = L; return; } f.lod = 0; f.lods[0].visible = false; m.bind(whole, m.bindMatrix); m.visible = true; };
   for (const L of [0, 1, 2]) {
     crowd.clear(); crowd.update(0);
-    const real = LINE.map(o => { const f = src[o.kind].twin(); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.scale.multiplyScalar(o.size); level(f, L); pin(f, o.move, o.phase); S.v.scene.add(f); return f; });
+    // (and each drawn as the shape it is: the view would draw a person of 8,000 triangles or more through cluster detail, with fewer)
+    const real = LINE.map(o => { const f = asCrowd(src[o.kind].twin()); f.position.set(o.x, 0, o.z); f.rotation.y = o.turn; f.scale.multiplyScalar(o.size); level(f, L); pin(f, o.move, o.phase); S.v.scene.add(f); S.v.detail(f, false); return f; });
     const a = await shot(S); out['skeletons-' + L] = S.c.toDataURL();
     for (const f of real) S.v.scene.remove(f);
     crowd.clear(); crowd.lod = L; for (const o of LINE) crowd.add(o); crowd.update(0);
@@ -109,7 +124,7 @@ try {
   crowd.lod = null;
   // a point between two rows of a move: still the rig's pose, near enough
   {
-    const o = { ...LINE[0], phase: (LINE[0].f + .5) / rowsOf(0, 'walk'), x: 0, z: 0 }, f = src[0].twin(); f.position.set(0, 0, 0); f.rotation.y = o.turn; f.lod = 0; pin(f, o.move, o.phase); S.v.scene.add(f);
+    const o = { ...LINE[0], phase: (LINE[0].f + .5) / rowsOf(0, 'walk'), x: 0, z: 0 }, f = asCrowd(src[0].twin()); f.position.set(0, 0, 0); f.rotation.y = o.turn; f.lod = 0; pin(f, o.move, o.phase); S.v.scene.add(f); S.v.detail(f, false);
     look(S, [0, 1.2, 3.4], [0, .9, 0]); crowd.clear();
     const a = await shot(S); S.v.scene.remove(f); crowd.lod = 0; crowd.add(o); crowd.update(0); const b = await shot(S); crowd.lod = null; out.between = S.c.toDataURL();
     const off = differ(a, b, 12);

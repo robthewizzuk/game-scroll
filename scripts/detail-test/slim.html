@@ -86,7 +86,7 @@ try {
     crowd.update(0);
     Object.assign(m, { a, b, dog, train, house, wall, crowd, src });
     await relief.ready(S.v.scene);
-    for (let i = 0; i < 400 && twins(S).length < 1; i++) { S.v.t = 0; S.v.render(S.x, W, H); await new Promise(r => setTimeout(r, 30)); }
+    for (const t1 = performance.now(); performance.now() - t1 < 240000 && twins(S).length < 1;) { S.v.t = 0; S.v.render(S.x, W, H); await nextFrame(); }   // (a frame a refresh, not a timer's: relief.html says why)
     // (each camera is looked through once before any picture is taken, so what the view makes in the background for what a
     // camera sees, simpler copies of big meshes, hair in layers, a shader, has arrived in both passes)
     for (const [at, to] of Object.values(CAMS)) { S.v.cam.position.set(...at); S.v.cam.lookAt(...to); S.v.cam.updateMatrixWorld(); S.v.cut?.(); for (let i = 0; i < 10; i++) { S.v.t = 0; S.v.render(S.x, W, H); await new Promise(r => setTimeout(r, 30)); } }
@@ -114,8 +114,10 @@ try {
     const off = differ(p, s, 12), any = differ(p, s, 3), mean = sum / (p.length / 4);
     info['picture-' + name] = { mean: +mean.toFixed(3), offBy12: off, offBy3: any };
     // (the wall's relief is a hundred thousand points, each moved to a grid a quarter of a millimetre fine: the lines of mortar move a fraction of a pixel)
-    const real = name === 'wall';
-    check(`${name}: the same picture with points kept small`, off <= W * H * (real ? .004 : .001) && mean < (real ? .8 : .25), `${off} of ${W * H} pixels differ by more than 12 of 255 (${any} by more than 3); mean ${mean.toFixed(3)}`);
+    // (the two people close up are drawn through cluster detail, as a game's are: with their points a hair's breadth elsewhere the simpler
+    // shapes made of them keep other edges, each within a pixel of the same surface, so pixels along their outlines differ: 305 here)
+    const real = name === 'wall', most = real ? .004 : name === 'people' ? .002 : .001;
+    check(`${name}: the same picture with points kept small`, off <= W * H * most && mean < (real ? .8 : .25), `${off} of ${W * H} pixels differ by more than 12 of 255 (${any} by more than 3); mean ${mean.toFixed(3)}`);
   }
   // how each is kept
   const ka = Sm.person.kinds, kp = P.person.kinds, half = typeof Float16Array !== 'undefined';

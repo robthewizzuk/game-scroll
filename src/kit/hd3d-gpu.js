@@ -179,7 +179,10 @@ const ARM_OUT = .27;   // (human-shapes.js ARM: the arms out as a person's mesh 
 // PORES: what the 'skin' recipe's roughness picture holds on average, squared (the shader multiplied by it twice), at its own size, at half,
 // and at a quarter and smaller (measured off the picture and its smaller copies: .525, .661 and .711 before squaring)
 const PORES = [.2767, .4413, .5055];
-const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4();   // (a mesh with no elbows or knees; a person clean and dry)
+const NO_BEND = new Vector4(0, -9, 0, 0), NO_GRIME = new Vector4(0, 0, 0, 0);   // (a mesh with no elbows or knees; a person clean and dry. All four noughts: three's Vector4 starts with a 1 in its fourth place, which here is the snow)
+// What a person's mesh carries for its looks (userData.gsGrime, gsBends, gsWrinkle) is the mesh's that a twin stands in for when the view draws
+// it through cluster detail (detail.js cutTwin: userData.gsPoseOf)
+const lookOf = o => (o?.userData?.gsPoseOf || o)?.userData;
 const ridge = x => { const f = fract(x); return f.mul(f.oneMinus()).mul(4); };   // a thread's round top: 0 at its edges, 1 along its middle
 // hd3d.js swaps a mesh's material for its twin here while the view draws on WebGPU (material.userData.gsGpu
 // names it). The twin reads the WebGL material's own uniform objects, so changes show on both.
@@ -247,7 +250,7 @@ export const gpuMaterials = {
       const FL = S.skin && gm.userData.faceLines, LINES = gm.userData.faceLinesAt;
       if (FL) {
         const u1 = uv(1), D = texture(FL, u1), pores = gm.normalMap ? normalMap(texture(gm.normalMap), uniform(gm.normalScale)) : normalViewGeometry;
-        const wr = uniform(new Vector4()).onObjectUpdate(({ object }) => (object?.userData?.gsPoseOf || object)?.userData?.gsWrinkle ?? NO_WRINKLE);
+        const wr = uniform(new Vector4()).onObjectUpdate(({ object }) => lookOf(object)?.gsWrinkle ?? NO_WRINKLE);
         const sunk = D.b.mul(select(u1.y.greaterThan(LINES.brow), wr.x, wr.z)).add(D.a.mul(select(u1.y.greaterThan(LINES.nose), wr.y, wr.w)));
         m.normalNode = bumpN(D.r.sub(sunk.mul(2.6)), float(.00016), pores);
         // (and rougher where the pores turn the surface faster than a pixel can show, Kaplanyan and Hoffman's specular antialiasing: a pore
@@ -340,7 +343,7 @@ export const gpuMaterials = {
     const n = mx_noise_float(P.mul(18)).toVar('gsFoldN');
     let fold = float(0);
     for (let i = 0; i < 4; i++) {
-      const J = uniform(new Vector4(0, -9, 0, 0)).onObjectUpdate(({ object }) => object?.userData?.gsBends?.[i] ?? NO_BEND), arm = i < 2;
+      const J = uniform(new Vector4(0, -9, 0, 0)).onObjectUpdate(({ object }) => lookOf(object)?.gsBends?.[i] ?? NO_BEND), arm = i < 2;
       const ax = arm ? vec3(TSL.sign(J.x).mul(Math.sin(ARM_OUT)), -Math.cos(ARM_OUT), 0) : vec3(0, -1, 0);
       const d = P.sub(J.xyz), along = dot(d, ax), r = length(d.sub(ax.mul(along))), inside = arm ? NG.z : NG.z.negate();
       // (a bent joint squeezes the skin of its inside into a few pixels: the folds go before they are finer than the pixels can show)
@@ -874,7 +877,7 @@ function openSky(AIR, facing) {
 // settings, or null (only the person's own).
 const MUD = vec3(.075, .052, .034), DUST = vec3(.42, .37, .3), SNOW = vec3(.68, .72, .78);
 export function grime(m, kind, o, AIR, air) {
-  const g = uniform(new Vector4()).onObjectUpdate(({ object }) => object?.userData?.gsGrime ?? NO_GRIME), P = positionGeometry;
+  const g = uniform(new Vector4()).onObjectUpdate(({ object }) => lookOf(object)?.gsGrime ?? NO_GRIME), P = positionGeometry;
   const n = mx_noise_float(P.mul(11)).toVar('gsGrimeN');
   let ww = float(0), ws = float(0);
   if (air) {
@@ -1035,7 +1038,7 @@ export function pcss(light) {
 // (and a light that a material treats as no other, HDView.faceLight's fill, is lit the usual way: a clustered lamp reaches the lighting
 // model as the cluster's node, not as itself). The lights node is the kit's own (lamps-gpu.js KitLampsNode): three's clustered lights
 // with the lamps' shadows from one atlas, light shapes, and tube and sign lights.
-const NO_WRINKLE = new Vector4();   // (a face at rest, or a mesh with no live face)
+const NO_WRINKLE = new Vector4(0, 0, 0, 0);   // (a face at rest, or a mesh with no live face)
 class KitLighting extends ClusteredLighting {
   constructor(...a) { super(...a); this.gsShadowOf = null; this.gsShadowNodes = new WeakMap(); }
   createNode(lights = []) { return new KitLampsNode(this.maxLights, this.tileSize, this.zSlices, this.maxLightsPerCluster).setLights(lights); }
