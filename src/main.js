@@ -55,6 +55,7 @@ import { show as showTweaks, knobs as knobList, setKnobs } from './kit/tweak.js'
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
 import { desktop } from './desktop.js';
+import { WEB, appOnly, getAppHTML, webHint } from './web.js';
 import { update } from './update.js';
 import { onGpuLoss, gpuMending, glStats, webgpu as webgpuNow } from './kit/gpu.js';
 import { PIPES, primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
@@ -185,6 +186,7 @@ function resetLater(s,e){
     err=>{if(s.dropped||s.game!==stub)return;s.game=g;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
 }
 function makeSlide(def){
+  if(WEB&&def.era==='board')try{def.hint=webHint(def)}catch(_){}   // (the web version: no "tap AR" in the hint)
   const el=document.createElement('section');el.className='slide '+(def.retro?'retro':'modern')+(def.era==='console'?' console':def.era==='nextgen'?' console nextgen':def.era==='ar'?' console nextgen ar':def.era==='board'?' console nextgen board':'');
   if(def.retro){const p=PAL[def.pal||'moss'];p.forEach((c,i)=>el.style.setProperty('--lcd'+i,c));el.style.setProperty('--shell',SHELL[def.pal||'moss']);}el.setAttribute('aria-label',def.title);
   el.innerHTML=`
@@ -279,7 +281,7 @@ function openInfo(s){
     infoDlg.addEventListener('click',e=>{if(e.target===infoDlg)infoDlg.close()});
     infoDlg.addEventListener('close',()=>{const t=infoDlg._s;if(t&&t.pauseWhy==='info')resumeGame(t)})}
   infoDlg._s=s;pauseGame(s,'info');
-  const kind=d.era==='console'?'Classic · Console game':d.era==='nextgen'?'Next Gen · Console game':d.era==='ar'?'AR 3D game: uses your camera and motion sensor':d.era==='board'?'Board game: on a table in 3D, or in your own room with AR':d.era==='advance'?'Advance-style pocket game':d.era==='color'?'Colour pocket game':d.retro?'Dot-matrix pocket game':'Phone game';
+  const kind=d.era==='console'?'Classic · Console game':d.era==='nextgen'?'Next Gen · Console game':d.era==='ar'?'AR 3D game: uses your camera and motion sensor':d.era==='board'?(WEB?'Board game: on a table in 3D':'Board game: on a table in 3D, or in your own room with AR'):d.era==='advance'?'Advance-style pocket game':d.era==='color'?'Colour pocket game':d.retro?'Dot-matrix pocket game':'Phone game';
   infoDlg.innerHTML=`<div class="info-card"><button class="info-x" aria-label="Close">✕</button>
     <span class="tag">${d.tag}</span><h2>${d.title}</h2><div class="info-by">Created by <b>${creatorOf(d)}</b></div><div class="info-k">${kind}</div>
     <h3>How to play</h3><p>${d.hint}</p>${locNote(d)}${sensorNote(d)}
@@ -304,7 +306,7 @@ function updateBest(s){s.el.querySelector('.best').textContent=fmt(best(s.def.id
 // ...and so do games that use the camera, mic or motion sensor (worked out from their code), and
 // iPhones get asked for motion access on the Play tap instead of in the middle of a round.
 const SENSOR_WORDS={camera:'camera',mic:'microphone',steps:'step counter',pressure:'air pressure sensor',light:'light sensor',near:'proximity sensor',motion:'motion sensor'};
-const sensorNote=d=>{if(d.era==='board'&&d.ar!==false)return'<div class="ov-loc">📷 Tap AR in the game to put the board in your own room. The camera is only used then, and nothing is recorded or leaves your phone.</div>';const u=(d.uses||[]).filter(k=>SENSOR_WORDS[k]);if(!u.length||d.era==='ar')return'';const w=u.map(k=>SENSOR_WORDS[k]);
+const sensorNote=d=>{if(d.era==='board'&&d.ar!==false&&!WEB)return'<div class="ov-loc">📷 Tap AR in the game to put the board in your own room. The camera is only used then, and nothing is recorded or leaves your phone.</div>';const u=(d.uses||[]).filter(k=>SENSOR_WORDS[k]);if(!u.length||d.era==='ar')return'';const w=u.map(k=>SENSOR_WORDS[k]);
   return`<div class="ov-loc">${u.includes('camera')?'📷':u.includes('mic')?'🎤':u.includes('steps')?'👟':'📱'} Uses your ${w.length>1?w.slice(0,-1).join(', ')+' and '+w[w.length-1]:w[0]}${u.includes('camera')||u.includes('mic')?'. Nothing is recorded or leaves your phone':''}.</div>`};
 const locNote=d=>d.location?`<div class="ov-loc">📍 Uses your ${d.location==='precise'?'location to walk around':'rough area (about 1 km)'}. It stays on your phone, and you can say no.</div>`:'';
 function renderOverlay(s){
@@ -659,11 +661,12 @@ function fit(s,again){
 // Shuffled queue over the whole catalogue; the feed pulls a few at a time so 1000 games never means 1000 slides in the DOM.
 let queue=[];
 // ar:'world' games need native AR (walking around), so the feed leaves them out on phones without it.
-function inPool(g){return (filter.startsWith('id:')||!isHidden(g.id)&&!(g.ar==='world'&&nativeARSupported()!==true))&&(filter==='all'||(filter.startsWith('id:')?g.id===filter.slice(3):filter==='pocket'?g.retro&&g.era!=='console'&&g.era!=='nextgen'&&g.era!=='ar'&&g.era!=='board':filter==='console'?g.era==='console':filter==='nextgen'?g.era==='nextgen':filter==='ar'?g.era==='ar':filter==='board'?g.era==='board':!g.retro))}
+// The web version leaves Next Gen and AR games out (src/web.js): they play only in the apps.
+function inPool(g){return !appOnly(g)&&(filter.startsWith('id:')||!isHidden(g.id)&&!(g.ar==='world'&&nativeARSupported()!==true))&&(filter==='all'||(filter.startsWith('id:')?g.id===filter.slice(3):filter==='pocket'?g.retro&&g.era!=='console'&&g.era!=='nextgen'&&g.era!=='ar'&&g.era!=='board':filter==='console'?g.era==='console':filter==='nextgen'?g.era==='nextgen':filter==='ar'?g.era==='ar':filter==='board'?g.era==='board':!g.retro))}
 function pickDefs(n=6){
   if(solo&&slides.length&&filter.startsWith('id:'))return[];
   let pool=GAMES.filter(inPool);
-  if(!pool.length)pool=GAMES;
+  if(!pool.length)pool=GAMES.filter(g=>!appOnly(g));
   const out=[],later=[];let tries=pool.length*2+n;
   while(out.length<n&&pool.length&&tries-->0){
     if(!queue.length){queue=rankQueue(pool,GAMES);if(queue.length>1&&queue[0].id===lastId)queue.push(queue.shift())}
@@ -857,6 +860,7 @@ function feedMsg(kind){
 // on screen with a Play button that did nothing. go=false only slots it in as the next card.
 function playNow(id,go=true){
   const g=GAMES.find(x=>x.id===id);if(!g)return;
+  if(appOnly(g)){getApp(g.era,g.title);return}   // (the web version: Next Gen and AR games are in the apps)
   const def=playable(g);if(!def){remote.load(id).then(d=>{if(d)playNow(id,go)});return}
   const i=active?slides.indexOf(active):-1;
   if(go){if(active&&(active.state==='playing'||active.starting))resetSlide(active);feed.classList.remove('locked')}
@@ -886,6 +890,7 @@ function dropCopies(id){
 }
 function openShared(id,checked=''){
   const g=GAMES.find(x=>x.id===id);
+  if(appOnly(g)){letGo(id);getApp(g.era,g.title);return}
   if(!g){
     if(STREAM&&!checked){holdFor(id);remote.refresh().then(ok=>openShared(id,ok?'fresh':'failed'));return}
     letGo(id);
@@ -1172,7 +1177,7 @@ logo.onclick=()=>openPanel(GAMES,best);
 const mineBtn=document.createElement('button');mineBtn.className='iconbtn';mineBtn.id='mine';mineBtn.setAttribute('aria-label','My games: hearted and Meh');mineBtn.textContent='♥';
 const muteBtn=document.getElementById('mute');muteBtn.before(mineBtn);
 const setBtn=document.createElement('button');setBtn.className='iconbtn';setBtn.id='settings';setBtn.setAttribute('aria-label','Settings');setBtn.textContent='⚙';
-muteBtn.after(setBtn);setBtn.onclick=()=>openSettings({stream:STREAM,cached:()=>remote.cacheInfo(),clear:()=>remote.clearCache(),arTest:()=>playNow('ar-lab')});
+muteBtn.after(setBtn);setBtn.onclick=()=>openSettings({stream:STREAM,cached:()=>remote.cacheInfo(),clear:()=>remote.clearCache(),arTest:WEB?null:()=>playNow('ar-lab')});
 mineBtn.onclick=()=>openMyGames({games:GAMES,best,play:playNow,changed:(id,r)=>{hearts.set(id,r>0);slides.forEach(x=>{if(x.def.id===id)x.setLike(r>0)});rerank()},qa:()=>openPanel(GAMES,best)});
 // 🔊 opens the Sound & haptics sheet (sound on/off, volume, music, vibration on/off and strength)
 muteBtn.setAttribute('aria-label','Sound and haptics');
@@ -1182,9 +1187,20 @@ muteBtn.onclick=()=>openFeel({changed:paintMute});
 const feedBtn=document.getElementById('feed-btn'),feedMenu=document.getElementById('feed-menu'),feedOpts=[...feedMenu.querySelectorAll('[role=option]')];
 function feedOpen(on){feedMenu.hidden=!on;feedBtn.setAttribute('aria-expanded',String(on));
   if(on){const b=feedBtn.getBoundingClientRect(),w=Math.min(240,innerWidth-32);feedMenu.style.width=w+'px';feedMenu.style.left=Math.max(16,Math.min(b.left,innerWidth-16-w))-b.left+'px';(feedOpts.find(o=>o.getAttribute('aria-selected')==='true')||feedOpts[0]).focus()}}
-function feedPick(o){feedOpen(false);feedBtn.focus();if(filter===o.dataset.f)return;filter=o.dataset.f;
+function feedPick(o){feedOpen(false);feedBtn.focus();
+  if(appOnly({era:o.dataset.f})){getApp(o.dataset.f);return}   // (the web version: these games are in the apps, not the feed)
+  if(filter===o.dataset.f)return;filter=o.dataset.f;
   feedOpts.forEach(x=>x.setAttribute('aria-selected',String(x===o)));const name=o.querySelector('b').textContent;
   document.getElementById('feed-label').textContent=name;feedBtn.setAttribute('aria-label','Show games: '+name);haptic('light');rebuild()}
+// The web version: Next Gen and AR stay in the menu, marked as in the app, and picking one says where to get it.
+if(WEB)feedOpts.forEach(o=>{const f=o.dataset.f,sm=o.querySelector('small');if(appOnly({era:f})){o.classList.add('app-only');sm.textContent='Get the app to play these'}else if(f==='board')sm.textContent='Tabletop games in 3D'});
+let getDlg=null;
+function getApp(era,title=''){
+  if(!getDlg){getDlg=document.createElement('dialog');getDlg.className='info get-dlg';document.body.appendChild(getDlg);getDlg.addEventListener('click',e=>{if(e.target===getDlg)getDlg.close()})}
+  getDlg.innerHTML=`<div class="info-card"><button class="info-x" aria-label="Close">✕</button>${getAppHTML(era,title)}</div>`;
+  getDlg.querySelector('.info-x').onclick=()=>getDlg.close();
+  if(!getDlg.open)getDlg.showModal();
+}
 feedBtn.onclick=e=>{e.stopPropagation();feedOpen(feedMenu.hidden)};
 feedOpts.forEach(o=>{o.onclick=e=>{e.stopPropagation();feedPick(o)}});
 feedMenu.addEventListener('keydown',e=>{const i=feedOpts.indexOf(document.activeElement);

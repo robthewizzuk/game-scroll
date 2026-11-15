@@ -40,6 +40,7 @@ import { shatter } from './destruction.js';
 import { haptic, want } from './device.js';
 import { tone, noise } from './sound.js';
 import { prefs } from './prefs.js';
+import { WEB } from '../web.js';
 export { Chess, loadChess } from './chess.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -153,7 +154,8 @@ export class Table {
     this.minPitch = (o.minPitch ?? 14) * DEG; this.maxPitch = (o.maxPitch ?? 88) * DEG;
     this.cam = { yaw: this.home.yaw, pitch: this.home.pitch, zoom: this.home.zoom, at: this.home.at.clone() };
     this.goal = { yaw: this.home.yaw, pitch: this.home.pitch, zoom: this.home.zoom, at: this.home.at.clone() };
-    this.arOk = o.ar !== false; this.arSize = o.arSize ?? .9; this.blur = !!o.blur;
+    this.arOk = o.ar !== false && !WEB;   // (the web version plays board games in 3D only: src/web.js)
+    this.arSize = o.arSize ?? .9; this.blur = !!o.blur;
     this.mode = '3d'; this.t = 0; this.gen = 0; this.flows = 0; this.fault = null; this.tweens = []; this.ptrs = new Map(); this.claimed = new Set();
     this.msg = null; this.chips = []; this.shakeAmt = 0; this.rubble = []; this.W = 300; this.H = 460; this.userView = false; this.dice_ = [];
     this.fitW = o.frame?.[0] ?? this.span; this.fitD = o.frame?.[1] ?? this.span;

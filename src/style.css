@@ -249,6 +249,12 @@ body.touring .fs-pill{display:none}
 .ov-loc{font:400 11px/1.35 var(--f-body);color:#aab1bf;max-width:30ch}
 .retro .ov-loc{color:var(--lcd0);opacity:.85}
 .info-card .ov-loc{max-width:none;margin:-4px 0 10px}
+/* the web version (src/web.js): Next Gen and AR are in the feed menu, marked as in the app, and picking one says where to get it */
+#feed-menu .app-only small{color:#f5c542}
+.get-app{display:flex;flex-direction:column;align-items:stretch;text-align:center;gap:10px;margin-top:14px}
+a.get-best{display:block;text-decoration:none;animation:none}
+.get-more{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px}
+a.get-other{font:600 13px/1.3 var(--f-body);color:#cfd5e0;text-decoration:underline;text-underline-offset:2px}
 .retro .ov-win{background:var(--lcd0);color:var(--lcd3);border-radius:2px}
 .shop{display:flex;flex-direction:column;align-items:center;gap:6px;max-width:100%}
 .shop-k{font:500 10px/1.3 var(--f-body);color:var(--muted);letter-spacing:.02em}
