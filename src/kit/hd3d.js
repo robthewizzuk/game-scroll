@@ -3491,8 +3491,8 @@ export class HDView {
     if (made && ch.fgWin.real >= 90 && !speed.forceFrameGen) {
       const { miss, dropped } = ch.missRate(), id = speed.game?.id, after = how === 'blend' && (fg.pace === 'after' || fg.pace === 'early');
       const why = `${Math.round(miss * 100)}% of the refreshes between didn’t come${dropped ? `, ${Math.round(dropped * 100)}% of the frames between were late` : ''}${fg.pace ? `, pace ${fg.pace} at ${Math.round(screenHz())} Hz` : ''}`;
-      if ((miss > .08 || dropped > .5) && frameGenSlack(id)) console.info(`Frame generation: 30 → 60 asks for a faster screen for this game, so the frame between has a spare refresh (${why})`);
-      else if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id)))) { if (!speed.shield) { frameGenFailed(id, why); console.info(`Frame generation off for this game: the phone is too busy for the frames between (${why})`); } }
+      if ((miss > .08 || dropped > .5) && frameGenSlack(id, why)) console.info(`Frame generation: 30 → 60 asks for a faster screen for this game, so the frame between has a spare refresh (${why})`);
+      else if (miss > .3 || dropped > .5 || (miss > .08 && !(after && frameGenPace(id, why)))) { if (!speed.shield) { frameGenFailed(id, why); console.info(`Frame generation off for this game: the phone is too busy for the frames between (${why})`); } }
       else if (miss > .08) console.info(fg.pace === 'early' ? `Frame generation: real frames back to one refresh of the chip for this game, its frames came late with two (${why})` : `Frame generation: each made frame on a refresh of its own for this game, its refreshes were too full (${why})`);
     }
     if (made) ch.sent(drawAt, 1000 / screenHz());

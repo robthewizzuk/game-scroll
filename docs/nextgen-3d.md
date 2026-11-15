@@ -1104,7 +1104,9 @@ jitter back out of the motion, and costs a few milliseconds of compute instead o
   takes about a whole 60 Hz refresh, like Long Shadow on the Fold), the game asks the screen for 120 Hz
   instead (`speed.js` `frameGenSlack`, remembered for it). It still makes one frame between each pair, shown
   on the middle refresh, or on the one after if the real frame's code ran over: still 60 different pictures
-  a second. Only then does it fall back to pace first, and after that off.
+  a second. If that misses too, it switches off for the game until the app restarts (pace first, a real
+  frame's work in one refresh, is only tried on a screen with no 120 Hz: at 120 that refresh is 8 ms).
+  Settings' GSFG line and the frame lab say what was tried before it went off.
 - **Screen rate:** phone screens pick their own rate (LTPO screens like the Fold's step between 120,
   60 and lower) and a web page can't ask for one, so the app asks through `plugins/screen-rate`
   (`src/kit/screenrate.js`, Android) while a round is played: the fastest rate that's a whole number of
