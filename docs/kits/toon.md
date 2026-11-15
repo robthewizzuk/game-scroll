@@ -4,7 +4,6 @@ Classic Console 3D: a cel-shaded view, parts, figures.
 
 Guide: [Classic Console 3D guide](../console-3d.md).
 
-
 `gs.toon` (Console 3D: `View` with real toon shadows and a rim of light, `{ retro: 'chunky'|'soft'|'tube' }` looks, `G`, `part`, `grp`, `blob`, `toon`, `dude`, `figure` (a jointed person with a `gs.poses` rig))
 
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->

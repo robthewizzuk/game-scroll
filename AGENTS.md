@@ -39,10 +39,14 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); each part of `gs` 
    the maker's job: fix its warnings too. A frame lab recording from a phone (its Report file or Copy text) gets the
    same advice: `node scripts/budget.cjs --lab <file>`.
    Which check fits which change, and how to keep testing fast (`--jobs`, software 3D): [docs/testing.md](docs/testing.md).
-5. Only change files in `src/games/` (and optionally tick the idea in `docs/game-ideas.md`). Shared
+5. Look at it, and at each change asked for: `npm run watch <id>` plays it with taps and saves a strip of frames with
+   the score over time, rounds and frame times; `npm run watch <id> gravity*0.8` plays before and after a knob change
+   from the same start (the file is not changed). The Game Scroll MCP server (`scripts/mcp.mjs`, set up by `.mcp.json`)
+   gives AI tools all of these as tools: [docs/ai-makers.md](docs/ai-makers.md#the-game-scroll-mcp-server).
+6. Only change files in `src/games/` (and optionally tick the idea in `docs/game-ideas.md`). Shared
    code (`src/kit/`, `src/gamescroll.js`, `src/main.js`...) ships inside the app: change it only when
    asked to, in a separate PR.
-6. **Adding a dependency** (a package in `package.json` `dependencies`, only for shared code): add it
+7. **Adding a dependency** (a package in `package.json` `dependencies`, only for shared code): add it
    to `src/licences.js` in the same PR so it shows under Settings › Licence › Open-source parts.
    `npm run licences` checks this, and the PR check fails until it's listed.
 

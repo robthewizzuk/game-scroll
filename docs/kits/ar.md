@@ -4,7 +4,6 @@ AR 3D: the camera and gyro view, the floor, anchors and markers.
 
 Guide: [AR 3D guide](../ar-3d.md).
 
-
 `gs.ar` (`ARView`, `FLOOR`, `arNote`; with native AR, `new ARView({ occlude: true, walls: true, light: 'real' })` lets real things hide virtual ones, maps walls and follows the room's light, `v.anchor(p, q)` holds a real spot and `v.marker(markerArt(seed))` finds a printed picture: all bonuses, never the only way to play)
 
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->

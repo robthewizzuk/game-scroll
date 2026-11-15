@@ -16,6 +16,8 @@
     "speed": "node scripts/budget.cjs",
     "kit": "node scripts/kit-guides.mjs",
     "kit-guides": "node scripts/kit-guides.mjs",
+    "watch": "node scripts/watch.mjs",
+    "mcp": "node scripts/mcp.mjs",
     "smoke": "vite build --mode bundled && node scripts/smoke.cjs",
     "stream-smoke": "node scripts/stream-smoke.mjs",
     "share-link": "node scripts/share-link.mjs",

@@ -4,7 +4,6 @@ Knobs: the numbers that set how a game feels, with live sliders in npm run dev.
 
 Guide: [feel words: which knob a word moves](../feel-words.md).
 
-
 `gs.tweak(name, { speed: 3, grip: [.8, 0, 1, 'how hard the tyres hold'] })`: live sliders in `npm run dev` (starting values elsewhere); read fields where used. **Knobs**: keep the numbers that set how a game feels in one `const K = gs.tweak('Feel', { ... })` block with a range and a few words each (every template has one); `node scripts/knobs.mjs <id>` lists and changes them (`speed*0.8`), the panel's Save to file writes sliders back, and [docs/feel-words.md](docs/feel-words.md) says which knob a word like *floaty*, *snappy*, *punchy* or *unfair* moves.
 
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
