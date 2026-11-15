@@ -2510,11 +2510,39 @@ export interface Kart extends WheelsBase {
   /** Puts it straight at x, y, z (its underside), turned to heading, with nothing in between. */
   moveTo(x: number, y: number, z: number, heading?: number): Kart;
 }
+/**
+ * A computer driver for a Car or a Kart on a Laps course (one for each rival car). By itself it drives by the
+ * course's bends, from the car's own turn, top and brakes. Shown the player's car each frame it keeps their best lap
+ * and drives that line when it is quicker than its own way round. It does not drift, and knows nothing of walls or
+ * other cars but to back off when held up.
+ */
+export interface Driver {
+  /** 0..1, or a gs.brains.Dial: its pace through the bends, how close it cuts them, how steady its hands are. Set it any time. */
+  skill: Skill;
+  /** The input for its car this frame: car.update(dt, driver.drive(dt, car, race)), then race.update(car). */
+  drive(dt: number, car: Car | Kart, race: Loose): { throttle: number; steer: number; brake: boolean; drift: boolean };
+  /** Each frame with the player's car, after race.update(car): keeps their quickest lap (from the second time across the line). True on the frame it takes a new one. */
+  watch(dt: number, car: Car | Kart, race: Loose): boolean;
+  /** Lap times in seconds: the player's best that it holds, and its own best by the bends alone (Infinity: none yet). */
+  readonly best: { theirs: number; own: number };
+  /** Is it on the player's line this frame? */
+  readonly using: boolean;
+  /** The end of a race: did the player win? Tells a Dial given as its skill. */
+  result(playerWon: boolean | 'draw' | number): Driver;
+  /** Forgets the player's line and its own lap time. */
+  forget(): Driver;
+}
 export interface VehiclesPart {
   /** world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). */
   Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; /** A 2D Physics to drive in, solid. Left out: the one the game made before the car; false: none. */ world?: Loose | false; size?: [number, number]; mass?: number; link?: boolean }) => Car;
   /** world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. */
   Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; /** A World3D to drive in, solid. Left out: the one the game made before the kart; false: none. */ world?: Loose | false; size?: [number, number, number]; clear?: number; fall?: number; link?: boolean }) => Kart;
+  /**
+   * A ready-made rival driver. name: its save's name ('driver': give each course and each rival its own); skill: 0..1 or a
+   * gs.brains.Dial (.7); learn: false for one that never takes the player's line; save: false keeps the line for this
+   * session only; rng. With no api (new Driver({ skill })) nothing is kept on the phone.
+   */
+  Driver: { new (api: GameApi | null, o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver; new (o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver };
   Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => {
     points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loose>(): T[]; aim(r: Loose, ahead?: number): { x: number; y: number; angle: number };
   };
