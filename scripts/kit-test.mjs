@@ -2446,6 +2446,50 @@ console.log('physics ok');
   }
   console.log('city walls: the same for a seed, only on street walls, posters, tags, pieces and grime ok');
 }
+// gs.city's traffic off its lanes and its police (city-drive.js, city-police.js), on the plan alone: cars change lanes and
+// never sit in each other, a crashed car gets back into the traffic, a car sent across the city gets most of the way with
+// the traffic pulling over for its siren and goes back to its lanes when let go; the police come at 3 stars, never ram
+// below 3 or block below 4, and a player out of sight long enough gets away, one stopped beside them is caught
+{
+  const { layout, Traffic, City, Wanted } = await import('../src/kit/city.js'), { Group } = await import('three');
+  const plan = layout({ seed: 7, blocks: 6 });
+  const fake = { plan, seed: 7, opts: {}, group: new Group(), view: {}, t: 0, next: [], events: [], night: 0, signal: City.prototype.signal, signalLeft: City.prototype.signalLeft, honk() {},
+    event(e) { this.next.push(e); }, collide: () => null, ray: () => null, road: City.prototype.road, route: City.prototype.route, spot: City.prototype.spot, ground: () => 0,
+    people: { witness: () => [], report() {}, fromCar() {}, list: [] } };
+  const T = new Traffic(fake, 50); fake.cars = T; T.reset({ x: 0, z: 0 });
+  let t = 0; const step = (n, focus = { x: 0, z: 0 }) => { for (let i = 0; i < n; i++) { t += 1 / 60; fake.t = t; fake.events = fake.next; fake.next = []; T.update(1 / 60, focus, t); } };
+  step(60 * 30);
+  assert.ok(T.stats.laneChanges > 0, 'traffic: cars change lanes (' + T.stats.laneChanges + ')');
+  let overlap = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.mode === 'lane' && b.mode === 'lane' && !a.turn && !b.turn && Math.hypot(a.x - b.x, a.z - b.z) < 1.2) overlap++;
+  assert.equal(overlap, 0, 'traffic: no two cars in one place');
+  const hit = T.list.find(c => c.mode === 'lane' && c.v > 4); T.crash(hit, { x: 7, z: 3 }, { spin: 2 });
+  assert.equal(hit.mode, 'loose', 'traffic: a crashed car leaves its lane'); step(60 * 12);
+  assert.ok(hit.mode === 'lane' || hit.mode === 'wreck', 'traffic: a crashed car drives on or stays a wreck (' + hit.mode + ')');
+  const cop = T.add({ x: plan.bounds.x0 + 10, z: plan.bounds.z0 + 10, police: true, keep: true }), goal = { x: plan.bounds.x1 - 20, z: plan.bounds.z1 - 20 }, far = Math.hypot(cop.x - goal.x, cop.z - goal.z), y0 = T.stats.yields;
+  assert.ok(cop && cop.police, 'traffic: a police car of the game\'s own');
+  T.chase(cop, goal, { how: 'go', siren: true }); step(60 * 50, cop);
+  const left = Math.hypot(cop.x - goal.x, cop.z - goal.z);
+  assert.ok(left < far * .4, 'traffic: a chasing car crosses the city along the roads (' + far.toFixed(0) + ' m to ' + left.toFixed(0) + ' m)');
+  assert.ok(T.stats.yields > y0, 'traffic: cars pull over for a siren');
+  T.release(cop); step(60 * 5); assert.equal(cop.mode, 'lane', 'traffic: a released car is back in its lanes');
+  const law = new Wanted(fake, null, { officers: false }), s0 = fake.spot('street', { near: { x: 0, z: 0 } }), me = { x: s0.x, z: s0.z, heading: s0.heading, v: 0, car: true };
+  const lawStep = n => { for (let i = 0; i < n; i++) { step(1, me); law.update(1 / 60, me); } };
+  assert.equal(law.crime('theft', me), 'unseen', 'police: a crime nobody sees'); assert.equal(law.stars, 0, 'police: no stars for it');
+  // (the player's speed kept above a walk here, so a car that gets there fast doesn't make the arrest before the count)
+  me.v = 3; law.set(3); law.seenNow(me); lawStep(60 * 8);
+  // (one may already have crashed into the traffic on the way: loose, then back on the chase)
+  const chasing = law.units.filter(u => u.car.police && u.car.siren && u.car.mode === 'chase').length;
+  assert.ok(law.units.length >= 2 && chasing >= 2 && law.units.every(u => u.car.police && ['chase', 'loose', 'wreck'].includes(u.car.mode)), 'police: cars come with sirens at 3 stars (' + law.units.map(u => u.car.mode + (u.car.siren ? '+siren' : '')) + ')');
+  assert.equal(law.allow([.1, 0, .5, 2 / 5, 0, 0, 1], 'ram'), 'chase', 'police: no ramming below 3 stars');
+  assert.notEqual(law.allow([.5, .9, .5, 3 / 5, .25, 0, 1], 'block'), 'block', 'police: no roadblocks below 4 stars');
+  let esc = 0, bust = 0; law.on('escaped', () => esc++); law.on('busted', () => bust++);
+  fake.ray = () => ({ dist: 1 }); me.x = plan.bounds.x1 + 300; me.z = plan.bounds.z1 + 300; lawStep(60 * 60);
+  assert.ok(esc === 1 && law.stars === 0 && !law.units.length, 'police: out of sight long enough, the player gets away');
+  fake.ray = () => null; Object.assign(me, { x: s0.x, z: s0.z, v: 0 }); law.set(2); law.seenNow(me);
+  for (let i = 0; i < 60 * 60 && !bust; i++) lawStep(1);
+  assert.equal(bust, 1, 'police: stopped beside a police car, the player is caught');
+  console.log('city traffic and police: lane changes, crashes, chases across the city, sirens, the rules, escaping and being caught ok');
+}
 // the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
 // further out, land from where the city's ground ends, the camera made to see it, lit windows at night
 {

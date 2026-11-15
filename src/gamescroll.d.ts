@@ -4205,8 +4205,30 @@ export interface CityBuilding {
 /** A parked car (City option parked): where it is, which way it faces and its box. */
 export interface CityParkedCar { parked: true; x: number; y: number; z: number; heading: number; style: number; colour: string; len: number; wid: number; x0: number; x1: number; z0: number; z1: number }
 export interface CitySpot { x: number; y: number; z: number; nx?: number; nz?: number; building?: number; block?: number; heading?: number; lane?: number; edge?: Loose }
-export interface CityCar { id: number; kind: 'car' | 'van'; taxi: boolean; colour: string; x: number; z: number; heading: number; v: number; vmax: number; braking: boolean; stun: number; edge: Loose; lane: number }
-export interface CityPerson { id: number; x: number; z: number; heading: number; speed: number; panic: number; down: number; shirt: string; block: Loose }
+export interface CityCar { id: number; kind: 'car' | 'van'; taxi: boolean; colour: string; x: number; z: number; heading: number; v: number; vmax: number; braking: boolean; stun: number; edge: Loose; lane: number;
+  /** 'lane' (in the traffic), 'chase' (off its lanes after something: Traffic.chase), 'loose' (crashed, sliding or a body), 'wreck' (stays put). */
+  mode: 'lane' | 'chase' | 'loose' | 'wreck';
+  /** Lanes across from the middle, fractional while it changes lane or swerves; latTo where it is heading. */
+  lat: number; latTo: number;
+  /** Why it is slowing or moving over: 'car', 'light', 'junction', 'hazard', 'siren', 'overtake', 'turn', 'stuck'... (null: cruising). */
+  why: string | null;
+  /** 0..1: how hurt it is. */ damage: number; police: boolean; siren: boolean; keep: boolean;
+  /** Its tilt as a quaternion while loose (null on its wheels), and how upright it is (1 upright, 0 on its side). */ q: Loose | null; up: number;
+  /** While chasing: { target, how, top, keep, face, sees (it can see the target), parked (a roadblock) }. */
+  chase: { target: Loose; how: 'pursue' | 'ram' | 'go' | 'flee' | 'block' | 'join'; top: number; keep: number; face?: number; sees?: boolean; parked?: boolean; onRoute?: boolean } | null;
+  /** Its World3D body while loose (after city.solid(world)), else null. */ body: Loose | null }
+/** One person in the street, as gs.city's People keeps them. */
+export interface CityPerson { id: number; x: number; z: number; heading: number; speed: number; panic: number; down: number; shirt: string; block: Loose;
+  /** What they are doing, or null (walking the pavement): move 'sit' | 'phone' | 'talk' | 'look' | 'in' | 'cower' | 'idle', t seconds left. */
+  act: { move: string; t: number; [k: string]: Loose } | null;
+  /** Off the pavement ring, walking to a point (a bench, a crash to look at, a door). */ free: { x: number; z: number } | null;
+  /** On the phone to the police: { at, about } until they finish. */ calling: Loose | null;
+  /** A full person while near the camera (Next Gen): body (a gs.models human), react (gs.characters Reactions); else null. */
+  full: { body: Loose; react: Loose } | null }
+/** Something that happened in a gs.city City this frame (city.events). */
+export interface CityEvent { kind: 'crash' | 'wreck' | 'knock' | 'call' | 'bang' | 'shots' | 'block' | string; at?: { x: number; z: number }; car?: CityCar; person?: CityPerson; by?: Loose; power?: number; about?: Loose; [k: string]: Loose }
+/** gs.city's police (Wanted): a unit is one police car and its officers. */
+export interface WantedUnit { car: CityCar; tactic: 'chase' | 'ram' | 'cutoff' | 'block' | 'hang'; officers: Loose[]; roadblock?: boolean; blocked?: boolean }
 /** gs.models: things made in code for Next Gen scenes (no image or model files). */
 export interface SculptShape {
   ball?: number; box?: [number, number, number]; cylinder?: [number, number]; torus?: [number, number]; cone?: [number, number];
@@ -4397,6 +4419,37 @@ export interface CityPart {
     /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
     /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean;
     /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number; [style: string]: Loose }) => CityWorld;
+  /**
+   * The police and the wanted level for a City: crimes seen by police (counted at once) or by people in the street
+   * (phoned in a few seconds later, if nobody stops them), stars 0..5, police cars that come with sirens and chase,
+   * ram (3 stars), cut you off and park roadblocks across the road ahead (4 stars) where it guesses you will turn,
+   * officers on foot, a search when they lose sight of you, and busted or escaped. The tactics are a Tiny Brain
+   * (gs.brains Brain + Wave: each police car an experiment) taught by rules at first, that learns what makes a chase
+   * exciting for this player and holds their escape rate near half; a Predict learns which way they turn.
+   * Options: max stars (5), cars (most police cars at once), officers (people on foot; Next Gen), brains (false:
+   * the rules alone), sight (metres a police car sees by day, 70).
+   */
+  Wanted: (new (city: CityWorld, api?: Loose | null, o?: { max?: number; cars?: number | null; officers?: boolean; brains?: boolean; sight?: number }) => {
+    stars: number; heat: number; seen: boolean; /** Seconds the police still know where you are after losing sight (a radio call). */ know: number;
+    /** Where they search while you are out of sight ({ x, z, r }), else null. */ search: { x: number; z: number; r: number } | null;
+    /** Seconds until you are clear, out of sight. */ left: number; /** 0..1: how close to being caught (stopped near police). */ busting: number;
+    units: WantedUnit[]; officers: Loose[]; /** 0..1: the brain's skill dial (follows this player's escape rate). */ readonly skill: number; readonly escapeTime: number;
+    /** Back to no stars and no police (in reset(), after city.reset()). */ reset(): Loose;
+    /** 'stars' (stars, was), 'seen' (at), 'lost' (last seen), 'busted', 'escaped', 'call' ({ at, about }), 'block' (unit). */
+    on(name: 'stars' | 'seen' | 'lost' | 'busted' | 'escaped' | 'call' | 'block' | string, fn: (...a: Loose[]) => void): Loose;
+    /** The player did something: 'police' (seen by them), 'reported' (a witness will phone it in) or 'unseen'. Weight with o.weight, else CRIMES[kind]. */
+    crime(kind: 'speeding' | 'crash' | 'wreck' | 'theft' | 'fight' | 'hit' | 'cop' | 'shots' | string, at: { x: number; z?: number; y?: number }, o?: { weight?: number }): 'police' | 'reported' | 'unseen';
+    /** Straight to a number of stars (0 clears them). */ set(stars: number): Loose;
+    /** Seen now, at a point (a sighting called in). */ seenNow(at: { x: number; z: number; vx?: number; vz?: number }): void;
+    /** Once a frame after city.update(): the player, and their World3D body so the crashes and knocks it causes count by themselves. */
+    update(dt: number, player: { x: number; z: number; heading: number; v: number; car?: boolean; body?: Loose }): Loose;
+    /** Can a police car or officer see this point? */ policeSee(p: { x: number; z?: number; y?: number }, r?: number | null): boolean;
+    /** The road out of the player's next junction they are likely to take, d metres along it. */ ahead(d?: number): { x: number; z: number; heading: number; edge: Loose; turn: 'left' | 'straight' | 'right'; node: Loose } | null;
+  }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown> };
+  /** How bad each crime is, in heat (stars at 1, 4, 9, 16 and 26 heat). */
+  CRIMES: Record<string, number>;
+  /** What a police car can do: chase, ram, cutoff, block, hang. */
+  TACTICS: string[];
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
   layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
   /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
@@ -4410,16 +4463,43 @@ export interface CityWorld {
   far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null;
   /** 0 day .. 1 night: windows, shop signs, street lamps and car lights. Follows sky.night when made with { sky }. */
   night: number;
+  /** The traffic: cars that keep to their lanes, change lanes, overtake, swerve round what is in the way, pull over for sirens, and crash. */
   cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar;
+    /** Counts since the city was made: laneChanges, swerves, overtakes, yields, crashes, wrecks, dodges. */ stats: Record<'laneChanges' | 'swerves' | 'overtakes' | 'yields' | 'crashes' | 'wrecks' | 'dodges', number>;
+    /** A car of the game's own (a police car, a getaway car) in the nearest lane to x, z (or edge, lane, s); keep: never sent elsewhere when far. Null when there is no room. */
+    add(o?: { x?: number; z?: number; edge?: Loose; lane?: number; s?: number; style?: number; colour?: string; police?: boolean; keep?: boolean }): CityCar | null;
+    remove(car: CityCar): Loose;
+    /** Off its lanes after a target ({ x, z }, a car or the player, read each frame): pursue (keep metres behind), ram, go, flee, block (parks across the road there, facing face); along the roads, round the traffic, slowing for corners. */
+    chase(car: CityCar, target: { x: number; z?: number; y?: number; [k: string]: Loose }, o?: { how?: 'pursue' | 'ram' | 'go' | 'flee' | 'block'; top?: number; keep?: number; face?: number; siren?: boolean }): CityCar;
+    /** Back into the traffic (it finds the nearest lane going its way). */ release(car: CityCar): CityCar;
+    /** A crash: push is the change in its speed (m/s), at where it was hit (spin from how far off its middle), spin to set it, by who did it. A World3D body after city.solid(world). */
+    crash(car: CityCar, push?: { x: number; z: number }, o?: { at?: { x: number; z: number }; spin?: number; by?: Loose }): CityCar;
+    /** Whether a circle at x, z of radius r overlaps the car's body. */ overlaps(car: CityCar, x: number, z: number, r?: number): boolean;
+    /** The point s metres along edge e, k lanes across from the middle (fractional, or under 0 for the other side's). */ lanePos(e: Loose, k: number, s: number, out?: Loose): { x: number; z: number };
+    /** Where x, z is on edge e: s along, k lanes across, m metres from the middle. */ across(e: Loose, x: number, z: number, out?: Loose): { s: number; k: number; m: number };
+    ends(e: Loose): [number, number]; back(e: Loose): Loose | null;
     /** A traffic car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people at the wheel (driver: false for none), ready for car.pull('driver', player). It is the game's from then on; null if it isn't in the traffic. */
     take(car: CityCar, o?: { driver?: boolean }): VehicleT | null };
+  /** The people in the street: walking, waiting and crossing, sitting on benches, on the phone, chatting, looking in windows, going in at doors; they jump out of the way, gather to look at a crash and phone the police; near the camera on Next Gen they are full people who stagger and fall when hit. */
   people: { list: CityPerson[]; near(p: { x: number; z?: number; y?: number }, r: number): CityPerson[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityPerson | null;
-    scare(p: { x: number; z?: number; y?: number }, r?: number, t?: number): unknown; knock(person: CityPerson, dx?: number, dz?: number, seconds?: number): CityPerson };
+    scare(p: { x: number; z?: number; y?: number }, r?: number, t?: number): unknown;
+    /** Knocks someone over the way of dx, dz: o.speed (m/s, how hard), o.by (who did it). A ragdoll near the camera after city.solid(world). */
+    knock(person: CityPerson, dx?: number, dz?: number, seconds?: number, o?: { speed?: number; by?: Loose }): CityPerson;
+    /** Everyone within r ducks a moment, then runs. */ cower(p: { x: number; z?: number; y?: number }, r?: number): Loose;
+    /** Who can see a point (within r, nothing in between, on their feet), nearest first. */ witness(at: { x: number; z?: number; y?: number }, r?: number): CityPerson[];
+    /** Has someone look at a point and phone it in (a 'call' event with about when they finish). */ report(person: CityPerson, at: { x: number; z: number }, about?: Loose): Loose;
+    /** The driver gets out of a car and stands looking at it, then calls it in. */ fromCar(car: CityCar): Loose;
+    /** Someone at x, z, walking off from there (the furthest person brought here). */ join(x: number, z: number): CityPerson;
+    /** A full person now (Next Gen): { body, react }. */ promote(person: CityPerson): { body: Loose; react: Loose } | null; demote(person: CityPerson): Loose };
+  /** What happened last frame (crashes, wrecks, knocks, calls, bangs, and anything a game or kit added with event()). */
+  events: CityEvent[];
+  /** Adds something that happened, for everything that reads city.events next frame. */
+  event(e: CityEvent): CityWorld;
   props: PropsPart['Props'] extends new (...a: Loose[]) => infer P ? P : Loose;
   reset(focus?: { x: number; z: number }): CityWorld;
   update(dt: number, focus?: { x: number; z?: number; y?: number }): CityWorld;
-  /** Cars brake for this point (radius r) this frame. */
-  avoid(p: { x: number; z?: number; y?: number }, r?: number): CityWorld;
+  /** Cars brake for this point (radius r) this frame and swerve round it; with vx, vz (or v and heading) cars and people get out of its way. */
+  avoid(p: { x: number; z?: number; y?: number; vx?: number; vz?: number; v?: number; heading?: number }, r?: number): CityWorld;
   /** Builds every chunk now (otherwise they're built a few a frame, nearest first). */
   warm(): CityWorld;
   /** Traffic light state for traffic along axis at a junction: 'g' | 'a' | 'r'. */
@@ -4433,7 +4513,7 @@ export interface CityWorld {
   parked: CityParkedCar[];
   ray(from: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, far?: number): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; dist: number; building: CityBuilding } | null;
   /** The nearest point in a lane. */
-  road(x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };
+  road(x: number, z: number, heading?: number | null): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };
   route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };
   spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?: () => number }): CitySpot | null;
   /** Building boxes for occlusion culling (optionally only those within r of near). */
