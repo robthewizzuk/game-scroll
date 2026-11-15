@@ -122,13 +122,19 @@ automatic upload says it can't publish the app, run it again later.
 ## Updates inside the app
 
 A copy of the app installed from Google Play (internal testing included) asks Play for a newer version
-a few seconds after it opens, and again when the player comes back to it (at most every 2 minutes).
+every time it opens (two or three seconds in, even if a round has already started), and again when the
+player comes back to it (at most every 2 minutes). What Play offers waits for a round to end.
 It uses Google's in-app updates (`plugins/play-update`, `src/update.js`):
 
 - **Normal update** (priority 0 to 3): Play's own sheet asks *Update available?* If the player says yes,
   Play downloads it in the background while they carry on, then a card at the bottom of the app says
-  **New version ready · Later · Restart**. It never covers a round being played. *No thanks* isn't
-  asked again for a day; Settings → Updates → **Check for updates** asks any time.
+  **New version ready · Later · Restart**. It never covers a round being played. After *No thanks*
+  it isn't asked again until the app is next opened; Settings → Updates → **Check for updates** asks any time.
+  If Play won't do a background download for that update, it shows its full-screen update instead
+  (which a normal update can be backed out of).
+- **Play hasn't noticed the new version yet:** the in-app check only knows what the phone's Play Store
+  last found, and the Play Store looks only now and then. Settings → Updates → **Open Google Play**
+  opens Game Scroll's Play Store page, which makes it look; back in the app, Play's sheet offers it.
 - **Must update** (priority 4 or 5, or the copy is older than the catalogue's minimum): Play's
   full-screen update straight away. Backing out of it leaves a *Time to update* card that can't be
   closed, only updated from (it goes by itself if Play has nothing newer).
@@ -154,8 +160,9 @@ In-app updates only work for a copy that Play installed for a tester account, so
    testing opt-in link with your tester account, and install Game Scroll from the Play Store.
 2. Get a newer version onto the track: merge anything to main, or **Run workflow** on Google Play.
    Wait until the run says the version is live.
-3. Open the Play Store, find Game Scroll and leave its page open a moment (or **Manage apps & device**),
-   so the Play Store learns of the new version. It caches this, so this step matters.
+3. Open the Play Store, find Game Scroll and leave its page open a moment (or **Manage apps & device**,
+   or Game Scroll's Settings → Updates → **Open Google Play**), so the Play Store learns of the new
+   version. It caches this, so this step matters.
 4. Open Game Scroll. After a few seconds Play's sheet offers the update. Say **Update**, keep
    playing, and when the download finishes the **New version ready** card appears: **Restart**.
    Settings → Updates shows the new version number afterwards.

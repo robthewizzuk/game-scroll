@@ -1,8 +1,11 @@
 package com.gamescroll.playupdate;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
@@ -48,6 +51,8 @@ import com.google.android.play.core.install.model.UpdateAvailability;
  *   downloads in the background; 'state' events follow. Immediate: Play's full screen update, which
  *   restarts the app into the new version.
  * complete() -> restarts into a downloaded flexible update.
+ * openStore() -> opens the app's page in the Play Store app (the web page where there's none). The Play
+ *   Store looks for new versions as it opens, and check() only knows what the Play Store last found.
  * 'state' event: { status, bytes, total, error } as a background download moves on.
  */
 @CapacitorPlugin(name = "PlayUpdate")
@@ -230,5 +235,27 @@ public class PlayUpdatePlugin extends Plugin {
         } catch (Exception e) {
             call.reject(String.valueOf(e.getMessage()));
         }
+    }
+
+    @PluginMethod
+    public void openStore(PluginCall call) {
+        String id = getContext().getPackageName();
+        Intent app = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + id)).setPackage("com.android.vending");
+        Intent web = new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + id));
+        bridge.executeOnMainThread(() -> {
+            try {
+                getActivity().startActivity(app);
+                call.resolve();
+            } catch (ActivityNotFoundException e) {
+                try {
+                    getActivity().startActivity(web);
+                    call.resolve();
+                } catch (Exception e2) {
+                    call.reject("No Play Store here");
+                }
+            } catch (Exception e) {
+                call.reject(String.valueOf(e.getMessage()));
+            }
+        });
     }
 }
