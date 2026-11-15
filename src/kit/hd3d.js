@@ -2580,8 +2580,14 @@ export class HDView {
       for (let p = o.parent; p && p !== this.scene; p = p.parent) if (!p.visible) { p.visible = true; shown.push(p); }
     }
     ops.scene = this.scene; ops.camera = this.cam;
+    // (once the round is under way, the shaders the stand-in draw asks for are written in the background, as the scene pass's
+    // are (nowait.js), not in the frame: drawn as three does, each was 2 to 31 ms on the build machine in the AR games where
+    // things come in mid-round, Floor Golf's worst 31. Under the loading screen (all), at once, as before)
+    const nw = !all && (HD.noWait ?? HD.hold !== false) && r.gsNoWait;
+    if (nw) nw.begin(true);
     try { for (const l of lights) ops.pre(l, PRE_BIT); }
     finally {
+      if (nw) nw.end(true);
       for (let i = 0; i < pick.length; i++) { const o = pick[i]; o.layers.mask = was[i * 3]; o.visible = was[i * 3 + 1]; o.frustumCulled = was[i * 3 + 2]; }
       for (const p of shown) p.visible = false;
       HD.info.shAhead = (HD.info.shAhead || 0) + pick.length;
@@ -3304,7 +3310,13 @@ export class HDView {
     if (pm >= 0) { leave(pm); enter('3D: skinning'); }
     HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
-    for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
+    // (contact shadows draw the scene from below with one material of their own: a kind of thing first seen mid-round had
+    // its shader for them written in the frame, 87 to 410 ms on the build machine in the AR games where things are added
+    // in play (Domino Run, Floor Golf, Laser Mirrors, Treasure Drop). Put off as the scene pass's are (nowait.js): that
+    // thing's contact shadow comes a frame or a few later)
+    const nwc = !baking && !off && !first && (HD.noWait ?? HD.hold !== false) && r.gsNoWait;
+    if (nwc && this.contacts.length) nwc.begin(true);
+    try { for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); } } finally { if (nwc && this.contacts.length) nwc.end(true); }
     if (pm >= 0) leave(pm);
     // (WebGPU multisamples 4 times a pixel or not at all: three draws a tier's 2 as 1. So there 2 is none, and the finishing pass's own edge
     // smoothing (FXAA) does the work, as on the tiers without MSAA; it had been left off as if MSAA were on, and its place taken by the lens
@@ -3427,7 +3439,9 @@ export class HDView {
       }
       if (pm >= 0) leave(pm);
       // (the shadow shaders of what these maps have not drawn yet: shadowAhead, after the scene pass below, once this frame's uniforms are set)
-      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || !this.warmed;
+      // (a view first drawn once a round is under way, as a game that makes its view again for the next round does, has its
+      // shadow shaders put off like the rest, a few a frame: all at once there was Floor Golf's 13 ms frame on the build machine)
+      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || (!this.warmed && !speed.playing());
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
