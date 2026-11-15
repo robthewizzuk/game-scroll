@@ -184,6 +184,30 @@ class FleshModel extends PhysicalLightingModel {
   }
 }
 
+// Hair, strand by strand (gs.models.human's strands: human-strands.js). Lit along the strand, not off a surface: a hair is a thin glassy tube, so
+// what it shows depends on the way it runs (TSL tangentView), as Kajiya and Kay's hair and Marschner's measurements of real hair have it, the
+// model films and the big engines' hair is lit with. Its parts: the light that goes into the hair mass and comes out all ways (wrapped round
+// the strand, deeper in the shade of the hair round it: in the colours, human-strands.js); the shine off the outside of each strand (R: white,
+// tight, tilted toward the tip by the scales on a hair's surface); a second, broader shine in the hair's own colour that has been in and out of
+// the strand (TRT: tilted the other way, so a head of hair has two bands of shine, a white one and a coloured one); and light through it from
+// behind (TT: hair against the sun glows at its edges).
+class HairModel extends PhysicalLightingModel {
+  constructor(m) { super(false, false, false, false, false, false); }
+  direct({ lightDirection: L, lightColor, reflectedLight }) {
+    const t0 = TSL.tangentView, T = t0.div(max(length(t0), 1e-6)), N = normalView, V = positionViewDirection, H = L.add(V).normalize();   // (guarded: a nought-long way would be NaN, and one NaN pixel blooms over the frame)
+    const tl = dot(T, L), sinTL = sqrt(float(1).sub(tl.mul(tl)).max(0)), nl = dot(N, L);
+    // (the side of the head away from the light is in the shade of the head, whichever way a strand there runs)
+    const side = nl.add(.35).div(1.35).saturate(), col = diffuseContribution;
+    reflectedLight.directDiffuse.addAssign(col.mul(lightColor).mul(mix(side, sinTL.mul(side), .45)).mul(1 / Math.PI));
+    const band = (shift, e) => { const t = T.add(N.mul(shift)).normalize(), th = dot(t, H); return pow(sqrt(float(1).sub(th.mul(th)).max(0)), e).mul(smoothstep(-1, 0, th)); };
+    const r = band(-.07, 90).mul(.9), trt = band(.1, 22).mul(.35);
+    reflectedLight.directSpecular.addAssign(lightColor.mul(side).mul(specularColor.mul(r).add(col.mul(trt).mul(1.6))));
+    // (through it: the light from behind, round the outline of the hair)
+    const tt = pow(dot(V, L).negate().saturate(), 4).mul(sinTL).mul(nl.negate().add(.2).saturate());
+    reflectedLight.directDiffuse.addAssign(col.mul(lightColor).mul(tt).mul(.9));
+  }
+}
+
 /* ---------- kit materials with a shader of their own, as node materials ---------- */
 // gs.models.human's weaves (human.js WEAVES: plain, twill, denim, knit, canvas, wool, fine): threads a tile, and the sheen each catches at a glance
 const WEAVE_N = [0, 18, 11, 20, 9, 10, 30], WEAVE_SHEEN = [.12, .12, .08, .25, .06, .4, .1];
@@ -312,6 +336,31 @@ export const gpuMaterials = {
     m.transparent = true; m.depthWrite = false;
     return m;
   },
+  // gs.models.human's hair strands (human-strands.js): each a ribbon along its middle line, its two edges turned square to the way to the
+  // camera here (so a strand always shows its width), at least half a pixel out each way and as see-through as it is thinner than that, as
+  // the hairs above. Further off fewer strands are drawn (the person's mesh.userData.gsKeep: those whose own number, uv's u, is under it),
+  // each as much wider. The lit sculpted hair under them is their dense middle.
+  strands(gm) {
+    const m = new MeshPhysicalNodeMaterial();
+    for (const k in gm) if (k !== 'uuid' && k !== 'id' && k !== 'type') m[k] = gm[k];
+    m.name = gm.name || 'strands'; m.visible = true;
+    const w = attribute('tangent', 'vec4').w, keep = uniform(1).onObjectUpdate(({ object }) => 1 / Math.max(.0625, object?.userData?.gsKeep || 1));
+    const cam = modelWorldMatrixInverse.mul(vec4(cameraPosition, 1)).xyz, along = TSL.tangentLocal.div(max(length(TSL.tangentLocal), 1e-6));
+    // (a strand whose number is over the share kept is drawn as nothing: its ribbon has no width)
+    const a0 = along.cross(cam.sub(positionLocal)), across = a0.div(max(length(a0), 1e-9)), half = abs(w).mul(keep).mul(step(uv().x, float(1).div(keep)));
+    const p11 = uniform(1).onRenderUpdate(({ camera }) => camera?.projectionMatrix?.elements[5] ?? 1);
+    const depth = max(TSL.modelViewMatrix.mul(vec4(positionLocal, 1)).z.negate(), 1e-3), px = half.mul(p11).mul(TSL.screenSize.y).mul(.5).div(depth);
+    const wide = max(float(1), float(HAIR_MIN_PX).div(max(px, 1e-6))).min(HAIR_MOST);
+    m.positionNode = positionLocal.add(across.mul(half.mul(wide).mul(sign(w))));
+    m.opacityNode = materialOpacity.mul(TSL.varying(float(1).div(wide), 'gsStrandCover')).mul(float(1).sub(smoothstep(.8, 1, uv().y).mul(.6)));
+    // (blended, from the innermost strand out, in the order they are listed: hashed see-through, which needs no order, left a dust of dots the
+    // smoothing over frames turned purple at the outline)
+    m.transparent = true; m.depthWrite = false;   // (the corners are laid so a ribbon always faces the camera the front way: one side drawn)
+    m.setupLightingModel = function () { return new HairModel(this); };
+    return m;
+  },
+  // (what is drawn on WebGL alone: a real head of hair's strips, where the strands are drawn on WebGPU)
+  hidden(gm) { const m = new MeshBasicNodeMaterial(); m.name = (gm.name || '') + ' (hidden)'; m.visible = false; return m; },
   // gs.models.human's clothes (userData.grime: 'cloth', 'leather', or 'far' for the plain stand-in further off). Close up each cloth is woven
   // its own way at the size of its threads (the weave in gsThin.x: human.js WEAVES), leather has its grain, and both crease at the inside of
   // an elbow and the back of a knee as far as it is bent (mesh.userData.gsBends: Grime in human-life.js). Each fades to the plain surface as

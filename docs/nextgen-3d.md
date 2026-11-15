@@ -1733,7 +1733,7 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `null` as sculpted; a number for the hand or one a finger, thumb first): it stays as set until
   `fingers({ R: 'auto' })` gives it back. At the middle and far levels the small bones (fingers, toes,
   forearm turn) stand still and cost nothing.
-  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
+  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle` (`'short'`, `'long'`, `'bun'`, `'curly'`, `'afro'`, `'bald'`), `hairTexture` (a real face's: `'straight'`, `'wavy'`, `'curly'`, `'coily'`; by heritage if left out), `iris`, `lips`, `moustache`, `stubble`, `face`
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in
   `src/kit/models/human.js`); `camo: [colour, colour]` on the top, legs or hat brushes blotches of those over
@@ -1880,7 +1880,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
   themselves (`creature.fur`; `fur: false` to leave it off), and people's moustaches and beards are
   strands (`human({ beard: 1 })`, `person.hair`; `strands: true` for the hair of the head too, which is a
-  clean combed shape otherwise; `strands: false` for none). Close up
+  clean combed shape otherwise; `strands: false` for none; a real face's hair is single strands of its own on WebGPU close up, curling by
+  `hairTexture`: `hairStrands: false` leaves them off). Close up
   only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
   fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
   [Fur and hair](maker-kit.md#fur-and-hair).

@@ -8,7 +8,8 @@ import { Loft, mesh as meshOf, thin, thickness, ready, smin, lumps, stamp, thinR
 export { thinReady };
 import { head as headOf, eyeOf, mouthY, noseOf, mouthAt, eyeRim, browOf, faceBones, faceShare, partLips, mouthInside, lidPlan, eyeParts, lipLine, mouthHalf, beardArea, ss, bump, HC, Hd, EYE, ES, esOf, CORNER, MOUTH, JAW, HEAD_STAMP } from './human-head.js';
 import { SEAM, seamUV } from './human-paint.js';
-import { hairStrips } from './human-hair.js';
+import { hairStrips, hairGuides } from './human-hair.js';
+import { hairStrands } from './human-strands.js';
 import { row, easeOf, torsoOf, torsoForms, sleeveRows, capOf, seatOf, seatRounds, legRows, lowRows, shaftRows, gaiterRows, neckRows, neckOpening, over, FOOT, BODY_STAMP } from './human-body.js';
 export { ss, bump, HC, EYE, eyeOf, mouthY, noseOf, ES, esOf, CORNER, MOUTH, JAW, mouthAt, eyeRim, browOf, faceBones, lipLine, mouthHalf, beardArea };
 
@@ -674,6 +675,13 @@ const plain = v => v == null || (typeof v !== 'object' && typeof v !== 'function
  * piece (never a colour), so people in the same cut of clothes share it; key names it (memory, saved copies).
  * local: it can't be sent to a worker (a maker's own shapes with functions in them).
  */
+// how many of a real beard's hairs are white (a twentieth at a time: it names the saved head): a pale, colourless hair colour asked for is
+// mostly white hairs among darker ones, and hair greys hair by hair with age (human.js colours the head's strands the same way)
+export function greyOf(sp) {
+  const h = /^#?([0-9a-f]{6})$/i.exec(sp.hair || ''); let pale = 0;
+  if (h) { const v = parseInt(h[1], 16), r = (v >> 16) / 255, g = (v >> 8 & 255) / 255, b = (v & 255) / 255, M = Math.max(r, g, b), m = Math.min(r, g, b), l = (M + m) / 2, sat = M === m ? 0 : (M - m) / (1 - Math.abs(2 * l - 1)); pale = sat < .2 ? ss(.32, .62, l) : 0; }
+  return Math.round(Math.min(.8, pale * .78 + ss(40, 78, sp.face.age || 30) * .3 * (1 - pale)) * 20) / 20;
+}
 export function jobsFor(sp) {
   const { top, web, extras: ex, hat } = sp, J = [];
   const add = (kind, a, more) => J.push({ kind, a, key: kind + JSON.stringify(a, (k, v) => typeof v === 'function' ? String(v) : v), ...more });
@@ -683,7 +691,7 @@ export function jobsFor(sp) {
     extras: { bag: bit(ex.bag), canteen: bit(ex.canteen), holster: ex.holster === 'left' ? 'left' : bit(ex.holster) } });
   add('hand', { limbs: sp.build.limbs, grip: bit(sp.hands === 'grip'), gloves: bit(sp.gloves) });
   const hatA = hat && HATS.has(hat.kind) ? { kind: hat.kind, ridge: bit(hat.ridge !== false), strap: bit(hat.strap !== false) } : null;
-  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', moustache: bit(sp.moustache), ...(sp.face.real && sp.beard ? { beard: sp.beard } : {}), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
+  add('head', { face: sp.face, neck: sp.build.neck, hair: sp.hair ? sp.hairStyle : 'bald', ...(sp.face.real && sp.curl ? { curl: sp.curl } : {}), moustache: bit(sp.moustache), ...(sp.face.real && sp.beard ? { beard: sp.beard } : {}), ...(sp.face.real && (sp.beard || sp.moustache) && greyOf(sp) ? { grey: greyOf(sp) } : {}), hat: hatA, foot: top.collar === false ? sp.build.shoulders : 0 });
   if (hatA) add('hat', hatA);
   if (sp.pack && PACKS.has(sp.pack.kind)) add('pack', { kind: sp.pack.kind });
   for (const g of sp.gear) add('gear', { shapes: g.shapes, cell: g.cell || .004, keep: g.keep || [.3, .06, .012], err: g.err || null, blend: g.blend ?? .004 }, { g, local: !plain(g.shapes) });
@@ -709,10 +717,14 @@ export function sculpt({ kind, a }) {
     const hat = a.hat && listed(HATS, a.hat.kind);   // the hat stands over the face: a brim's shadow on the brow
     let lids = null;
     const p = finish(headOf(a, (hat && hat(a.hat).ghost) || []), { cell: .002, bones: headBonesOf(f, () => lids), keep: [.16, .023, .0036], err: [.0004, .004, .02], reach: .07, blend: .01, extra: eye, flesh: [.004, .013],
-      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); lids = lidPlan(r, f); r.extra = [inside, ...(f.real ? eyeParts(r, f, { moustache: a.moustache, beard: a.beard }) : [])].filter(Boolean); return r; } });
+      after: m => { const r = partLips(m, f), inside = mouthInside(r, f); lids = lidPlan(r, f); r.extra = [inside, ...(f.real ? eyeParts(r, f, { moustache: a.moustache, beard: a.beard, grey: a.grey || 0 }) : [])].filter(Boolean); return r; } });
     p.lid = lids.turn;   // (how far the upper lids turn to close, for human-face.js)
     // (a real face's hair: the strips laid over it close up, worked out here with the head, human-hair.js)
-    if (f.real && a.hair && a.hair !== 'bald' && !a.hat) { const st = hairStrips(p, { style: a.hair, fem: f.soft > .5 }); if (st) p.strips = st; }
+    // (and its strands, for WebGPU close up: human-strands.js. Curly and Afro hair take the short hair's strips on WebGL)
+    if (f.real && a.hair && a.hair !== 'bald' && !a.hat) {
+      const fem = f.soft > .5, st = hairStrips(p, { style: a.hair === 'afro' || a.hair === 'curly' ? 'short' : a.hair, fem }); if (st) p.strips = st;
+      const sd = hairStrands(p, { style: a.hair, fem, curl: a.curl || 0 }); if (sd) p.strands = sd;
+    }
     return p;
   }
   if (kind === 'hat' || kind === 'pack') {
@@ -724,4 +736,4 @@ export function sculpt({ kind, a }) {
 // a number for all of the above as it stands: saved pieces made by other workings are not used
 const cyrb = s => { let a = 0xdeadbeef, b = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677); } a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909); b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909); return (4294967296 * (2097151 & b) + (a >>> 0)).toString(36); };
 export const hashOf = cyrb;
-export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, BULGE, AT, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, hairStrips, eyeball, realEyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));
+export const VERSION = cyrb(stamp() + [trunk, trunkBones, trunkCreases, crook, ham, lap, RIPPLE, BONES, BETWEEN, BULGE, AT, OUT, collar, collarRows, turnOf, RIM, BODY_STAMP, sleeves, handPlan, hand, handBones, HEAD_STAMP, headBonesOf, hairStrips, hairGuides, hairStrands, eyeball, realEyeball, stud, finish, evenStitches, seamUV, SEAM, sculpt, CLOTH, HOLLOW, ...HATS.values(), ...PACKS.values()].map(v => typeof v === 'function' ? String(v) : JSON.stringify(v)).join(''));

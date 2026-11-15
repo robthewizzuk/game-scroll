@@ -4303,7 +4303,16 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   round the head from the crown), which reads well at every distance and costs nothing extra; `strands: true`
   lays real strands over it as well, streaming from the crown (from the bun, for `hairStyle: 'bun'`), and
   `strands: { length: .02, layers: 8 }` tunes them. With `look: 'real'` a beard and a moustache are single
-  hairs in the head's own close-up mesh instead, over the beard's colour painted under them, and wear no coat.
+  hairs in the head's own close-up mesh instead, over the beard's colour painted under them, and wear no coat
+  (a greying beard is white hairs among dark ones, as a real one is). A real face's hair is single strands
+  too, close up on WebGPU (a groom, as films and the newest console games draw hair): tens of thousands of
+  them grown over the sculpted hair in clumps, each its own length, a few strays, darker deep in the hair,
+  lit as hair is (two bands of shine, light through it from behind), and fewer and thicker further off so the
+  hair stays as full. Grey hair is white strands among darker ones. How it curls is `hairTexture: 'straight'
+  | 'wavy' | 'curly' | 'coily'` (or 0..1); left out, it follows the heritage (Afro-textured hair coils by
+  itself, some of anyone's hair waves); `hairStyle: 'afro'` is a round of coils standing out all over the
+  head and `'curly'` a shorter curly crop. WebGL draws the hair strips as before; `hairStrands: false` leaves
+  the strands off.
   `person.hair` is the coat, or `null`: no beard or moustache (or a real face's) and no strands asked for, under a hat (the hair there stays as sculpted, cropped close), or
   `strands: false` (none anywhere).
 - **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
@@ -4311,7 +4320,8 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   `(i, x, y, z) => 0..1`; strands shorten toward where none grow and the coat thins out there, so it has
   no cliff at its edge), `tile` (how wide the strand picture is on the surface: fur has 32 strands across
   it), `lean` and `flow` (how far the strands lie over, and which way: down and back along -z unless told),
-  `uv: { centre, crown }` (hair streaming from the crown of a head), `thin`, `rough`, `root` and `tip` (how
+  `uv: { centre, crown }` (hair streaming from the crown of a head), `vary` (0..1: longer and shorter in
+  patches, as a real coat is; creatures use .7), `thin`, `rough`, `root` and `tip` (how
   dark the roots, how light the tips), `colour`, `seed`. The mesh's vertex colours colour the coat.
 - **The coat** (`creature.fur`, `person.hair`, what `fur()` returns): `length` (1 as made; set it any time:
   1.5 stands fur on end, .5 is a wet coat) and `lean` (a creature's `move()` lays its fur back as it runs),

@@ -420,21 +420,23 @@ export function eyeParts(m, f, hair = {}) {
     // sn: the way the skin at its root faces, which its own round is lit by in part (sw 0..1): a hair a fraction of a millimetre across lets
     // the light through and scatters it, so it is lit nearly as the skin it lies on is. Lit as a solid little rod of three sides, two of them
     // turned from the light, a fair brow or beard had read as black specks
-    const strand = (r, d, c, L, k, r0, like, slot = 'lashes', shade = 1, sn = null, sw = 0) => {
-      const T = [0, 0, 0], S = [0, 0, 0], B = [0, 0, 0], base = P.length / 3;
-      for (const t of [0, .3, .65, 1]) {
+    // (wave: a beard's or moustache's hair kinks as real ones do, wave: [how far, how many turns, where it starts]; five rings along it then)
+    const strand = (r, d, c, L, k, r0, like, slot = 'lashes', shade = 1, sn = null, sw = 0, wave = null) => {
+      const T = [0, 0, 0], S = [0, 0, 0], B = [0, 0, 0], base = P.length / 3, ts = wave ? [0, .25, .5, .75, 1] : [0, .3, .65, 1];
+      for (const t of ts) {
         for (let q = 0; q < 3; q++) T[q] = d[q] + 2 * k * t * c[q]; let l = hyp(T[0], T[1], T[2]); for (let q = 0; q < 3; q++) T[q] /= l;
         const ref = abs(T[1]) < .9 ? [0, 1, 0] : [1, 0, 0]; S[0] = T[1] * ref[2] - T[2] * ref[1]; S[1] = T[2] * ref[0] - T[0] * ref[2]; S[2] = T[0] * ref[1] - T[1] * ref[0]; l = hyp(S[0], S[1], S[2]); for (let q = 0; q < 3; q++) S[q] /= l;
         B[0] = T[1] * S[2] - T[2] * S[1]; B[1] = T[2] * S[0] - T[0] * S[2]; B[2] = T[0] * S[1] - T[1] * S[0];
         const rr = r0 * (1 - .85 * t);
         for (let v = 0; v < 3; v++) {
           const an = v * PI * 2 / 3, nx = S[0] * cos(an) + B[0] * sin(an), ny = S[1] * cos(an) + B[1] * sin(an), nz = S[2] * cos(an) + B[2] * sin(an);
-          P.push(r[0] + L * (t * d[0] + k * t * t * c[0]) + rr * nx, r[1] + L * (t * d[1] + k * t * t * c[1]) + rr * ny, r[2] + L * (t * d[2] + k * t * t * c[2]) + rr * nz);
+          const wv = wave ? wave[0] * L * Math.sin(t * wave[1] * PI * 2 + wave[2]) * t : 0, wb = wave ? wave[0] * L * .6 * Math.cos(t * wave[1] * PI * 2 + wave[2]) * t : 0;
+          P.push(r[0] + L * (t * d[0] + k * t * t * c[0]) + rr * nx + wv * S[0] + wb * B[0], r[1] + L * (t * d[1] + k * t * t * c[1]) + rr * ny + wv * S[1] + wb * B[1], r[2] + L * (t * d[2] + k * t * t * c[2]) + rr * nz + wv * S[2] + wb * B[2]);
           if (sn) { const a = nx * (1 - sw) + sn[0] * sw, b = ny * (1 - sw) + sn[1] * sw, g = nz * (1 - sw) + sn[2] * sw, l = hyp(a, b, g) || 1; N.push(a / l, b / l, g / l); } else N.push(nx, ny, nz);
           K.push(slot); src.push(like); ao.push((slot === 'lashes' ? .5 + .5 * t : .72 + .28 * t) * shade);   // (darker at the root, a brow's or a beard's hairs less so: lit through, their roots dark had dotted a brow with black)
         }
       }
-      for (let j = 0; j < 3; j++) for (let v = 0; v < 3; v++) { const a = base + j * 3 + v, b = base + j * 3 + (v + 1) % 3; I.push(a, b, b + 3, a, b + 3, a + 3); }
+      for (let j = 0; j < ts.length - 1; j++) for (let v = 0; v < 3; v++) { const a = base + j * 3 + v, b = base + j * 3 + (v + 1) % 3; I.push(a, b, b + 3, a, b + 3, a + 3); }
     };
     const unit = v => { const l = hyp(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
     for (const upper of [true, false]) {
@@ -511,7 +513,8 @@ export function eyeParts(m, f, hair = {}) {
         // (as long as reaches down to a couple of millimetres above where the lips meet, its curl and all)
         const c = [-.8 * N3[0], -.6 - .8 * N3[1], -.8 * N3[2]], fall = -(d[1] + .45 * c[1]), drop = hy - lipLine(x, f) - .0022;
         const L = Math.min((.0095 + .003 * ss(0, .02, x)) * (.7 + .3 * full) * (.75 + .5 * rnd()), drop / mx(.3, fall)); if (L < .0015) continue;
-        strand(root, d, c, L, .45, .00008, like, 'beardhair', .7 + .4 * rnd(), N3, .55);
+        // (a share of them white, hair by hair, on a greying face: hair.grey)
+        strand(root, d, c, L, .45, .00006, like, rnd() < (hair.grey || 0) ? 'beardgrey' : 'beardhair', .7 + .4 * rnd(), N3, .55, [.05 + .05 * rnd(), .6 + .8 * rnd(), rnd() * 6.28]);
       }
     }
     // the beard: single hairs too, where a real one grows (beardArea), fewer and shorter toward its edges and its neckline, growing down the
@@ -528,7 +531,8 @@ export function eyeParts(m, f, hair = {}) {
         const under = ss(-.25, -.65, nn[1]), way = [nn[0] * .2 + (rnd() - .5) * .35, -1 + .7 * under, -.9 * under + .15 * (1 - under)], along = way[0] * nn[0] + way[1] * nn[1] + way[2] * nn[2];
         const d = unit([way[0] - along * nn[0] + .22 * nn[0], way[1] - along * nn[1] + .22 * nn[1], way[2] - along * nn[2] + .22 * nn[2]]);
         const neck = .35 + .65 * ss(-.004, .03, ((hz + .04) * .045 + (hy + .085) * .075) / .0875), L = (.004 + .011 * hair.beard) * (.4 + .6 * kb) * neck * (.7 + .6 * rnd());
-        strand(root, d, [-.8 * nn[0], -.5 - .8 * nn[1], -.8 * nn[2]], L, .4, .0001, like, 'beardhair', .65 + .45 * rnd(), nn, .55);
+        // (thinner than they were, a beard's hair is a tenth of a millimetre across at most, and kinked: a straight thick one read as a scratch)
+        strand(root, d, [-.8 * nn[0], -.5 - .8 * nn[1], -.8 * nn[2]], L, .4, .00007, like, rnd() < (hair.grey || 0) ? 'beardgrey' : 'beardhair', .65 + .45 * rnd(), nn, .55, [.06 + .08 * rnd(), .7 + 1.1 * rnd(), rnd() * 6.28]);
       }
     }
     parts.push({ P, N, K, I, src, ao, close: true });
@@ -562,8 +566,10 @@ const outside = L => {
  * the skin in a step at the hairline, less than its full length, and is combed in locks from the forehead back and down the
  * sides. th: [length on top, at the sides]; fem: a woman's hairline. At the hairline it stands at least 3 mm (short hair all of its length).
  */
-function hairShape(base, th, fem, soft = false) {
-  const L = fem ? LINE_F : LINE_M, z0 = HC[2] - .0125, y0 = HC[1], m = outside(L);
+/** An Afro's outline round the head (human-strands.js grows its coils out to it; the sculpted hair is a little inside it): middle and radii. */
+export const AFRO = { c: [0, HC[1] + .03, HC[2] - .015], r: [.118, .126, .13] };
+function hairShape(base, th, fem, soft = false, big = false) {
+  const L = fem ? LINE_F : LINE_M, wb = big ? 2 * mx(0, th[0] - .008) : 0, z0 = HC[2] - .0125, y0 = HC[1], m = outside(L);
   return {
     field(x, y, z) {
       const d = base(x, y, z); if (d > .04 || d < -.02) return d + .004;
@@ -577,7 +583,9 @@ function hairShape(base, th, fem, soft = false) {
       const T0 = (th[1] + (th[0] - th[1]) * top) * (1 - .4 * ss(-.02, -.06, hy)), T = T0 * inn + (soft ? .0006 : mx(.45 * T0, Math.min(T0, .0032))) * (1 - inn) + lock * (.3 + .7 * inn) * Math.min(1, th[0] / .008);
       return smax(d - T, e, .0035);
     },
-    m, lo: [-.1, y0 - .095, HC[2] - .13], hi: [.1, y0 + .14, HC[2] + .112],
+    // (a big head of hair, an Afro or curls, reaches well past the head's own box: cut by it, its top had been a flat lid. Only for those:
+    // the box is where the head's surface is made, and widened for every head it had moved the points of every face a little)
+    m, lo: [-.1 - wb, y0 - .095, HC[2] - .13 - wb], hi: [.1 + wb, y0 + .14 + wb, HC[2] + .112 + wb / 2],
   };
 }
 // A woman's long hair: a fall of it down the back of the head and the neck to between the shoulders, combed straight down
@@ -795,8 +803,15 @@ export function head(a, ghosts = []) {
     // centimetre off them their measure jumps where they end, which stood in the hair as a ledge round the head)
     const B = ready(real ? base.map(fitted) : base), all = (x, y, z) => { let d = 1e9; for (const s of B) d = smin(d, s.d(x, y, z), s.k); return d; }, crown = B[G ? 0 : 1].d;
     const skull = (x, y, z) => { const w = ss(.035, .06, y - HC[1]); return w <= 0 ? all(x, y, z) : w >= 1 ? crown(x, y, z) : crown(x, y, z) * w + all(x, y, z) * (1 - w); };
-    const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.003, .003] : !fem ? [.0105, .006] : hs === 'long' ? [.012, .011] : [.007, .006];
-    if (!bob) S.push({ ...hairShape(skull, th, fem, real && !a.hat), out: .0015, slot: 'hair', blend: .003 });
+    const bob = fem && hs === 'short' && !a.hat, th = a.hat ? [.003, .003] : hs === 'afro' ? [.012, .009] : hs === 'curly' ? [.014, .011] : !fem ? [.0105, .006] : hs === 'long' ? [.012, .011] : [.007, .006];
+    if (!bob) S.push({ ...hairShape(skull, th, fem, real && !a.hat, !a.hat && (hs === 'afro' || hs === 'curly')), out: .0015, slot: 'hair', blend: .003 });
+    // an Afro: a round of hair over the whole head, inside the hairline (measured round the head, so it holds off the head too: the head's own
+    // measure is only good a centimetre or so out, and hair as thick as this laid on it had come out as a flat lid). Its coils, human-strands.js
+    if (hs === 'afro' && !a.hat) {
+      const C = AFRO.c, R = AFRO.r.map(v => v * .86), m = outside(fem ? LINE_F : LINE_M), rm = Math.min(...R);
+      S.push({ field: (x, y, z) => { const qx = x / R[0], qy = (y - C[1]) / R[1], qz = (z - C[2]) / R[2]; return smax((Math.sqrt(qx * qx + qy * qy + qz * qz) - 1) * rm, m(x, y, z) + .004, .01); },
+        lo: [-R[0] - .01, C[1] - R[1] - .01, C[2] - R[2] - .01], hi: [R[0] + .01, C[1] + R[1] + .01, C[2] + R[2] + .01], slot: 'hair', blend: .012 });
+    }
     if (bob || hs === 'long') {
       // (its edge is an outline of its own: the line where the surface stops being the bob's and becomes the face's, made straight)
       const U = ready(S.filter(s => !s.paint && !s.ghost)), b = bob ? bobShape() : longShape(), near = (s, x, y, z) => x > s.lo[0] - .02 && x < s.hi[0] + .02 && y > s.lo[1] - .02 && y < s.hi[1] + .02 && z > s.lo[2] - .02 && z < s.hi[2] + .02;
