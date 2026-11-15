@@ -15,7 +15,7 @@ import {
   Fn, instancedArray, instanceIndex, uniform, uniformArray, Loop, If, Break, int, uint, float, vec2, vec3, vec4, uvec3, max, min, abs, floor, length, dot, cross, exp, pow,
   select, clamp, mix, smoothstep, textureStore, texture3D, uv, rtt, getViewPosition, interleavedGradientNoise, screenCoordinate,
 } from 'three/tsl';
-import { SOURCES, SOLIDS, SOLID, IGNITE, HEAT, BURNS_AT, FLAME, SMOKE_MAX, VMAX, SHARP, NEAR, GAS, emptyField } from './gas.js';
+import { SOURCES, SOLIDS, SOLID, IGNITE, HEAT, BURNS_AT, FLAME, SMOKE_MAX, VMAX, SHARP, NEAR, GAS, CHEB, CHEB_W, emptyField } from './gas.js';
 import { ORIGIN } from './origin.js';
 import { halfFn, halfWanted } from './half.js';
 import { noDepth } from './depth-gpu.js';
@@ -171,15 +171,19 @@ export function gpuGas(F) {
       Db.element(c).assign(div);
     });
   });
-  const jacobi = (Pin, Pout) => pass(cells, () => {
+  // (w: the round's Chebyshev weight, gas.js pressure(): 0 a plain round; else the new value is w x (the plain round's
+  // answer - the round before's) + the round before's, and the round before's is what Pout holds, so it is written in place)
+  const jacobi = (Pin, Pout, w = 0) => pass(cells, () => {
     const [i, j, k] = xyz(), c = int(instanceIndex), b = Bb.element(c);
     If(solid(b), () => { Pout.element(c).assign(0); }).Else(() => {
       const p = Pin.element(c).toVar(), ns = sides(i, j, k, c), cs = codes(b);
       let sum = float(0); for (let q = 0; q < 6; q++) sum = sum.add(select(cs[q].equal(0), Pin.element(ns[q]), select(cs[q].equal(1), p, float(0))));
-      Pout.element(c).assign(sum.sub(Db.element(c)).div(6));
+      const jv = sum.sub(Db.element(c)).div(6);
+      if (!w) Pout.element(c).assign(jv);
+      else { const old = Pout.element(c).toVar(); Pout.element(c).assign(jv.sub(old).mul(w).add(old)); }
     });
   });
-  const jA = jacobi(Pb, P2b), jB = jacobi(P2b, Pb);
+  const jA = jacobi(Pb, P2b), jB = jacobi(P2b, Pb), cFirst = jacobi(P2b, Pb, CHEB_W[0]), cA = jacobi(Pb, P2b, CHEB_W[1]), cB = jacobi(P2b, Pb, CHEB_W[1]);
   const project = pass(cells, () => {
     const [i, j, k] = xyz(), c = int(instanceIndex), b = Bb.element(c);
     If(solid(b).not(), () => {
@@ -237,7 +241,12 @@ export function gpuGas(F) {
     Ab.element(c.mul(2)).assign(s.div(64)); Ab.element(c.mul(2).add(1)).assign(u.div(64));
   });
 
-  const stepList = iters => { const l = [advect, react, curl, confine, diverge]; for (let q = 0; q < iters; q += 2) l.push(jA, jB); l.push(project); return l; };
+  // (the rounds, as gas.js pressure(): a plain one, then Chebyshev's; an even count ends in Pb, which project reads)
+  const stepList = iters => {
+    const l = [advect, react, curl, confine, diverge];
+    if (CHEB.on) { l.push(jA, cFirst); for (let q = 2; q < iters; q += 2) l.push(cA, cB); } else for (let q = 0; q < iters; q += 2) l.push(jA, jB);
+    l.push(project); return l;
+  };
   let list = null, listFor = -1, shaped = -1, used = false, flip = false, frame = 0, reading = null;
   const lo = new Vector3(S.ox, S.oy, S.oz), size = new Vector3(nx * S.h, ny * S.h, nz * S.h), lk = new Vector3(nx / (2 * lx), ny / (2 * ly), nz / (2 * lz));
   const pseudo = { enabled: false, needsSwap: false, setSize() {}, render() {}, gsFx: { kind: 'gas', id: 0 }, gas: F };   // the gas's place in the view's chain of screen passes (gasStage below)
@@ -290,7 +299,7 @@ export function gpuGas(F) {
     dispose() {
       this.show(false);
       for (const b of [Ub, Sb, U2b, S2b, S3b, Ob, Wb, Pb, P2b, Db, Mb, Bb, Lb, L2b, Ab]) b.value?.dispose?.();
-      for (const p of [mark, mask, advect, react, curl, confine, diverge, jA, jB, project, wipe, litA, litB, bake, answers]) p.dispose?.();
+      for (const p of [mark, mask, advect, react, curl, confine, diverge, jA, jB, cFirst, cA, cB, project, wipe, litA, litB, bake, answers]) p.dispose?.();
       densT.dispose(); lightT.dispose();
     },
   };

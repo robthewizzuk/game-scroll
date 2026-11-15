@@ -624,6 +624,60 @@ async function fluidScene() {
   } finally { F.force = was; }
 }
 
+// gs.fluid's grains (snow, sand and mud: fluid.js GRAIN): a layer of each in its own box, a foot pressed in
+// and lifted, and sand poured into a pile. Two pictures side by side: the foot in, then the print it left. On
+// WebGPU each runs on the graphics chip with the JavaScript version beside it, held to the same rule as the
+// liquids (a hundredth of a cell in the middle), and the print has to stay in snow and mud.
+async function grainScene() {
+  window.__hd.force = 3;
+  const { Fluid } = gs.fluid, F = window.__fluid, was = F.force; F.force = 3000;
+  try {
+    const v = new HV({ bg: '#9ab4d0', fog: .002, amb: .4 }), c = document.createElement('canvas'); c.width = 480; c.height = 540; const x = c.getContext('2d');
+    v.cam.position.set(0, 2.3, 2.9); v.cam.lookAt(0, .05, .1); v.cam.updateMatrixWorld();
+    const sun = gs.hd.sun('#fff2d8', 2.2, 12, [-.45, 1, .55]); v.scene.add(sun, sun.target); v.sun = sun; sun.follow(0, 0, 0);
+    const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#4a4f58', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+    const KINDS = [['snow', -2.25], ['sand', 0], ['mud', 2.25]];
+    const mk = (view, kind, cx) => {
+      const f = new Fluid(view, { box: [cx - 1.05, 0, -.7, cx + 1.05, 1.4, .7], volume: 1.1, kind, gpu: !!view, seed: 3 });
+      f.fill({ y1: kind === 'sand' ? .22 : .32 });
+      const foot = f.box({ x: cx - .35, y: 1, z: 0, w: .3, h: .24, d: .4 });
+      const tap = kind === 'sand' ? f.pour({ x: cx + .5, y: .9, z: 0, rate: .12, speed: .3 }) : null;
+      return { f, foot, tap, cx, kind };
+    };
+    const sets = KINDS.map(([k, cx]) => ({ a: mk(v, k, cx), b: GPU ? mk(null, k, cx) : null }));
+    const feet = sets.map(({ a }) => { const m = new T.Mesh(new T.BoxGeometry(.3, .24, .4), gs.hd.pbr('#b03a2e', { rough: .5 })); m.castShadow = true; v.scene.add(m); return m; });
+    const footY = i => i < 50 ? 1 - .88 * i / 50 : i < 80 ? .12 : i < 110 ? .12 + (i - 80) * .04 : 3;   // down, held, up and away
+    for (let i = 0; i < 200; i++) {
+      for (const s of sets) for (const k of [s.a, s.b]) if (k) { k.foot.set(k.cx - .35, footY(i), 0); if (k.tap) k.tap.on = i < 150; k.f.update(1 / 60); }
+      sets.forEach(({ a }, j) => { feet[j].position.set(a.foot.x, a.foot.y, a.foot.z); feet[j].visible = a.foot.y < 2; });
+      v.t = 0; v.render(x, 480, 270); if (i % 5 === 0) await frame();
+      if (i === 79) { const keep = document.createElement('canvas'); keep.width = 480; keep.height = 270; keep.getContext('2d').drawImage(c, 0, 0, 480, 270, 0, 0, 480, 270); sets.keep = keep; }
+    }
+    // the picture: the foot in (top), the print it left (below)
+    v.render(x, 480, 270); x.drawImage(c, 0, 0, 480, 270, 0, 270, 480, 270); x.drawImage(sets.keep, 0, 0);
+    const onChip = sets.every(({ a }) => a.f.backend === 'gpu' && !!a.f.twin);
+    if (GPU && !onChip) throw new Error('gs.fluid grains did not run on the graphics chip on WebGPU');
+    const lines = [];
+    for (const { a, b } of sets) {
+      if (onChip) await a.f.twin.drops(a.f.twin.r);
+      const f = b ? b.f : a.f, at = f.level(a.cx - .35, 0), side = f.level(a.cx - .85, .45);
+      lines.push(`${a.kind}: print ${at == null ? 'bare' : at.toFixed(2)} beside ${side == null ? '-' : side.toFixed(2)}`);
+      if (a.kind !== 'sand' && !(side - (at ?? 0) > .1)) throw new Error(`gs.fluid ${a.kind}: the foot left no print (${lines.at(-1)})`);
+      if (onChip) {
+        const P = await a.f.twin.drops(a.f.twin.r), Q = b.f.sim.P, d = []; let odd = 0;
+        for (let p = 0; p < b.f.sim.N; p++) { const k = p * 4, g = P[k + 3] > 0, q = Q[k + 3] > 0; if (g && q) d.push(Math.hypot(P[k] - Q[k], P[k + 1] - Q[k + 1], P[k + 2] - Q[k + 2])); else if (g !== q) odd++; }
+        d.sort((m, n) => m - n); const mid = d[d.length >> 1], p90 = d[Math.floor(d.length * .9)];
+        lines.push(`${a.kind} on the chip against JavaScript: ${d.length} drops, apart by ${mid.toFixed(4)} (middle) and ${p90.toFixed(4)} (nine in ten) cells`);
+        if (!(d.length > 1000 && odd === 0 && mid < .01 && p90 < .05)) throw new Error(`gs.fluid ${a.kind} on the graphics chip left the JavaScript version: ${lines.at(-1)}, ${odd} in one only`);
+      }
+    }
+    console.log('grains: ' + lines.join('; '));
+    const pic = c.toDataURL();
+    for (const s of sets) for (const k of [s.a, s.b]) k?.f.dispose();
+    return [pic, window.__hd.info.backend + (onChip ? ', on the graphics chip, matching the JavaScript version' : ', JavaScript') + ' | ' + lines.join('; ')];
+  } finally { F.force = was; }
+}
+
 // gs.gas (smoke and fire that flow): a fire, and smoke that meets a ball. On WebGPU the gas runs on the
 // graphics chip and is drawn as a lit volume; beside it, unseen, the JavaScript version runs the same gas in
 // the same grid at the same rate (__gas.twin), and the two are held against each other cell by cell: the
@@ -901,7 +955,7 @@ async function shadowOffScene() {
   v.t = 0; v.render(x, 240, 320);
   return [c.toDataURL(), window.__hd.info.backend];
 }
-const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), 'gpu-gas': () => gasScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), rain: () => rainScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
+const SCENES = { ...Object.fromEntries(Object.entries(CONSOLE).map(([n, k]) => [n, () => consoleScene(k)])), 'shadow-off': () => shadowOffScene(), 'pulse-two': () => pulseTwoScene(), 'fx-text': () => fxScene('text'), 'fx-parts': () => fxScene('parts'), 'fx-outline': () => fxScene('outline'), 'fx-pixelate': () => fxScene('pixelate'), 'fx-trails': () => fxScene('trails'), 'gpu-fx-glitch': () => fxScene('glitch'), 'gpu-fx-reflect': () => fxScene('reflect'), dust: () => dustScene(), 'fx-probe': () => fxScene('probe'), river: () => riverScene(), flood: () => floodScene(), 'gpu-fluid': () => fluidScene(), 'gpu-grains': () => grainScene(), 'gpu-gas': () => gasScene(), city: () => cityScene(), 'outdoor-tier1': () => outdoor(1), 'outdoor-tier3': () => outdoor(3), 'outdoor-physical': () => outdoor(3, true), 'gpu-cull': () => cullScene(true), 'gpu-cull-cpu': () => cullScene(false), area: () => areaScene(), 'gpu-sss': () => sssScene(), 'gpu-oit': () => oitScene(), flare: () => flareScene(), 'gpu-pom': () => pomScene(), batch: () => batchScene(), materials: () => materialsScene(), 'gpu-pcss': () => pcssScene(), rain: () => rainScene(), 'gpu-fog': () => fogScene(), 'gpu-mblur': () => objBlurScene(), 'gpu-gi-none': () => giScene(null), 'gpu-gi-screen': () => giScene('screen'), 'gpu-gi-voxel': () => giScene('voxel'), recipes: () => recipesScene(), 'gpu-recipes-near': () => recipesScene(true), wear: () => wearScene(), props: () => propsScene(), sculpt: () => sculptScene(), trees: () => treesScene(), buildings: () => buildingsScene(), humans: () => humansScene(), creatures: () => creaturesScene() };
 const PICK = new URLSearchParams(location.search).get('pick');
 if (PICK) try { for (const n of PICK.split(',')) if (n === 'beams') { const [pics, be] = await beamsScene(); [out['beams-sun'], out['beams-lamp'], out['motion-blur']] = pics; backends['beams-sun'] = backends['beams-lamp'] = backends['motion-blur'] = be; } else [out[n], backends[n]] = await SCENES[n](); } catch (e) { out.error = String(e && e.stack || e); }
 else try {
@@ -944,6 +998,7 @@ else try {
   [out.river, backends.river] = await riverScene();
   [out.flood, backends.flood] = await floodScene();
   [out['gpu-fluid'], backends['gpu-fluid']] = await fluidScene();
+  [out['gpu-grains'], backends['gpu-grains']] = await grainScene();
   [out['gpu-gas'], backends['gpu-gas']] = await gasScene();
   [out.city, backends.city] = await cityScene();
   for (const t of [1, 3]) [out['outdoor-tier' + t], backends['outdoor-tier' + t]] = await outdoor(t);

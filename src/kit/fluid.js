@@ -20,6 +20,7 @@
 // The kit picks how many drops the phone can run (fluid.max) and sizes them so `volume` fits; when the
 // fluid is full (fluid.full) taps stop until some drains away. Questions are answered from the drops:
 // amount(box), level(x, z), wet(x, y, z). On WebGPU the answers are a few frames old.
+// Not only liquids: kind 'sand', 'snow' or 'mud' is ground that piles, packs and keeps footprints (GRAIN below).
 // Kit use: view is an HDView (Next Gen, AR, Board); in a Console view it runs the smaller version.
 import { timed } from './prof.js';
 import { Color, IcosahedronGeometry, InstancedMesh, MeshStandardMaterial, Quaternion, Matrix4, Vector3, DynamicDrawUsage } from 'three';
@@ -60,7 +61,27 @@ export const KINDS = {
   lava: { colour: '#ff5a14', foam: '#ffd76a', thick: .7, rough: .6, glow: .6 },
   slime: { colour: '#5ecb3a', foam: '#b4e68c', thick: .45, rough: .25, glow: 0 },
   honey: { colour: '#e39a1c', foam: '#f2c873', thick: 1, rough: .15, glow: 0 },
+  // grains and soft ground (see GRAIN below): not liquids at all, but the same drops and grid
+  sand: { colour: '#d6b47a', foam: false, thick: 0, rough: .95, glow: 0, grain: 1.4, holds: 0, packs: 0 },
+  snow: { colour: '#c6cdd8', foam: false, thick: .05, rough: .85, glow: 0, grain: .35, holds: 5, packs: 1.8 },
+  mud: { colour: '#5d4029', foam: '#7a5a3c', thick: .55, rough: .45, glow: 0, grain: .12, holds: 1.5, packs: 0 },
 };
+// Grains, snow and mud (MLS-MPM with plasticity, but no deformation gradient or SVD): each drop keeps how
+// far its bit of ground has been sheared (S, its elastic shear strain, turned with the ground as it
+// spins), which pushes back like a spring. How hard it may push is capped by Drucker-Prager: friction
+// (grain: 1.4 piles sand at about 25 degrees; a pile's top cells are hardly squeezed, so it
+// takes more than the textbook number) times how hard it is squeezed, plus what holds
+// it together (holds: about how many cells of wall stand up by themselves); past that it gives and flows.
+// So a pile stands still at its slope instead of creeping flat, a cut stands as long as it holds, and the
+// squeeze (from the drops round it, as for a liquid) never pulls. Snow packs (packs: how much denser it
+// may get): squeezed past a little, it stays squeezed (each drop's own resting fullness rises) and the
+// packed snow holds harder, so a foot leaves a print that stays. The floor and solid things grip it.
+// GRAIN_G: how stiff the spring is (cells a step; as stiff as a step allows beside the squeeze);
+// GRIP: how much of a grain's slide along the floor or a solid thing is stopped each step (all of it: with
+// less, piles crept flat along the floor).
+export const GRAIN_G = .45, GRIP = 1, PACK0 = .08;
+/** The ground's rules for a kind, or null for a liquid. */
+export const grainOf = k => k.grain == null ? null : { mu: k.grain, holds: k.holds || 0, packs: k.packs || 0 };
 /** How thick a liquid is, as the fluid counts it (thick 0..1), and how much it resists being squeezed fast for that thickness. */
 // (twice the first plus the second has to stay under about 2.3, or a step overshoots and the liquid blows up)
 export const viscosity = thick => .08 + Math.max(0, Math.min(1, thick)) * .52;
@@ -203,6 +224,8 @@ class Sim {
     this.drop = h * h * h / RHO;   // how much liquid one drop is
     this.foam0 = g > 1e-6 ? .5 * Math.sqrt(g * sy) * this.dt / h : 1e9;   // fast enough to foam (cells a step): half the speed of a fall from the top of the box
     this.P = new Float32Array(N * 4); this.V = new Float32Array(N * 4); this.C = new Float32Array(N * 12); this.D = new Float32Array(N * 4);
+    this.grain = F.grain; this.E = F.grain ? new Float32Array(N * 8) : null;   // grains: each drop's shear (xx, yy, zz, its resting fullness; xy, xz, yz)
+    this.gstep = g * this.dt * this.dt / h;   // gravity, in cells a step squared
     this.live = new Uint8Array(N); this.born = new Int32Array(N); this.free = new Int32Array(N); for (let i = 0; i < N; i++) this.free[i] = N - 1 - i;
     this.nfree = N; this.alive = 0; this.top = 0; this.steps = 0; this.stamp = 0;
     this.G = null; this.T = null; this.H = null; this.occ = null; this.occAt = -1;
@@ -230,6 +253,7 @@ class Sim {
     this.P[a] = x; this.P[a + 1] = y; this.P[a + 2] = z; this.P[a + 3] = 1;
     this.V[a] = vx * k; this.V[a + 1] = vy * k; this.V[a + 2] = vz * k; this.V[a + 3] = 0;
     this.C.fill(0, s * 12, s * 12 + 12); this.D[a] = this.D[a + 1] = this.D[a + 2] = 0; this.D[a + 3] = 1;
+    if (this.E) { this.E.fill(0, s * 8, s * 8 + 8); this.E[s * 8 + 3] = 1; }
     this.live[s] = 1; this.born[s] = this.steps; this.alive++; if (s >= this.top) this.top = s + 1;
     return s;
   }
@@ -269,6 +293,29 @@ class Sim {
     }
     if (this.H) { const gh = this.groundAt(x, z), l = Math.hypot(snx, 1, snz), d = (y - gh) / l - SKIN; if (d < bd) { bd = d; bnx = -snx / l; bny = 1 / l; bnz = -snz / l; bux = buy = buz = 0; } }
     return bd < REACH;
+  }
+  // snow packs: squeezed past a little over its resting fullness, that fullness rises (up to 1 + packs), so it stays squeezed. Returns it.
+  pack(E, e, rho) {
+    let r0 = E[e + 3]; const most = 1 + this.grain.packs;
+    if (most > 1) { const q = rho / RHO; if (q > r0 * (1 + PACK0)) r0 = E[e + 3] = Math.min(most, q / (1 + PACK0)); }
+    return r0;
+  }
+  // a drop's shear this step: turned with how its ground spins, plus how it was sheared (C's symmetric part,
+  // less its squeeze); then capped where friction times the squeeze (sp), and what holds it, give way
+  shear(E, e, C, c, sp, r0) {
+    const g = this.grain, c00 = C[c], c11 = C[c + 5], c22 = C[c + 10], tr = (c00 + c11 + c22) / 3;
+    const w01 = .5 * (C[c + 1] - C[c + 4]), w02 = .5 * (C[c + 2] - C[c + 8]), w12 = .5 * (C[c + 6] - C[c + 9]);
+    const s00 = E[e], s11 = E[e + 1], s22 = E[e + 2], s01 = E[e + 4], s02 = E[e + 5], s12 = E[e + 6];
+    // W S - S W, W the spin (w10 = -w01 ...): a symmetric result
+    const r00 = 2 * (w01 * s01 + w02 * s02), r11 = 2 * (-w01 * s01 + w12 * s12), r22 = 2 * (-w02 * s02 - w12 * s12);
+    const r01 = w01 * s11 + w02 * s12 - w01 * s00 + w12 * s02, r02 = w01 * s12 + w02 * s22 - s00 * w02 - s01 * w12, r12 = -w01 * s02 + w12 * s22 - s01 * w02 - s11 * w12;
+    let n00 = s00 + c00 - tr + r00, n11 = s11 + c11 - tr + r11, n22 = s22 + c22 - tr + r22;
+    let n01 = s01 + .5 * (C[c + 1] + C[c + 4]) + r01, n02 = s02 + .5 * (C[c + 2] + C[c + 8]) + r02, n12 = s12 + .5 * (C[c + 6] + C[c + 9]) + r12;
+    const m = (n00 + n11 + n22) / 3; n00 -= m; n11 -= m; n22 -= m;   // (kept free of squeeze)
+    const size = Math.sqrt(n00 * n00 + n11 * n11 + n22 * n22 + 2 * (n01 * n01 + n02 * n02 + n12 * n12));
+    const hold = g.holds * RHO * this.gstep * .5 * r0 * r0 * r0, most = (g.mu * sp + hold) / (2 * GRAIN_G);
+    const k = size > most ? most / size : 1;
+    E[e] = n00 * k; E[e + 1] = n11 * k; E[e + 2] = n22 * k; E[e + 4] = n01 * k; E[e + 5] = n02 * k; E[e + 6] = n12 * k;
   }
   /** One step, here on the CPU. */
   step() {
@@ -342,10 +389,16 @@ class Sim {
       // the push: squeezed liquid pushes out (kp), and liquid that shears or is squeezed fast drags (kv). A lone
       // drop or a thin sheet has little weight in its cells, so its drag is scaled down with it (thin(): a
       // drag sized for full cells threw lone drops about)
-      const q = Math.min(rho / RHO, 3), q2 = q * q, c = p * 12, kp = 4 / rho * Math.max(0, K * (q2 * q2 - 1)), kv = -4 * thin(rho);
+      const E = this.E, e = p * 8, r0 = E ? this.pack(E, e, rho) : 1;
+      const q = Math.min(rho / RHO / r0, 3), q2 = q * q, c = p * 12, sp = Math.max(0, K * (q2 * q2 - 1)), kp = 4 / rho * sp, kv = -4 * thin(rho);
       const sq = kv * zeta * (C[c] + C[c + 5] + C[c + 10]) + kp;   // (being squeezed or stretched fast is resisted, which stills the liquid's ringing)
       let t00 = kv * 2 * mu * C[c] + sq, t11 = kv * 2 * mu * C[c + 5] + sq, t22 = kv * 2 * mu * C[c + 10] + sq;
       let t01 = kv * mu * (C[c + 1] + C[c + 4]), t02 = kv * mu * (C[c + 2] + C[c + 8]), t12 = kv * mu * (C[c + 6] + C[c + 9]);
+      if (E) {   // grains: the shear's spring, as far as friction and what holds it allow
+        this.shear(E, e, C, c, sp, r0);
+        const k2 = kv * 2 * GRAIN_G;
+        t00 += k2 * E[e]; t11 += k2 * E[e + 1]; t22 += k2 * E[e + 2]; t01 += k2 * E[e + 4]; t02 += k2 * E[e + 5]; t12 += k2 * E[e + 6];
+      }
       const twin = M[a + 3];
       for (let pass = 0; pass <= twin; pass++) {
         if (pass) {   // the twin in the mirror pushes as hard as its drop
@@ -369,7 +422,7 @@ class Sim {
     }
     if (!open) this.fold(nt, false);   // the pushes given to cells beyond a wall come back too
     // the grid: each cell's speed, gravity, blasts; a cell inside a solid thing never moves further into it
-    const kg = this.dt * this.dt / this.h, gvx = F.gravity.x * kg, gvy = F.gravity.y * kg, gvz = F.gravity.z * kg, pushes = F.blasts, np = pushes.length;
+    const grip = this.grain ? GRIP : 0, kg = this.dt * this.dt / this.h, gvx = F.gravity.x * kg, gvy = F.gravity.y * kg, gvz = F.gravity.z * kg, pushes = F.blasts, np = pushes.length;
     for (let k = 0; k < nt; k++) {
       const i = T[k], m = G[i + 3], c = i >> 2, ix = c % nx, iy = ((c / nx) | 0) % ny, iz = (c / nxy) | 0, x = ix + .5, y = iy + .5, z = iz + .5;
       if (!open && (ix < LO || ix >= hx || iy < LO || iy >= hy || iz < LO || iz >= hz)) continue;   // beyond a wall: below
@@ -378,11 +431,18 @@ class Sim {
         const b = pushes[j], ex = x - b.x, ey = y - b.y, ez = z - b.z, l = Math.hypot(ex, ey, ez);
         if (l < b.r) { const f = b.s * (1 - l / b.r) / (l || 1); vx += ex * f; vy += ey * f + b.up * (1 - l / b.r); vz += ez * f; }
       }
-      if (bounds && this.near(x, y, z) && bd < 0) {
-        let qx = vx - bux, qy = vy - buy, qz = vz - buz; const vn = qx * bnx + qy * bny + qz * bnz;
-        if (vn < 0) { qx -= vn * bnx; qy -= vn * bny; qz -= vn * bnz; }
-        vx = bux + qx; vy = buy + qy; vz = buz + qz;
+      if (bounds && this.near(x, y, z)) {
+        if (bd < 0) {
+          let qx = vx - bux, qy = vy - buy, qz = vz - buz; const vn = qx * bnx + qy * bny + qz * bnz;
+          if (vn < 0) { qx -= vn * bnx; qy -= vn * bny; qz -= vn * bnz; }
+          vx = bux + qx; vy = buy + qy; vz = buz + qz;
+        }
+        if (grip && bd < .5) {   // grains: a solid thing or the ground grips them (its own way of moving is kept)
+          const qx = vx - bux, qy = vy - buy, qz = vz - buz, vn = qx * bnx + qy * bny + qz * bnz;
+          vx -= grip * (qx - vn * bnx); vy -= grip * (qy - vn * bny); vz -= grip * (qz - vn * bnz);
+        }
       }
+      if (grip && !open && iy === LO) { vx *= 1 - grip; vz *= 1 - grip; }   // (and the box's floor)
       G[i] = vx; G[i + 1] = vy; G[i + 2] = vz;
     }
     // the cells beyond a wall move as their mirror cells do, turned round
@@ -458,7 +518,7 @@ const budget = big => { const c = FLUID.klass || phoneClass(); return { drops: F
  * A liquid in a box of your world. box: [x0, y0, z0, x1, y1, z1], where it can go (walls all round; open:
  * true: a floor and no walls, and drops that leave the box vanish). volume: the most liquid it has to hold, in units cubed (a
  * quarter of the box if you don't say): the drops are sized so that much fits. kind: 'water', 'lava',
- * 'slime' or 'honey', or your own colour, foam (a colour, or false), thick (0 water .. 1 honey), rough
+ * 'slime', 'honey', or ground: 'sand', 'snow', 'mud' (GRAIN above; your own grain, holds, packs), or your own colour, foam (a colour, or false), thick (0 water .. 1 honey), rough
  * and glow. gravity: units a second squared (9.8), or { x, y, z } (change fluid.gravity any time: tilt
  * the world). drops: fewer drops than the phone would run by itself (Fluid.max() is its number). size: how
  * big each drop is drawn (1). seed: a number for its dice (the same seed pours and splashes the same way).
@@ -473,7 +533,7 @@ export class Fluid {
     const [x0, y0, z0, x1, y1, z1] = this.bounds;
     this.volume = o.volume || (x1 - x0) * (y1 - y0) * (z1 - z0) / 4;
     const g = o.gravity ?? 9.8; this.gravity = typeof g === 'number' ? { x: 0, y: -g, z: 0 } : { x: g.x || 0, y: g.y || 0, z: g.z || 0 };
-    this.mu = viscosity(kind.thick); this.size = o.size || 1; this.shadows = o.shadows !== false;
+    this.mu = viscosity(kind.thick); this.grain = grainOf(kind); this.size = o.size || 1; this.shadows = o.shadows !== false;
     this.look = { colour: new Color(kind.colour), foam: kind.foam === false ? null : new Color(kind.foam), rough: kind.rough, glow: kind.glow };
     this.solids = []; this.packed = []; this.taps = []; this.drains = []; this.blasts = [];
     this.groundFn = this.open ? () => y0 : null;   // (an open box keeps its floor, as ground: the liquid runs off the edges)

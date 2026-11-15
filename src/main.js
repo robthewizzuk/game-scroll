@@ -57,7 +57,7 @@ import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChang
 import { desktop } from './desktop.js';
 import { update } from './update.js';
 import { onGpuLoss, gpuMending } from './kit/gpu.js';
-import { primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
+import { PIPES, primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
 // (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
 const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
@@ -108,6 +108,10 @@ const stubGame=(s,msg,what='')=>({reset(){},update(){},draw(c){const w=s.w||s.de
 // each pass runs on a fresh copy of the game's file, and the copy that reaches the end is the game from
 // then on: KEPT has its make(), and cards of the game made later share what it built, as they always did.
 const SLICED=new Set(['nextgen','ar','board']);
+// A card's next pass waits while the feed is being swiped (a finger on it, or still moving): each pass is a few
+// milliseconds of building every frame, and the 3D cards loading below kept at it all through a swipe past them.
+// (Play is pressed on a still feed, and the card you're looking at goes on loading as soon as you let go.)
+function whenStill(fn){const go=()=>{if(settling())setTimeout(go,100);else fn()};go()}
 const KEPT=new WeakMap();   // definition -> make() of the copy that finished loading
 const BUSY=new WeakMap();   // definition -> the promise of work a card of it left with the workers, while it is out
 let copies=0;
@@ -122,7 +126,7 @@ function bootGame(s,slice=true){
     const f=freshCopy(s.def);
     if(f&&f.then){
       s.loading=true;s.game=stubGame(s,'Loading…',s.what||'');
-      f.then(d=>d,()=>null).then(d=>{if(s.dropped||s.turn!==turn)return;const ok=!!(d&&typeof d.make==='function');makeGame(s,ok?d.make:s.def.make,ok,slice);s.dirty=true;renderOverlay(s)});
+      f.then(d=>d,()=>null).then(d=>whenStill(()=>{if(s.dropped||s.turn!==turn)return;const ok=!!(d&&typeof d.make==='function');makeGame(s,ok?d.make:s.def.make,ok,slice);s.dirty=true;renderOverlay(s)}));
       return;
     }
     if(f&&typeof f.make==='function'){makeGame(s,f.make,true,slice);return}
@@ -149,7 +153,8 @@ function makeGame(s,make,fresh,slice){
       release(s);   // what the unfinished pass started (a physics world, a sensor) is let go now, not when the card leaves
       s.loading=true;s.what=e.what||'';s.game=stubGame(s,'Loading…',s.what);
       const turn=s.turn;
-      e.kitLoading.then(()=>{if(s.dropped||s.turn!==turn)return;bootGame(s,slice);s.dirty=true;renderOverlay(s)},err=>{if(s.dropped||s.turn!==turn)return;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
+      const next=()=>{if(s.dropped||s.turn!==turn)return;bootGame(s,slice);s.dirty=true;renderOverlay(s)};
+      e.kitLoading.then(()=>slice&&SLICED.has(s.def.era)?whenStill(next):next(),err=>{if(s.dropped||s.turn!==turn)return;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
       return;
     }
     s.passes=0;slices.forget(s);gameFault(s,e);
@@ -789,6 +794,8 @@ function calmTick(){
   idleSlot(()=>{if(!calm()){calmT=setTimeout(calmTick,100);return}const f=calmJobs.shift();try{f()}catch(e){console.error(e)}calmT=calmJobs.length?setTimeout(calmTick,60):0});
 }
 speed.busy=()=>!calm();speed.playing=()=>!!active&&active.state==='playing';
+// the shaders a card's rounds made before are made again while the feed is still, or once Play is pressed (src/kit/pipes.js)
+PIPES.free=()=>calm()||!!active&&(!!active.starting||active.state==='playing');
 function topUpLater(wait=QUIET){
   clearTimeout(topT);if(guest)return;
   const ahead=()=>slides.length-1-(active?slides.indexOf(active):0);
@@ -1078,11 +1085,12 @@ function frame(now){
       if(timed){if(run)runTicks(s,tickRate(s.def),dt,h=>{if(s.state==='playing'&&!s.paused)s.game.update(h)},DBG&&DBG.on?0:1/fps);if(!guest)gameRan(s.def.id);if(run)soundtrack.update(dt,s.score,s.def.goal)}else if(s.state==='over'&&s.game.fx)s.game.fx(dt);
       const t1=performance.now();
       // a Next Gen / AR card scrolling into place already shows its picture: its first live frame (which
-      // moves the shared 3D canvas onto it) waits until the swipe has settled
+      // moves the shared 3D canvas onto it, and is a whole 3D frame at full size) waits for a calm moment, as
+      // the rest of the feed's work does: 0.15 s after a swipe it often landed just as the next swipe began
       // (nor does a finished one keep drawing its game-over scene while it's being swiped away: a whole
       // 3D frame each refresh, on the same graphics chip that's moving the feed)
       // (a round getting ready is drawn with a thumb resting on the screen too, just not while the feed moves)
-      const hold=usesHD(s.def)&&(warm?performance.now()-scrollAt<150:s.state==='ready'&&s.dirty&&settling()||s.state==='over'&&performance.now()-scrollAt<150);
+      const hold=usesHD(s.def)&&(warm?performance.now()-scrollAt<150:s.state==='ready'&&s.dirty&&(s.starting?settling():!calm())||s.state==='over'&&performance.now()-scrollAt<150);
       const painted=!hold&&(s.state!=='ready'||s.dirty||(DBG&&DBG.on));if(painted){paint(s);s.dirty=false}
       if(DBG&&DBG.on){DBG.after(s,timed?t1-t0:0,performance.now()-t1,now);if(s.off&&DBG.boxes&&s.game.debug)present(s,true)}
       if(LAB)LAB.tick(now,s,painted?'frame':'idle',timed?t1-t0:0,performance.now()-t1);
@@ -1115,14 +1123,39 @@ addEventListener('keyup',e=>{keyInput(e.key,false)});
 
 
 // Folding/unfolding a phone, rotating, or split-screen all arrive as a resize. Refit every
-// canvas and keep the current game snapped in place so a running game is not lost.
-let rt;
+// canvas and keep the card that was on screen snapped in place so a running game is not lost.
+// Only a feed that really changed size moves its cards: a resize that leaves it as it was (the top bar
+// stepping round the camera, the system bars showing over the page for a moment and hiding again,
+// visualViewport news) refits the canvases and touches nothing else. It used to put back the card the
+// feed last called current, and a resize in the middle of a swipe (before that card had changed) pulled
+// the feed back to the game being swiped away from: "it jumps back to the previous game".
+let rt,keepT=0,feedW=feed.clientWidth,feedH=feed.clientHeight;
+const feedResized=()=>feed.clientWidth!==feedW||feed.clientHeight!==feedH;
 function onResize(){
   slides.forEach(fit);
-  if(active){const i=slides.indexOf(active);feed.style.scrollSnapType='none';feed.scrollTop=i*feed.clientHeight;resizeAt=performance.now();requestAnimationFrame(()=>{feed.style.scrollSnapType='';})}
+  if(!feedResized())return;
+  feedW=feed.clientWidth;feedH=feed.clientHeight;resizeAt=performance.now();
+  keepCard(restCard&&slides.includes(restCard)?restCard:active);
 }
-addEventListener('resize',()=>{resizeAt=performance.now();clearTimeout(rt);rt=setTimeout(onResize,80)});
-if(window.visualViewport)visualViewport.addEventListener('resize',()=>{resizeAt=performance.now();clearTimeout(rt);rt=setTimeout(onResize,80)});
+// card: the one on screen before the resize. A finger on the feed, or a swipe still moving: the swipe goes
+// on, and once it has landed the feed is lined up on whichever card it landed on (never pulled back a card).
+function keepCard(card){
+  clearTimeout(keepT);
+  const locked=feed.classList.contains('locked');
+  if(!locked&&settling()){keepT=setTimeout(()=>keepCard(null),100);return}
+  if(locked)card=active;else if(!card)card=nearestCard();
+  if(!card)return;
+  feed.style.scrollSnapType='none';feed.scrollTop+=card.el.getBoundingClientRect().top-feed.getBoundingClientRect().top;resizeAt=performance.now();requestAnimationFrame(()=>{feed.style.scrollSnapType='';});
+}
+// the card filling the feed now, by where the cards are (not which one the feed last called current)
+function nearestCard(){const f=feed.getBoundingClientRect();let best=null,bd=Infinity;for(const s of slides){const d=Math.abs(s.el.getBoundingClientRect().top-f.top);if(d<bd){bd=d;best=s}}return best}
+// The card the feed last came to rest on (where it is, not what the feed was told): the one to keep after a resize.
+let restCard=null,restT=0;
+function noteRest(){clearTimeout(restT);if(settling()){restT=setTimeout(noteRest,100);return}restCard=nearestCard()||restCard}
+feed.addEventListener('scroll',()=>{clearTimeout(restT);restT=setTimeout(noteRest,160)},{passive:true});
+const resized=()=>{if(feedResized())resizeAt=performance.now();clearTimeout(rt);rt=setTimeout(onResize,80)};
+addEventListener('resize',resized);
+if(window.visualViewport)visualViewport.addEventListener('resize',resized);
 screen.orientation?.addEventListener?.('change',()=>setTimeout(onResize,150));
 // The top bar moves up into the camera strip where it can (src/topbar.js); when it moves, the cards refit to the room it leaves.
 onBarMove(()=>requestAnimationFrame(onResize));initBar();
@@ -1194,4 +1227,4 @@ if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refres
 // Its prompts wait for a round to end; the catalogue can name the oldest version that may carry on.
 update.init({busy:()=>!!active&&active.state==='playing',min:()=>+remote.app()?.android?.min||0});
 
-if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},heat:()=>import('./kit/heat.js'),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

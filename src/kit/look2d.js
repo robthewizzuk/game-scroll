@@ -26,6 +26,8 @@
 
 import { lazy } from './lazy.js';
 import { prefs } from './prefs.js';
+import { GlowField, glowRes } from './glow2d.js';
+import { own } from './cleanup.js';
 
 /* ---------- lights (plain canvas, no library) ---------- */
 
@@ -41,14 +43,34 @@ function hexA(col, a) {
 
 /**
  * Darkness with holes of light. Each light: { x, y, r, color?, power? (0..1), cone? (radians wide),
- * dir? (radians), flicker? (0..1), shadows? (default true) }. walls: a gs.tiles TileMap, anything with
- * ray(x0, y0, x1, y1), or a list of [x1, y1, x2, y2] segments, to cut shadows behind them.
+ * dir? (radians), flicker? (0..1), shadows? (default true), size? (glow: how big the bright middle is) }.
+ * walls: a gs.tiles TileMap, anything with ray(x0, y0, x1, y1), or a list of [x1, y1, x2, y2] segments,
+ * to cut shadows behind them.
+ *
+ * glow: true works the light out on the graphics chip instead (2D radiance cascades, glow2d.js): light
+ * runs from each light's bright middle and from whatever draw()'s emit(c) paints (lava, neon, a glowing
+ * pickup lights the room in its own shape and colour), stops at walls and whatever block(c) paints, and
+ * gives soft shadows that sharpen near what casts them; the cost doesn't grow with the lights. Options:
+ * res (texels a game unit; picked for the phone), bright (how brightly emit()'s paint shines, 3), haze
+ * (the glow added round bright light, .3), sky (the light coming in from past the screen's edges,
+ * '#000' none), steady (how much of the last frames' light is kept, .75: steadier, a little slower to
+ * follow; 0 none). lights.glowing says whether the chip is doing it; where it can't, the canvas lights
+ * draw instead (and emit() is added on top), so a game looks right either way.
  */
 export class Lights {
-  constructor(w, h, { dark = .85, color = '#000000', pixel = false, rays = 120, scale = 1 } = {}) {
-    Object.assign(this, { w, h, dark, color, pixel, rays, scale });
+  constructor(w, h, { dark = .85, color = '#000000', pixel = false, rays = 120, scale = 1, glow = false, res = 0, bright = 3, haze = .3, sky = null, steady = .75 } = {}) {
+    Object.assign(this, { w, h, dark, color, pixel, rays, scale, glow, bright, haze, sky, steady });
     this.cv = canvas(Math.ceil(w * scale), Math.ceil(h * scale)); this.g = this.cv.getContext('2d'); this.t = 0;
+    this.glowing = false;
+    if (glow) {
+      const k = glowRes(w, h, res); this.res = k;
+      this.fw = Math.max(8, Math.ceil(w * k)); this.fh = Math.max(8, Math.ceil(h * k));
+      this.field = new GlowField(this.fw, this.fh); own(this);   // (the chip's pictures go when the card leaves the feed)
+      this.sc = canvas(this.fw, this.fh); this.sg = this.sc.getContext('2d', { willReadFrequently: false });
+      this.bc = null; this.out = [];
+    }
   }
+  free() { this.field?.free(); }
   /** The points that light at (x, y) reaches, out to r: a polygon around it, cut by walls. */
   reach(l, walls) {
     const n = l.cone ? Math.max(8, Math.ceil(this.rays * l.cone / (Math.PI * 2))) : this.rays, pts = [];
@@ -65,8 +87,13 @@ export class Lights {
     }
     return pts;
   }
-  /** Draws the darkness and lights over what's on c. cam: a gs.camera2d Camera2D if the world scrolls. */
-  draw(c, lights, { walls = null, cam = null, dt = 1 / 60 } = {}) {
+  /**
+   * Draws the darkness and lights over what's on c. cam: a gs.camera2d Camera2D if the world scrolls.
+   * With glow: emit(c) paints what glows and block(c) what stops light (any colour: it counts as a
+   * wall), both in world units like the lights.
+   */
+  draw(c, lights, { walls = null, cam = null, dt = 1 / 60, emit = null, block = null } = {}) {
+    if (this.glow && this.glowDraw(c, lights, walls, cam, dt, emit, block)) return this;
     this.t += dt;
     const g = this.g, s = this.scale;
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, this.cv.width, this.cv.height);
@@ -97,9 +124,75 @@ export class Lights {
       grad.addColorStop(0, hexA(l.color, .22 * (l.power ?? 1))); grad.addColorStop(1, hexA(l.color, 0));
       c.fillStyle = grad; c.beginPath(); c.arc(l.x, l.y, l.r, 0, Math.PI * 2); c.fill();
     }
+    if (emit) { c.globalCompositeOperation = 'lighter'; emit(c); }
     c.restore();
     return this;
   }
+  /** flicker's dimming for a light now (1 steady). */
+  fl(l) { return l.flicker ? 1 - l.flicker * (.5 + .5 * Math.sin(this.t * 23 + l.x) * Math.sin(this.t * 7.3 + l.y)) * .5 : 1; }
+  glowDraw(c, lights, walls, cam, dt, emit, block) {
+    const { fw, fh, res: k, sg: g } = this;
+    this.t += dt;
+    const zoom = cam ? cam.zoom : 1, [ox, oy] = cam ? cam.offset() : [0, 0];
+    const world = gg => { gg.setTransform(k, 0, 0, k, 0, 0); gg.translate(ox, oy); gg.scale(zoom, zoom); };
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, fw, fh);
+    world(g); g.fillStyle = '#000'; g.strokeStyle = '#000';
+    // walls: a TileMap's solid tiles on screen, or segments
+    if (walls && walls.cols && walls.solid) {
+      const s = walls.size, x0 = Math.max(0, Math.floor(-ox / zoom / s)), y0 = Math.max(0, Math.floor(-oy / zoom / s));
+      const x1 = Math.min(walls.cols - 1, Math.ceil((this.w - ox) / zoom / s)), y1 = Math.min(walls.rows - 1, Math.ceil((this.h - oy) / zoom / s));
+      for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (walls.solid(tx, ty)) g.fillRect(tx * s, ty * s, s, s);
+    } else if (Array.isArray(walls)) {
+      g.lineWidth = 1.6 / (k * zoom); g.beginPath();
+      for (const [ax, ay, bx, by] of walls) { g.moveTo(ax, ay); g.lineTo(bx, by); }
+      g.stroke();
+    }
+    if (block) {   // painted in any colour, then made black: it only stops light
+      if (!this.bc) { this.bc = canvas(fw, fh); this.bg2 = this.bc.getContext('2d'); }
+      const b = this.bg2; b.setTransform(1, 0, 0, 1, 0, 0); b.globalCompositeOperation = 'source-over'; b.clearRect(0, 0, fw, fh);
+      world(b); block(b);
+      b.setTransform(1, 0, 0, 1, 0, 0); b.globalCompositeOperation = 'source-in'; b.fillStyle = '#000'; b.fillRect(0, 0, fw, fh);
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(this.bc, 0, 0); g.restore();
+    }
+    if (emit) { g.save(); emit(g); g.restore(); }
+    // the lights, in texels: a bright disc each, as bright as reaching r needs (2D light falls off as 1 / distance)
+    const out = this.out; out.length = 0;
+    for (const l of lights) {
+      const f = this.fl(l), x = (l.x * zoom + ox) * k, y = (l.y * zoom + oy) * k, r = l.r * f * zoom * k;
+      const a = Math.max(2.5, (l.size ?? Math.min(6, Math.max(2, l.r * .04))) * zoom * k);
+      if (x < -r || y < -r || x > fw + r || y > fh + r) continue;
+      const L = .35 * Math.PI * r / a * (l.power ?? 1) * f * (l.cone ? Math.sqrt(Math.PI * 2 / Math.max(.2, l.cone)) : 1), [cr, cg, cb] = rgb(l.color || '#ffffff');
+      out.push({ x, y, a, cone: l.cone ? l.cone / 2 : 0, dir: l.dir || 0, r: cr * L, g: cg * L, b: cb * L });
+    }
+    const [dr, dg, db] = rgb(this.color), d = this.dark;
+    const pic = this.field.run(this.sc, out, {
+      bright: this.bright, haze: this.pixel ? 0 : this.haze, pixel: this.pixel, ow: fw, oh: fh,
+      amb: [1 - d + dr * d, 1 - d + dg * d, 1 - d + db * d], sky: this.sky ? rgb(this.sky) : [0, 0, 0],
+      shift: [(ox - (this.ox ?? ox)) * k, (oy - (this.oy ?? oy)) * k], keep: this.steady,
+    });
+    this.ox = ox; this.oy = oy;
+    if (!pic) { this.glowing = false; this.t -= dt; return false; }
+    this.glowing = true;
+    c.save(); if (this.pixel) c.imageSmoothingEnabled = false;
+    c.globalCompositeOperation = 'multiply'; c.drawImage(pic, 0, 0, fw, fh, 0, 0, this.w, this.h);
+    if (emit) {   // what glows, drawn sharp over the dark at the game's own size
+      c.save(); c.globalCompositeOperation = 'source-over';
+      if (cam) { c.translate(ox, oy); c.scale(zoom, zoom); }
+      emit(c); c.restore();
+    }
+    if (!this.pixel) { c.globalCompositeOperation = 'lighter'; c.drawImage(pic, 0, fh, fw, fh, 0, 0, this.w, this.h); }
+    c.restore();
+    return true;
+  }
+}
+const rgbCache = new Map();
+function rgb(col) {   // a colour as [r, g, b] 0..1 (hex, or anything the canvas reads)
+  let v = rgbCache.get(col); if (v) return v;
+  const m = String(col).match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (m) { let h = m[1]; if (h.length === 3) h = [...h].map(x => x + x).join(''); v = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255); }
+  else { const t = canvas(1, 1).getContext('2d'); t.fillStyle = col; t.fillRect(0, 0, 1, 1); const p = t.getImageData(0, 0, 1, 1).data; v = [p[0] / 255, p[1] / 255, p[2] / 255]; }
+  if (rgbCache.size > 256) rgbCache.clear();
+  rgbCache.set(col, v); return v;
 }
 function segHit(x0, y0, x1, y1, [ax, ay, bx, by]) {   // where (0..1) the ray first crosses segment a-b, or 1
   const rx = x1 - x0, ry = y1 - y0, sx = bx - ax, sy = by - ay, d = rx * sy - ry * sx;

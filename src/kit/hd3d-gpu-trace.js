@@ -388,7 +388,7 @@ const VOGEL = Array.from({ length: 6 }, (_, i) => { const r = Math.sqrt((i + .5)
 /** The scene's colour with the traced reflections laid over it (a picture node). tr: the view's Tracer. */
 export function traceStage(ch, sp, colT, tr) {
   const U = ch.trU = {
-    invProj: uniform(new Matrix4()), proj: uniform(new Matrix4()), camWorld: uniform(new Matrix4()), view: uniform(new Matrix4()), camPos: uniform(new Vector3()),
+    invProj: uniform(new Matrix4()), proj: uniform(new Matrix4()), camWorld: uniform(new Matrix4()), view: uniform(new Matrix4()), viewProj: uniform(new Matrix4()), camPos: uniform(new Vector3()),
     half: uniform(new Vector2(1, 1)), nf: uniform(new Vector2(.05, 120)), focal: uniform(1),
     // Ray Regeneration (regenStage below): where this frame's rays start inside their pixels (rj, in the rays' pixels),
     // the turns of their noise, last frame's camera without the upscaler's jitter (prevVP, its inverse, where it stood),
@@ -662,13 +662,21 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
       const kk = mix(float(8), float(1.2), soft).toVar();
       const sum = vec3(0).toVar(), ws = float(0).toVar(), m1 = vec3(0).toVar(), m2 = vec3(0).toVar(), wb = float(0).toVar(), tn = float(-1).toVar(), wt = float(0).toVar(), us = float(0).toVar(), lo = vec3(1e4).toVar(), hi = vec3(-1e4).toVar(), fw = float(0).toVar();
       // (how far this pixel's own ray went, as the share of the blur it leaves: see reach below)
-      const ownA = rays.load(clamp(ivec2(floor(hp.add(.5))), ivec2(0), top)).a, ownReach = select(spread.greaterThan(.02).and(ownA.greaterThan(0)), ownA.div(ownA.add(len)), float(1)).toVar();
-      const tap = (px, w0, out = 1) => {
-        const p = clamp(px, ivec2(0), top), s = rays.load(p), tq = vec2(p).add(.5).add(U.rj).div(U.half).toVar(), z = zAt(tq);
+      // (this pixel's plane, for the taps: the view-space point a tap's pixel looks through is affine in its place on
+      // the picture (the inverse projection's w is the same at one depth), so where the plane lies along it is a few
+      // sums per tap, worked out here once: the point at the picture's corner (0, 0) and its steps along x and y)
+      const c00 = U.invProj.mul(vec4(-1, 1, .5, 1)), c10 = U.invProj.mul(vec4(1, 1, .5, 1)), c01 = U.invProj.mul(vec4(-1, -1, .5, 1));
+      const r00 = c00.xyz.div(c00.w).toVar(), rx = c10.xyz.div(c10.w).sub(r00).toVar(), ry = c01.xyz.div(c01.w).sub(r00).toVar();
+      const pn0 = dot(nv, r00).toVar(), pnx = dot(nv, rx).toVar(), pny = dot(nv, ry).toVar(), pd = dot(nv, vp).toVar();
+      // (the four nearest rays, read once: one of them is this pixel's own)
+      const n4 = REGEN_TAPS.map(([x, y]) => rays.load(clamp(b.add(ivec2(x, y)), ivec2(0), top)).toVar()), oo = ivec2(floor(hp.add(.5))).sub(b);
+      const ownA = select(oo.y.greaterThan(0), select(oo.x.greaterThan(0), n4[3], n4[2]), select(oo.x.greaterThan(0), n4[1], n4[0])).a, ownReach = select(spread.greaterThan(.02).and(ownA.greaterThan(0)), ownA.div(ownA.add(len)), float(1)).toVar();
+      const tap = (px, w0, out = 1, got = null) => {
+        const p = clamp(px, ivec2(0), top), s = got || rays.load(p), tq = vec2(p).add(.5).add(U.rj).div(U.half).toVar(), z = zAt(tq);
         // (on this pixel's surface: as deep as it, or as deep as its plane is at the ray's own pixel. A floor seen at a
         // low angle gets deeper fast toward the camera, the way its blur is longest, and held to this pixel's depth
         // alone its rays were shared over a strip across the picture, not over the blur)
-        const tb = U.invProj.mul(vec4(tq.x.mul(2).sub(1), tq.y.oneMinus().mul(2).sub(1), .5, 1)), tr = tb.xyz.div(tb.w), tdn = dot(nv, tr), zp = select(abs(tdn).greaterThan(1e-6), tr.z.mul(dot(nv, vp)).div(tdn), zc);
+        const tdn = pn0.add(pnx.mul(tq.x)).add(pny.mul(tq.y)), zp = select(abs(tdn).greaterThan(1e-6), r00.z.add(rx.z.mul(tq.x)).add(ry.z.mul(tq.y)).mul(pd).div(tdn), zc);
         const on = max(float(1).sub(min(abs(z.sub(zc)), abs(z.sub(zp))).div(abs(zc).mul(.04).add(.03))), 0).mul(select(s.a.equal(0), float(0), float(1))).toVar();
         // (a ray from another pixel is one of this pixel's cone only if it started within the cone's width at the
         // thing it found: a thing found close by, as a pole's foot by the floor in front of it, is seen from there
@@ -686,7 +694,7 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
         If(on.greaterThan(.05), () => { lo.assign(min(lo, val)); hi.assign(max(hi, val)); });
       };
       // the four nearest (the tests' reference: each pixel's own ray alone)
-      for (const [x, y] of REGEN_TAPS) { const d = vec2(b.add(ivec2(x, y))).sub(hp), d2 = dot(d, d); tap(b.add(ivec2(x, y)), exp(d2.mul(kk).negate()).mul(select(d2.lessThan(.01), float(1), U.ref.oneMinus()))); }
+      REGEN_TAPS.forEach(([x, y], i) => { const d = vec2(b.add(ivec2(x, y))).sub(hp), d2 = dot(d, d); tap(b.add(ivec2(x, y)), exp(d2.mul(kk).negate()).mul(select(d2.lessThan(.01), float(1), U.ref.oneMinus())), 1, n4[i]); });
       // how far behind the surface the reflected thing stands. A mirror: as far as the nearest ray went. A rough
       // surface: each of its rays went another way and found another thing, so one frame's say little; the nearness
       // they found is kept from frame to frame with the surface (read back where this point of it was) and this
@@ -731,7 +739,7 @@ function regenStage(ch, { U, L, dT, nT, R, C, rays, zAt, envAt, vel }) {
         // own sky, and one point's "less the sky" read at the next would move the sky's highlights about)
         const k = G.distN.sample(p).toVar(), h4 = G.histN.sample(p), h = vec4(h4.rgb.sub(sky.mul(k.a)), h4.a).toVar(), hl = k.r;
         const nd = vec2(p.x.sub(U.jn.x).mul(2).sub(1), float(1).sub(p.y.sub(U.jn.y).mul(2))), fp = U.prevInv.mul(vec4(nd, 1, 1)), pp = U.prevCam.add(normalize(fp.xyz.div(fp.w).sub(U.prevCam)).mul(hl));
-        const pn = U.proj.mul(U.view.mul(vec4(pp, 1))), there = pn.xy.div(max(abs(pn.w), 1e-6)).mul(vec2(.5, -.5)).add(.5);
+        const pn = U.viewProj.mul(vec4(pp, 1)), there = pn.xy.div(max(abs(pn.w), 1e-6)).mul(vec2(.5, -.5)).add(.5);
         const ok = p.x.greaterThanEqual(0).and(p.x.lessThanEqual(1)).and(p.y.greaterThanEqual(0)).and(p.y.lessThanEqual(1)).and(pc.w.greaterThan(0)).and(hl.greaterThan(0))
           .and(abs(dot(pp.sub(wp), nw)).lessThan(len.mul(.02).add(.03))).and(U.cut.lessThan(.5))
           .and(abs(float(1 + 1 / 64).sub(abs(R.sample(there).a)).sub(rough)).lessThan(.06));
@@ -847,7 +855,7 @@ export function traceFrame(ch, w, h, scale, { cut = false, f = null, ref = false
   const G = ch.trG; if (G && ref) scale = 1;
   const U = ch.trU, cam = ch.cam, hw = Math.max(4, Math.round(w * scale)), hh = Math.max(4, Math.round(h * scale));
   ch.trT.setSize(w, h); ch.trH?.setSize(hw, hh); U.half.value.set(hw, hh); U.size.value.set(w, h);
-  U.invProj.value.copy(cam.projectionMatrixInverse); U.proj.value.copy(cam.projectionMatrix); U.camWorld.value.copy(cam.matrixWorld); U.view.value.copy(cam.matrixWorld).invert();
+  U.invProj.value.copy(cam.projectionMatrixInverse); U.proj.value.copy(cam.projectionMatrix); U.camWorld.value.copy(cam.matrixWorld); U.view.value.copy(cam.matrixWorld).invert(); U.viewProj.value.multiplyMatrices(U.proj.value, U.view.value);
   cam.getWorldPosition(U.camPos.value); U.nf.value.set(cam.near, cam.far); U.focal.value = cam.projectionMatrix.elements[5] * hh / 2;
   if (G) {
     // the camera without the upscaler's jitter, this frame and last (the history is read on the pixel grid: a still

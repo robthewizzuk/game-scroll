@@ -1010,8 +1010,20 @@ export function areaLTC(lib) { RectAreaLightNode.setLTC(lib.init()); }
 // as three's own shadow.filterNode hook. A few taps find how far above the ground the blockers are,
 // then the filter spreads by that gap times the sun's width: sharp at a foot, soft at a rooftop's edge.
 // Sun (orthographic) shadows: depth there is linear, so the gap in metres is the depth gap x range.
+// With the upscaler's history under it (SGSR 2 / GSSR: hd3d.js sets pcssFrame each frame), the taps' pattern turns
+// by the golden ratio every frame and the history averages the turns, so fewer taps a frame give the same soft edge
+// (the same trade spread.js and the ray tracer make): 5 + 7 instead of 8 + 12. With no history, the full count and
+// a still pattern (a turning one would crawl). The counts are uniforms over a fixed loop: a skipped tap is a branch
+// every pixel takes the same way, so it costs nothing on the chip and no shader is built again when they change.
 const PCSS_FIND = 8, PCSS_TAPS = 12, GOLDEN = 2.39996323;
-const disc = (i, n, phi) => { const r = Math.sqrt((i + .5) / n), a = phi.add(i * GOLDEN); return vec2(cos(a), sin(a)).mul(r); };
+/** Taps (find, filter) a frame and the pattern's turn (0..1): hd3d.js pcssFrame() sets them. */
+export const PCSS = { n: uniform(new Vector2(PCSS_FIND, PCSS_TAPS)), turn: uniform(0), few: [5, 7], on: true };
+/** Called once a frame: history (the upscaler keeps one this frame), frame (a counter). */
+export function pcssFrame(history, frame) {
+  const few = history && PCSS.on; PCSS.n.value.set(few ? PCSS.few[0] : PCSS_FIND, few ? PCSS.few[1] : PCSS_TAPS);
+  PCSS.turn.value = few ? frame * .6180339887 % 1 : 0;
+}
+const disc = (i, n, phi) => { const r = float(i + .5).div(n).sqrt(), a = phi.add(i * GOLDEN); return vec2(cos(a), sin(a)).mul(r); };
 export function pcss(light) {
   const sh = light.shadow, cam = sh.camera;
   // texels of spread per unit of depth gap: depth range (m) x tan(sun width) / texel size (m)
@@ -1023,21 +1035,24 @@ export function pcss(light) {
     const at = u => { let t = texture(depthTexture, u); if (depthTexture.isArrayTexture) t = t.depth(depthLayer); return t; };
     // (the raw depth by texel: the map's sampler is a comparing one, which can't read depths)
     const raw = u => { let t = texture(depthTexture).load(ivec2(u.div(TEXEL))); if (depthTexture.isArrayTexture) t = t.depth(depthLayer); return t.x; };
-    const texel = TEXEL, z = shadowCoord.z, phi = interleavedGradientNoise(screenCoordinate.xy).mul(6.2831853);
+    const texel = TEXEL, z = shadowCoord.z, phi = fract(interleavedGradientNoise(screenCoordinate.xy).add(PCSS.turn)).mul(6.2831853).toVar();
+    const NF = PCSS.n.x, NT = PCSS.n.y;
     // 1: blockers in reach of the widest spread, their average depth
     const sum = float(0).toVar(), n = float(0).toVar();
     for (let i = 0; i < PCSS_FIND; i++) {
-      const d = raw(clamp(shadowCoord.xy.add(disc(i, PCSS_FIND, phi).mul(MAXR).mul(texel)), 0, .9999));
-      const b = rev ? step(z, d) : step(d, z);   // (closer to the sun than this point)
-      sum.addAssign(d.mul(b)); n.addAssign(b);
+      If(NF.greaterThan(i), () => {
+        const d = raw(clamp(shadowCoord.xy.add(disc(i, NF, phi).mul(MAXR).mul(texel)), 0, .9999));
+        const b = rev ? step(z, d) : step(d, z);   // (closer to the sun than this point)
+        sum.addAssign(d.mul(b)); n.addAssign(b);
+      });
     }
     const lit = float(1).toVar();
     If(n.greaterThan(0), () => {
       const gap = abs(z.sub(sum.div(n))), r = clamp(gap.mul(K), 1, MAXR).mul(texel);
       // 2: the filter, as wide as the gap says
       const acc = float(0).toVar();
-      for (let i = 0; i < PCSS_TAPS; i++) acc.addAssign(at(shadowCoord.xy.add(disc(i, PCSS_TAPS, phi.add(1.7)).mul(r))).compare(z));
-      lit.assign(acc.div(PCSS_TAPS));
+      for (let i = 0; i < PCSS_TAPS; i++) If(NT.greaterThan(i), () => { acc.addAssign(at(shadowCoord.xy.add(disc(i, NT, phi.add(1.7)).mul(r))).compare(z)); });
+      lit.assign(acc.div(NT));
     });
     return lit;
   });
@@ -2039,6 +2054,26 @@ function bloomChain(src, aoF, P = HALF4) {
     dispose() { for (const n of [...nodes, ...Us]) n?.renderTarget?.dispose(); },
   };
 }
+// How bright each part of the screen is on the whole, for the OLED dimming (hd3d.js FINAL_EFFECTS oled): the picture
+// at a quarter and then a sixteenth of its size, each pixel the exact average of a 4 x 4 block (four bilinear reads
+// between texels), so a big bright area reads bright and a small highlight hardly at all, and nothing flickers as
+// things move. Two tiny passes (a sixteenth and a 256th of the pixels).
+function bigChain(src, aoF, P = HALF4) {
+  const px = [uniform(new Vector2(1, 1)), uniform(new Vector2(1, 1))], at = (t, p, x, y) => t.sample(uv().add(vec2(x, y).mul(p))).rgb;
+  const box = (t, p, k) => at(t, p, -1, -1).add(at(t, p, 1, -1)).add(at(t, p, -1, 1)).add(at(t, p, 1, 1)).mul(k);
+  const A = rtt(hdrOut(vec4(box(src, px[0], .25).mul(aoF), 1), P), 1, 1, P), B = rtt(hdrOut(vec4(box(A, px[1], .25), 1), P), 1, 1, P);
+  A.renderTarget.gsPart = B.renderTarget.gsPart = 'effects';
+  return {
+    wide: B,
+    size(w, h) {
+      if (this.key === `${w}x${h}`) return; this.key = `${w}x${h}`;
+      const aw = Math.max(1, Math.ceil(w / 4)), ah = Math.max(1, Math.ceil(h / 4));
+      A.setSize(aw, ah); B.setSize(Math.max(1, Math.ceil(aw / 4)), Math.max(1, Math.ceil(ah / 4)));
+      px[0].value.set(1 / w, 1 / h); px[1].value.set(1 / aw, 1 / ah);
+    },
+    dispose() { A.renderTarget?.dispose(); B.renderTarget?.dispose(); },
+  };
+}
 
 /* ---------- the screen effects ---------- */
 // The last touches on the finished picture: vignette, film grain and the hurt flash. t moves the
@@ -2593,6 +2628,8 @@ export class GpuChain {
       sunCol: uniform(new Color()), aspect: uniform(1), lutK: uniform(1),
       // HDR screens (gpu.js): how far past paper white the brightest highlights go (headroom - 1), and the exposure
       hdrK: uniform(0), hdrExp: uniform(1),
+      // big bright areas dimmer while saving power, on OLED screens (hd3d.js FINAL_EFFECTS oled, OLED_MAX): how much, the exposure
+      oled: uniform(0), oledExp: uniform(1),
       // depth of field (hd3d.js DOF): at, range, depth, blur in pixels; camera near and far; one pixel
       lens: uniform(new Vector4()), cn: uniform(.1), cf: uniform(1000), px: uniform(new Vector2(1, 1)),
       // sun shafts (hd3d.js SHAFT_*): strength x how much the sun shows, and the light's colour
@@ -2638,7 +2675,7 @@ export class GpuChain {
     }
     this.builtKey = key; this.builtX = this.xKey;
     this.key = key; this.fg?.reset(); this.sched = null; this.still?.reset();
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose(); this.bigN?.dispose(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose();
     for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose();
     this.giN?.dispose?.(); this.giT?.renderTarget?.dispose(); this.giN = this.giT = null;
     for (const k of ['spAO', 'spVol', 'spGI', 'lensN']) { this[k]?.dispose(); this[k] = null; }
@@ -2871,7 +2908,7 @@ export class GpuChain {
       shafts = this.shB.sample(screenUV).rgb.mul(U.shaftTint).mul(U.shaft); this.shM.renderTarget.gsPart = this.shB.renderTarget.gsPart = 'light shafts';
     }
     if (src !== colT || shaftsOn) lit = src.sample(screenUV).rgb.mul(srcAo).add(shafts);
-    this.bloomN = bloomChain(src, srcAo, P3); this.bloomK = uniform(.56);
+    this.bloomN = bloomChain(src, srcAo, P3); this.bloomK = uniform(.56); this.bigN = bigChain(src, srcAo, P3);
     const uv0 = screenUV, d = uv0.sub(.5), r2 = dot(d, d), half = halfWanted();
     const graded = Fn(() => {
       const uv = uv0;
@@ -2909,6 +2946,13 @@ export class GpuChain {
     if (this.r.gsHdr) {
       const U = this.U, over = max(dot(graded, LUM).mul(U.hdrExp).sub(1), 0);
       out = vec4(out.rgb.mul(float(1).add(U.hdrK.mul(float(1).sub(exp(over.mul(-.6)))))), 1);
+    }
+    // OLED screens light each pixel, so a big bright area (a sky) costs power and heat: while the phone saves power it
+    // is a little dimmer, the blue most (hd3d.js FINAL_EFFECTS oled). By how bright the area round each pixel is on the
+    // whole (bigChain), so a small highlight keeps its full brightness; a uniform, so nothing is rebuilt as it eases in and out
+    {
+      const U = this.U, big = dot(this.bigN.wide.sample(screenUV).rgb.mul(U.oledExp), vec3(.2126, .7152, .0722));
+      out = vec4(out.rgb.mul(vec3(1).sub(vec3(.9, .9, 1.2).mul(U.oled.mul(smoothstep(.1, .7, big))))), 1);
     }
     // live, the last touches go on as each refresh is shown (show()), not here
     const fin = live ? vec4(out.rgb, 1) : Fn(() => vec4(touches(U, out.rgb, U.t, float(1)), 1))();
@@ -3004,9 +3048,10 @@ export class GpuChain {
       if (this.aoN && this.aoN.resolutionScale !== o.ao * k) { this.aoN.resolutionScale = o.ao * k; this.dnT?.setResolutionScale(o.ao * k); }
       // (three's SSGI sizes itself from the canvas, the screen's size under an upscaler: the picture's size, or half of it spread)
       if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
-      this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5);
+      this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5); this.bigN.size(o.w, o.h);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }
+      U.oled.value = o.oled || 0; U.oledExp.value = this.r.toneMappingExposure;
       const g = o.grade; U.gradeOn.value = g ? 1 : 0;
       if (g) { U.sat.value = g.sat; U.con.value = g.con; U.lo.value.copy(g.lo); U.hi.value.copy(g.hi); }
       if (this.giT) this.giT.setSize(o.w, o.h);
@@ -3204,7 +3249,7 @@ export class GpuChain {
   }
   dispose() {
     this.lensN?.dispose(); this.lensN = null;
-    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
+    this.aoN?.dispose?.(); this.dnN?.dispose?.(); this.dnT?.renderTarget?.dispose(); this.bloomN?.dispose?.(); this.bigN?.dispose?.(); this.s2?.dispose(); this.s1?.dispose(); this.dofT?.renderTarget?.dispose(); this.shM?.renderTarget?.dispose(); this.shB?.renderTarget?.dispose(); for (const t of [this.volT, this.baseT, this.mbT]) t?.renderTarget?.dispose(); this.pp.dispose?.();
     fxDispose(this); reflDispose(this); TR?.traceDispose(this);
     this.fg?.dispose(); this.still?.dispose(); for (const t of this.fgRT || []) t.dispose(); this.showQ?.material.dispose(); this.madeQ?.material.dispose(); this.fg = this.still = this.fgRT = this.showQ = this.madeQ = null; this.sched = null; this.lastColor = null;
     this._bf?.rt.dispose(); this._bf = null;

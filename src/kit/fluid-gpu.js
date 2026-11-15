@@ -13,7 +13,7 @@ import {
   Fn, instancedArray, storage, instanceIndex, uniform, uniformArray, Loop, If, int, float, vec2, vec3, vec4, ivec3, max, min, abs, sign, floor, length, dot, cross,
   select, clamp, mix, smoothstep, normalize, sqrt, atomicAdd, positionGeometry, positionPrevious, cameraViewMatrix, cameraWorldMatrix, uv,
 } from 'three/tsl';
-import { RHO, K, VMAX, LO, IN, SKIN, REACH, RAD, SOLIDS, SINKS, PUSHES, bulk, FLUID } from './fluid.js';
+import { RHO, K, VMAX, LO, IN, SKIN, REACH, RAD, SOLIDS, SINKS, PUSHES, bulk, FLUID, GRAIN_G, GRIP, PACK0 } from './fluid.js';
 
 const MULT = 4194304, FAR = 480;   // fixed point: 22 bits after the point, sums up to +-512
 const SPAWN = 2048;                // new drops sent up in one go
@@ -28,12 +28,14 @@ export function gpuFluid(F) {
   const S = F.sim, { N, nx, ny, nz, cells } = S, hx = S.hi[0], hy = S.hi[1], hz = S.hi[2], L = F.look;
   const Pb = instancedArray(N, 'vec4'), Vb = instancedArray(N, 'vec4'), Cb = instancedArray(N * 3, 'vec4'), Db = instancedArray(N, 'vec4'), Mb = instancedArray(N, 'vec4');
   const giA = new StorageBufferAttribute(new Int32Array(cells * 4), 1), Gi = storage(giA, 'int', cells * 4).toAtomic(), GiR = storage(giA, 'int', cells * 4);
+  // grains, snow and mud (fluid.js GRAIN): each drop's shear, xx yy zz and its resting fullness, then xy xz yz
+  const grain = S.grain, Eb = grain ? instancedArray(N * 2, 'vec4') : null;
   const Gm = instancedArray(cells, 'float'), Gf = instancedArray(cells, 'vec4'), Hg = instancedArray(nx * nz, 'float'), Sp = instancedArray(SPAWN * 2, 'vec4');
   const rows = n => Array.from({ length: n }, () => new Vector4());
   const sc = rows(SOLIDS), sa = rows(SOLIDS), si = rows(SOLIDS), s0 = rows(SOLIDS), s1 = rows(SOLIDS), s2 = rows(SOLIDS), sv = rows(SOLIDS), sw = rows(SOLIDS), dk = rows(SINKS), pu = rows(PUSHES), pv = rows(PUSHES);
   const SC = uniformArray(sc, 'vec4'), SA = uniformArray(sa, 'vec4'), SI = uniformArray(si, 'vec4'), SM0 = uniformArray(s0, 'vec4'), SM1 = uniformArray(s1, 'vec4'), SM2 = uniformArray(s2, 'vec4'), SV = uniformArray(sv, 'vec4'), SW = uniformArray(sw, 'vec4');
   const DK = uniformArray(dk, 'vec4'), PU = uniformArray(pu, 'vec4'), PV = uniformArray(pv, 'vec4');
-  const U = { grav: uniform(new Vector3()), mu: uniform(F.mu), zeta: uniform(bulk(F.mu)), open: uniform(0), ns: uniform(0, 'int'), ground: uniform(0), nk: uniform(0, 'int'), np: uniform(0, 'int'), moved: uniform(0) };
+  const U = { grav: uniform(new Vector3()), mu: uniform(F.mu), zeta: uniform(bulk(F.mu)), open: uniform(0), ns: uniform(0, 'int'), ground: uniform(0), nk: uniform(0, 'int'), np: uniform(0, 'int'), moved: uniform(0), gstep: uniform(S.gstep) };
 
   /* ----- pieces the passes share ----- */
   const cellOf = (ix, iy, iz) => iz.mul(ny).add(iy).mul(nx).add(ix);
@@ -143,10 +145,31 @@ export function gpuFluid(F) {
       rho.assign(max(rho, 1e-4));
       Db.element(instanceIndex).assign(vec4(grad.div(-RHO), rho.div(RHO)));
       const c = instanceIndex.mul(3), c0 = Cb.element(c).xyz.toVar(), c1 = Cb.element(c.add(1)).xyz.toVar(), c2 = Cb.element(c.add(2)).xyz.toVar();
-      const q = min(rho.div(RHO), 3), q2 = q.mul(q), kp = float(4).div(rho).mul(max(float(0), q2.mul(q2).sub(1).mul(K))).toVar(), kv = min(float(1).div(rho), rho.div(RHO * RHO)).mul(-4).toVar();
+      // grains: snow packs (its resting fullness rises when squeezed past a little: fluid.js Sim.pack())
+      const ea = grain ? Eb.element(instanceIndex.mul(2)).toVar() : null, eb = grain ? Eb.element(instanceIndex.mul(2).add(1)).toVar() : null;
+      const r0 = grain ? ea.w.toVar() : float(1);
+      if (grain && grain.packs > 0) { const qr = rho.div(RHO); If(qr.greaterThan(r0.mul(1 + PACK0)), () => { r0.assign(min(float(1 + grain.packs), qr.div(1 + PACK0))); }); }
+      const q = min(rho.div(RHO).div(r0), 3), q2 = q.mul(q), sp = max(float(0), q2.mul(q2).sub(1).mul(K)).toVar(), kp = float(4).div(rho).mul(sp).toVar(), kv = min(float(1).div(rho), rho.div(RHO * RHO)).mul(-4).toVar();
       const sq = kv.mul(U.zeta).mul(c0.x.add(c1.y).add(c2.z)).add(kp), m2 = kv.mul(U.mu);
       const t0 = vec3(m2.mul(2).mul(c0.x).add(sq), m2.mul(c0.y.add(c1.x)), m2.mul(c0.z.add(c2.x))).toVar();
       const t1 = vec3(t0.y, m2.mul(2).mul(c1.y).add(sq), m2.mul(c1.z.add(c2.y))).toVar(), t2 = vec3(t0.z, t1.z, m2.mul(2).mul(c2.z).add(sq)).toVar();
+      if (grain) {   // the shear's spring, as far as friction and what holds it allow (fluid.js Sim.shear())
+        const s00 = ea.x, s11 = ea.y, s22 = ea.z, s01 = eb.x, s02 = eb.y, s12 = eb.z;
+        const tr = c0.x.add(c1.y).add(c2.z).div(3), w01 = c0.y.sub(c1.x).mul(.5), w02 = c0.z.sub(c2.x).mul(.5), w12 = c1.z.sub(c2.y).mul(.5);
+        const r00 = w01.mul(s01).add(w02.mul(s02)).mul(2), r11 = w12.mul(s12).sub(w01.mul(s01)).mul(2), r22 = w02.mul(s02).add(w12.mul(s12)).mul(-2);
+        const r01 = w01.mul(s11).add(w02.mul(s12)).sub(w01.mul(s00)).add(w12.mul(s02));
+        const r02 = w01.mul(s12).add(w02.mul(s22)).sub(w02.mul(s00)).sub(w12.mul(s01));
+        const r12 = w12.mul(s22).sub(w01.mul(s02)).sub(w02.mul(s01)).sub(w12.mul(s11));
+        const d = vec3(s00.add(c0.x).sub(tr).add(r00), s11.add(c1.y).sub(tr).add(r11), s22.add(c2.z).sub(tr).add(r22)).toVar();
+        d.subAssign(d.x.add(d.y).add(d.z).div(3));
+        const o = vec3(s01.add(c0.y.add(c1.x).mul(.5)).add(r01), s02.add(c0.z.add(c2.x).mul(.5)).add(r02), s12.add(c1.z.add(c2.y).mul(.5)).add(r12)).toVar();
+        const size = sqrt(dot(d, d).add(dot(o, o).mul(2))), hold = r0.mul(r0).mul(r0).mul(U.gstep).mul(grain.holds * RHO * .5);
+        const most = sp.mul(grain.mu).add(hold).div(2 * GRAIN_G), k = select(size.greaterThan(most), most.div(max(size, 1e-12)), float(1));
+        d.mulAssign(k); o.mulAssign(k);
+        Eb.element(instanceIndex.mul(2)).assign(vec4(d, r0)); Eb.element(instanceIndex.mul(2).add(1)).assign(vec4(o, 0));
+        const k2 = kv.mul(2 * GRAIN_G);
+        t0.addAssign(vec3(d.x, o.x, o.y).mul(k2)); t1.addAssign(vec3(o.x, d.y, o.z).mul(k2)); t2.addAssign(vec3(o.y, o.z, d.z).mul(k2));
+      }
       const push = (at, r0, r1, r2) => round27(at, (w, r, cell) => {
         const i4 = cell.mul(4);
         atomicAdd(Gi.element(i4), enc(dot(r0, r).mul(w))); atomicAdd(Gi.element(i4.add(1)), enc(dot(r1, r).mul(w))); atomicAdd(Gi.element(i4.add(2)), enc(dot(r2, r).mul(w)));
@@ -179,7 +202,9 @@ export function gpuFluid(F) {
       If(U.ns.greaterThan(0).or(U.ground.greaterThan(.5)), () => {
         const { bd, bn, bu } = near(at);
         If(bd.lessThan(0), () => { const q = v.sub(bu).toVar(), vn = dot(q, bn); If(vn.lessThan(0), () => { q.subAssign(bn.mul(vn)); }); v.assign(bu.add(q)); });
+        if (grain) If(bd.lessThan(.5), () => { const q = v.sub(bu).toVar(); v.subAssign(q.sub(bn.mul(dot(q, bn))).mul(GRIP)); });   // (grains: gripped)
       });
+      if (grain) If(walls.and(jy.equal(LO)), () => { v.x.mulAssign(1 - GRIP); v.z.mulAssign(1 - GRIP); });   // (and by the box's floor)
     });
     const turn = vec3(select(jx.equal(ix), float(1), float(-1)), select(jy.equal(iy), float(1), float(-1)), select(jz.equal(iz), float(1), float(-1)));
     Gf.element(instanceIndex).assign(vec4(v.mul(turn), m.div(MULT)));
@@ -221,6 +246,7 @@ export function gpuFluid(F) {
     Pb.element(slot).assign(vec4(a.xyz, 1)); Vb.element(slot).assign(vec4(b.xyz, 0));
     Cb.element(slot.mul(3)).assign(vec4(0)); Cb.element(slot.mul(3).add(1)).assign(vec4(0)); Cb.element(slot.mul(3).add(2)).assign(vec4(0));
     Db.element(slot).assign(vec4(0, 0, 0, 1));
+    if (grain) { Eb.element(slot.mul(2)).assign(vec4(0, 0, 0, 1)); Eb.element(slot.mul(2).add(1)).assign(vec4(0)); }
   })().compute(SPAWN, [64]);
   const passes = [clear, toGrid, weigh, press, move, toDrops];
   // a frame's steps as one list (one compute pass and one submit to the chip, not one a step); a list for each count of steps, kept
@@ -260,7 +286,7 @@ export function gpuFluid(F) {
     /** Runs n steps on the graphics chip, with what fluid.js has ready: new drops, the solids, drains and blasts as they are now. */
     step(r, n) {
       const sp = Sp.value.array;
-      if (F.cpuOwns) { up4(Pb, S.P); up4(Vb, S.V); up4(Cb, S.C); F.cpuOwns = false; F.staged.length = 0; }
+      if (F.cpuOwns) { up4(Pb, S.P); up4(Vb, S.V); up4(Cb, S.C); if (Eb) up4(Eb, S.E); F.cpuOwns = false; F.staged.length = 0; }
       for (let at = 0; at < F.staged.length; at += SPAWN) {
         const k = Math.min(SPAWN, F.staged.length - at);
         for (let i = 0; i < k; i++) { const s = F.staged[at + i], a = s * 4, o = i * 8; sp[o] = S.P[a]; sp[o + 1] = S.P[a + 1]; sp[o + 2] = S.P[a + 2]; sp[o + 3] = s; sp[o + 4] = S.V[a]; sp[o + 5] = S.V[a + 1]; sp[o + 6] = S.V[a + 2]; sp[o + 7] = 0; }
@@ -269,7 +295,7 @@ export function gpuFluid(F) {
       F.staged.length = 0;
       if (S.H !== groundAt || F.groundNew) { groundAt = S.H; F.groundNew = false; if (S.H) up4(Hg, S.H); }
       U.ground.value = S.H ? 1 : 0; U.open.value = F.open ? 1 : 0; U.mu.value = F.mu; U.zeta.value = bulk(F.mu);
-      const kg = S.dt * S.dt / S.h; U.grav.value.set(F.gravity.x * kg, F.gravity.y * kg, F.gravity.z * kg);
+      U.gstep.value = S.gstep; const kg = S.dt * S.dt / S.h; U.grav.value.set(F.gravity.x * kg, F.gravity.y * kg, F.gravity.z * kg);
       const ps = F.packed; U.ns.value = Math.min(ps.length, SOLIDS);
       for (let i = 0; i < U.ns.value; i++) {
         const s = ps[i], m = s.m;
@@ -286,6 +312,6 @@ export function gpuFluid(F) {
     },
     /** A promise of the drops as they are now on the graphics chip; the fluid's count and its answers are up to date when it resolves (tests). */
     drops(r) { const at = S.steps; return copy(r).then(P => { if (F.twin?.sim === S) F.read(P, at); return P; }); },
-    dispose() { mat.dispose(); mesh.geometry.dispose(); for (const b of [Pb, Vb, Cb, Db, Mb, Gm, Gf, Hg, Sp]) b.value?.dispose?.(); giA.dispose?.(); },
+    dispose() { mat.dispose(); mesh.geometry.dispose(); for (const b of [Pb, Vb, Cb, Db, Mb, Gm, Gf, Hg, Sp, Eb]) b?.value?.dispose?.(); giA.dispose?.(); },
   };
 }

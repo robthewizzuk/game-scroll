@@ -1967,6 +1967,29 @@ functions out of anything that decides what happens (use them for drawing), use 
 anything with `ray()`, or `[x1, y1, x2, y2]` segments) cast real shadows. `pixel: true` bands the
 light for pixel styles.
 
+**Light that glows** (`new Lights(W, H, { glow: true })`): the light is worked out on the graphics chip
+with 2D radiance cascades (Sannikov 2023). Light leaves each light's bright middle (`size`, in game
+units) and anything `emit(c)` paints, runs across the screen, stops at walls (a TileMap or segments)
+and at whatever `block(c)` paints, and soaks round corners: shadows are soft far from what casts them
+and sharp close to it, coloured lights mix where they meet, and a lava pool or a neon tube lights the
+room in its own shape. It costs the same for one light or forty.
+
+```js
+lights = new Lights(W, H, { glow: true, dark: .9 });
+lights.draw(c, [{ x: hero.x, y: hero.y, r: 120, color: '#ffb35a' }], {
+  walls: map,
+  emit: c => { c.fillStyle = '#ff6a10'; c.fill(lavaPath); },   // glows, and is drawn sharp on top
+  block: c => { for (const p of pillars) { c.beginPath(); c.arc(p.x, p.y, 16, 0, 7); c.fill(); } },
+});
+```
+
+Options: `res` (texels a game unit; picked for the phone), `bright` (how brightly `emit` paint shines,
+3), `haze` (glow added round bright light, .3), `sky` (a colour coming in from past the screen's
+edges), `steady` (.75: how much of the last frames is kept, which smooths the light; moving lights
+and the camera are followed at once). `lights.glowing` says whether the chip is doing it; where it
+can't (no WebGL2 half-float pictures), the canvas lights draw instead and `emit` is added on top, so
+a game looks right either way. `node scripts/glow.cjs out.png` draws test scenes both ways.
+
 `Screen({ crt: true, bloom: { threshold: .6 } })` (PixiJS and pixi-filters, loaded on first use) runs
 the whole frame through effects: call `screen.apply(c)` last in `draw`. Effects: `crt`, `bloom`,
 `grade`, `pixelate`, `glitch`, `rgbSplit`, `film`, `shockwave` (`screen.shock(x, y)`), `godrays`,
@@ -3194,6 +3217,17 @@ update(dt) { tap.on = pressed; ball.set(px, py, pz); fluid.update(dt);
   your own `colour`, `foam` (the colour of spray and fast liquid, or `false`), `thick` (0 water .. 1
   honey), `rough`, `glow`. `gravity`: a number (9.8) or `{ x, y, z }`; set `fluid.gravity` any time to
   tilt the world.
+- Ground that isn't a liquid: `kind: 'sand'` piles up at a slope and stands still, is shoved aside by a
+  foot and slumps back into the print; `'snow'` packs down where it is pressed (no rim, and the packed
+  snow holds harder), so footprints and wheel ruts stay, and lumps break off and tumble; `'mud'` oozes
+  into a rim round what presses it and settles where it stops. Each drop keeps how far its bit of ground
+  has been sheared and pushes back like a spring, up to a limit (friction times how hard it is squeezed,
+  plus what holds it together: Drucker-Prager plasticity on MLS-MPM, without the usual deformation
+  gradients); past it the ground gives and flows. Your own: `grain` (friction: 1.4 piles at about 25
+  degrees), `holds` (about how many drops' widths of wall stand up by themselves: snow 5, mud 1.5),
+  `packs` (how much denser it may be pressed: snow 1.8). The floor and solid things grip it. Press a
+  `fluid.box()` that `follow`s a foot or a wheel into a layer made with `fill()`; `level(x, z)` reads
+  the print back.
 - Putting liquid in: `fluid.pour({ x, y, z, dir, rate, speed, spread, r })` is a tap (change its fields
   or `tap.on` any time; `tap.remove()`), `fluid.fill({ y1: 1 })` is liquid at rest in a block (sides you
   leave out are the box's), `fluid.splash(x, y, z, { amount, speed, up })` a burst, `cup.fill(.8)` fills a

@@ -2168,6 +2168,20 @@ console.log('physics ok');
   const t = performance.now(), big = new Swarm({ count: 2000, w: 600, h: 600, gpu: false }); for (let f = 0; f < 30; f++) big.update(1 / 60);
   console.log(`swarm: flocks, pulls, pushes, obstacles, edges, kill and revive ok (2000 on the CPU: ${((performance.now() - t) / 30).toFixed(1)} ms a frame here)`);
 }
+// glowing 2D light (look2d Lights glow: true): enough cascades to cross the field, sizes for the phone, and
+// with no WebGL2 (here) the canvas lights still answer
+{
+  const { cascadesFor, glowRes } = await import('../src/kit/glow2d.js');
+  for (const [w, h] of [[64, 64], [288, 512], [320, 320], [900, 1600]]) {
+    const n = cascadesFor(w, h), reach = (4 ** n - 1) / 3;
+    assert.ok(reach >= Math.hypot(w, h) && (4 ** (n - 1) - 1) / 3 < Math.hypot(w, h), `glow: ${n} cascades just cover ${w}x${h}`);
+  }
+  assert.equal(glowRes(360, 640, 1.5), 1.5, 'glow: res given wins');
+  const r = glowRes(360, 640); assert.ok(r >= .4 && r <= 2 && 640 * r <= 520 + 1, 'glow: res for a phone game ' + r);
+  assert.ok(glowRes(160, 160) >= 2 - 1e-9 || 160 * glowRes(160, 160) <= 520, 'glow: a Pocket game is worked out finer');
+  console.log('glow: cascades and sizes ok');
+}
+
 
 // gs.city layout: the same seed gives the same city; buildings stay inside their blocks and never overlap; the roads join up
 {
@@ -2757,6 +2771,54 @@ console.log('physics ok');
   p.charging = true; assert.equal(judge(p, 30000), true, 'held a minute after the reason goes');
   assert.equal(judge(p, 62000), false, 'then lets go');
   p.saver = true; judge(p, 70000); assert.equal(p.why, 'battery saver is on');
+  { const q = { heat: 0, saver: false, level: .8, charging: true, saving: false, why: '', ahead: true }; judge(q, 200000); assert.equal(q.why, 'the phone is heating up', 'the heat model seeing it coming is a reason to save'); }
+  // the battery's draw: microamps or milliamps, either sign, nothing while charging
+  const { wattsOf } = await import('../src/kit/power.js');
+  assert.ok(Math.abs(wattsOf({ current: -1200000, voltage: 4000 }) - 4.8) < 1e-9, 'microamps draining (negative): 4.8 W');
+  assert.ok(Math.abs(wattsOf({ current: 1200, voltage: 4000 }) - 4.8) < 1e-9, 'milliamps (a Samsung) read the same');
+  assert.equal(wattsOf({ current: -1200000, voltage: 4000, charging: true }), null, 'nothing while charging');
+  assert.equal(wattsOf({ voltage: 4000 }), null, 'no current, no watts');
+
+  // the heat model (src/kit/heat.js): fitted from noisy headroom windows of a made-up phone, it finds where each load settles
+  {
+    const { HeatModel, holdable, heat, WARM, LOOK } = await import('../src/kit/heat.js');
+    const { power } = await import('../src/kit/power.js');
+    const real = { b: .25, a: .2, c: .1 };   // per minute: u 1 settles at 1.2, u .5 at .8, idle at .4; τ 4 min
+    const R = (() => { let s = 7; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; })();
+    const gauss = () => Math.sqrt(-2 * Math.log(R() + 1e-12)) * Math.cos(2 * Math.PI * R());
+    const m = new HeatModel(); let h = .45, last = h;
+    for (let i = 0; i < 160; i++) {   // 40 minutes of 15 s windows, the load changing every 2 minutes
+      const u = [.4, 1, .7, 1.3, .2][Math.floor(i / 8) % 5];
+      for (let k = 0; k < 15; k++) h += (real.a * u - real.b * h + real.c) / 60;   // one second at a time
+      const seen = h + gauss() * .01; m.add(last, seen, u, 15); last = seen;
+    }
+    assert.ok(m.ok, `fitted: ${JSON.stringify(m.pack().th)}`);
+    for (const u of [.5, 1, 1.3]) assert.ok(Math.abs(m.steady(u) - (real.a * u + real.c) / real.b) < .08, `load ${u} settles near ${((real.a * u + real.c) / real.b).toFixed(2)}: ${m.steady(u).toFixed(3)}`);
+    assert.ok(Math.abs(1 / m.b - 4) < 1.2, `time constant near 4 min: ${(1 / m.b).toFixed(2)}`);
+    const t = m.secsTo(.5, 1, WARM); assert.ok(t > 0 && t < Infinity && Math.abs(m.at(.5, 1, t) - WARM) < 1e-6, 'the time to the warm line lands on it');
+    assert.equal(m.secsTo(.5, .3, WARM), Infinity, 'a light load never gets there');
+    // the holdable tier: CPU .3 and chip .6 on high (tier 2); each tier's chip work by its pixels
+    const px = [.5, .85, 1.3, 2], rel = t2 => px[t2] / px[2];
+    assert.equal(holdable(m, .15, .3, rel, 2), 2, 'high holds (settles near .76), ultra would not (.89)');
+    assert.equal(holdable(m, .1, .2, t2 => px[t2] / px[1], 1), 2, 'a light game on medium may climb to high, which it holds');
+    assert.equal(holdable(m, .6, 1, rel, 2), 1, 'never more than one tier under the one measured');
+    assert.equal(holdable(new HeatModel(), .3, .6, rel, 2), 3, 'not fitted yet: no cap');
+    // live: a phone heading for warm at full load is stepped down before it gets there, and stays down while full quality would heat it
+    heat.reset({ th: [real.b, real.a, real.c], P: [1e-4, 0, 0, 0, 1e-4, 0, 0, 0, 1e-4], n: 30 }); power.heat = 0;
+    let now = 1e6, hh = .55;
+    const win = u => { for (let k = 0; k < 15; k++) hh += (real.a * u - real.b * hh + real.c) / 60; now += 15000; heat.step({ h: hh, u, dt: 15, now }); };
+    let firstAhead = null;
+    for (let i = 0; i < 40 && firstAhead == null; i++) { win(1.4); if (heat.ahead) firstAhead = hh; }
+    assert.ok(firstAhead != null && firstAhead < WARM, `stepped down ahead, at headroom ${firstAhead?.toFixed(3)} (warm at ${WARM})`);
+    assert.ok(heat.secs < LOOK, 'it said when');
+    assert.equal(power.why, 'the phone is heating up', 'and frame generation saves power for it');
+    for (let i = 0; i < 4; i++) win(.6);   // the cut load: lighter, but full quality would still heat it
+    assert.ok(heat.ahead, 'held while full quality would still get warm soon');
+    for (let i = 0; i < 60; i++) win(.6);
+    assert.ok(heat.ahead === (heat.secs < LOOK), 'lets go only once full quality wouldn\'t reach warm for a while');
+    heat.reset(); power.heat = 0;
+    heat.oledForce = 1; assert.equal(heat.oled(), 1, 'OLED dimming pinned on'); heat.oledForce = null; heat.oled(1e12);
+  }
 
   // pacing: a 60 fps game on a 120 Hz screen whose refresh between real frames comes late, or not at all,
   // still shows the moment due by the clock (never back, never the same moment twice)
@@ -4804,10 +4866,36 @@ console.log('physics ok');
     const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same liquid, drop for drop');
     const n0 = f.view.sims.length; f.dispose(); assert.ok(f.view.sims.length === n0 - 1 && !f.mesh.parent, 'dispose()');
   }
+  {
+    // grains, snow and mud: a foot pressed into a layer and lifted. Water fills its print back in; snow keeps
+    // its print and has packed under it (no rim); mud keeps its print and shoves up a rim; sand slumps back.
+    // A column of sand falls into a pile that stands still at a slope instead of spreading flat.
+    FLUID.force = 8000;
+    const print = kind => {
+      const f = new Fluid(view(), { box: [-1, 0, -.6, 1, 1, .6], volume: .45, kind }); f.fill({ y1: .3 }); run(f, 90);
+      const before = f.level(0, 0), foot = f.box({ x: 0, y: .6, z: 0, w: .22, h: .2, d: .3 });
+      run(f, 60, i => foot.set(0, .6 - .5 * Math.min(1, i / 48), 0)); const rim = Math.max(...[.16, .2, .25, .3, .35].flatMap(x => [f.level(-x, 0), f.level(x, 0)]));
+      run(f, 36, i => foot.set(0, .1 + i / 60, 0)); foot.set(0, 3, 0); run(f, 120);
+      return { before, after: f.level(0, 0), rim, f };
+    };
+    const w = print('water'), sn = print('snow'), sa = print('sand'), mu = print('mud');
+    assert.ok(Math.abs(w.after - w.before) < .04, `water fills a print back in: ${w.before.toFixed(2)} then ${w.after.toFixed(2)}`);
+    assert.ok(sn.before - sn.after > .1 && sn.rim - sn.before < .02, `snow keeps a print, packed down with no rim: ${sn.before.toFixed(2)} then ${sn.after.toFixed(2)}, beside it ${sn.rim.toFixed(2)}`);
+    assert.ok(Math.max(...sn.f.sim.E.filter((v, i) => i % 8 === 3)) > 1.3, 'snow under the foot packed denser');
+    assert.ok(mu.before - mu.after > .05 && mu.rim > mu.before + .02, `mud keeps a print and shoves up a rim: ${mu.before.toFixed(2)} then ${mu.after.toFixed(2)}, rim ${mu.rim.toFixed(2)}`);
+    assert.ok(sa.after > sn.after + .05 && sa.rim > sa.before + .02, `sand is shoved aside and slumps back into the print: ${sa.before.toFixed(2)} then ${sa.after.toFixed(2)}, rim ${sa.rim.toFixed(2)}`);
+    const pile = new Fluid(view(), { box: [-2, 0, -1, 2, 2, 1], volume: 1.2, kind: 'sand' }); pile.fill({ x0: -.35, x1: .35, y1: 1.6 }); run(pile, 240);
+    const top = pile.level(0, 0), half = pile.level(.6, 0), at4 = [-.9, -.6, .6, .9].map(x => pile.level(x, 0)); run(pile, 240);
+    const drift = Math.max(...[-.9, -.6, .6, .9].map((x, i) => Math.abs((pile.level(x, 0) ?? 0) - (at4[i] ?? 0))));
+    const slope = Math.atan((top - half) / .6) * 180 / Math.PI;
+    assert.ok(slope > 15 && pile.level(1.6, 0) === null && drift < .05, `a sand pile stands at ${slope.toFixed(0)} degrees and stays (moved ${drift.toFixed(3)} in 4 s)`);
+    assert.ok(F.grainOf(KINDS.water) === null && F.grainOf(KINDS.snow).packs > 0, 'liquids have no grain');
+    FLUID.force = 0;
+  }
   FLUID.klass = null;
   const { HIDDEN } = await import('../src/gamescroll.js');
   assert.deepEqual(Object.keys(F).filter(k => !HIDDEN.fluid.includes(k)).sort(), ['Fluid', 'KINDS'], 'gs.fluid is Fluid and KINDS: the numbers and test switches stay off it');
-  console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds ok');
+  console.log('gs.fluid: pools, taps, drains, a dam break, cups, a ball, blasts, ground, an open box, sideways gravity, resizing, copies back, seeds, prints in snow, mud and sand, a sand pile ok');
 }
 
 // gs.gas (smoke and fire that flow): the version phones without WebGPU run, which is also what the graphics
@@ -4907,6 +4995,16 @@ console.log('physics ok');
     const mk = seed => { const q = new Gas(view(), { box: BOX, kind: 'fire', seed }); q.fire({ y: .3 }); q.burst(.5, 1, 0, { size: 1.2 }); run(q, .5); return q.sim.S.slice(); };
     const A = mk(7), B = mk(7), C = mk(8); assert.ok(A.every((v, i) => v === B[i]) && A.some((v, i) => v !== C[i]), 'the same seed makes the same gas, cell for cell');
     const n0 = g.view.sims.length; g.dispose(); assert.ok(g.view.sims.length === n0 - 1 && !g.puffs.soft.parent && !g.puffs.glow.parent, 'dispose()');
+  }
+  {
+    // the pressure's rounds (Chebyshev's): the same count comes closer to the pressure that evens the flow out, and half as many as the chip ran before come as close
+    const { CHEB } = F, g = new Gas(view(), { box: [-2, 0, -2, 2, 3, 2], draw: false }); g.fire({ y: .4, size: .8 }); g.smoke({ x: 1, y: .3, heat: 1 }); run(g, 2);
+    const S = g.sim; S.advect(g.sources(true)); S.curl(); S.confine(); S.diverge(g.sources(false));
+    const P0 = S.P.slice(), Q0 = S.P2.slice(), solve = (cheb, n) => { CHEB.on = cheb; S.P.set(P0); S.P2.set(Q0); S.pressure(n); CHEB.on = true; return S.P.slice(); };
+    const X = solve(false, 3000), nx = S.nx, nxy = S.nx * S.ny;
+    const off = P => { let e = 0, t = 0; for (let c = nxy + nx + 1; c < S.cells - nxy - nx - 1; c++) for (const d of [1, nx, nxy]) { const a = P[c + d] - P[c] - (X[c + d] - X[c]), b = X[c + d] - X[c]; e += a * a; t += b * b; } return Math.sqrt(e / t); };
+    const p10 = off(solve(false, 10)), c10 = off(solve(true, 10)), p24 = off(solve(false, 24)), c12 = off(solve(true, 12));
+    assert.ok(c10 < p10 && c12 < p24, `Chebyshev rounds come closer: 10 of them off by ${c10.toFixed(3)}, 10 plain ${p10.toFixed(3)}; 12 of them ${c12.toFixed(3)}, 24 plain ${p24.toFixed(3)}`);
   }
   assert.deepEqual(Object.keys(KINDS), ['smoke', 'fire', 'steam', 'dust', 'toxic', 'magic'], 'the ready-made gases');
   GAS.klass = null;
@@ -7004,6 +7102,13 @@ console.log('physics ok');
   { const scene = { v: 'slow', g: 15, worst: 19, parts: { upscale: 1.6, scene: 10, show: .3 } };
     assert.deepEqual(stepsRun([scene, scene, scene, scene], { cw: 1080, ch: 2340, tier: 2 }), ['', 'lvl 1', '', 'lvl 2'], 'a scene that is the cost: the 3D steps, and takes the final picture with it'); }
   assert.deepEqual(stepsRun([...Array(8).fill(fast), ...Array(8).fill(fast)], { cw: 2446, ch: 1848, tier: 2, lvl: 1, out: 1 }).filter(Boolean), ['lvl 0', 'out 0'], 'climbing back: the 3D\'s own pixels first, then the final picture');
+  // Rob's folded Fold on medium (2026-11-15): every size step taken, the chip 13.1 ms a frame in the middle and 22 at its worst.
+  // Low is wanted from the next round, and saved at once: a mission left mid-round starts on low next time
+  { const sp = await import('../src/kit/speed.js'), fold = { v: 'slow', g: 13.1, worst: 22.3, parts: { scene: 7.2, upscale: 1.8, skinning: 1.6, shadows: 1.2, show: .19 } };
+    assert.deepEqual(stepsRun([fold, fold, fold], { cw: 1247, ch: 1971, tier: 1, lvl: 3, out: 2, game: { id: 'kt-want' } }), ['', 'tier 0', ''], 'every size step taken: the tier below is wanted');
+    const s = sp.settledFor('kt-want'); assert.ok(s && s.tier === 0 && s.lvl === 1 && s.out === 0, 'and saved at once, with the sizes the tier starts from: ' + JSON.stringify(s));
+    stepsRun([fold, fold], { cw: 1247, ch: 1971, tier: 1, lvl: 0, out: 0, game: { id: 'kt-want2' } });
+    assert.equal(sp.settledFor('kt-want2')?.tier, 1, 'a size step on the way saves the tier being drawn, not one below'); }
   console.log('gs.hd frame sizes: the final picture follows the 3D, the 3D keeps a floor ok');
 }
 

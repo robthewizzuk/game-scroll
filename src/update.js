@@ -1,24 +1,27 @@
 // Updates from Google Play, on Android phones that got Game Scroll from Play (the internal testing
-// track counts). Google's in-app updates, through plugins/play-update:
-// - Usually Play asks once whether to get the new version and downloads it in the background while
-//   the player carries on. Then a small card here offers to restart into it.
+// track counts). Google's in-app updates, through plugins/play-update. Every time the app opens it asks
+// Play straight away whether there's a newer version (and again when the player comes back to it):
+// - Usually Play asks whether to get the new version and downloads it in the background while the
+//   player carries on. Then a small card here offers to restart into it. "No thanks" holds for the rest
+//   of that visit; the next time the app is opened Play asks again.
 // - A version that can't wait gets Play's full-screen update straight away, with a card behind it that
 //   stays until the app is updated. That is a release uploaded with priority 4 or 5
 //   (scripts/play-upload.mjs), or this copy being older than the catalogue's minimum version
 //   (store/app-update.json, published with the games).
-// Prompts never cover a round being played: they wait for it to end. Play's own sheets open over the
+// Asking Play is invisible, so it happens at once, round or not; what it offers waits for a round to end.
+// Play only knows of a new version once the phone's Play Store has looked (it keeps a cached list), so
+// Settings can open Game Scroll's Play Store page, which makes it look, and the app asks again on return. Play's own sheets open over the
 // app, and the system bars hide again when it gets focus back (src/fullscreen.js).
 // Nothing happens at all on the iPhone, the Mac and Windows app, the web, or an APK from anywhere but
 // Play: Play can only update the copies it installed.
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { store } from './util.js';
 
 const URGENT = 4;                     // Play priority (0..5) from which an update can't wait
-const ASK_AGAIN = 24 * 3600e3;        // after "No thanks" on Play's sheet, ask again a day later
+const ASK_AGAIN = 6 * 3600e3;         // after "No thanks", a visit that lasts this long is asked again (a new visit always is)
 const LATER = 30 * 60e3;              // after "Later" on the restart card, show it again half an hour on
 const LOOK_EVERY = 2 * 60e3;          // coming back to the app looks again at most this often
-const FIRST_LOOK = 4000;              // after start-up, so the first games load first
-const NO = 'gs_update_no';            // when the player last said no to Play's sheet
+const FIRST_LOOK = 2500;              // after start-up, once a fresh catalogue (its minimum version) is usually in
+const WAIT = 2000;                    // how often an offer held back by a round looks whether it has ended
 
 // Tests drive a stand-in for the plugin (scripts/app-test.cjs); never the store apps.
 const fake = (import.meta.env.MODE !== 'production' || navigator.webdriver) && globalThis.__gsPlayFake;
@@ -27,6 +30,8 @@ const plugin = fake || (Capacitor.getPlatform() === 'android' && Capacitor.isPlu
 let busy = () => false, min = () => 0;
 let latest = null;        // Play's last answer (and this copy's version), for Settings
 let looking = false, waiting = false, last = 0;
+let saidNo = -Infinity;   // when the player last said no to Play's sheet, this visit (a new visit asks again)
+let toStore = false;      // the Play Store page was opened from here: look again the moment the player is back
 let dl = null;            // { bytes, total } while a background download runs
 let ready = false, laterAt = -Infinity;
 let card = null, wall = null, cardT = 0;
@@ -41,33 +46,48 @@ function ask(p, ms = 8000) {
 
 const urgent = r => r.immediate && (r.priority >= URGENT || (min() > 0 && r.versionCode < min()));
 
-/** Look for an update once no round is being played, and offer it. force: ask even if the player said no today. */
+/** Ask Play now, and offer what it has once no round is being played. force: offer even if the player said no this visit. */
 function look(force = false) {
-  if (!plugin || waiting) return;
+  if (plugin) act(force);
+}
+
+// Whether an offer has to wait: a round being played, or the app not on screen.
+const held = () => busy() || document.hidden;
+
+// The offer waits for the round to end, then asks Play again (each answer from Play can start one
+// update at most, and a fresh one says whether it's still wanted).
+function later(force) {
+  if (waiting) return;
   waiting = true;
   const go = () => {
-    if (busy() || document.hidden) { setTimeout(go, 3000); return; }
+    if (held()) { setTimeout(go, WAIT); return; }
     waiting = false; act(force);
   };
-  go();
+  setTimeout(go, WAIT);
 }
 
 async function act(force) {
   if (looking) return;
   looking = true; last = Date.now(); tell();
   try {
-    // A fresh answer every time: each answer from Play can start one update at most.
     const r = latest = await ask(plugin.check());
     if (!r || !r.play) return;
     if (r.status === 'downloaded') { downloaded(); return; }
-    if (r.available === 'resume' || (r.available === 'yes' && urgent(r))) { await mustUpdate(); return; }
+    if (r.available === 'resume' || (r.available === 'yes' && urgent(r))) {
+      if (held()) { later(true); return; }
+      await mustUpdate(); return;
+    }
     if (r.available !== 'yes') { unwall(); return; }   // nothing (or nothing any more) to update to
     if (r.status === 'pending' || r.status === 'downloading') { dl = { bytes: r.bytes, total: r.total }; return; }
-    if (!r.flexible || (!force && Date.now() - store.get(NO, 0) < ASK_AGAIN)) return;
+    // Play's sheet ("Update available", then a background download); where Play won't do that for this
+    // update, its full-screen one, which the player may still back out of
+    const type = r.flexible ? 'flexible' : r.immediate ? 'immediate' : null;
+    if (!type || (!force && Date.now() - saidNo < ASK_AGAIN)) return;
+    if (held()) { later(force); return; }
     looking = false; tell();
-    const s = await ask(plugin.start({ type: 'flexible' }), 0);   // Play's sheet: "Update available"
-    if (s?.result === 'declined') store.set(NO, Date.now());
-    if (s?.result === 'accepted') dl = { bytes: 0, total: 0 };      // downloading in the background now
+    const s = await ask(plugin.start({ type }), 0);
+    if (s?.result === 'declined') saidNo = Date.now();
+    if (s?.result === 'accepted' && type === 'flexible') dl = { bytes: 0, total: 0 };   // downloading in the background now
   } finally { looking = false; tell(); }
 }
 
@@ -102,6 +122,16 @@ function onState(s) {
   else if (s.status === 'pending' || s.status === 'downloading') dl = { bytes: s.bytes || 0, total: s.total || 0 };
   else dl = null;   // installed, failed or cancelled
   tell();
+}
+
+/** Game Scroll's page in the Play Store app. Opening it makes the Play Store look for new versions
+ *  (the in-app check only knows what it last found), and the app asks Play again on the way back. */
+async function openStore() {
+  if (!plugin?.openStore) return false;
+  toStore = true;
+  const ok = (await ask(plugin.openStore(), 4000)) !== null;
+  if (!ok) toStore = false;
+  return ok;
 }
 
 async function restart() {
@@ -165,22 +195,30 @@ export const update = {
     if (o.busy) busy = o.busy;
     if (o.min) min = o.min;
     try { plugin.addListener('state', onState); } catch (_) {}
+    try { localStorage.removeItem('gs_update_no'); } catch (_) {}   // the old "no thanks for a day", no longer used
     setTimeout(() => look(), FIRST_LOOK);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
       // Back from Play's own screens, or from anywhere else. With the must-update card up, only look
       // quietly whether it's still needed: opening Play's screen again on every return would trap the player.
       if (wall) { if (Date.now() - last > 5000) quiet(); return; }
+      // Back from the Play Store page opened here: it has just looked for new versions, so ask now.
+      if (toStore) { toStore = false; look(true); return; }
       if (Date.now() - last > LOOK_EVERY) look();
+      // a background download may have finished while the app was away: its restart card
+      else if (dl && !looking) quiet();
     });
   },
 
   /** Look now and offer what's there, once no round is being played (Settings' button; tests).
-   *  force (default): ask even if the player said no to Play's sheet today. */
+   *  force (default): ask even if the player said no to Play's sheet this visit. */
   check(force = true) { look(force); },
   /** Look now, offering nothing (Settings opening). */
   refresh: quiet,
   restart,
+  openStore,
+  /** Whether the Play Store page can be opened from here (copies from Play). */
+  get store() { return !!plugin?.openStore && latest?.play !== false; },
 
   /** For Settings: { play (null until asked), version, state: 'idle'|'checking'|'none'|'available'|'downloading'|'ready'|'error'|'away', pct } */
   status() {

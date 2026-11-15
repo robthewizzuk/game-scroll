@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// Glowing 2D light (look2d Lights with glow: true, glow2d.js), for scripts/glow.cjs: each scene drawn with the
+// canvas lights and with glow side by side, to judge by eye, and what a frame of each cost here.
+//   ?acts=dungeon,neon,cone,pixel,cam (default: all)   &frames=30
+import gs from '../../src/gamescroll.js';
+import { glowWorks } from '../../src/kit/glow2d.js';
+const Q = new URLSearchParams(location.search), FRAMES = +(Q.get('frames') || 30);
+const { Lights } = gs.look2d, { TileMap } = gs.tiles, { Camera2D } = gs.camera2d;
+try {
+  const MAP = TileMap.fromText(`
+    ######################
+    #......#.............#
+    #......#.............#
+    #......#....##.......#
+    #...........##.......#
+    #......#.............#
+    ####.###.......#.....#
+    #..............#.....#
+    #......##############.
+    #......#.............#
+    #......#....#..#.....#
+    #...........#..#.....#
+    #......#.............#
+    ######################`, { size: 16 });
+  const floor = (c, w, h, a = '#7d6b58', b = '#6e5d4b', s = 16) => { for (let y = 0; y < h; y += s) for (let x = 0; x < w; x += s) { c.fillStyle = ((x + y) / s) % 2 ? a : b; c.fillRect(x, y, s, s); } };
+  const tiles = (c, m) => { c.fillStyle = '#3b3f4a'; for (let ty = 0; ty < m.rows; ty++) for (let tx = 0; tx < m.cols; tx++) if (m.solid(tx, ty)) c.fillRect(tx * 16, ty * 16, 16, 16); };
+  const ACTS = {
+    // rooms off a corridor: a warm torch, a cold lamp and a green glow, shadows off the walls
+    dungeon: { w: 352, h: 224, o: { dark: .9, color: '#05060f' },
+      scene: (c, t) => { floor(c, 352, 224); tiles(c, MAP); },
+      lights: t => [{ x: 56, y: 56, r: 140, color: '#ffb35a', flicker: .3 }, { x: 250 + Math.sin(t) * 30, y: 60, r: 160, color: '#7fb4ff' }, { x: 80, y: 180, r: 110, color: '#7cff8a', size: 6 }],
+      walls: MAP },
+    // things that glow in their own shape: a neon tube, a lava pool, a ring of pickups; pillars block it (block())
+    neon: { w: 360, h: 300, o: { dark: .92, color: '#0a0612' },
+      scene: (c) => { floor(c, 360, 300, '#5a5a66', '#50505c', 20); c.fillStyle = '#2b2b33'; for (const [x, y] of [[110, 150], [250, 150], [180, 230]]) { c.beginPath(); c.arc(x, y, 16, 0, 7); c.fill(); } },
+      emit: (c, t) => {
+        c.lineCap = 'round'; c.strokeStyle = '#ff3fb4'; c.lineWidth = 5; c.beginPath(); c.moveTo(60, 40); c.lineTo(300, 40); c.stroke();
+        c.fillStyle = '#ff6a10'; c.beginPath(); c.ellipse(70, 250, 46, 22, 0, 0, 7); c.fill();
+        for (let i = 0; i < 6; i++) { const a = t + i * 1.047; c.fillStyle = '#5affd8'; c.beginPath(); c.arc(260 + Math.cos(a) * 40, 250 + Math.sin(a) * 22, 4, 0, 7); c.fill(); }
+      },
+      block: (c) => { for (const [x, y] of [[110, 150], [250, 150], [180, 230]]) { c.beginPath(); c.arc(x, y, 16, 0, 7); c.fill(); } },
+      lights: () => [] },
+    // a cone (a torch beam) sweeping a room of crates
+    cone: { w: 360, h: 300, o: { dark: .88 },
+      scene: (c) => { floor(c, 360, 300, '#6b7360', '#636b58', 20); c.fillStyle = '#6a4a2a'; for (const [x, y] of [[200, 90], [260, 180], [150, 220]]) c.fillRect(x - 14, y - 14, 28, 28); },
+      walls: [[186, 76, 214, 76], [214, 76, 214, 104], [214, 104, 186, 104], [186, 104, 186, 76], [246, 166, 274, 166], [274, 166, 274, 194], [274, 194, 246, 194], [246, 194, 246, 166], [136, 206, 164, 206], [164, 206, 164, 234], [164, 234, 136, 234], [136, 234, 136, 206]],
+      lights: t => [{ x: 50, y: 150, r: 280, color: '#fff2c8', cone: .9, dir: Math.sin(t * .8) * .5 }, { x: 330, y: 40, r: 60, color: '#ff4040', size: 3 }] },
+    // a Pocket game (160 x 160, four shades): banded light
+    pixel: { w: 160, h: 160, o: { dark: .8, pixel: true, color: '#0f380f' },
+      scene: (c) => { c.fillStyle = '#8bac0f'; c.fillRect(0, 0, 160, 160); c.fillStyle = '#306230'; c.fillRect(70, 30, 12, 60); c.fillRect(20, 110, 60, 10); },
+      walls: [[70, 30, 82, 30], [82, 30, 82, 90], [82, 90, 70, 90], [70, 90, 70, 30], [20, 110, 80, 110], [80, 110, 80, 120], [80, 120, 20, 120], [20, 120, 20, 110]],
+      lights: () => [{ x: 40, y: 60, r: 80, color: '#9bbc0f' }, { x: 120, y: 130, r: 50 }] },
+    // the same dungeon through a scrolling, zoomed camera
+    cam: { w: 240, h: 200, o: { dark: .9 }, cam: true,
+      scene: (c, t, cam) => { cam.begin(c); floor(c, 352, 224); tiles(c, MAP); cam.end(c); },
+      lights: t => [{ x: 56, y: 56, r: 140, color: '#ffb35a' }, { x: 180 + Math.sin(t) * 60, y: 120, r: 120, color: '#ff7fe0' }], walls: MAP },
+  };
+  const acts = (Q.get('acts') || Object.keys(ACTS).join(',')).split(',');
+  const K = 2, cells = [], info = [`glow on the chip: ${glowWorks()}`];
+  for (const name of acts) {
+    const A = ACTS[name]; if (!A) throw new Error('no act ' + name);
+    const row = [];
+    for (const glow of [false, true]) {
+      const cv = document.createElement('canvas'); cv.width = A.w * K; cv.height = A.h * K; const c = cv.getContext('2d');
+      const L = new Lights(A.w, A.h, { ...A.o, glow });
+      const cam = A.cam ? new Camera2D(A.w, A.h, { zoom: 1.4, lag: 0 }) : null;
+      let ms = 0, t = 0;
+      for (let f = 0; f < FRAMES; f++) {
+        t += 1 / 30; if (cam) cam.update(1 / 30, { x: 120 + f * 3, y: 100 });
+        c.setTransform(K, 0, 0, K, 0, 0); c.globalCompositeOperation = 'source-over';
+        A.scene(c, t, cam);
+        const t0 = performance.now();
+        L.draw(c, A.lights(t), { walls: A.walls, cam, dt: 1 / 30, emit: A.emit ? (g => A.emit(g, t)) : null, block: A.block });
+        c.getImageData(0, 0, 1, 1);   // (wait for the chip)
+        if (f >= 3) ms += performance.now() - t0;
+      }
+      info.push(`${name} ${glow ? 'glow' : 'canvas'}: ${(ms / Math.max(1, FRAMES - 3)).toFixed(2)} ms a frame${glow ? ` (${L.fw}x${L.fh} texels, ${L.field.n} cascades, on the chip: ${L.glowing})` : ''}`);
+      row.push(cv);
+    }
+    cells.push(row);
+  }
+  const W = Math.max(...cells.map(r => r[0].width + r[1].width + 30)), H = cells.reduce((s, r) => s + r[0].height + 10, 10);
+  const sheet = document.createElement('canvas'); sheet.width = W; sheet.height = H; const s = sheet.getContext('2d');
+  s.fillStyle = '#222'; s.fillRect(0, 0, W, H); let y = 10;
+  for (const [a, b] of cells) { s.drawImage(a, 10, y); s.drawImage(b, 20 + a.width, y); y += a.height + 10; }
+  window.result = { sheet: sheet.toDataURL('image/png'), info };
+} catch (e) { window.result = { error: e.stack || String(e) }; }
+</script>

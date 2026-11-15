@@ -385,6 +385,7 @@ dialog.info::backdrop{background:#000a;backdrop-filter:blur(3px)}
 .set-toggle{display:flex;align-items:center;gap:10px;margin:0 16px 12px;font-size:15px;cursor:pointer}
 .set-toggle input{width:20px;height:20px;accent-color:var(--accent,#ff4d6d)}
 .set-clear:disabled,.set-upd:disabled{opacity:.5;cursor:default}
+.qa-actions .set-store{background:transparent;color:inherit;border:1px solid currentColor}
 .set-note{margin:0 16px 12px;color:var(--accent);font-size:13px}
 .settings{overflow-y:auto}
 .set-row + .set-row{border-top:1px solid #ffffff10;padding-top:6px}
