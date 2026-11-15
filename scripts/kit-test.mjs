@@ -9006,5 +9006,69 @@ console.log('physics ok');
   console.log('creator: live sliders, picks made again in the background');
 }
 
+// gs.companions: follow, roles in a fight, the order wheel, tactics the coach corrects, approval from deeds
+{
+  const { Companions, ACTIONS } = await import('../src/kit/companions.js');
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Magic } = await import('../src/kit/magic.js');
+  const { together, linksFor } = await import('../src/kit/links.js');
+  together(() => {
+    const magic = new Magic({ book: { mend: { kind: 'heal', cost: 5, cool: 1, heal: 30 }, spark: { kind: 'bolt', cost: 4, cool: .5, speed: 30, damage: 6 } } });
+    const rep = { handlers: {}, on(e, f) { (this.handlers[e] ||= []).push(f); return this; }, did(id) { for (const f of this.handlers.deed || []) f(id, { seen: true }); } };
+    linksFor(null).join('reputation', rep);
+    const st = () => new Stats({ hp: { max: 100 }, mana: { max: 60, regen: 4 }, power: 1 });
+    const hero = { position: { x: 0, y: 0, z: 0 } }; hero.stats = st(); hero.unit = magic.unit(hero, { team: 'hero', stats: hero.stats });
+    const party = new Companions({ hero, coach: true, seed: 3, heroUnit: hero.unit });
+    const body = (x, z) => ({ position: { x, y: 0, z } });
+    const mk = (name, role, x, z, more = {}) => { const b = body(x, z), s = st(); return party.join(b, { name, role, stats: s, unit: magic.unit(b, { team: 'hero', stats: s }), ...more }); };
+    const bran = mk('Bran', 'guard', 2, -1, { likes: { rescue: 3, steal: -6 } });
+    const mira = mk('Mira', 'healer', -2, -2, { spells: { heal: 'mend', attack: 'spark' }, likes: { steal: 4 } });
+    const ilse = mk('Ilse', 'archer', 1, -3);
+    assert.equal(mk('Odo', 'caster', 0, -4), null, 'three at most');
+    const walk = (dt, speed = 1) => { for (const m of party.members) { const p = m.body.position, dx = m.goal.x - p.x, dz = m.goal.z - p.z, d = Math.hypot(dx, dz), v = (m.run ? 6 : 3) * dt * speed; if (d > .01) { p.x += dx / d * Math.min(d, v); p.z += dz / d * Math.min(d, v); } } };
+    // walking north: they keep their places round the hero
+    for (let i = 0; i < 300; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    for (const m of party.members) { const p = m.body.position; assert.ok(Math.hypot(p.x - hero.position.x, p.z - hero.position.z) < 4 && p.z < hero.position.z + .5, m.name + ' follows behind the hero'); }
+    assert.ok(Math.abs(bran.body.position.x - ilse.body.position.x) > .5 || Math.abs(bran.body.position.z - ilse.body.position.z) > .5, 'not on top of each other');
+    // foes come: the guard closes in, the archer keeps away and shoots, the healer heals the hurt hero
+    const foes = [0, 1, 2].map(i => ({ position: { x: -2 + i * 2, y: 0, z: hero.position.z + 9 }, hp: 30, hpMax: 30, name: 'wolf' }));
+    hero.stats.change('hp', -60);
+    const seen = new Set(); let mended = 0;
+    for (let i = 0; i < 600; i++) {
+      for (const f of foes) if (f.hp > 0) { const dz = hero.position.z - f.position.z; if (Math.abs(dz) > 1.5) f.position.z += Math.sign(dz) * 2 / 60; }
+      const slow = party.update(1 / 60, { foes }); walk(1 / 60, slow); magic.update(1 / 60);
+      for (const e of party.events) { seen.add(e.type); if (e.type === 'swing' || e.type === 'shoot') e.target.hp -= 6; if (e.type === 'heal' && e.cast) mended++; }
+    }
+    assert.ok(seen.has('fight') && seen.has('swing') && seen.has('shoot') && seen.has('say'), 'a fight: swings, shots and lines: ' + [...seen]);
+    assert.ok(mended > 0 && hero.stats.part('hp') > .45, 'the healer mended the hero through gs.magic: ' + hero.stats.part('hp'));
+    assert.ok(foes.every(f => f.hp <= 0) && seen.has('calm'), 'the wolves fell and the fight ended');
+    // the wheel: slows the world while open, an order to hold is kept
+    party.wheel.open(); let sp = 1; for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp < .2, 'the wheel slows time: ' + sp);
+    assert.equal(party.wheel.at(0, -1).id, 'attack', 'the top item'); assert.equal(party.wheel.at(.05, .05), null, 'the middle is none');
+    const hold = party.wheel.items.find(x => x.id === 'hold'); assert.equal(party.wheel.at(Math.sin(hold.angle), -Math.cos(hold.angle)).id, 'hold');
+    party.wheel.pick(); for (let i = 0; i < 30; i++) sp = party.update(1 / 60, { foes: [] }); assert.ok(sp > .95 && !party.wheel.on, 'time back to full');
+    const at = { ...ilse.body.position }; for (let i = 0; i < 200; i++) { hero.position.z += 3 / 60; party.update(1 / 60, { foes: [] }); walk(1 / 60); }
+    assert.ok(Math.hypot(ilse.body.position.x - at.x, ilse.body.position.z - at.z) < .2 && ilse.act === 'hold', 'held where they stood');
+    party.command('follow'); party.update(1 / 60, { foes: [] }); assert.equal(ilse.act, 'follow');
+    // tactics: a passive guard keeps out; the coach's corrections win in spots like the one corrected
+    const wolf = { position: { x: hero.position.x + 1, y: 0, z: hero.position.z + 1.5 }, hp: 30, hpMax: 30 };
+    bran.body.position.x = hero.position.x + 1; bran.body.position.z = hero.position.z - 1;
+    party.update(1 / 60, { foes: [wolf] }); assert.ok(['guard', 'attack'].includes(bran.act), 'the guard steps in: ' + bran.act);
+    party.correct(bran, 'hold'); party.correct(bran, 'hold'); party.update(1 / 60, { foes: [wolf] });
+    assert.equal(bran.act, 'hold', 'corrected: here it holds'); party.coachFor('guard').uncorrect();
+    bran.tactics.stance = 'passive'; party.update(1 / 60, { foes: [wolf] }); assert.ok(['follow', 'retreat'].includes(bran.act), 'passive: keeps out of it');
+    assert.ok(ACTIONS.includes(bran.act));
+    // approval: a Reputation's deeds reach them by themselves; enough dislike and one leaves
+    rep.did('rescue'); assert.equal(bran.approval, 3, 'liked the rescue'); assert.equal(mira.approval, 0, 'Mira does not care');
+    rep.did('steal'); assert.equal(mira.approval, 4); assert.equal(bran.mood, 'easy');
+    for (let i = 0; i < 20; i++) rep.did('steal');
+    assert.ok(!party.members.includes(bran) && party.events.some(e => e.type === 'leave' && e.who === bran), 'Bran left over the thieving');
+    assert.equal(mira.mood, 'devoted');
+    // saves
+    const saved = JSON.parse(JSON.stringify(party.pack())); mira.approval = 0; party.unpack(saved); assert.ok(mira.approval > 60, 'approval saved');
+  });
+  console.log('companions: following, guard, healer and archer in a fight, the order wheel, the coach, approval from deeds, saves');
+}
+
 // every check above has passed; something a kit started (a timer) would keep Node waiting a minute before it exits
 process.exit(0);

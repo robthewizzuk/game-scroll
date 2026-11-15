@@ -2352,6 +2352,78 @@ export interface Magic {
   hit(by: MagicUnit | null, who: MagicUnit, name: string, spell: Partial<Spell>, at?: P3, push?: P3 | null): MagicEvent;
   status(who: MagicUnit, id: string, spell?: Partial<Spell>, o?: { for?: number; spec?: StatBuff }): string | null;
 }
+/** What a companion does: the coach learns among these. */
+export type CompanionAct = 'follow' | 'attack' | 'shoot' | 'cast' | 'heal' | 'guard' | 'hold' | 'retreat' | 'down';
+export type CompanionRole = 'guard' | 'healer' | 'archer' | 'caster';
+export interface CompanionEvent { type: 'join' | 'full' | 'fight' | 'calm' | 'say' | 'swing' | 'shoot' | 'cast' | 'heal' | 'taunt' | 'order' | 'refuse' | 'approve' | 'disapprove' | 'mood' | 'leave' | 'down' | 'up' | 'wheel'; who?: Companion; target?: Loose; at?: { x: number; z: number }; from?: { x: number; z: number }; text?: string; kind?: string; after?: number; spell?: string | null; cast?: boolean; by?: number; why?: string | null; mood?: string; was?: string; id?: string; open?: boolean; [k: string]: Loose }
+export interface Companion {
+  name: string; role: CompanionRole; body: Loose; stats: Loose; unit: Loose; person: Loose;
+  /** Spells cast through gs.magic when it has a unit: heal, attack (cast), shoot, melee. */
+  spells: { heal?: string; attack?: string; shoot?: string; melee?: string };
+  /** Deeds it likes (above 0) or dislikes, by id. */
+  likes: Record<string, number>;
+  /** stance: 'bold' | 'steady' | 'careful' | 'passive'; healAt (0..1); focus: 'nearest' | 'weakest' | 'strongest' | 'hero'. */
+  tactics: { stance: 'bold' | 'steady' | 'careful' | 'passive'; healAt: number; focus: 'nearest' | 'weakest' | 'strongest' | 'hero' };
+  /** -100..100. */
+  approval: number;
+  /** 'fed up', 'wary', 'easy', 'warm' or 'devoted'. */
+  readonly mood: string;
+  /** Where it wants to be this frame (x, z; or x, y in 2D), whether to run, what to face. */
+  goal: { x: number; z?: number; y?: number }; run: boolean; face: { x: number; z: number } | null;
+  /** What it does now, and on whom. */
+  act: CompanionAct; target: Loose;
+  order: { id: string; target: Loose; at: Loose; left: number } | null;
+  down: boolean;
+  /** What it looked at when it last decided (for the coach). */
+  see: Float32Array;
+  at(): { x: number; z?: number; y?: number };
+  hp(): number;
+  approve(n: number, why?: string | null): Companion;
+  command(id: string, o?: { target?: Loose; at?: Loose; for?: number }): boolean;
+  revive(): Companion;
+}
+export interface CompanionWheel {
+  on: boolean; who: Companion | null; speed: number; slow: number;
+  items: { id: string; label: string; icon: string; angle: number }[];
+  over: { id: string; label: string; icon: string; angle: number } | null;
+  open(who?: Companion | null): CompanionWheel; close(): CompanionWheel;
+  /** The item a finger is over, from the wheel's centre as a part of its radius (inside .25 is none). */
+  at(dx: number, dy: number): { id: string; label: string; icon: string; angle: number } | null;
+  /** Gives the order (the item under the finger) and closes the wheel. */
+  pick(item?: Loose, o?: { target?: Loose; at?: Loose; for?: number }): boolean;
+}
+export interface CompanionParty {
+  members: Companion[]; events: CompanionEvent[]; max: number; wheel: CompanionWheel; fighting: boolean; hero: Loose;
+  on(type: CompanionEvent['type'] | '*', fn: (e: CompanionEvent) => void): CompanionParty;
+  /** Adds one (null when full). */
+  join(body: Loose, o?: { name?: string; role?: CompanionRole; stats?: Loose; unit?: Loose; health?: () => number; person?: Loose; spells?: Companion['spells']; likes?: Record<string, number>; lines?: Record<string, string[]>; tactics?: Partial<Companion['tactics']>; approval?: number; roleOpts?: Loose }): Companion | null;
+  leave(m: Companion): CompanionParty; clear(): CompanionParty; find(name: string): Companion | null;
+  /** Decides for everyone; returns how fast the world runs now (the wheel slows it). */
+  update(dt: number, o?: { foes?: Loose[]; hero?: Loose }): number;
+  /** An order for all (or who): 'attack', 'hold', 'heal', 'focus', 'back', 'follow'. False when refused. */
+  command(id: string, o?: { who?: Companion | null; target?: Loose; at?: Loose; for?: number }): boolean;
+  /** A deed the hero did: those who care like or dislike it (a gs.rpg Reputation's deeds arrive by themselves). */
+  deed(id: string, o?: { seen?: boolean; by?: number }): CompanionParty;
+  gift(m: Companion, n?: number): CompanionParty;
+  say(m: Companion, kind: string, o?: { force?: boolean; foe?: Loose }): CompanionEvent | null;
+  /** Tiny Brains coach: "here, this one should have done action". */
+  correct(m: Companion, action: CompanionAct): CompanionParty;
+  /** "Not what you just did, here." */
+  avoid(m: Companion, action?: CompanionAct): CompanionParty;
+  coachFor(role: CompanionRole): Loose;
+  pack(): Loose[]; unpack(d: Loose[]): CompanionParty;
+}
+export interface CompanionsPart {
+  /** api: the game's api (the coach keeps its corrections). o: hero, max (3), magic, reputation (found by themselves), coach (true: one per role), talk (6 s between lines), banter (40 s; 0 never), leaveAt (-90), leaves, wheel ({ slow, orders, ease }), voice (lines spoken by person.face), heroUnit, heroName, seed. */
+  Companions: new (api: Loose, o?: { hero?: Loose; max?: number; magic?: Loose; reputation?: Loose; coach?: Loose; talk?: number; banter?: number; leaveAt?: number; leaves?: boolean; wheel?: { slow?: number; orders?: { id: string; label: string; icon: string }[]; ease?: number }; voice?: boolean; heroUnit?: Loose; heroName?: string; seed?: number; link?: boolean }) => CompanionParty;
+  ACTIONS: readonly CompanionAct[];
+  ROLES: Readonly<Record<CompanionRole, { keep: number; reach: number; acts: CompanionAct[]; every: Record<string, number>; slot: [number, number]; brave: number }>>;
+  ORDERS: readonly { id: string; label: string; icon: string }[];
+  MOODS: readonly { id: string; at: number }[];
+  LINES: Readonly<Record<string, string[]>>;
+  BANTER: readonly [string, string][];
+  Companion: Loose; Wheel: Loose;
+}
 export interface MagicPart {
   /** book: { name: Spell }; statuses (STATUSES), reactions (REACTIONS), gcd, gravity, world (a World3D or 2D Physics; found by itself; false none), apply (false: only say who was hit). */
   Magic: new (o?: { book?: Record<string, Spell>; statuses?: Record<string, StatBuff>; reactions?: { name: string; has: string; by: string; clear?: string[]; add?: string; bonus?: number; skip?: boolean }[]; gcd?: number; gravity?: number; world?: Loose; apply?: boolean; link?: boolean }) => Magic;
@@ -4913,7 +4985,7 @@ export interface GS {
   board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
-  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
+  stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; companions: CompanionsPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;
   outdoors: OutdoorsPart; city: CityPart; models: ModelsPart; voxels: VoxelsPart; fluid: FluidPart; gas: GasPart; regions: RegionsPart; dungeon: DungeonPart; craft: CraftPart; soft: SoftPart; cards: CardsPart; dice: DicePart; words: WordsPart; trivia: TriviaPart; ui: UIPart;
   hear: HearPart; doodle: DoodlePart; phoneai: PhoneaiPart;
   sketch: SketchPart; icons: IconsPart;
