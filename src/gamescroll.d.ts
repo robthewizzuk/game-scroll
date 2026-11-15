@@ -1813,8 +1813,8 @@ export interface BrainOptions {
   fun?: boolean;
   /** Start a fresh brain at the player's usual level, and add to the profile (true). */
   profile?: boolean;
-  /** The maker's own corrections: spots where the right move is known, as [see, action] pairs. They come with the game and stay through reset(). */
-  corrections?: [number[], number | string][];
+  /** The maker's own corrections: spots where the right move is known, as [see, action] (or [see, action, false] where a move is wrong). They come with the game and stay through reset(). */
+  corrections?: ([number[], number | string] | [number[], number | string, false])[];
 }
 /** A Tiny Brain that learns as you play, with guard rails. */
 export declare class Brain {
@@ -1850,10 +1850,19 @@ export declare class Brain {
    */
   correct(see: ArrayLike<number>, action: number | string): this;
   correct(action: number | string): this;
+  /**
+   * "In this spot, not that": avoid(see, action), avoid(action) for the spot it last decided on, or avoid()
+   * for whatever it just did there. For a mistake where the right move isn't known. In spots like the
+   * examples it makes its next best move.
+   */
+  avoid(see: ArrayLike<number>, action: number | string): this;
+  avoid(action?: number | string): this;
+  /** After act(): the correction that shaped the move it just chose ({ action, not: it leaned away, like: 0..1 how alike the spot was }), or null. */
+  readonly recalled: { action: number | string; not: boolean; like: number } | null;
   /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
   uncorrect(action?: number | string): this;
-  /** Every correction it holds, as [see, action] pairs (copy them into the corrections option to keep them in the game). */
-  readonly corrections: [number[], number | string][];
+  /** Every correction it holds, as [see, action] ("not this": [see, action, false]); copy them into the corrections option to keep them in the game. */
+  readonly corrections: ([number[], number | string] | [number[], number | string, false])[];
   /** How far it trusts its corrections, 0..2: full while they agree, less when examples close together name different moves. */
   readonly heed: number;
   /** The brain as text (for start). */
@@ -1897,7 +1906,7 @@ export declare class Predict {
   /** Forgets every habit. */
   forget(): this;
 }
-export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; }
+export interface BrainMind { act(see: number[], dt?: number): number; readonly action: number | string; feel(x?: number): void; done(): void; readonly telling: { action: number | string; left: number; t: number } | null; readonly unsure: number; readonly style: string | undefined; /** Corrections are the brain's, shared by every mind: these are about the spot this mind last decided on. */ correct(action: number | string): this; avoid(action?: number | string): this; readonly recalled: { action: number | string; not: boolean; like: number } | null; }
 export interface BrainsPart {
   Net: typeof TinyNet;
   Brain: typeof Brain;

@@ -1612,6 +1612,7 @@ const bot = new Brain(api, { inputs: 4, actions: ['left', 'right', 'jump', 'flee
   corrections: [[[0, 0, -.8, .6], 'flee'], [[.4, -.3, -.7, .5], 'flee'], [[-.5, .5, -.9, .7], 'flee']] });
 // or while the game runs, about the spot it just decided on:
 if (walkedOffTheLedge) bot.correct('jump');
+if (fellInThePit) bot.avoid();                       // "not what you just did"
 // a pet the player trains: they tap the move it should have made
 down(x, y) { const move = buttonAt(x, y); if (move) pet.correct(move); }
 ```
@@ -1621,12 +1622,22 @@ down(x, y) { const move = buttonAt(x, y); if (move) pet.correct(move); }
   player near" fix about three quarters of such spots and leave over 95% of other decisions as they were.
 - **It works out which inputs matter.** Where an action's examples agree on an input, that input
   counts; where they are as spread as it usually is, it doesn't ("whatever `dx` is"). So show it the
-  move in a few different spots of the same kind. Two different kinds of spot for one action work
-  less well than one.
+  move in a few different spots of the same kind.
+- **Two kinds of spot for one move are found by themselves** ("flee when hurt" and "flee when
+  cornered"): give each kind a few examples (with six of each, about four in five such spots are
+  fixed).
+- **"Not this."** `bot.avoid(see, 'right')` (or `bot.avoid()` for what it just did) is for a mistake
+  where the right move isn't known: it walked off the ledge, so not `'right'` here. In spots like the
+  examples the brain makes its next best move (eight examples: nine in ten such spots).
+- **What it recalled.** After `act()`, `bot.recalled` is `{ action, not, like }` when a correction
+  shaped the move (else `null`): draw the pet's "!" when it remembers a lesson, or find out why a bot
+  did something. Each enemy of a `Wave` has `mind.correct(action)`, `mind.avoid()` and
+  `mind.recalled` about its own last spot; the examples are the brain's, shared by all of them.
 - **The newest word on a spot wins**, and examples close together that name different moves are
   trusted less (`bot.heed`, 2 down to 0).
-- The newest 12 per action are kept and saved with the brain (a few bytes each); `bot.uncorrect()`
-  forgets them, `bot.corrections` lists them as `[see, action]` pairs to paste into the game.
+- The newest 12 per action (and as many "not this") are kept and saved with the brain, a few bytes
+  each; `bot.uncorrect()` forgets them, `bot.corrections` lists them as `[see, action]` (and
+  `[see, action, false]` for "not this") to paste into the game.
 - **The guard rails still apply**: the reaction time, the randomness, the limit on changes of mind and
   your `rules` all act on what it then does, and the skill dial still follows the win rate.
 - A decision still takes a few microseconds, with nothing to download.
