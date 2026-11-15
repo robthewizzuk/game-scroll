@@ -10,7 +10,7 @@
 //
 // The ground's materials then read the pictures in place of their own tiled map (the 'groundpaint' look): one
 // picture read a pixel where they used to read one, the finer level near, the coarser next, their own map past
-// both, each change dithered over a band so no line shows. Colour is kept as its square root (no banding in the
+// both, each change a smooth blend over a band so no line shows. Colour is kept as its square root (no banding in the
 // dark asphalt in 8 bits) and the alpha holds the roughness. Mipmapped, so the far edge does not shimmer.
 //
 // Painted by whichever renderer draws the view (a picture lives on the GPU API that drew it): plain shader
@@ -117,21 +117,22 @@ function paintMatGL(base, kind) {
 // the levels hold sqrt(colour) and roughness; past both the material's own map)
 const READ_HEAD = ORIGIN_GLSL + `varying vec3 vGpRW;
 uniform sampler2D gpT0, gpT1; uniform vec4 gpL, gpL2; uniform float gpOn;
-float gpDither(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(.06711056, .00583715)))); }
 `;
 const READ = `
-  float gpRough = -1.;
+  float gpRough = -1., gpK = 0.;
   {
-    vec2 gp = vGpRW.xy, gq = vec2(gp.x, -gp.y), gx = dFdx(gq), gy = dFdy(gq); float dz = gpDither(gl_FragCoord.xy);   // (the pictures' v runs along -z: painter's note)
+    vec2 gp = vGpRW.xy, gq = vec2(gp.x, -gp.y), gx = dFdx(gq), gy = dFdy(gq);   // (the pictures' v runs along -z: painter's note)
     float m0 = max(abs(gp.x - gpL.x), abs(gp.y - gpL.y)) / (gpL.z * .5), m1 = max(abs(gp.x - gpL2.x), abs(gp.y - gpL2.y)) / (gpL.w * .5);
-    vec4 g = vec4(-1.);
-    bool up = gpOn > .5 && vGpRW.z > .7;   // (a face that looks up)
-    if (up && m0 < mix(.8, .95, dz)) g = textureGrad(gpT0, gq / gpL.z, gx / gpL.z, gy / gpL.z);
-    else if (up && m1 < mix(.82, .97, dz)) g = textureGrad(gpT1, gq / gpL.w, gx / gpL.w, gy / gpL.w);
-    if (g.x >= 0.) { diffuseColor.rgb *= g.rgb * g.rgb; gpRough = g.a; }
+    float w0 = smoothstep(.8, .95, m0); gpK = gpOn > .5 && vGpRW.z > .7 ? 1. - smoothstep(.82, .97, m1) : 0.;   // (a face that looks up)
+    vec4 g = vec4(0., 0., 0., 1.), own = diffuseColor;
+    if (gpK > 0.) {   // (each change a smooth blend over its band: see ground-paint-gpu.js)
+      if (w0 < 1.) { vec4 a = textureGrad(gpT0, gq / gpL.z, gx / gpL.z, gy / gpL.z); g = vec4(a.rgb * a.rgb, a.a); }
+      if (w0 > 0.) { vec4 b = textureGrad(gpT1, gq / gpL.w, gx / gpL.w, gy / gpL.w); g = mix(g, vec4(b.rgb * b.rgb, b.a), w0); }
+    }
 #ifdef USE_MAP
-    else diffuseColor *= texture2D(map, vMapUv);
+    if (gpK < 1.) own *= texture2D(map, vMapUv);
 #endif
+    diffuseColor = mix(own, vec4(diffuseColor.rgb * g.rgb, diffuseColor.a), gpK); gpRough = g.a;
   }`;
 // what the ground's materials read (one set for all of them: the ground paint at work)
 const READ_U = { gpT0: { value: null }, gpT1: { value: null }, gpL: { value: new Vector4() }, gpL2: { value: new Vector4() }, gpOn: { value: 0 }, gsOrigin: ORIGIN_U };
@@ -141,7 +142,7 @@ function readLook(m) {
     vertexHead: READ_HEAD,
     vertex: [['#include <project_vertex>', 'after', '\n  { vec4 gpw = modelMatrix * vec4(transformed, 1.); vGpRW = vec3(gpw.xz + gsOrigin.xz, normalize(mat3(modelMatrix) * objectNormal).y); }']],
     fragmentHead: READ_HEAD,
-    fragment: [['#include <map_fragment>', 'replace', READ], ['#include <roughnessmap_fragment>', 'after', '\n  if (gpRough >= 0.) roughnessFactor = gpRough;']],
+    fragment: [['#include <map_fragment>', 'replace', READ], ['#include <roughnessmap_fragment>', 'after', '\n  roughnessFactor = mix(roughnessFactor, gpRough, gpK);']],
   });
 }
 
