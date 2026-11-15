@@ -1739,6 +1739,46 @@ console.log('physics ok');
   assert.deepEqual(d.guess(ring, { among: ['spaceship'] }), [], 'unknown names are left out');
   console.log('doodle: 200 things, picture, guesses, among ok (top for a ring: ' + g[0].name + ')');
 
+  // it learns this player's own drawing: a ring taught as the model's fourth guess for it counts as that from then on
+  {
+    const { features, scores } = await import('../src/kit/doodle.js');
+    const f = features(picture(ring), d.M);
+    assert.equal(f.length, 256, 'features: the last hidden layer');
+    assert.deepEqual(Array.from(scores(picture(ring), d.M)), Array.from(scores(null, d.M, f)), 'scores from a picture or from its features');
+    const again = (rx, ry, wob, ph) => [Array.from({ length: 41 }, (_, i) => { const a = ph + i / 40 * Math.PI * 2, r = 1 + wob * Math.sin(a * 5 + ph); return { x: 300 + rx * r * Math.cos(a), y: 200 + ry * r * Math.sin(a) }; })];
+    const fourth = g[3].name, top = g[0].name, triTop = d.guess(tri)[0], ladTop = d.guess(ladder)[0];
+    assert.deepEqual(d.learned, {}, 'nothing learned to start with');
+    assert.equal(d.learn(ring, 'spaceship'), false, 'a thing the model does not know is not learned');
+    assert.equal(d.learn(ring, g[40].name), false, 'a ring is not learned as a thing it looks nothing like (' + g[40].name + ')');
+    assert.equal(d.learn(ladder, top), false, 'nor a ladder as a ' + top);
+    assert.deepEqual(d.learned, {}); assert.equal(d.guess(ring)[0].name, top, 'refused lessons change nothing');
+    assert.ok(!d.guess(ring).some(x => x.yours), 'no guess is marked yours before a lesson');
+    assert.equal(d.learn(ring, fourth), true, 'a ring taught as its fourth guess (' + fourth + ')');
+    assert.deepEqual(d.learned, { [fourth]: 1 });
+    let after = d.guess(ring);
+    assert.equal(after[0].name, fourth, 'the same drawing is now that'); assert.equal(after[0].yours, true, 'and marked yours');
+    assert.ok(Math.abs(after.reduce((a, b) => a + b.sure, 0) - 1) < 1e-5, 'sures still add up to 1');
+    assert.equal(after.filter(x => x.yours).length, 1, 'only the learned thing is marked');
+    for (const [rx, ry, w, ph] of [[60, 57, .01, 1], [50, 46, .03, .5], [60, 50, .04, 3]]) { const r = d.guess(again(rx, ry, w, ph))[0]; assert.ok(r.name === fourth && r.yours, 'drawn again a little differently (' + [rx, ry, w] + '), still ' + fourth + ': ' + r.name); }
+    assert.deepEqual(d.guess(tri)[0], triTop, 'a triangle is guessed exactly as before'); assert.deepEqual(d.guess(ladder)[0], ladTop, 'and a ladder');
+    assert.equal(d.guess(ring, { among: [top, 'square'] })[0].name, top, 'among things it was not taught, nothing changes');
+    assert.equal(d.guess(ring, { among: [top, fourth] })[0].name, fourth, 'among the two, the lesson wins');
+    for (let i = 0; i < 4; i++) d.learn(again(60, 58 - i, .01, i), fourth);
+    assert.deepEqual(d.learned, { [fourth]: 3 }, 'the newest three of a thing are kept');
+    assert.equal(d.forget(fourth), d); assert.deepEqual(d.learned, {}); assert.deepEqual(d.guess(ring)[0], g[0], 'forgotten: as it was');
+    // kept on the phone with the game's brains, by name; a doodle made with no api keeps nothing
+    const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+    const d1 = new Doodle(api); d1.learn(ring, fourth); d1.learn(tri, 'tent');
+    assert.ok(kept.has('doodle') && kept.get('doodle').length < 400, 'saved small: ' + (kept.get('doodle') || '').length + ' characters');
+    const d2 = new Doodle(api);
+    assert.deepEqual(d2.learned, { [fourth]: 1, tent: 1 }, 'a new session remembers'); assert.equal(d2.guess(ring)[0].name, fourth); assert.equal(d2.guess(tri)[0].name, 'tent');
+    assert.equal(d2.guess(ladder)[0].name, 'ladder', 'what it was not taught is untouched');
+    assert.deepEqual(new Doodle(api, { name: 'other' }).learned, {}, 'another name is another store');
+    const d3 = new Doodle(api, { save: false }); d3.learn(ladder, 'ladder'); assert.deepEqual(new Doodle(api).learned, { [fourth]: 1, tent: 1 }, 'save: false keeps a lesson to the session');
+    assert.deepEqual(new Doodle().learned, {}, 'no api: nothing carried over'); assert.deepEqual(new Doodle({ name: 'x' }).learned, {}, 'options alone are options');
+    console.log('doodle learns: a ring taught as a ' + fourth + ' is one from then on (redrawn too), a triangle and a ladder unchanged, look-nothing-alike refused, newest three kept, forgotten, saved in ' + kept.get('doodle').length + ' characters ok');
+  }
+
   const { Voice } = await import('../src/kit/hear.js');
   const v = new Voice({ words: ['jump', 'fire', 'turn left'], also: { fire: ['shoot'] } });
   v.hear('jump', false); v.hear('jump jump', false); v.hear('jump jump', true);

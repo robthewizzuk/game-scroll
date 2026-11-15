@@ -2609,13 +2609,35 @@ motorbike, palm tree, cactus, rain, skateboard, skyscraper, stairs, stop sign, s
 tractor, traffic light, train, truck, windmill, campfire, bed, chair, table, bench, television,
 laptop, hand, moustache, mermaid, angel, soccer ball, tennis racquet, basketball.
 
-Measured on drawings it never saw: 76 in 100 are named right among all 200, 89 in 100 are in its
-first three guesses, and 96 in 100 are right when the game asks it to choose among five. So pass
-`among` with the few things your game cares about, and take the top guess only when its `sure` is
-high. Animals that look alike as doodles are the hard ones (dog, bear, bird, frog, raccoon and tiger
-are right a third to a half of the time among all 200): don't put two of those in one `among`. The
-model is about 440 KB and is only fetched by a game that uses it. For plain shapes, `gs.strokes`
-`Shapes` needs no model.
+Measured on the dataset's own pictures of drawings it never saw: 76 in 100 are named right among
+all 200, 89 in 100 are in its first three guesses, and 96 in 100 are right when the game asks it to
+choose among five. So pass `among` with the few things your game cares about, and take the top guess
+only when its `sure` is high. Animals that look alike as doodles are the hard ones (dog, bear, bird,
+frog, raccoon and tiger are right a third to a half of the time among all 200): don't put two of
+those in one `among`. Drawn from strokes, the way a game does it, on 2,100 real drawings of 14 things
+(nine of them look-alike animals): 60 in 100 right among all 200, 80 in its first three, 95 among
+five. The model is about 440 KB and is only fetched by a game that uses it. For plain shapes,
+`gs.strokes` `Shapes` needs no model.
+
+It can learn this player's own way of drawing a thing. When the game knows what a drawing was (it
+asked for a cat, and the player says that was one), tell it:
+
+```js
+reset() { doodle = new Doodle(api); }                    // api: what it learns is kept on the phone
+// the game asked for a cat, the guess was something else, and the player taps "that was my cat":
+if (doodle.learn(strokes, 'cat')) say('Got it. I know your cat now.');
+const best = doodle.guess(strokes, { among })[0];       // best.yours: true when it knew it as the player's own
+```
+
+- It keeps the newest three drawings of each thing, as 48 numbers each, saved with the game's brains;
+  `doodle.learned` is `{ cat: 2 }` and `doodle.forget('cat')` (or `forget()`) takes it back.
+- Measured on real drawings of nine look-alike animals, choosing among the nine: for a player who
+  draws a thing alike each time, 70 in 100 right before, 91 after one example, 95 after three (84
+  for a wobblier hand). For a player who never draws a thing alike twice it changes nothing (75, then
+  76). Fewer than one in 100 of their other animals is lost to it.
+- `learn()` says no (false) to a drawing that looks nothing like the thing: one that isn't in the
+  model's first twenty guesses of the 200. So a scribble can't be taught as a cat, though a ring can
+  be taught as a clock. Only call it when the game knows what was drawn; never on every guess.
 
 **The phone's own AI** (`gs.phoneai.PhoneAI`): newer phones have a language model built in (Apple
 Intelligence on iPhone, Gemini Nano on Android, the browser's own on the web). Use it for flavour:
