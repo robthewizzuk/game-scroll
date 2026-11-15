@@ -396,7 +396,9 @@ function decide(v, now, fps, budget) {
     else if (!cpuBound && fxDown(g)) { /* an effect drawn smaller first */ }
     else if (!cpuBound && sizeDown(g)) { /* the final picture, or the 3D's own, smaller */ }
     // (from the tier being drawn: while hot that is one under the game's own, HD.tier, and a step to the one it already draws would change nothing)
-    else if (HD.tier > 0) { if (Q.want == null) { Q.tierCeil = HD.tier - 1; Q.want = HD.tier - 1; } }
+    // (the tier itself waits for the round's end, applyTier; it is saved now, so that a game left mid-round starts on it next time:
+    // Long Shadow on the Fold, 2026-11-15, wanted low for a whole minute of a mission at 35 fps, and would have started on medium again)
+    else if (HD.tier > 0) { if (Q.want == null) { Q.tierCeil = HD.tier - 1; Q.want = HD.tier - 1; settle(Q.game?.id, { tier: Q.want, lvl: 1, out: 0 }); } }
     else if (stepDown(Q.game)) { Q.lvl = 1; Q.fpsT = now; }
   } else if (v === 'fast') {
     Q.slow = 0; if (++Q.fast < (gpuRoom && Q.lvl > Q.ceil ? 3 : 8)) return; Q.fast = 0;
@@ -411,7 +413,7 @@ function decide(v, now, fps, budget) {
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
   } else { Q.slow = 0; Q.fast = 0; }
-  if (Q.tier !== tier0 || Q.lvl !== lvl0 || Q.out !== out0 || Q.fxLast.length !== fx0) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, out: Q.out, fx: fxSaved() });
+  if ((Q.tier !== tier0 || Q.lvl !== lvl0 || Q.out !== out0 || Q.fxLast.length !== fx0) && !(Q.want != null && Q.want < Q.tier)) settle(Q.game?.id, { tier: Q.tier, lvl: Q.lvl, out: Q.out, fx: fxSaved() });
 }
 /** The slow verdict, GPU-bound, with no effect left to draw smaller: the final picture or the 3D's own a step down (pickSize). False if neither can. */
 function sizeDown(g) {
@@ -423,11 +425,11 @@ function sizeDown(g) {
  * Tests: the quality steps run over a list of windows of frames, each { v: 'slow' | 'fast' | 'ok', g: the chip's ms a
  * frame (or none), worst: its longest reading, parts: HD.info.gpuParts }, for a screen of o.cw x o.ch on tier o.tier
  * from steps o.lvl and o.out, with o.fx the effects drawn. Gives what each window did: 'out 1', 'lvl 2', 'fx',
- * 'tier 1' (wanted, from the next round) or ''. The game being played is left as it was.
+ * 'tier 1' (wanted, from the next round) or ''. o.game: a definition ({ id }) the steps are saved for (none: nothing saved). The game being played is left as it was.
  */
 export function stepsRun(list, o = {}) {
   const keep = { ...Q, fx: { ...Q.fx }, fxLast: [...Q.fxLast] }, parts0 = HD.info.gpuParts, on0 = fxOn, did = [];
-  Object.assign(Q, { game: null, force: null, tier: o.tier ?? 2, capNow: CAP, lvl: o.lvl | 0, ceil: 0, out: o.out | 0, outCeil: 0, cw: o.cw, ch: o.ch, slow: 0, fast: 0, easy: 0, want: null, fx: {}, fxLast: [], ceilT: -1e9, upT: -1e9, hold: HOLD, tierCeil: 3 });
+  Object.assign(Q, { game: o.game || null, force: null, tier: o.tier ?? 2, capNow: CAP, lvl: o.lvl | 0, ceil: 0, out: o.out | 0, outCeil: 0, cw: o.cw, ch: o.ch, slow: 0, fast: 0, easy: 0, want: null, fx: {}, fxLast: [], ceilT: -1e9, upT: -1e9, hold: HOLD, tierCeil: 3 });
   fxOn = new Set(o.fx || []);
   try {
     let now = performance.now();
