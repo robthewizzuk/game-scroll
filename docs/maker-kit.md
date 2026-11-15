@@ -2196,6 +2196,46 @@ For real suspension and cars that can roll over, `World3D.vehicle(mesh, { wheels
 These are how a car handles; what it looks like is yours, or `gs.models.vehicle('car')`:
 [Vehicles made in code](#vehicles-made-in-code).
 
+A ready-made rival driver (Tiny Brains): `Driver` drives a `Car` or a `Kart` round a `Laps` course, and
+takes the player's best lap as its own line when that is quicker than its own way round.
+
+```js
+const { Car, Laps, Driver } = gs.vehicles;
+rival = new Driver(api, { name: 'harbour', skill: .7 });   // make(): one for each rival car, a name for each course
+reset() { race = new Laps(POINTS, { radius: 40 }); me = race.join(new Car(START)); them = race.join(new Car(GRID2)); }
+update(dt) {
+  me.update(dt, myInput); race.update(me);
+  rival.watch(dt, me, race);                               // it keeps the player's best lap
+  them.update(dt, rival.drive(dt, them, race)); race.update(them);   // { throttle, steer, brake, drift }
+}
+// at the end of a race:
+rival.result(playerWon);
+```
+
+- By itself it drives by the course's bends: the inside of each checkpoint, as fast as the bend allows
+  for this car (from the car's own `turn`, `top` and `brakes`), braking in time for it and the one after.
+- `watch()` keeps the player's quickest lap: where they were and how fast, at 64 places round it (a
+  short save on the phone under the driver's name). A lap counts from the second time across the line,
+  because the first starts from a standstill.
+- It drives that line once it has a lap of its own to compare with, only while the player's lap is the
+  quicker, and only on the course it was driven on. A line that turns out no quicker in its hands is
+  dropped after a lap. `rival.best` is `{ theirs, own }` in seconds; `rival.using` says which it is on.
+- `skill` is 0..1 or a `gs.brains.Dial`: its pace through the bends, how close it cuts them and how
+  steady its hands are. On the player's line a lower skill is slower through the slow parts.
+- It does not drift, and it knows nothing of walls or other cars: held up for a second it backs off
+  and tries again. A course with walls needs checkpoints a car can drive between in straight lines.
+- Measured on four made-up courses with a top-down `Car` and scripted players, none of it on a phone.
+  By the bends alone its best laps at skill 0, .5 and 1 were 9.1, 8.3 and 8.0 seconds on an oval, 10.3,
+  8.9 and 8.8 on a kidney, 12.2, 11.0 and 10.5 on a twisty course and 18.4, 16.9 and 16.4 through
+  hairpins (neighbouring skills are sometimes a tenth or two out of order). After watching a quick
+  player for one race, at skill 1 it went from 7.97 to 7.57 on the oval (their lap: 7.63), 8.80 to 8.32
+  on the kidney (8.47) and 16.40 to 15.90 through the hairpins (16.28): a little quicker than the lap
+  it copied, because it cuts the line's corners slightly. On the twisty course its own way was already
+  quicker than every scripted player, so it took nothing, and a slower player's lap never changed its
+  times. At skill .5 the same line was worth about half a second a lap; at skill 0 it was within the
+  wobble from lap to lap. 480 races on learned lines at skills from 0 to .75 all finished. A
+  `drive()` takes 3 to 5 microseconds.
+
 **3D levels from text** (`gs.level3d.Level3D(text, { size, wall, look })`): the same text maps in 3D.
 `#` walls, `.` floor, `1`-`9` raised floors, `~` water, `=` low walls, spaces as holes, letters as
 marks (`find('P')`). Rows of the same block merge, so a big map is a few meshes. `level.solid(world)`
