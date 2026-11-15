@@ -218,9 +218,10 @@ export class Metro {
     this.ways.update(dt, f, this._night, this._avoid || []); if (this._avoid) this._avoid.length = 0;
     // one set of lamps for all of them: the nearest street lamps and headlights of whichever districts are made
     const v = this.view;
-    if (this.lampsOn && v.placeLamps && this._night > .05) {
+    if (this.lampsOn && v.placeLamps && (this._night > .05 || this.indoor?.length)) {
       if (!v.lamps?.length) v.lampLights(26);
       const all = this._lamps ||= []; all.length = 0;
+      for (const l of this.indoor || []) all.push(l);   // (the lamps of a room behind a door, by day too: gs.city Interiors)
       for (const c of this.cities) for (const l of c._lamps || []) all.push(l);
       for (const l of this.ways.traffic?.headlamps(this._night, this._hl ||= []) || []) all.push(l);
       v.placeLamps(all, f.x, 2, f.z, this.t);

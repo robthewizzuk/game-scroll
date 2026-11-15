@@ -2764,6 +2764,44 @@ console.log('physics ok');
   gps.clear(); assert.ok(gps.target === null && !gps.all().length, 'cleared');
   console.log('finding the way: a route that follows the player, turns, arriving, waypoints and markers ok');
 }
+// the rooms behind the doors (city-inside.js): every building's door in a bay of its street wall, and the room behind it in
+// plain numbers: inside its building, the same every time, and the keeper, the counter and every seat reachable from the door
+{
+  const t0 = performance.now();
+  const { layout, STYLES, doorwayOf, FACADES } = await import('../src/kit/city.js'), { roomPlan, roomFree, roomKind, INSIDE_KINDS } = await import('../src/kit/city-inside.js');
+  const counts = {}, fails = {}; let rooms = 0;
+  const err = m => { fails[m] = (fails[m] || 0) + 1; };
+  for (const style of Object.keys(STYLES)) for (const b of layout({ seed: 2, blocks: [4, 3], style }).buildings) {
+    const h = b.doorway, P = b.parts[0];
+    if (!h) { err('no door'); continue; }
+    const again = doorwayOf(b); if (again.x !== h.x || again.z !== h.z) err('door moved');
+    // on its street wall, inside the wall's length, and its shape by the building
+    const along = h.s % 2 === 0 ? P.x1 - P.x0 : P.z1 - P.z0;
+    if (h.t0 < 0 || h.t1 > along || h.h <= 1.8 || h.h > h.storey) err('door off its wall');
+    if (FACADES[b.facade].kind === 'shed' ? !h.shed : h.shed) err('shed door');
+    if (Math.abs(h.x - (h.s === 1 ? P.x1 : h.s === 3 ? P.x0 : h.x)) > 1e-6 || Math.abs(h.z - (h.s === 0 ? P.z0 : h.s === 2 ? P.z1 : h.z)) > 1e-6) err('door not on the face');
+    for (const kind of [null, 'store', 'diner', 'bar', 'home', 'lobby', 'warehouse']) {
+      const r = roomPlan(b, { kind }); rooms++; counts[r.kind] = (counts[r.kind] || 0) + 1;
+      if (kind === null && r.kind !== roomKind(b) && !(roomKind(b) === 'store' && r.kind === 'diner')) err('kind');   // (a shop too narrow for aisles is a diner)
+      if (!(r.x0 >= P.x0 - 1e-6 && r.x1 <= P.x1 + 1e-6 && r.z0 >= P.z0 - 1e-6 && r.z1 <= P.z1 + 1e-6)) err('floor outside its building');
+      if (r.boxes.some(q => q.x0 < P.x0 - .21 || q.x1 > P.x1 + .21 || q.z0 < P.z0 - .21 || q.z1 > P.z1 + .21)) err('a wall outside its building');
+      if (!r.lamps.length || r.top <= r.y + 2) err('no lamps or a low ceiling');
+      // the floor flooded from the door: the keeper, the counter and the seats reachable, the places to stand free
+      const c = .2, nx = Math.ceil((r.x1 - r.x0) / c), nz = Math.ceil((r.z1 - r.z0) / c), seen = new Uint8Array(nx * nz), free = (i, j) => roomFree(r, r.x0 + (i + .5) * c, r.z0 + (j + .5) * c, .28);
+      const cell = q => [Math.floor((q.x - r.x0) / c), Math.floor((q.z - r.z0) / c)], [di, dj] = cell(r.spots.door);
+      if (!free(di, dj)) { err('the way in blocked'); continue; }
+      const st = [[di, dj]]; seen[dj * nx + di] = 1;
+      while (st.length) { const [i, j] = st.pop(); for (const [a, e] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const I = i + a, J = j + e; if (I < 0 || J < 0 || I >= nx || J >= nz || seen[J * nx + I] || !free(I, J)) continue; seen[J * nx + I] = 1; st.push([I, J]); } }
+      const reach = (q, name) => { const [i, j] = cell(q); for (let a = -5; a <= 5; a++) for (let e = -5; e <= 5; e++) { const I = i + a, J = j + e; if (I >= 0 && J >= 0 && I < nx && J < nz && seen[J * nx + I]) return; } err(name + ' out of reach'); };
+      if (r.spots.keeper) reach(r.spots.keeper, 'keeper'); if (r.spots.counter) reach(r.spots.counter, 'counter'); for (const q of r.spots.seats) reach(q, 'seat');
+      if (r.spots.stand.some(q => !roomFree(r, q.x, q.z, .28))) err('a place to stand blocked');
+      const twice = roomPlan(b, { kind }); if (twice.boxes.length !== r.boxes.length || twice.x0 !== r.x0) err('not the same twice');
+    }
+  }
+  assert.deepEqual(fails, {}, 'rooms: ' + JSON.stringify(fails));
+  assert.ok(Object.keys(INSIDE_KINDS).every(k => counts[k] > 0), 'every kind of room made');
+  console.log(`rooms behind the doors: a door on every street wall, ${rooms} rooms inside their buildings, the same every time, keeper, counter and seats reachable from the door ok (${(performance.now() - t0).toFixed(0)} ms)`);
+}
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
 {
