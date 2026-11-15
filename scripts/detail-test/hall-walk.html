@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// The engine test Hall (src/detail-scenes.js hall(): what the phone tour's ray tracing runs walk) walked frame by
+// frame at a phone's pace on the build machine, with Ray Regeneration, the pass as it was, or the reference, for
+// scripts/detail-test.cjs --page hall-walk --webgpu --shots dir [--q "..."]. A tool for looking at what a phone
+// showed (its one check is that the Hall is ray traced): the last three frames of the walk are saved.
+//   ?mode=regen|was|ref  ?w=454&h=717  ?zoom=2 (a narrower view; 1: the tour's own)  ?size=.3 (the Hall's size)
+//   ?t0=4 (seconds into the walk where the last frame is)  ?fps=50  ?n=40 (frames walked)  ?refs=300 (frames the
+//   reference gathers at t0)  ?hold=40 (then stand still that many frames: shots held, held2)  ?hd=key:val
+//   ?up=1 (GSSR on; with hd=scale:0.763 drawn smaller and upscaled, as a phone on "high" runs it)
+//   ?rough=.075 (the floor's roughness: a phone's chip adds a hair to it, which a build machine's doesn't)
+// A Fold's run of the tour: --q "w=594&h=939&zoom=1&n=30&up=1&hd=scale:0.763" (about 5 minutes)
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+import { SCENES } from '../../src/detail-scenes.js';
+const Q = new URLSearchParams(location.search);
+setGpuPick('webgpu');
+await loadParts(); await loadParts(['hd', 'props', 'models', 'poses', 'THREE']);
+const out = {}, info = {}, checks = [];
+try {
+  if (!await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const HD = window.__hd, W = +(Q.get('w') || 454), H = +(Q.get('h') || 717);
+  HD.force = +(Q.get('tier') ?? 2); HD.upscale = Q.get('up') === '1'; HD.grain = 0; HD.spread = false; HD.hold = false; HD.still = false; HD.occlude = false;
+  for (const kv of (Q.get('hd') || '').split(',').filter(Boolean)) { const [k, val] = kv.split(':'); HD[k] = JSON.parse(val); }
+  const S = SCENES.find(s => s[0] === 'hall')[3]({ gs, HD, size: +(Q.get('size') || .3), gpu: true, top: true }), v = S.v, T = gs.THREE;
+  if (Q.get('rough')) { let k = 0; v.scene.traverse(o => { if (o.material && o.geometry?.parameters?.width === 22) { o.material.roughness = +Q.get('rough'); k++; } }); info.floors = k; }
+  const zoom = +(Q.get('zoom') || 2); v.cam.fov = 2 * Math.atan(Math.tan(v.cam.fov * Math.PI / 360) / zoom) * 180 / Math.PI; v.cam.updateProjectionMatrix();
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const draw = () => { v.t = 0; v.render(x, W, H); return x.getImageData(0, 0, W, H).data; };
+  const nextFrame = () => new Promise(r => requestAnimationFrame(r)), D = async () => { const d = draw(); await nextFrame(); return d; };
+  const shot = name => { out[name] = c.toDataURL(); };
+  const m = Q.get('mode') || 'regen', T0 = +(Q.get('t0') || 4), FPS = +(Q.get('fps') || 50), N = +(Q.get('n') || 40);
+  S.path(T0, v.cam);
+  const got = await S.modes.find(o => o.key === (m === 'was' ? 'traced-was' : 'traced')).enter(D);
+  info.enter = got; info.refl = HD.info.refl; info.fov = +v.cam.fov.toFixed(1);
+  info.hd = Object.fromEntries(Object.entries(HD.info).filter(([k, x]) => typeof x !== 'object' && typeof x !== 'function'));
+  checks.push({ name: 'the hall is ray traced', ok: HD.info.refl === 'traced', note: JSON.stringify(HD.info.trace || null).slice(0, 200) });
+  if (m === 'ref') { S.path(T0, v.cam); HD.regenRef = 1; const n = +(Q.get('refs') || 300); for (let i = 0; i < n; i++) await D(); shot('truth'); }
+  else {
+    S.path(T0 - N / FPS, v.cam); v.cut(); for (let i = 0; i < 12; i++) await D();
+    for (let i = 1; i <= N; i++) { S.path(T0 - (N - i) / FPS, v.cam); await D(); if (i > N - 3) shot('f' + String(i).padStart(3, '0')); }
+    if (Q.get('hold')) { for (let i = 0; i < +Q.get('hold'); i++) await D(); shot('held'); await D(); shot('held2'); }
+  }
+  S.dispose(); HD.regenRef = false;
+} catch (e) { window.result = { error: String(e?.stack || e) }; throw e; }
+window.result ||= { out, info, checks };
+</script>
