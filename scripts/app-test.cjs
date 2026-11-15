@@ -1181,12 +1181,14 @@ async function reports(b) {
 
 /* ---------- updates from Google Play (src/update.js), with a stand-in for the phone's plugin ---------- */
 // The stand-in answers check() with `answer` and start() with `result`, notes every call, and can send
-// the plugin's 'state' events. The app looks by itself 4 seconds after it opens.
+// the plugin's 'state' events. The app asks Play by itself as it opens.
 function fakePlay(o) {
   const f = window.__gsPlayFake = { calls: [], answer: o.answer, result: o.result || 'accepted', on: [] };
+  if (o.saidNo) localStorage.setItem('gs_update_no', String(o.saidNo));   // what an earlier build kept after "No thanks"
   f.check = async () => { f.calls.push('check'); return { ...f.answer }; };
   f.start = async ({ type }) => { f.calls.push('start:' + type); return { result: f.result }; };
   f.complete = async () => { f.calls.push('complete'); };
+  f.openStore = async () => { f.calls.push('store'); };
   f.addListener = (name, fn) => { f.on.push(fn); return Promise.resolve({ remove() {} }); };
   f.send = s => f.on.forEach(fn => fn(s));
 }
@@ -1227,15 +1229,38 @@ async function updates(b) {
   check((await calls(p)).endsWith('complete'), 'Restart has Play install it', await calls(p));
   await p.done();
 
-  // "No thanks" on Play's sheet: not asked again today, unless the player asks in Settings
+  // "No thanks" on Play's sheet: not asked again this visit, unless the player asks in Settings; the next
+  // time the app opens, Play asks again (an old "not today" left by an earlier build doesn't count)
   p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY, result: 'declined' } });
   await looked(p); await p.waitForTimeout(300);
   await p.evaluate(() => __gs.update.check(false)); await p.waitForTimeout(400);
-  const no = await p.evaluate(() => +localStorage.getItem('gs_update_no'));
-  check(await calls(p) === 'check start:flexible check' && no > 0, 'after No thanks it looks again but doesn\'t ask today', await calls(p));
+  check(await calls(p) === 'check start:flexible check', 'after No thanks it looks again but doesn\'t ask again this visit', await calls(p));
   await p.click('#settings'); await p.waitForTimeout(400);
   await p.evaluate(() => document.querySelector('.set-upd').click()); await p.waitForTimeout(400);
   check((await calls(p)).endsWith('check start:flexible'), 'Settings\' button asks again', await calls(p));
+  await p.done();
+  p = await open(b, { before: fakePlay, arg: { answer: FROM_PLAY, result: 'declined', saidNo: Date.now() } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:flexible', 'the next launch asks again, even after a No thanks', await calls(p));
+  await p.done();
+
+  // Where Play won't do the background download for an update, its full-screen one; backing out of a
+  // normal update leaves the player be (no must-update card)
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, flexible: false }, result: 'declined' } });
+  await looked(p); await p.waitForTimeout(300);
+  check(await calls(p) === 'check start:immediate' && !await p.evaluate(() => !!document.querySelector('dialog.upd-wall[open]')),
+    'no background download allowed: Play\'s full-screen update, which a normal update can be backed out of', await calls(p));
+  await p.done();
+
+  // Play doesn't know of a new version yet: Settings opens the Play Store page, and coming back asks again
+  p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'none' } } });
+  await looked(p); await p.waitForTimeout(300);
+  await p.click('#settings'); await p.waitForTimeout(400);
+  const none = await p.evaluate(() => document.querySelector('.set-updates')?.innerText || '');
+  if (process.env.SHOTS) { await p.evaluate(() => document.querySelector('.set-updates').scrollIntoView({ block: 'center' })); await shot(p, 'update-settings'); }
+  await p.evaluate(() => document.querySelector('.set-store').click()); await p.waitForTimeout(200);
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'yes' }; document.dispatchEvent(new Event('visibilitychange')); }); await p.waitForTimeout(400);
+  check(/Open Google Play/.test(none) && (await calls(p)).endsWith('store check start:flexible'), 'Open Google Play, and back in the app Play\'s sheet offers what it found', JSON.stringify([none, await calls(p)]));
   await p.done();
 
   // Priority 4-5: Play's full-screen update; backing out leaves a card that can't be closed
@@ -1266,14 +1291,14 @@ async function updates(b) {
   check(await calls(p) === 'check' && await p.evaluate(() => !!document.querySelector('.upd.on')), 'one downloaded earlier goes straight to the restart card', await calls(p));
   await p.done();
 
-  // A round being played holds the offer back until it ends
+  // A round being played: Play is asked at once, and what it offers waits for the round to end
   p = await open(b, { before: fakePlay, arg: { answer: { ...FROM_PLAY, available: 'none' } } });
   await p.game(CASUAL); await looked(p); await p.waitForTimeout(200);
   await p.evaluate(() => __gs.start()); await p.waitForTimeout(300);
-  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'yes' }; __gs.update.check(); }); await p.waitForTimeout(1500);
+  await p.evaluate(() => { __gsPlayFake.answer = { ...__gsPlayFake.answer, available: 'yes' }; __gs.update.check(); }); await p.waitForTimeout(2500);
   const held = await calls(p);
   await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(3600);
-  check(held === 'check' && (await calls(p)) === 'check check start:flexible', 'an offer waits for the round to end', JSON.stringify([held, await calls(p)]));
+  check(held === 'check check' && /^check check( check)+ start:flexible$/.test(await calls(p)), 'Play is asked during a round, and its offer waits for the round to end', JSON.stringify([held, await calls(p)]));
   await p.done();
 }
 
