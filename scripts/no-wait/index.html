@@ -35,8 +35,8 @@ dev.addEventListener('uncapturederror', e => refused.push(String(e.error?.messag
   };
 }
 // which things the chip was asked to draw this frame
-const drawn = new Set();
-{ const be = r.backend, d = be.draw.bind(be); be.draw = (ro, info) => { drawn.add(ro.object); return d(ro, info); }; }
+const drawn = new Set(), ever = new Set();   // (ever: drawn at least once; once still, things are drawn from render bundles, not one by one)
+{ const be = r.backend, d = be.draw.bind(be); be.draw = (ro, info) => { drawn.add(ro.object); ever.add(ro.object); return d(ro, info); }; }
 let worst = 0;
 const draw = async () => { drawn.clear(); drawing = true; const t = performance.now(); try { v.render(x, 240, 320); } finally { drawing = false; } worst = Math.max(worst, performance.now() - t); await frame(); };
 const settle = async (most = 600) => { let i = 0; for (; i < most && (i < 4 || r.gsBuilding > 0); i++) await draw(); for (let k = 0; k < 3; k++) await draw(); return i; };
@@ -60,6 +60,27 @@ await phase('new thing', () => v.scene.add(b), b);
 const h = kind('#4c4', { clearcoat: 1, sheen: .5 }); h.name = 'switched on'; h.material.name = 'switched on'; h.position.set(-2, 1, 0); h.visible = false; v.scene.add(h);
 await settle();
 await phase('switched on', () => { h.visible = true; }, h);
+// new things with maps while one with a map of another kind is drawn in every frame: three keeps one node for all
+// materials' maps, and the frames drawn while a build gives the main thread back left it holding the drawn one's
+// picture (a nearest-filtered palette, read with no sampler): the builds then declared no sampler for their own
+// smooth maps, and the chip refused them (gpu.js ownMaps; Parcel Dash's city blocks never drew, 2026-11-15)
+{
+  const pal = new T.DataTexture(new Uint8Array([200, 60, 60, 255, 60, 200, 60, 255, 60, 60, 200, 255, 220, 220, 60, 255]), 4, 1); pal.needsUpdate = true;   // (nearest-filtered: three's default)
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64; const g2 = cv.getContext('2d');
+  for (let i = 0; i < 8; i++) { g2.fillStyle = i % 2 ? '#ddd' : '#555'; g2.fillRect(i * 8, 0, 8, 64); }
+  const pm = new T.Mesh(new T.BoxGeometry(1, 1, 1), new T.MeshStandardMaterial({ map: pal })); pm.material.name = 'palette'; pm.position.set(3, .5, 2); v.scene.add(pm);
+  await settle();
+  const smooth = [];
+  for (let i = 0; i < 6; i++) {
+    const t = new T.CanvasTexture(cv); t.wrapS = t.wrapT = T.RepeatWrapping;
+    const m = new T.Mesh(new T.SphereGeometry(.35, 24, 12), new T.MeshPhysicalMaterial({ map: t, roughnessMap: t, color: '#fff', clearcoat: i / 6, sheen: i % 2 }));
+    m.material.name = 'smooth map ' + i; m.position.set(-2.5 + i, .4, 2); smooth.push(m);
+  }
+  await phase('maps of two kinds', () => { for (const m of smooth) v.scene.add(m); }, smooth[5]);
+  await settle();
+  phases['maps of two kinds'].allShown = smooth.every(m => ever.has(m));
+  phases['maps of two kinds'].missing = smooth.filter(m => !ever.has(m)).map(m => m.material.name);
+}
 // another light: three writes every lit shader again
 const fill = new T.DirectionalLight('#ffd8b0', .4); fill.position.set(-3, 4, 2);
 await phase('a light added', () => v.scene.add(fill), ground);

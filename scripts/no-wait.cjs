@@ -6,6 +6,7 @@
 //  - each of them still shows (a few frames later), and no pipeline is refused (a build for the wrong picture);
 //  - once everything is built the picture is the one drawn without it;
 //  - a thing put off and thrown away before its turn leaves no error behind (the page's errors fail it).
+//  - new things with smooth maps, built while a thing with a nearest-filtered map draws each frame, are not refused (gpu.js ownMaps);
 // Without it the same steps must write shader text in their frames (or the page shows nothing).
 // Usage: node scripts/no-wait.cjs
 const { chromium } = require('playwright');
@@ -32,6 +33,7 @@ const path = require('path');
       if (k === 'a light added') { say(a.shownAt === 0, `${k}: built in its frame as three does (a change of lights is every lit shader at once): the ground still drawn in that frame (${a.shownAt}), ${a.text.length} shader texts in it (without: ${z.text.length})`); console.log(`     ${k}: longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without`); continue; }
       say(a.text.length === 0 && a.pipes.length === 0, `${k}: in the frames, with it: shader text ${a.text.length}, pipelines made at once ${a.pipes.length} (${[...a.text, ...a.pipes].slice(0, 4).join(', ') || 'none'}); without: ${z.text.length} and ${z.pipes.length}`);
       if (a.shownAt !== undefined && k !== 'a light added') say(a.shownAt >= 0, `${k}: shows ${a.shownAt} frames after (without it: ${z.shownAt}); longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without`);
+      if (a.allShown !== undefined) say(a.allShown, `${k}: every new thing drawn once built (${a.allShown ? 'all' : 'not: ' + a.missing.join(', ')})`);
       else console.log(`     ${k}: longest frame ${a.worst.toFixed(0)} ms with it, ${z.worst.toFixed(0)} ms without, settled in ${a.frames} frames (${z.frames} without)`);
     }
     say(off.phases['new thing'].text.length > 0, `without it, the new thing's shader text is written in its frame (${off.phases['new thing'].text.length}): the page tests something`);

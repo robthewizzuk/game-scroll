@@ -5,7 +5,7 @@
 import { MeshBasicNodeMaterial, NoBlending, DoubleSide, RendererUtils } from 'three/webgpu';
 import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, screenCoordinate, materialColor, materialRoughness, reference,
   vec2, vec3, vec4, float, int, floor, fract, mod, abs, min, max, clamp, dot, length, sqrt, cos, sin, smoothstep, step, mix, select, dFdx, dFdy } from 'three/tsl';
-import { DataTexture } from 'three';
+import { DataTexture, LinearFilter } from 'three';
 import { ORIGIN } from './origin.js';
 
 const ORG = uniform(ORIGIN);
@@ -123,9 +123,12 @@ export function groundPaintRender(r, gp, L, pieces, U) {
   }
 }
 
-// a stand-in until the pictures are made
+// a stand-in until the pictures are made. Filtered as the pictures are (three's DataTexture is nearest-filtered by
+// default, which WebGPU reads without a sampler, by whole texels and with no wrapping): a ground material whose
+// shader was written while it read this one kept that way of reading after the pictures came in, and read one
+// texel off their edge for the whole road (Parcel Dash on Rob's Fold, 2026-11-15: roads brown, black or grey on a first load).
 let blank = null;
-const BLANK = () => blank ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 128, 230]), 1, 1), { needsUpdate: true });
+const BLANK = () => blank ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 128, 230]), 1, 1), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });
 
 /** The 'groundpaint' look (hd3d-gpu.js gpuLooks): m: the ground's material (still a classic one); s: its look; live: hd3d-gpu.js's. */
 export function groundPaintLook(m, s, o, { live }) {

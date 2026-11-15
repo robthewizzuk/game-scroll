@@ -234,7 +234,7 @@ export function prepareGPU() {
       if (STEER.submit !== false) holdSubmits(r.backend.device);   // (a frame's passes go to the chip in one submit: submit.js)
       fx.manyLights(r);
       fx.listWalk(r);   // (three's walk of the scene for each render, over the scene's list: scene-list.js)
-      freeUnbuilt(r); sendChanged(r); oneWrite(r); sameText(r);
+      freeUnbuilt(r); sendChanged(r); oneWrite(r); sameText(r); ownMaps(W);
       noWait(r);   // (no frame of a view waits for a shader: built in the background, the thing shown once it's there, nowait.js)
       await fx.halfCheck(r);   // half precision in the kit's own passes, where the chip has it and compiles them (half.js)
       fx.sharpMips(r);   // textures read for the screen's size when SGSR 2 upscales
@@ -290,6 +290,28 @@ function sameText(r) {
     return f.call(this, group, ...a);
   };
   P.getSharedBindGroup.gsSame = true;
+}
+// A shader written in the background keeps its own material's maps all the way through. three keeps ONE node for each
+// map name (map, roughnessMap...) shared by every material (MaterialNode's cache), and sets its picture to the
+// material in hand when it writes a shader and before each thing it draws. A background build (compileAsync, the
+// no-wait queue, nowait.js) writes the text a stage at a time and gives the main thread back between, and the
+// frames drawn meanwhile leave that node holding another material's picture. The text's last part (which pictures
+// get a sampler) then read the other picture: two of Parcel Dash's city blocks, read with a sampler for their own
+// smooth picture, had none declared because a car's palette (a tiny nearest-filtered one, which three reads without
+// a sampler) was in the node by then; the chip refused the shaders and the blocks were never drawn (Rob's Fold,
+// 2026-11-15: buildings missing on a first load). Here, after each give-back, the build's shared reference nodes
+// are pointed at its own material and object again, as at its start (scripts/no-wait.cjs, "maps of two kinds").
+function ownMaps(W) {
+  const P = W.WGSLNodeBuilder?.prototype, f = P?.buildAsync;
+  if (typeof f !== 'function' || f.gsOwn) return;
+  P.buildAsync = function (yieldFn, ...a) {
+    const b = this, give = yieldFn || (() => (self.scheduler?.yield ? self.scheduler.yield() : new Promise(res => requestAnimationFrame(res))));   // (three's own yieldToMain when none is given)
+    return f.call(this, async () => {
+      await give();
+      for (const n of b.nodes) if (typeof n.getValueFromReference === 'function' && typeof n.updateValue === 'function' && n.node) { try { n.updateReference(b); n.updateValue(); } catch (e) { /* (a reference whose object has gone: left as it is) */ } }
+    }, ...a);
+  };
+  P.buildAsync.gsOwn = true;
 }
 // HDR output: on screens that report a high dynamic range, unless a test turned it off or on (setHdr)
 let hdrPick = null;
