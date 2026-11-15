@@ -1,0 +1,64 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.city.Town drawn to look over, for scripts/town.cjs: a column for each camera, a row for each hour.
+//   ?views=square,street,cottage,inn,gate,high,map   &times=10,21.5   &cell=480x360   &seed=7   &kind=village|castle   &houses=16   &gpu
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  const views = (Q.get('views') || 'square,street,cottage,high,map').split(','), times = (Q.get('times') || '10,21.5').split(',').map(Number), [cw, ch] = (Q.get('cell') || '480x360').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * views.length; sheet.height = ch * times.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0018, env: .5, amb: .45, fov: 60 });
+  v.cam.near = .2; v.cam.far = 900; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffe0b0', 2.6, 70, [-.6, .5, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0008, colour: '#a8b4c4' });
+  const sky = new gs.sky.Sky(v, { time: times[0], speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const clock = new gs.town.Clock({ hour: times[0], speed: 0, sky });
+  const t0 = performance.now();
+  const town = new gs.city.Town(v, { seed: +(Q.get('seed') || 7), kind: Q.get('kind') || 'village', houses: +(Q.get('houses') || 16), clock });
+  const made = performance.now() - t0, P = town.plan;
+  const folk = new gs.town.Folk(P, { clock }), night = new gs.town.Night(P, { clock });
+  const B = r => P.buildings.find(b => b.role === r) || P.buildings[0];
+  const front = (b, back = 9, up = 1.7, side = 2) => { const fx = Math.sin(b.turn), fz = Math.cos(b.turn), sx2 = Math.cos(b.turn), sz2 = -Math.sin(b.turn); return [[b.x + fx * (b.d / 2 + back) + sx2 * side, up, b.z + fz * (b.d / 2 + back) + sz2 * side], [b.x, up + 1.2, b.z]]; };
+  const H = P.heading, main = P.roads[0].points, back = main[Math.max(0, Math.floor(main.length * .2))];
+  const VIEWS = {
+    square: () => [[P.square.x + Math.sin(H + 2.4) * (P.square.r - 1), 1.7, P.square.z + Math.cos(H + 2.4) * (P.square.r - 1)], [P.square.x, 1.5, P.square.z]],
+    street: () => [[back[0], 1.8, back[1]], [P.square.x, 2.5, P.square.z]],
+    cottage: () => front(P.buildings.find(b => b.style === 'cottage' && b.role === 'home') || B('home'), 6, 1.6, 2.5),
+    inn: () => front(B('inn'), 8, 1.7, -2),
+    keep: () => front(B('keep'), 18, 2, 4),
+    gate: () => { const g = P.gates[0] || { x: main[0][0], z: main[0][1], turn: H + Math.PI }; return [[g.x + Math.sin(g.turn) * 22 + Math.cos(g.turn) * 6, 2, g.z + Math.cos(g.turn) * 22 - Math.sin(g.turn) * 6], [g.x, 4, g.z]]; },
+    high: () => [[Math.sin(H + 2.2) * P.radius * 1.15, P.radius * .75, Math.cos(H + 2.2) * P.radius * 1.15], [0, 0, 0]],
+  };
+  const info = [`${P.name} (${P.kind}): made in ${made.toFixed(0)} ms, ${P.buildings.length} buildings, ${P.roads.length} roads, ${P.walls.length} wall pieces, ${P.lights.length} torches, ${folk.people.length} people`];
+  for (let r = 0; r < times.length; r++) {
+    clock.set(times[r]); sky.update(0); folk.settle();
+    for (let c = 0; c < views.length; c++) {
+      if (views[c] === 'map') {   // the plan, with each person where this hour has them (indoors: a ring at their building)
+        cx.clearRect(0, 0, cw, ch); town.drawMap(cx, 0, 0, cw, ch, { at: { x: 0, z: 0 }, range: P.radius + 8 });
+        const s = Math.min(cw, ch) / ((P.radius + 8) * 2), col = { sleep: '#6070ff', work: '#ff8040', eat: '#40d060', drink: '#e0e040', chat: '#ff60c0', stroll: '#60e0ff', patrol: '#ffffff', watch: '#ffffff', hide: '#ff2020', walk: '#c0c0c0' };
+        for (const p of folk.people) { const X = cw / 2 + p.x * s, Y = ch / 2 + p.z * s; cx.fillStyle = col[p.doing] || '#000'; cx.strokeStyle = '#000'; cx.beginPath(); cx.arc(X + (p.inside >= 0 ? (p.id % 3 - 1) * 4 : 0), Y + (p.inside >= 0 ? (p.id % 2) * 4 : 0), p.inside >= 0 ? 3 : 4, 0, Math.PI * 2); cx.fill(); cx.stroke(); }
+        const tally = {}; for (const p of folk.people) tally[p.doing] = (tally[p.doing] || 0) + 1;
+        info.push(`map     ${String(times[r]).padEnd(5)} ${JSON.stringify(tally)}`);
+      } else {
+        const V = VIEWS[views[c]]; if (!V) throw new Error('no view ' + views[c]);
+        const [at, look] = V();
+        v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld();
+        sun.follow(at[0], 0, at[2]); v.cut?.();
+        const I = window.__hd.info;
+        for (let n = 0; n < 10; n++) { town.update(1 / 60); sky.update(1 / 60); v.t = n / 60; I.shCalls = I.shTris = 0; v.render(cx, cw, ch); await frame(); }
+        info.push(`${views[c].padEnd(7)} ${String(times[r]).padEnd(5)} draws ${I.calls ?? '?'} triangles ${I.tris ?? '?'} (+ shadows ${I.shCalls ?? 0} draws)`);
+      }
+      sx.drawImage(cell, c * cw, r * ch);
+      sx.font = '12px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(`${views[c]} ${times[r]}h`, c * cw + 5, r * ch + 14);
+    }
+  }
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

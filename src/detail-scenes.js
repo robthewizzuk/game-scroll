@@ -40,6 +40,9 @@
 //   embers   light from effects (hd3d.js flash, lamps.js lampLightAt, sunmask-gpu.js gasSunAt): a works yard at dusk with a burning drum,
 //            sparks, a turret firing, blasts and smoke: once lighting nothing, then lighting the yard, the smoke lit by the lamps, the
 //            drum's smoke shading the ground from the low sun (WebGPU)
+//   opencity everything an open-city game asks for at once (gs.city, gs.sky Weather, gs.physics3d): a drive across a city of ten blocks
+//            a side behind a car: at midday, at night in the rain, then chased by three cars with the city solid in physics; each
+//            system's time a frame and the city's memory are told, for the budgets in docs/open-city.md
 // A scene: { v (its view), holds (what is in it, in words), modes: [{ key, name, enter(draw) }], path(t, cam),
 // tell() (a few words about the run just flown), dispose() }, and where it has more than one pair of runs to set
 // side by side, pairs: [[off key, on key, the comparison's own words (or the two names)]]. enter() sets the mode up and, where something has to be built
@@ -1324,6 +1327,114 @@ function skyline({ gs, size }) {
   };
 }
 
+/* ---------- open city: everything an open-city game asks for at once ---------- */
+// What an open-city game asks of a phone all at once (Rob's open-city pick 1, 2026-11-15): a drive at 16 metres a second
+// across a made-up city of ten blocks a side, corner to corner and back, behind a car, with the camera in a chase. Three
+// runs, each with more on: 'day' the city to the horizon with its traffic, people on the pavements and cars parked at the
+// kerbs, at midday and dry; 'night' the same drive at night in the rain, street lamps and headlights casting shadows, the
+// streets wet and drops on the lens; 'chase' the night drive with three cars chasing, the city made solid in physics
+// (gs.physics3d: buildings, kerbs, street furniture, parked cars, the nearest traffic and people), the car a body that
+// shoves the crates left in the road, people running from it and traffic braking for it. The city is not built ahead: it builds as the
+// drive comes to it, as a game's would. tell() gives each system's own time a frame and what the city holds in memory,
+// so a phone says what a city game can spend where (the budgets in docs/open-city.md).
+function opencity({ gs, HD, size }) {
+  const T = gs.THREE, { City } = gs.city, { vehicle } = gs.models, k = Math.min(1, Math.max(.2, size));
+  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0009, env: .5, amb: .5, fov: 62 });
+  v.cam.near = .2; v.cam.far = 10800; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#fff0d8', 2.6, 70, [-.5, .8, .35]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  v.air({ haze: .0006, colour: '#9aa6bc' });
+  const sky = new gs.sky.Sky(v, { time: 13, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const blocks = size < .15 ? 2 : size < .3 ? 3 : Math.max(4, Math.round(10 * Math.sqrt(k))), busy = 1.3 * k, SPEED = 16, BACK = [12, 21, 30];
+  const car = vehicle('car', { style: 'sports', seed: 11, colour: '#c8321e' }), chasers = BACK.map((_, i) => vehicle('car', { style: 'saloon', seed: 40 + i, colour: '#e8e8ea' }));
+  v.scene.add(car); for (const c of chasers) { c.visible = false; v.scene.add(c); }
+  let city = null, weather = null, world = null, body = null, path = null, mode = '', ready = false, crates = [];
+  const crateGeo = new T.BoxGeometry(.8, .8, .8), crateMat = gs.hd.pbr('#8a6a44', { rough: .8 });
+  const sum = { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, heading: 0, scare: 0, hits: 0 }, P = {}, Q = {}, ahead = new T.Vector3();
+  const drop = () => { for (const m of crates) m.removeFromParent(); crates = []; weather?.dispose(); weather = null; world?.dispose?.(); world = body = null; city?.dispose(); city = null; if (v.drops) v.drops.on = false; };
+  const enter = key => async draw => {
+    const t0 = performance.now(), night = key !== 'day';
+    const opts = { seed: 23, blocks, style: 'downtown', sky, traffic: busy, people: busy, sound: false, far: true };
+    if (!ready) {   // (the people are sculpted the first time a phone meets them, and kept)
+      let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
+      await until(draw, () => done); if (err) throw err; if (!done) throw new Error('the city\'s people were not sculpted in time'); ready = true;
+    }
+    drop(); mode = key;
+    if (key === 'chase') { let done = false; gs.physics3d.loadPhysics3D().then(() => { done = true; }, () => { done = true; }); await until(draw, () => done); }
+    // corner to corner across the city and back, on the driving side of the roads (gs.city route), smoothed at the corners
+    const plan = gs.city.layout(opts), xs = plan.nodes.map(n => n.x), zs = plan.nodes.map(n => n.z);
+    const lo = { x: Math.min(...xs) + 20, z: Math.min(...zs) + 20 }, hi = { x: Math.max(...xs) - 20, z: Math.max(...zs) - 20 };
+    city = new City(v, { ...opts, at: lo });
+    const go = city.route(lo, hi), back = city.route(hi, lo), pts = go.points.concat(back.points.slice(1));
+    path = new gs.paths.Path(pts.filter((p, i) => !i || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 2).map(([x, z]) => ({ x, y: 0, z })), { loop: true, kind: 'smooth', tension: .3 });
+    sky.time = night ? 22.5 : 13; sky.update(0);
+    if (night) { weather = new gs.sky.Weather(v, { kind: 'rain', amount: .6, level: city, area: 28, max: Math.round(900 * k), lens: true }); weather.wet = 1; weather.pools = .4; weather.watch(car); }
+    if (key === 'chase') {
+      world = new gs.physics3d.World3D(); city.solid(world);
+      body = world.box(null, 1.9, 1.3, 4.4, { moving: true, at: { x: lo.x, y: .7, z: lo.z }, tag: 'car', sound: 'metal' });
+      world.onHit(() => { sum.hits++; });
+      // crates and bins left in the road along the drive, for the car to shove aside (the city's own things are fixed or move by its code)
+      for (let i = 0; i < Math.round(36 * k); i++) {
+        const p = path.offset((i + .5) * path.length / Math.round(36 * k), (i % 3 - 1) * 1.4, {}), m = new T.Mesh(crateGeo, crateMat);
+        m.castShadow = m.receiveShadow = true; v.scene.add(m); crates.push(m);
+        world.box(m, .8, .8, .8, { at: { x: p.x, y: .45 + (i % 2) * .85, z: p.z }, tag: 'crate', sound: 'wood' });
+      }
+    }
+    for (const c of chasers) c.visible = key === 'chase';
+    Object.assign(sum, { n: 0, t: 1e9, city: 0, weather: 0, physics: 0, sky: 0, scare: 0, hits: 0 });
+    const build = performance.now() - t0;
+    for (let i = 0; i < 4; i++) await draw();
+    return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.cars.list.length)} cars, ${num(city.parked.length)} parked, ${num(city.people.list.length)} people, a drive of ${num(path.length)} m` };
+  };
+  const place = (m, d, dt) => {
+    path.at(d, P); path.at(d + 3, Q);
+    m.position.set(P.x, 0, P.z); m.rotation.y = Math.atan2(Q.x - P.x, Q.z - P.z) + Math.PI; m.move(dt, SPEED, { steer: 0 }); m.updateMatrixWorld(true);
+    return Math.atan2(Q.x - P.x, Q.z - P.z);
+  };
+  return {
+    v, holds: `a drive at ${SPEED} m/s across a made-up downtown of ${blocks} blocks a side and back, behind a car, the city to the horizon, its traffic and people round it`,
+    modes: [
+      { key: 'day', name: 'the city at midday, dry', enter: enter('day') },
+      { key: 'night', name: 'at night in the rain: lamps, headlights, wet streets, drops on the lens', enter: enter('night') },
+      { key: 'chase', name: 'a chase at night in the rain: three cars behind, the city solid in physics, people running', enter: enter('chase') },
+    ],
+    pairs: [['day', 'night', 'night in the rain against a dry midday'], ['night', 'chase', 'a chase in physics against the drive alone']],
+    path(t, cam) {
+      if (!city) return;
+      const back = t < sum.t, dt = back ? 1 / 60 : Math.min(.1, t - sum.t); sum.t = t;
+      const d = (t * SPEED) % path.length, h = place(car, d, dt);
+      if (back) sum.heading = h; else sum.heading += Math.atan2(Math.sin(h - sum.heading), Math.cos(h - sum.heading)) * Math.min(1, dt * 3);
+      chasers.forEach((c, i) => { if (c.visible) place(c, (d - BACK[i] + path.length) % path.length, dt); });
+      const fx = Math.sin(sum.heading), fz = Math.cos(sum.heading);
+      cam.position.set(P.x - fx * 9, 3.2, P.z - fz * 9); ahead.set(P.x + fx * 8, 1.4, P.z + fz * 8); cam.lookAt(ahead); cam.updateMatrixWorld();
+      sun.follow(P.x, 0, P.z);
+      let t0 = performance.now(); sky.update(dt); sum.sky += performance.now() - t0;
+      if (mode === 'chase') {
+        city.avoid(car.position, 1.2); for (const c of chasers) city.avoid(c.position, 1.2);
+        if ((sum.scare -= dt) <= 0) { city.people.scare(car.position, 14, 3); sum.scare = 1; }
+      }
+      t0 = performance.now(); city.update(dt, car.position); sum.city += performance.now() - t0;
+      if (weather) { t0 = performance.now(); weather.update(dt); sum.weather += performance.now() - t0; }
+      if (world) {
+        t0 = performance.now();
+        body.body.setNextKinematicTranslation(world.inner({ x: P.x, y: .7, z: P.z })); body.body.setNextKinematicRotation({ x: 0, y: Math.sin(car.rotation.y / 2), z: 0, w: Math.cos(car.rotation.y / 2) });
+        world.step(dt); sum.physics += performance.now() - t0;
+      }
+      sum.n++;
+    },
+    tell() {
+      if (!city || !sum.n) return null;
+      const n = sum.n, ms = x => (x / n).toFixed(2), B = HD.meshBytes(v.scene), built = [...city.chunks.values()].filter(c => c.group).length, heap = performance.memory?.usedJSHeapSize;
+      const parts = [`the city's code ${ms(sum.city)} ms`, `sky ${ms(sum.sky)} ms`];
+      if (weather) parts.push(`rain and wet ${ms(sum.weather)} ms`);
+      if (world) parts.push(`physics ${ms(sum.physics)} ms (${num(sum.hits)} hits)`);
+      parts.push(`${built} of ${city.chunks.size} city chunks built`, `meshes ${(B.js / 1048576).toFixed(1)} MB in JavaScript, ${(B.chip / 1048576).toFixed(1)} MB on the chip`);
+      if (heap) parts.push(`heap ${(heap / 1048576).toFixed(0)} MB`);
+      return parts.join(' · ');
+    },
+    dispose() { drop(); crateGeo.dispose(); sky.dispose(); car.removeFromParent(); for (const c of chasers) c.removeFromParent(); clear(v); },   // (the cars' shapes are the kit's own: not freed here)
+  };
+}
+
 export const SCENES = [
   ['valley', 'Valley', 'cluster detail', valley],
   ['forest', 'Forest', 'detail for copies', forest],
@@ -1345,4 +1456,5 @@ export const SCENES = [
   ['skyline', 'Skyline', 'the city to the horizon: stand-ins past the streets, far lights, hills', skyline],
   ['coast', 'Coast', 'the open sea and rain that runs', coast],
   ['embers', 'Embers', 'light from fire, sparks and explosions, lamp-lit smoke, smoke\'s shadow', embers],
+  ['opencity', 'Open city', 'everything an open-city game asks for at once: the city to the horizon, traffic, people, night, rain, a chase in physics', opencity],
 ];

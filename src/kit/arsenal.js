@@ -20,6 +20,8 @@
 import { Gun } from './combat.js';
 import { noise, tone } from './sound.js';
 import { linksFor } from './links.js';
+import { Bow } from './bow.js';
+import { ARMS, SHIELD } from './melee3d.js';
 
 /**
  * Each weapon's numbers: gun (options for gs.combat.Gun: arm(kind) makes one), ammo (the kind of rounds it takes, a
@@ -37,12 +39,15 @@ export const ARSENAL = {
   sniper: { slot: 'long', ammo: 'rifle', shell: 'rifle', pickup: 10, gun: { damage: 95, rate: .9, mag: 5, reload: 2.8, spread: .0015, bloom: .04, maxSpread: .06, settle: .08, auto: false, recoil: .2, sideways: .15, range: 420, falloff: [150, 400, .8], head: 3 } },
   launcher: { slot: 'heavy', ammo: 'rockets', shell: null, pickup: 2, blast: { radius: 4.5, damage: 120 }, gun: { damage: 40, rate: .6, mag: 1, reload: 2.8, spread: .004, bloom: 0, auto: false, recoil: .18, range: 200, speed: 48, head: 1 } },
   grenade: { slot: 'throw', ammo: 'grenades', shell: null, pickup: 2, throw: { speed: 13, fuse: 2.6, radius: 5, damage: 100 } },
-  bat: { slot: 'melee', melee: { reach: 0, damage: 1, arc: 0 } },
-  pipe: { slot: 'melee', melee: { reach: -.08, damage: 1.1, arc: -.1 } },
-  wrench: { slot: 'melee', melee: { reach: -.45, damage: .9, arc: -.3 } },
-  baton: { slot: 'melee', melee: { reach: -.25, damage: .7, arc: 0 } },
+  bat: { slot: 'melee', melee: ARMS.bat }, pipe: { slot: 'melee', melee: ARMS.pipe }, wrench: { slot: 'melee', melee: ARMS.wrench }, baton: { slot: 'melee', melee: ARMS.baton },
+  // the old world's: melee is gs.fight's ARMS[kind] (moves names its set: BLADES, AXES, SPEARS, STAVES; edge: 'cut' | 'blunt' |
+  // 'point', how armour takes it); shield: how it guards (gs.fight.Melee's shield); bow: options for gs.combat.Bow
+  sword: { slot: 'melee', melee: ARMS.sword }, longsword: { slot: 'melee', melee: ARMS.longsword }, dagger: { slot: 'melee', melee: ARMS.dagger },
+  axe: { slot: 'melee', melee: ARMS.axe }, mace: { slot: 'melee', melee: ARMS.mace }, spear: { slot: 'melee', melee: ARMS.spear }, staff: { slot: 'melee', melee: ARMS.staff },
+  shield: { slot: 'off', shield: SHIELD },
+  bow: { slot: 'long', ammo: 'arrows', shell: null, pickup: 12, bow: { draw: .75, speed: 60, damage: 40 } },
 };
-const SLOTS = ['melee', 'hand', 'long', 'heavy', 'throw'];
+const SLOTS = ['melee', 'hand', 'long', 'heavy', 'throw', 'off'];
 
 /** A gs.combat.Gun with a weapon's numbers (ARSENAL[kind].gun), o over them (a pouch, rng, damage...). */
 export function arm(kind, o = {}) {
@@ -55,7 +60,7 @@ export function arm(kind, o = {}) {
  * guns given it (arm(kind, { pouch }) or a Loadout's) reload out of it. max: the most of each kind carried.
  */
 export class Pouch {
-  constructor(start = {}, { max = { pistol: 180, magnum: 36, shells: 48, rifle: 240, rockets: 6, grenades: 5 } } = {}) { this.n = {}; this.max = max; for (const k in start) this.add(k, start[k]); }
+  constructor(start = {}, { max = { pistol: 180, magnum: 36, shells: 48, rifle: 240, rockets: 6, grenades: 5, arrows: 40 } } = {}) { this.n = {}; this.max = max; for (const k in start) this.add(k, start[k]); }
   count(kind) { return this.n[kind] || 0; }
   /** Puts some in (no more than max): how many went in. */
   add(kind, n) { const room = (this.max[kind] ?? Infinity) - this.count(kind), k = Math.max(0, Math.min(room, n | 0)); this.n[kind] = this.count(kind) + k; return k; }
@@ -82,11 +87,22 @@ const T = (f, o, at) => { const E = at && findEars(); if (E) E.tone(f, at, o); e
 /**
  * A weapon's sound: what 'fire' (a shot), 'empty' (the click of nothing left), 'reload' (out with the old magazine, in
  * with the new over `time` seconds), 'pump' (a shotgun's, a bolt's), 'swing' (a thing swung, a grenade thrown), 'pin',
- * 'draw' (taken out). at: where it happens ({ x, y, z }): through the game's gs.sound.Ears when there is one, so it
+ * 'draw' (taken out); 'clang' (steel on steel, a blow blocked), 'parry', 'bash' (a shield into someone); a bow's 'nock', 'draw' (over time),
+ * 'fire' (loosed), 'thunk' (into wood or earth), 'flesh'. at: where it happens ({ x, y, z }): through the game's gs.sound.Ears when there is one, so it
  * is heard from there, muffled behind walls and echoing in the place. Each shot sounds a little different.
  */
 export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary = .08 } = {}) {
   const v = 1 + (Math.random() - .5) * 2 * vary, A = ARSENAL[kind] || {};
+  if (kind === 'bow') {   // (a bow: the arrow onto the string, the creak of the draw, the string's slap, the arrow going in)
+    if (what === 'nock') return N(.05, { vol: .03, from: 2500, to: 3500, filter: 'bandpass', q: 3 }, at);
+    if (what === 'draw') { N(Math.max(.2, time * .9), { vol: .018, from: 300 * v, to: 520 * v, filter: 'bandpass', q: 6, attack: .1 }, at); return; }
+    if (what === 'fire') { T(95 * v, { len: .12, wave: 'triangle', vol: .09, slide: -30 }, at); N(.05, { vol: .05, from: 1800, to: 600, filter: 'bandpass' }, at); N(.35, { vol: .02, from: 900, to: 2400, filter: 'bandpass', q: 2, at: .03 }, at); return; }
+    if (what === 'thunk') { T(170 * v, { len: .06, wave: 'sine', vol: .08, slide: -60 }, at); return N(.04, { vol: .05, from: 2400, to: 700, filter: 'bandpass' }, at); }
+    if (what === 'flesh') return T(120 * v, { len: .08, wave: 'sine', vol: .07, slide: -40 }, at);
+  }
+  if (what === 'clang') { T(1350 * v, { len: .5, wave: 'triangle', vol: .05, slide: -40 }, at); T(2210 * v, { len: .35, wave: 'sine', vol: .03 }, at); return N(.04, { vol: .08, from: 6000, to: 2500, filter: 'highpass' }, at); }   // (steel on steel)
+  if (what === 'parry') { T(1900 * v, { len: .7, wave: 'triangle', vol: .06 }, at); T(2850 * v, { len: .5, wave: 'sine', vol: .035 }, at); return N(.03, { vol: .09, from: 8000, to: 3000, filter: 'highpass' }, at); }
+  if (what === 'bash') { T(95 * v, { len: .12, wave: 'sine', vol: .1, slide: -30 }, at); return N(.08, { vol: .07, from: 1200, to: 300 }, at); }   // (wood and iron into someone)
   if (what === 'fire') {
     const R = REPORT[kind]; if (!R) return weaponSound(kind, 'swing', at);
     const [crack, body, thump, len] = R;
@@ -115,15 +131,17 @@ export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary =
 // ---------------------------------------------------------------- what someone carries
 
 /**
- * The weapons one person carries: one in each slot ('melee', 'hand', 'long', 'heavy', 'throw'), the one out (kind,
- * gun: its gs.combat.Gun, null for melee and thrown), and a pouch of ammo the guns share. give(kind) picks one up
+ * The weapons one person carries: one in each slot ('melee', 'hand', 'long', 'heavy', 'throw', and 'off': a shield, worn
+ * beside the one out, as off), the one out (kind, gun: its gs.combat.Gun, null for melee and thrown; bow: its gs.combat.Bow),
+ * and a pouch of ammo the guns and bows share. give(kind) picks one up
  * (a second of the same kind gives its rounds instead), take(pickup) whatever a Pickups handed over, use(kind),
  * next() / prev() switch, fire(from, dir, pressed, { at }) pulls the trigger with its sound, reload(). sounds: false
  * for none (the game plays its own).
  */
 export class Loadout {
-  constructor({ pouch = new Pouch(), sounds = true, health = null } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.switching = 0; }
+  constructor({ pouch = new Pouch(), sounds = true, health = null } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.off = null; this.switching = 0; }
   get gun() { return this.carried[this.kind]?.gun || null; }
+  get bow() { return this.carried[this.kind]?.bow || null; }
   get info() { return ARSENAL[this.kind] || null; }
   has(kind) { return !!this.carried[kind]; }
   /** The kinds carried, in slot order. */
@@ -134,8 +152,9 @@ export class Loadout {
     if (A.ammo && rounds) this.pouch.add(A.ammo, rounds);
     if (this.carried[kind]) return null;
     const dropped = Object.keys(this.carried).find(k => ARSENAL[k].slot === A.slot && A.slot !== 'throw') || null;
-    if (dropped) { delete this.carried[dropped]; if (this.kind === dropped) this.kind = null; }
-    this.carried[kind] = { gun: A.gun ? arm(kind, { pouch: this.pouch }) : null };
+    if (dropped) { delete this.carried[dropped]; if (this.kind === dropped) this.kind = null; if (this.off === dropped) this.off = null; }
+    this.carried[kind] = { gun: A.gun ? arm(kind, { pouch: this.pouch }) : null, bow: A.bow ? new Bow({ ...A.bow, pouch: this.pouch, ammo: A.ammo, sounds: this.sounds }) : null };
+    if (A.slot === 'off') { this.off = kind; return dropped; }   // (a shield: worn as well as what is out)
     if (A.gun) { const g = this.carried[kind].gun, n = Math.min(g.mag, this.pouch.count(A.ammo)); g.ammo = n; this.pouch.take(A.ammo, n); }
     if (use || !this.kind) this.use(kind);
     return dropped;
@@ -149,10 +168,10 @@ export class Loadout {
     return 1;
   }
   /** Takes out a weapon carried (it takes a moment: switching counts down from .4 s, no firing meanwhile). */
-  use(kind) { if (!this.carried[kind] || kind === this.kind) return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); return this; }
-  next(step = 1) { const L = this.list; if (L.length) this.use(L[(L.indexOf(this.kind) + step + L.length) % L.length]); return this; }
+  use(kind) { if (!this.carried[kind] || kind === this.kind || ARSENAL[kind].slot === 'off') return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); return this; }
+  next(step = 1) { const L = this.list.filter(k => ARSENAL[k].slot !== 'off'); if (L.length) this.use(L[(L.indexOf(this.kind) + step + L.length) % L.length]); return this; }
   prev() { return this.next(-1); }
-  update(dt) { this.switching = Math.max(0, this.switching - dt); for (const k in this.carried) this.carried[k].gun?.update(dt); return this; }
+  update(dt) { this.switching = Math.max(0, this.switching - dt); for (const k in this.carried) this.carried[k].gun?.update(dt); return this; }   // (a bow is updated by the game: arms.bow.update(dt, { pull, from, dir, targets }))
   /** Fire (or hold the trigger): the shots this frame, as Gun.pull, with the weapon's sound at `at`; nothing while switching. */
   fire(from, dir, pressed = true, { at = from } = {}) {
     const g = this.gun; if (!g || this.switching > 0) return [];
@@ -165,8 +184,12 @@ export class Loadout {
   load(d) {
     if (!d) return this;
     this.carried = {}; this.pouch.load(d.p);
-    for (const [k, a] of Object.entries(d.c || {})) { if (!ARSENAL[k]) continue; this.carried[k] = { gun: ARSENAL[k].gun ? arm(k, { pouch: this.pouch }) : null }; if (this.carried[k].gun) this.carried[k].gun.ammo = a; }
-    this.kind = this.carried[d.k] ? d.k : this.list[0] || null; return this;
+    for (const [k, a] of Object.entries(d.c || {})) {
+      const A = ARSENAL[k]; if (!A) continue;
+      this.carried[k] = { gun: A.gun ? arm(k, { pouch: this.pouch }) : null, bow: A.bow ? new Bow({ ...A.bow, pouch: this.pouch, ammo: A.ammo, sounds: this.sounds }) : null }; if (this.carried[k].gun) this.carried[k].gun.ammo = a;
+      if (A.slot === 'off') this.off = k;
+    }
+    this.kind = this.carried[d.k] && ARSENAL[d.k].slot !== 'off' ? d.k : this.list.find(k => ARSENAL[k].slot !== 'off') || null; return this;
   }
 }
 

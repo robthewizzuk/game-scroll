@@ -152,6 +152,20 @@ export const RECIPES = {
       return { col: O.mulc(k.colour, O.add(.92, O.mul(n, .08))), rough: O.sub(.6, O.mul(sparkle, .5)), metal: 0, h: O.add(.4, O.mul(n, .3)) };
     },
   },
+  // straw thatch: courses of bundles laid in rows, each row's straw ends showing at its lower edge, the stalks
+  // running down the slope (along y), darker in the hollow under the course above
+  thatch: {
+    P: 4, look: { colour: '#b89a5c', dark: '#5e4a2a', old: '#7a7458' },
+    f(O, p, k) {
+      const row = O.mod(O.floor(O.mul(O.y(p), 2)), 8), v = O.fract(O.mul(O.y(p), 2)), u = O.add(O.x(p), O.mul(O.rand(row, 0, 7), 4));
+      const bundle = O.rand(O.mod(O.floor(O.mul(u, 2)), 8), row, 3), stalk = O.fbm(O.xy(O.mul(u, 16), O.mul(O.y(p), 1)), 4, 3, 4);
+      const fine = O.fbm(O.xy(O.mul(u, 32), O.mul(O.y(p), 2)), 8, 2, 6), age = O.fbm(O.scale(p, 1), 4, 3, 8);
+      const lip = O.smooth(.55, 1, v), hollow = O.sub(1, O.mul(O.smooth(.0, .25, v), O.sub(1, O.mul(lip, .6))));
+      const t = O.clamp(O.add(O.add(O.mul(stalk, .55), O.mul(fine, .35)), O.sub(O.mul(bundle, .3), O.mul(hollow, .45))));
+      const straw = O.mixc(k.dark, k.colour, t), col = O.mixc(straw, k.old, O.mul(O.smooth(.45, .75, age), .55));
+      return { col, rough: .97, metal: 0, h: O.clamp(O.add(O.mul(O.sub(1, hollow), .6), O.mul(stalk, .4))) };
+    },
+  },
   // skin seen close (a tile is 16 mm on a person): the net of fine furrows that cuts it into little plots half a millimetre
   // across, a wider net over that, pores in some of the plots, and a slow unevenness under it all
   skin: {
