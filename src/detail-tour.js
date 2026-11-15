@@ -41,6 +41,7 @@ import { summarise, phone, powerNow, head, guestApi } from './tour.js';
 const frame = () => new Promise(r => requestAnimationFrame(r));
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
 const num = n => Math.round(n).toLocaleString('en-GB');
+const FEW = 4, LONGEST = 4;   // a run times at least FEW frames, flying on to LONGEST times its seconds for them (see fly())
 const secs = ms => ms < 950 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 const TIER = ['low', 'medium', 'high', 'ultra'], STOP = {};   // STOP: thrown out of a build's wait when Stop is pressed
 const FREEZE_MS = 70;   // (a freeze: the line src/perf.js and the tour draw)
@@ -136,7 +137,8 @@ export async function runScenes(driver, { seconds = 20, size = 1, only = null, o
     const start = performance.now();
     try { for (;;) {
       const t = (performance.now() - start - away) / 1000;
-      if (t >= seconds || stopped()) break;
+      // (a run too slow for FEW frames in its time, a build machine drawing in software, flies on to LONGEST times it)
+      if (t >= seconds && (dts.length >= FEW || t >= seconds * LONGEST) || stopped()) break;
       let now, isReal = true, pic = true, counted = false;
       if (pace) ({ now, real: isReal, pic } = await beat(pace, t));
       else { S.path(t, S.v.cam); now = await draw(); }
