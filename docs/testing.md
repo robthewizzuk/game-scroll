@@ -96,6 +96,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | What a frame asks of WebGPU (`src/kit/gpu.js` and anything that adds a pass, a picture, an upload or a compute step: the screen's own picture with no depth beside it, `SCREEN_DEPTH`; Console's passes in 8 bits with their samples thrown away, `CONSOLE_8BIT`, `MSAA_KEEP` in `toon3d-gpu.js`; the posed people's list kept within the device's limits, `SKIN_MOST` in `skin-gpu.js`; a shadow map slid whole cleared first, `SHIFT_CLEAR` in hd3d-gpu.js; a kit's compute passes of a frame sent as one list) | `node scripts/gpu-calls.cjs --q "scene=town&mode=on&frames=30&tier=2" --passes [--who] [--uploads]` before and after: passes, submits, uploads, draws and picture bytes a frame, and each pass's pictures with their format and whether they are loaded or cleared, kept or thrown away (`--who`: the kit code that asked for each). `npm run build:bundled && node scripts/gpu-calls.cjs --game <id> --passes` does the same for a real game, Console ones too. Counts are the same on any chip; what they cost on a phone is the frame lab's to say. Then `node scripts/look-compare.cjs save base --webgpu` before and `check base --webgpu` after, `node scripts/gpu-games.cjs <a few ids>`, and `node scripts/detail-test.cjs --page skin --webgpu` (its last checks: a pool with no room leaves a newcomer posed in its own shaders, everybody drawn, and takes it in once there is room) | 35 s a scene, 5 min for the look |
 | The frame lab (`src/framelab.js`), CPU by part (`src/kit/prof.js`), effects that step down by their cost (hd3d.js `FXS`, `pickEffect`) | `npm run kit-test` (time by part, the effect picked), then `node scripts/framelab-test.cjs [2d-id] [3d-id] [--shots dir] [--report file.html]` (also: the chip's time by effect, effects drawn smaller with no shader built, memory) | a second, then about 3 min |
 | The memory guard (`src/kit/memory.js`, `plugins/power-state`) | `npm run kit-test` (levels from the phone's readings and warnings, up at once and down after a calm spell), `node scripts/prune.cjs` (the feed keeps fewer cards while memory is short, and builds back up), `node scripts/app-test.cjs reports` (a crash report says "(memory was low)"). On a phone: the frame lab's memory line, and its api `memory(2)` | a second, about a minute, about a minute |
+| Heat planned ahead, performance hints, power and OLED dimming (`src/kit/heat.js`, `src/kit/perfhint.js`, `src/kit/power.js`, `plugins/power-state`, hd3d.js `FINAL_EFFECTS` `oled`) | `npm run kit-test` (the heat model fitted from noisy made-up readings, the tier it holds, stepping down before warm and holding while full quality would still heat the phone; watts from a battery's readings), `node scripts/framelab-test.cjs` (the lab with its power lines), the frame lab's A/B "OLED dimming off vs on" on a Next Gen game (WebGL and WebGPU). On a phone: the frame lab's power and heat plan lines on battery, and the phone test tour's `PowerState.battery` | a second, about 3 min |
 | How a game really runs (pacing, hitch causes, upscaler, frame gen) | the frame lab on a phone: QA panel › Frame lab, Rec, Report ([frame-lab.md](frame-lab.md)) | |
 | Every 3D game and every native plugin on a real phone | the phone test tour: QA panel › Phone test tour (see below) | about 25 min for the 56 3D games |
 | What the engine's detail systems gain on a real phone's graphics chip | the tour's engine test scenes: QA panel › Phone test tour › Engine test scenes (see below) | about 21 min |
@@ -108,19 +109,25 @@ The PR check (`.github/workflows/game-pr-check.yml`) runs the node checks (`npm 
 apps' web build, `licences`, `types-check`, `game-types`, the starter templates, `kit-test`, `brains`, `recommend`, `site`),
 the uniqueness check on the changed games (`unique.mjs --since`), and then smoke, streamed, fold, sweep, Tiny
 Brains, the AI playtester and budget on the changed games (plus a sample of engine-heavy games when shared code
-changes), split over up to three machines. The slower checks run only when their parts change, each on a machine
-of its own: `app-test.cjs -scenes` and `sound-test.cjs` ("app"), `app-test.cjs scenes` ("app-scenes"),
-`framegen-test.cjs --check`, `close-up.cjs`, `gpu-loss.cjs` and the dust look ("framegen"), `upscale-compare.cjs`
-in three parts ("sgsr"), `share-link.mjs`, the guards' mutation check, and `ar-floor.cjs` when the AR kit changes.
+changes), dealt out over up to three machines by how long each game takes (`pick-games.mjs --deal`: Long Shadow
+and the swept Console games count for most). The slower checks run only when their parts change, each on a machine of its own:
+`app-test.cjs -scenes` and `sound-test.cjs` ("app"), `app-test.cjs scenes` ("app-scenes"), `framegen-test.cjs
+--check`, `close-up.cjs` and the dust look ("framegen"), `gpu-loss.cjs` and `shader-replay.cjs` ("gpu-recovery"),
+`upscale-compare.cjs` in three WebGPU parts and the WebGL one ("sgsr"), `share-link.mjs`, the guards' mutation
+check, and `ar-floor.cjs` when the AR kit changes.
 
 **Keeping it quick.** GitHub runs about 20 jobs at once for the whole repository, shared by every open pull
-request, so time on a machine is what everyone waits for. Before adding a check: give it a "did my part
-change?" step like the others, so other pull requests skip it in seconds; keep any one job under about 8
-minutes on GitHub (split by part or scene, as `app-test.cjs` and `upscale-compare.cjs` are); and use
-`.github/actions/browser` for Node and the browser. GitHub's machines are about 1.8 times slower than the
-cloud machine these times were measured on. The maths probe (`math-probe.cjs`, a warning only) runs after
-merging (`maths-probe.yml`), and the Android builds skip pull requests that change only games, kits or test
-scripts.
+request, so time on a machine is what everyone waits for. The "plan" job works out once which parts a pull
+request changed, and a job with nothing to check is skipped before it takes a machine. Before adding a check:
+give it an answer in "plan"'s "Which slower checks have something to check" step (or reuse one) and an `if:`
+on that answer; keep any one job under about 8 minutes on GitHub (split by part or scene, as `app-test.cjs` and
+`upscale-compare.cjs` are: `--scenes =name` is one scene alone); and use `.github/actions/browser` for Node and
+the browser (its Playwright version is pinned there: move it on in a pull request of its own, as a new browser
+can move the picture checks' numbers). GitHub's machines are about 1.8 times slower than the cloud machine
+these times were measured on. The maths probe (`math-probe.cjs`, a warning only) runs after merging
+(`maths-probe.yml`). Pull requests build the Android app ("Google Play", the release build) only when they
+change what Gradle builds (`android/`, `plugins/`, the packages, the NPU files); the debug APK is built on
+main, or by hand with "Run workflow".
 
 ## The AI playtester: can a player reach the goal?
 
@@ -201,7 +208,7 @@ What it does (`src/tour.js`):
 
 - **Plugins.** Each native plugin is asked one harmless question with a 4 second limit: Device, App,
   Haptics, KeepAwake, Geolocation (only its permission state), Filesystem, Share, TextToSpeech,
-  PowerState, AppHealth (Android: why the app last closed), ScreenRate, PhoneSensors (which sensors, and where sound is going), RichHaptics,
+  PowerState (and on Android its battery reading: current, voltage, temperature), AppHealth (Android: why the app last closed), ScreenRate, PhoneSensors (which sensors, and where sound is going), RichHaptics,
   NativeAR, NPU, PhoneAI (the model, and speech), GameServices (whether the player is signed in
   already) and SpeechAudio (the phone writes three words of speech to sound, unheard: the answer says
   how many samples a second, how long it is and how many word marks came with it, which is what shaped

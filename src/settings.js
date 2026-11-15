@@ -19,20 +19,23 @@ const size = b => b < 1024 * 1024 ? `${Math.ceil(b / 1024)} KB` : `${(b / 1024 /
 // Android: which version this is and, for a copy from Google Play, a button to look for a new one (src/update.js).
 function bindUpdates(el) {
   el.querySelector('.set-upd')?.addEventListener('click', () => { update.status().state === 'ready' ? update.restart() : update.check(); });
+  el.querySelector('.set-store')?.addEventListener('click', () => update.openStore());
 }
 function updatesRow() {
   const u = update.status();
   const say = {
     idle: 'Updates come from Google Play.',
     checking: 'Looking on Google Play…',
-    none: 'This is the newest version.',
+    none: 'This is the newest version Google Play knows of. Just released one? Open Google Play to have it look.',
     available: 'A new version is on Google Play.',
     downloading: `Downloading the new version${u.pct ? ` (${u.pct}%)` : ''}. Carry on playing meanwhile.`,
     ready: 'The new version is downloaded. Restart to update.',
     error: 'Couldn’t reach Google Play just now.',
     away: 'This copy didn’t come from Google Play, so its updates come from wherever it did.',
   }[u.state];
-  const btn = u.play === false ? '' : `<div class="qa-actions"><button class="set-upd"${u.state === 'checking' || u.state === 'downloading' ? ' disabled' : ''}>${u.state === 'ready' ? 'Restart to update' : u.state === 'available' ? 'Update' : 'Check for updates'}</button></div>`;
+  // Google Play's own page makes the Play Store look for new versions; the app asks again on the way back
+  const store = update.store && (u.state === 'none' || u.state === 'error') ? '<button class="set-store">Open Google Play</button>' : '';
+  const btn = u.play === false ? '' : `<div class="qa-actions"><button class="set-upd"${u.state === 'checking' || u.state === 'downloading' ? ' disabled' : ''}>${u.state === 'ready' ? 'Restart to update' : u.state === 'available' ? 'Update' : 'Check for updates'}</button>${store}</div>`;
   return `<section class="set-row set-updates">
         <h3>Updates</h3>
         ${u.version ? `<div class="set-stat">Version <b>${u.version}</b></div>` : ''}

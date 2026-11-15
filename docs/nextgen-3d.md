@@ -132,6 +132,29 @@ shaders, so not mid-round) and drop to the first resolution step at once. The sa
 phone is short of memory (the memory guard, `src/kit/memory.js`: low or critical; critical takes the
 second resolution step), since a lower tier and a smaller picture keep fewer and smaller render targets.
 
+**Heat planned ahead** (`src/kit/heat.js`). Waiting for the phone to say it is warm is late: by then its
+clocks are already coming down and the game stutters. On Android 11 and later the phone also says its
+thermal headroom (0 cool, 1 where it slows itself down), and heat is simple: the phone is one warm lump,
+heated by the work done in it and cooling in proportion to how much warmer than the room it is
+(`dh/dt = a·u − b·h + c`, u the load: the share of each frame the CPU and the graphics chip are busy).
+The three numbers are fitted live for each phone (least squares over 15-second windows of the headroom
+read every 3 seconds in play) and kept for next time. From them, `heat.ahead`: at the load full quality
+makes, the phone would be warm within 90 seconds, so the game takes the hot steps now (the first
+resolution step, one tier lower from the next round, frame generation's power saving); and `heat.cap`:
+between rounds a game draws no higher than the tier whose load would settle under the warm line, so it
+doesn't climb to one it would only give up again (never more than a tier at a time). Where the phone
+doesn't say its headroom (iPhone, older Android, the web) only the reactive steps work.
+
+**Performance hints** (`src/kit/perfhint.js`, Android 12+): each frame's work and the frame budget go to
+an ADPF performance hint session, so the phone sets its CPU clocks to what the frames need instead of
+guessing from how busy the cores look (efficiency over speed while saving power, Android 15+).
+
+**OLED dimming** (`FINAL_EFFECTS` `oled`, the same on WebGPU): while the phone saves power (warm, heating
+up, battery saver or a low battery) big bright areas of the picture are a little dimmer (at most a tenth,
+the blue a little more), eased in over two seconds. An OLED screen lights each pixel, so a bright sky costs
+power and heat; a small highlight keeps its full brightness, as the dimming follows how bright each
+16 × 16 block is on average. Phones only (the app), not computers. `heat.oledForce` pins it for tests.
+
 The feed loop skips screen refreshes to hold a game at its rate (a 60 fps game on a 120 Hz screen
 draws every other refresh), which saves battery and heat. Settings has Auto / 120 / 60 / 30
 (battery saver); a game can also set `fps: 30` in its definition to cap itself.

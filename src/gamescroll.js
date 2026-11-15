@@ -194,7 +194,7 @@ export const HIDDEN = {
   toon: ['TOON', 'celReady'],   // test switches, and whether three's toon shader still has the lines the cel look changes
   props: ['simplifyReady'],
   fluid: ['FLUID', 'RHO', 'K', 'G0', 'VMAX', 'LO', 'WALL', 'SOLIDS', 'SINKS', 'PUSHES', 'IN', 'RAD', 'SKIN', 'REACH', 'viscosity', 'bulk', 'thin', 'foamOf'],   // the fluid's numbers (shared with its WebGPU twin) and test switches
-  gas: ['GAS', 'SOURCES', 'SOLIDS', 'SOLID', 'WARM', 'IGNITE', 'HEAT', 'BURNS_AT', 'FLAME', 'QUENCH', 'SMOKE_MAX', 'HEAT_MAX', 'FUEL_MAX', 'VMAX', 'SHARP', 'NEAR', 'flameAt', 'emptyField', 'sample'],   // the gas's numbers (shared with its WebGPU twin) and test switches
+  gas: ['GAS', 'SOURCES', 'SOLIDS', 'SOLID', 'WARM', 'IGNITE', 'HEAT', 'BURNS_AT', 'FLAME', 'QUENCH', 'SMOKE_MAX', 'HEAT_MAX', 'FUEL_MAX', 'VMAX', 'SHARP', 'NEAR', 'flameAt', 'emptyField', 'sample', 'CHEB', 'CHEB_W'],   // the gas's numbers (shared with its WebGPU twin) and test switches
   tabletop: ['loadChess'],
   models: ['ready'],   // (the app waits for the saved bakes while the 3D parts load)   // the Next Gen screen shader in pieces, for the WebGPU port (docs/webgpu-move.md)
 };

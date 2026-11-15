@@ -48,13 +48,28 @@ export const SOLID = 0x1000;
 // once it fell to 24 frames a second; 110,000 is about 3.5 ms a step there.
 const BUDGET = { gpu: { desk: 300000, top: 110000, mid: 50000, low: 30000 }, cpu: { top: 12000, mid: 8000, low: 5000 } };
 const PHONE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-const RATE = { gpu: 60, cpu: 30 }, JACOBI = { gpu: 24, cpu: 10 };
+const RATE = { gpu: 60, cpu: 30 };
+// The pressure's rounds are Chebyshev's (Golub and Varga 1961; Wang used them for cloth in 2015): each round takes its
+// plain answer a little past itself, by how far the round before had got, and the answer gets there in far fewer rounds.
+// Measured in this gas (a fire and a smoke a second in, each round started from the last step's pressure, against the
+// pressure 4,000 plain rounds give; the error of the push the flow gets from it): 105,000 cells (the chip's, a top phone)
+// 24 plain rounds 0.205, 12 of these 0.186, 8 of these 0.205 (the chip over the frame: 12 plain 0.236); 11,500 cells (the
+// CPU's) 10 plain 0.056, 12 of these 0.031, 8 of these 0.052. So the rounds went from 24 to 12 on the chip (12 to 8 when it
+// is over the frame), each a little truer than before; here, where a small box needs few rounds anyway, they stay 10 and
+// come out truer. The weights are for plain rounds that shrink the error
+// by .96 a round at worst (CHEB_RHO): the best of .96 to .995 at every size tried, and smaller than any real box's, which
+// is safe (only a weight of 2 or more grows). CHEB.on false: plain rounds again, with the old counts.
+export const CHEB = { on: true };
+const CHEB_RHO = .96;
+/** The weights: the second round's, then every later round's (the limit the series settles at in a round or two). */
+export const CHEB_W = [2 / (2 - CHEB_RHO * CHEB_RHO), 2 / (1 + Math.sqrt(1 - CHEB_RHO * CHEB_RHO))];
+const JACOBI = CHEB.on ? { gpu: 12, cpu: 10 } : { gpu: 24, cpu: 10 };
 const PUFFS = { top: 700, mid: 480, low: 300 }, MARCH = { top: 56, mid: 44, low: 32 };   // puffs drawn (the smaller version); steps a pixel's ray takes through the gas (WebGPU)
 // While the graphics chip takes longer than the game's frame (its own timestamps, WebGPU), the gas on it does less: the
 // pressure gets fewer rounds (down to JACOBI_LOW), each pixel's ray fewer steps (down to MARCH_LOW of them), and a frame
 // takes at most one step, so steps that fell behind are let go (the smoke runs a little slow, where catching up made the
 // frame slower still: two or three steps a frame at 24 a second). Each comes back as the chip has room again.
-const JACOBI_LOW = 12, MARCH_LOW = .65;
+const JACOBI_LOW = CHEB.on ? 8 : 12, MARCH_LOW = .65;
 
 /**
  * Ready-made gases. colour: the smoke; colour2: a second smoke colour (a source's `tint` 0..1 blends to it);
@@ -341,12 +356,15 @@ class Sim {
     const { nx, ny, D, B } = this, nxy = nx * ny, n = this.cells;
     let P = this.P, Q = this.P2;
     for (let it = 0; it < iters; it++) {
+      // (a plain round, then Chebyshev's: Q holds the round before's, and the new value goes w past the plain one from it)
+      const w = !CHEB.on || it === 0 ? 0 : CHEB_W[it === 1 ? 0 : 1];
       for (let c = 0; c < n; c++) {
         const b = B[c];
-        if (b === 0) { Q[c] = (P[c - 1] + P[c + 1] + P[c - nx] + P[c + nx] + P[c - nxy] + P[c + nxy] - D[c]) / 6; continue; }
+        if (b === 0) { const v = (P[c - 1] + P[c + 1] + P[c - nx] + P[c + nx] + P[c - nxy] + P[c + nxy] - D[c]) / 6; Q[c] = w ? Q[c] + w * (v - Q[c]) : v; continue; }
         if (b & SOLID) { Q[c] = 0; continue; }
         const p = P[c], xl = b & 3, xr = b >> 2 & 3, yl = b >> 4 & 3, yr = b >> 6 & 3, zl = b >> 8 & 3, zr = b >> 10 & 3;
-        Q[c] = ((xl === 0 ? P[c - 1] : xl === 1 ? p : 0) + (xr === 0 ? P[c + 1] : xr === 1 ? p : 0) + (yl === 0 ? P[c - nx] : yl === 1 ? p : 0) + (yr === 0 ? P[c + nx] : yr === 1 ? p : 0) + (zl === 0 ? P[c - nxy] : zl === 1 ? p : 0) + (zr === 0 ? P[c + nxy] : zr === 1 ? p : 0) - D[c]) / 6;
+        const v = ((xl === 0 ? P[c - 1] : xl === 1 ? p : 0) + (xr === 0 ? P[c + 1] : xr === 1 ? p : 0) + (yl === 0 ? P[c - nx] : yl === 1 ? p : 0) + (yr === 0 ? P[c + nx] : yr === 1 ? p : 0) + (zl === 0 ? P[c - nxy] : zl === 1 ? p : 0) + (zr === 0 ? P[c + nxy] : zr === 1 ? p : 0) - D[c]) / 6;
+        Q[c] = w ? Q[c] + w * (v - Q[c]) : v;
       }
       const t = P; P = Q; Q = t;
     }

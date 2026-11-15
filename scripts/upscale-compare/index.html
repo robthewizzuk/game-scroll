@@ -56,7 +56,7 @@ const shine = (f, on) => { lamp.intensity = on ? 9 : 0; lamp.position.x = -3 + f
 // sgsr2-plain and aa-plain: SGSR 2 as it was; sgsr2-soft: SGSR 2 with the textures read as the small picture
 // reads them (no mip bias: WebGPU's sharper textures under SGSR 2 off), and &mip=-.5 for more or less of it
 const MIP = Q.has('mip') ? +Q.get('mip') : null;
-const ONLY = Q.get('scenes')?.split(',');   // &scenes=textured: only the runs whose names start so
+const ONLY = Q.get('scenes')?.split(',');   // &scenes=textured: only the runs whose names start so (=anti-aliasing: only the run of that name)
 // sgsr2-hand: GSSR's hand-written blend (HD.gssrNet false), against the learned one (sgsr2: gssr-net.js, or
 // window.__gssrNet from upscale-compare.cjs --net)
 const set = m => {
@@ -80,7 +80,7 @@ const differ = (a, b, m = new Uint8Array(a.length / 4)) => { for (let i = 0, j =
 const out = { scale: K, scenes: {} }, shots = {}, LAST = 8, tick = () => new Promise(r => requestAnimationFrame(r));
 const MODES = Q.get('modes')?.split(','), AA = ['native', 'aa', 'aa-hand', 'aa-plain'].filter(m => !MODES || MODES.includes(m));
 const run = async (name, frames, moveCam, moveBox, modes = MODES?.filter(m => !/^(native|aa)/.test(m)) || ['plain', 'sgsr1', 'sgsr2', 'sgsr2-hand', 'sgsr2-plain'], moveLamp = false) => {
-  if (ONLY && !ONLY.some(s => name.startsWith(s))) return;
+  if (ONLY && !ONLY.some(s => s[0] === '=' ? name === s.slice(1) : name.startsWith(s))) return;
   const at = f => { pose(moveCam ? f : 0); place(moveBox ? f : 0); shine(moveLamp ? f : 0, moveLamp); };
   set('full'); at(frames - LAST); draw(); await tick(); await tick();   // (a resized WebGPU canvas shows the old picture until the next frame)
   for (let i = 0; i < 120 && v.shadersLeft > 0; i++) { draw(); await tick(); }   // (and its shaders built: see below)
