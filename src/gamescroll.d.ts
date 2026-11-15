@@ -3120,12 +3120,16 @@ export interface MissionsPart {
     ring(call: { from?: string; say: string | string[]; voice?: Loose; job?: string }, o?: { after?: number }): PhoneCall;
     text(from: string, text: string): Loose; answer(): Loose; decline(): Loose; skip(): Loose; update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
   };
-  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone and Radio found by themselves; rounded, measured, saved when it changes. */
-  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean }) => {
-    size: number; readonly room: number; dropped: string[];
-    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean }): Loose;
-    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean };
+  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone, Radio and the gs.rpg Quests, Growth, Reputation and Flags found by themselves; rounded, measured, saved when it changes; local parts and save slots on this phone (api.saveLocal). */
+  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean; slots?: number }) => {
+    size: number; readonly room: number; dropped: string[]; /** Seconds of play, kept with the save. */ played: number;
+    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean; local?: boolean }): Loose;
+    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean; local: Loose | null };
     load(): boolean; now(force?: boolean): boolean; update(dt: number): Loose;
+    /** Saves in a moment (a quest moving on or a level gained calls it by itself). */ soon(after?: number): Loose;
+    /** Saves the world now into a slot on this phone (1..slots). */ slot(n: number, label?: string): boolean;
+    /** Puts the world back from a slot and makes that the save. */ restore(n: number): boolean;
+    clear(n: number): Loose; readonly slots: ({ n: number; label: string; played: number; at: number } | null)[];
   };
   /** Rounds every number in it to `places`. */
   compact<T>(v: T, places?: number): T;

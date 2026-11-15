@@ -8539,6 +8539,44 @@ console.log('physics ok');
   console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
   console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
 }
+// WorldSave for an RPG: the gs.rpg kits kept by themselves, a save soon after a quest moves on, parts on the phone, slots
+{
+  const { WorldSave } = await import('../src/kit/missions.js');
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { together } = await import('../src/kit/links.js');
+  let cloud = null, phone = null, writes = 0;
+  const api = { save: d => { cloud = JSON.parse(JSON.stringify(d)); writes++; return true; }, load: f => cloud ?? f,
+    saveLocal: d => { phone = JSON.parse(JSON.stringify(d)); return true; }, loadLocal: f => phone ?? f };
+  const TABLE = { gate: { name: 'The Gate', stages: { find: { text: 'Find the gate', next: 'open' }, open: { text: 'Open it', count: 2, next: 'won' }, won: { end: 'done', text: 'Open.' } }, rewards: { done: { xp: 120, deeds: ['brave'] } } } };
+  let k, crates;
+  const make = () => together(() => {
+    k = { grow: new Growth(null, { attributes: { might: 3 } }), rep: new Reputation({ factions: { town: {} }, deeds: { brave: { town: 10, fame: 5 } } }), flags: new Flags(), quests: new Quests(TABLE), inv: new Inventory({}, { slots: 2 }) };
+    crates = [[1, 2, 3]];
+    k.save = new WorldSave(api); k.save.keep('crates', () => crates, d => { crates = d; }, { local: true });
+  });
+  make(); assert.equal(k.save.load(), false, 'nothing saved yet');
+  k.quests.start('gate'); k.flags.set('met_gate');
+  k.save.update(.1); assert.equal(writes, 0); k.save.update(.5); assert.equal(writes, 1, 'a quest starting saves a moment later by itself');
+  assert.ok(cloud.Q && cloud.G && cloud.E && cloud.W && cloud._t >= 0, 'quests, growth, reputation and flags kept by themselves: ' + Object.keys(cloud));
+  assert.deepEqual(phone.w.crates, [[1, 2, 3]], 'a local part goes to the phone save');
+  assert.ok(!('crates' in cloud), 'and not to the 8 KB');
+  k.quests.to('gate', 'open'); k.quests.count('x', 2); k.save.update(.6);
+  assert.equal(cloud.Q.e.gate, 'done'); assert.equal(k.grow.level, 2);
+  crates = [[9, 9, 9]]; k.save.update(10);
+  assert.ok(k.save.slot(1, 'At the gate')); assert.deepEqual(k.save.slots.map(s => s && s.label), ['At the gate', null, null]);
+  k.flags.set('gate_smashed'); crates = []; k.save.now();
+  // a new phone with the same cloud save but no phone save
+  const keepPhone = phone; phone = null; make(); assert.ok(k.save.load());
+  assert.ok(k.quests.ended('gate') === 'done' && k.grow.level === 2 && k.rep.with('town') === 10 && k.flags.has('gate_smashed') && k.save.played > 10, 'the world comes back from the 8 KB');
+  assert.deepEqual(crates, [[1, 2, 3]], 'the phone-only part stays as made on a new phone');
+  phone = keepPhone; make(); k.save.load(); assert.deepEqual(crates, [], 'the phone save comes back on the same phone');
+  assert.ok(k.save.restore(1) && !k.flags.has('gate_smashed') && JSON.stringify(crates) === '[[9,9,9]]', 'a slot puts the world back as it was');
+  assert.ok(!cloud.W.gate_smashed, 'and becomes the save');
+  k.save.clear(1); assert.equal(k.save.slots[0], null);
+  assert.throws(() => k.save.slot(4), /slot 4/);
+  console.log('world save: gs.rpg quests, growth, reputation and flags kept by themselves, saved soon after a quest moves on, parts kept on the phone, save slots ok');
+}
 {
   // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines
   const { Radio } = await import('../src/kit/radio.js');

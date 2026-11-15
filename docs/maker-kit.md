@@ -2699,7 +2699,15 @@ update(dt) { save.update(dt); }    // saves when something changed, every few se
 The Jobs (done, money, a running job's checkpoint), Phone (texts) and Radio (the station) of the same game are kept
 by themselves. Numbers are rounded to two places and `rows()` writes a list of records without repeating the names;
 if it all comes to more than 8 KB, the `optional` parts are left out (`save.dropped`), and `save.size` / `save.room`
-say how much is used. A built world (every crate where you left it) is bigger: keep that with `api.saveLocal`.
+say how much is used. A built world (every crate where you left it) is bigger: keep it with `{ local: true }`, and it
+goes to `api.saveLocal` (512 KB that stays on this phone; call `load()` in `make()` or `reset()`).
+
+For a role-playing game, the `gs.rpg` `Quests`, `Growth`, `Reputation` and `Flags` of the same game are kept by
+themselves too, and a quest moving on, ending or failing, or a level gained, saves a moment later (`save.soon()`
+does the same for your own moments). Save slots live on the phone beside the one save that follows the player:
+`save.slot(1, 'Before the tower')` keeps the world as it is now, `save.restore(1)` puts it back and makes that the
+save, `save.slots` lists them for a menu (`{ n, label, played, at }` or `null`), `save.clear(1)` empties one
+(`slots: 3` by default). `save.played` is seconds of play, kept with the save.
 
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
