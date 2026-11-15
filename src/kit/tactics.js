@@ -4,7 +4,7 @@
 // and call it all out). Allies can follow a route with you. The kit gives orders; your game moves
 // the characters (gs.ai Crowd, NavGrid paths, physics3d movers) and plays the shots and voices.
 //
-//   const { CoverMap, Squad, Route } = gs.tactics;
+//   const { CoverMap, Squad, Route } = gs.tactics;      // 3D games: Cover3D and TakeCover (src/kit/cover3d.js), cover found from the level
 //   reset() {
 //     cover = new CoverMap(map.cols, map.rows, (c, r) => map.solid(c, r), { size: 16, low: (c, r) => map.at(c, r) === '=' });
 //     squad = new Squad(enemies, { cover, sees: (a, b) => nav.sees(a.x, a.y, b.x, b.y) });
@@ -18,7 +18,7 @@
 //     }
 //   }
 //
-// Positions are { x, y } (3D games: pass x and z as x and y). Members need x, y, and alive or hp.
+// Positions are { x, y } in 2D; in 3D { x, y, z } with y up (the squad works on x and z). Members need x, y, and alive or hp.
 // Tell the squad what happened: squad.hurt(member) when one is hit, squad.reloading(member).
 //
 // A squad can be coached (Tiny Brains corrections): new Squad(men, { coach: true }), then
@@ -30,7 +30,9 @@
 
 import { linksFor, linked } from './links.js';
 import { Coach } from './brains.js';
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// (3D: positions with z are on the ground's x, z; 2D: x, y)
+const dist = (a, b) => Math.hypot(a.x - b.x, (a.z ?? a.y) - (b.z ?? b.y));
+const at = p => (p.z != null ? { x: p.x, y: p.y, z: p.z } : { x: p.x, y: p.y });
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const ROLES = ['suppress', 'advance', 'flank', 'grenade', 'retreat'];   // what a coach can say to a squad member
 
@@ -111,7 +113,8 @@ export class CoverMap {
  */
 export class Squad {
   constructor(members, { cover = null, sees = null, range = 12, grenades = 2, camp = 4, think = .6, aggression = .5, rng = Math.random, link = true, coach = null } = {}) {
-    cover = linked(cover, linksFor(null, link), 'cover');   // (links.js: with none given, the CoverMap the game made; false: none)
+    cover = linked(cover, linksFor(null, link), 'cover');   // (links.js: with none given, the CoverMap (or Cover3D) the game made; false: none)
+    if (sees == null && cover?.sees && cover.world !== undefined) sees = (a, b) => cover.sees(a, b);   // (3D cover from a World3D: real line of sight, eyes to chest)
     Object.assign(this, { members, cover, sees, range, grenades, camp, thinkEvery: think, aggression, rng });
     this.coach = coach === true ? new Coach({ name: 'squad', save: false }) : coach || null;
     if (this.coach) this.coach.shape(7, ROLES);
@@ -127,7 +130,7 @@ export class Squad {
   reloading(m) { m._reloadUntil = this.t + 1.5; this.call(m, 'reloading'); return this; }
   update(dt, target) {
     this.t += dt;
-    if (this.lastTarget && dist(this.lastTarget, target) < (this.cover?.size || 1) * 1.5) this.still += dt; else { this.still = 0; this.lastTarget = { x: target.x, y: target.y }; }
+    if (this.lastTarget && dist(this.lastTarget, target) < (this.cover?.size || 1) * 1.5) this.still += dt; else { this.still = 0; this.lastTarget = at(target); }
     const left = this.left; if (!left.length) return this;
     const seen = left.some(m => !this.sees || this.sees(m, target));
     if (seen && !this.alerted) { this.alerted = true; this.call(left[0], 'contact'); }
@@ -155,12 +158,12 @@ export class Squad {
         role = C.pick(see, can); m._role = role; m._recalled = C.recalled;
       }
       if (role === 'retreat') { if (m.order.role !== 'retreat') { this.order(m, 'retreat', target, { near: 10 * size, band: [this.range * .8, this.range * 2] }); this.call(m, 'falling back'); } }
-      else if (role === 'grenade') { this.grenades--; this.lastGrenade = this.t; this.still = 0; m.order = { do: 'throw', role: 'grenade', at: { x: target.x, y: target.y } }; this.call(m, 'grenade'); }
+      else if (role === 'grenade') { this.grenades--; this.lastGrenade = this.t; this.still = 0; m.order = { do: 'throw', role: 'grenade', at: at(target) }; this.call(m, 'grenade'); }
       else if (role === 'flank') { flanked = true; this.lastFlank = this.t; this.order(m, 'flank', target, { flank: 1.3, near: 14 * size }); this.call(m, 'flanking'); }
       else if (role === 'advance') {
         if (up) movers--;
         this.order(m, 'advance', target, up || role !== usual ? { band: [2 * size, Math.max(3, d - 2 * size)] } : {});
-      } else { const spot = m.order.spot; m.order = { do: 'shoot', role: 'suppress', at: { x: target.x, y: target.y }, spot, from: spot && this.cover ? this.cover.peek(spot, target) : null }; if (this.rng() < .15) this.call(m, 'covering'); }
+      } else { const spot = m.order.spot; m.order = { do: 'shoot', role: 'suppress', at: at(target), spot, from: spot && this.cover ? this.cover.peek(spot, target) : null }; if (this.rng() < .15) this.call(m, 'covering'); }
     });
     return this;
   }
@@ -174,8 +177,8 @@ export class Squad {
   order(m, role, target, o) {
     let spot = null;
     if (this.cover) { spot = this.cover.find(m, target, { who: m, sees: this.sees, ...o }); this.cover.take(spot, m); }
-    const to = spot ? { x: spot.x, y: spot.y } : role === 'retreat' ? { x: m.x + (m.x - target.x), y: m.y + (m.y - target.y) } : { x: target.x, y: target.y };
-    m.order = { do: 'move', role, to, spot, at: { x: target.x, y: target.y } };
+    const to = spot ? at(spot) : role === 'retreat' ? (target.z != null ? { x: m.x + (m.x - target.x), y: m.y, z: m.z + (m.z - target.z) } : { x: m.x + (m.x - target.x), y: m.y + (m.y - target.y) }) : at(target);
+    m.order = { do: 'move', role, to, spot, at: at(target) };
   }
 }
 
@@ -198,3 +201,5 @@ export class Route {
     return this.point;
   }
 }
+
+export { Cover3D, TakeCover } from './cover3d.js';
