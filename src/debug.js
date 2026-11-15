@@ -9,7 +9,7 @@
 //   B                      Tiny Brains: copy each brain's and shadow's starting brain (pack()) to the
 //                          clipboard and the console, for new Brain(api, { start }) ("teach by playing")
 //
-// Tiny Brains in this game show in the panel too: skill, the player's win rate against its target,
+// Tiny Brains in this game show in the panel too (a Dial as one line): skill, the player's win rate against its target,
 // trust (how often it decides instead of its teacher), the fun lean, how torn it is, and any tell.
 // The panel shows frames per second, how long update() and draw() take, the game's size, score and
 // state. Hitboxes: give your game object a debug(c) method that outlines whatever you like, in game
@@ -19,6 +19,7 @@ const SPEEDS = [.1, .25, .5, 1, 2];
 const pct = v => (v * 100).toFixed(0).padStart(3) + '%';
 function brainLines(s) {
   return liveBrains(s).slice(0, 6).map(b => {
+    if (b.dial) return `${b.name}  dial ${pct(b.skill)}  win ${pct(b.winRate)}/${pct(b.target)}  rounds ${b.rounds}`;
     if (b.habits) return `${b.name}  met ${b.record.met}  you ${b.record.wins}-${b.record.losses}  habit ${b.habit ? b.habit.move : '-'}`;
     if (!b.target) return `${b.name}  copies you ${pct(b.like)}  seen ${b.seen}${b.ready ? '  ready' : ''}`;
     const t = b.telling;

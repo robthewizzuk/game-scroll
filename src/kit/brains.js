@@ -38,6 +38,9 @@
 // The app also tells every brain how fun each round looked (played again, hearted, left in a hurry),
 // and the brain leans its pressure towards what this player enjoys, always inside the win-rate rail.
 //
+// Dial is the win-rate rail by itself, for an opponent that isn't a Brain: a search, a team, a
+// director (wherever a kit takes a skill number).
+//
 // Corrections: bot.correct(see, 'flee') is "in this spot the right move was flee". A brain holds to
 // it from a couple of examples, at once and without retraining, in spots like the ones it was shown
 // (see Fixes below).
@@ -171,8 +174,9 @@ function slot(api, name) {
 // card that made them.
 const LIVE = new Set();
 const track = o => { o.owner = currentOwner(); LIVE.add(new WeakRef(o)); if (LIVE.size > 200) for (const r of LIVE) if (!r.deref()) LIVE.delete(r); };
-/** The brains (Brain, Shadow, Nemesis) still alive, optionally only those a card made. */
-export const brainStats = b => b.target && !b.habits ? { name: b.name, kind: 'brain', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, trust: b.trust, lean: b.lean, fun: b.fun, ok: b.net.w.every(Number.isFinite) }
+/** The brains (Brain, Dial, Shadow, Nemesis) still alive, optionally only those a card made. */
+export const brainStats = b => b.dial ? { name: b.name, kind: 'dial', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, ok: isFinite(b.skill) }
+  : b.target && !b.habits ? { name: b.name, kind: 'brain', skill: b.skill, skill0: b.skill0, winRate: b.winRate, target: b.target, rounds: b.rounds, trust: b.trust, lean: b.lean, fun: b.fun, ok: b.net.w.every(Number.isFinite) }
   : b.habits ? { name: b.name, kind: 'nemesis', ...b.record } : { name: b.name, kind: 'shadow', like: b.like, seen: b.seen, ok: b.net.w.every(Number.isFinite) };
 export function liveBrains(owner) {
   const out = [];
@@ -766,6 +770,77 @@ export class Brain {
     this.net = n; this.net.even = this.even; this.anchor = n.copy(); if (this.teacher) this.trust = .3;
   }
 }
+
+// ---------------------------------------------------------------- Dial
+
+/**
+ * The win-rate guard rail by itself, for an opponent that isn't a Brain: a search, a team, a rival
+ * car, a director. A number from 0 to 1 that follows this player: it goes up while they win more
+ * than the target and down while they win less, a big step down after three losses in a row, and a
+ * new game starts where this player's other games settled (the private Player profile).
+ *
+ *   const dial = new gs.brains.Dial(api, { name: 'draughts', target: .55 });
+ *   search.best(state, { skill: dial });                  // wherever a kit takes a skill number
+ *   away = new Team(pitch, 1, { skill: dial });           // it reads the dial each time it thinks
+ *   game.think({ level: dial.level(5) });                 // or a level 1..5
+ *   on game over: dial.result(playerWon);                 // true, false, or 'draw'
+ *
+ * Saved on the phone with the game's brains (a few bytes). `dial.skill` is the number, and the dial
+ * stands in for it in sums (`1 - dial`, `dial > .4`).
+ */
+export class Dial {
+  constructor(api, opts = {}) {
+    if (api && !api.brains && !api.score && (api.name || api.target || api.start != null || api.range)) { opts = api; api = null; }
+    this.dial = true;
+    this.name = String(opts.name || 'dial');
+    this.target = clamp(opts.target ?? .6, .2, .9);
+    const r = Array.isArray(opts.range) ? opts.range : [.05, 1];
+    this.lo = clamp(+r[0] || 0, 0, 1); this.hi = clamp(+r[1] || 1, this.lo, 1);
+    this.useOdds = opts.odds !== false;
+    this.slot = slot(api, this.name);
+    this.player = opts.profile === false ? null : new Player(api);
+    this.forget(false);
+    if (opts.start != null) this.skill = clamp(+opts.start || 0, this.lo, this.hi);
+    else if (this.player && this.player.count('skill') > 0) this.skill = clamp(this.player.skill, Math.max(this.lo, .2), Math.min(this.hi, .85));
+    this.load();
+    this.skill0 = this.skill;
+    track(this);
+  }
+  /** Forgets what it learned about this player. */
+  forget(save = true) {
+    this.skill = clamp(.5, this.lo, this.hi); this.winRate = this.target; this.losses = 0; this.rounds = 0;
+    this.odds = new Float32Array(ODDS * 2);
+    if (save) this.save();
+    return this;
+  }
+  valueOf() { return this.skill; }
+  /** The dial as a level 1..n (a chess opponent's levels: dial.level(5)). */
+  level(n = 5) { return 1 + Math.min(n - 1, Math.floor((this.skill - this.lo) / Math.max(1e-6, this.hi - this.lo) * n)); }
+  /** The end of a game or round: did the player win? true, false, 'draw', or a number 0..1 (how well they did). */
+  result(playerWon) {
+    const w = playerWon === 'draw' ? .5 : typeof playerWon === 'number' ? clamp(playerWon, 0, 1) : playerWon ? 1 : 0, played = this.skill;
+    this.winRate += (w - this.winRate) * .15;
+    this.losses = w > .5 ? 0 : w < .5 ? this.losses + 1 : this.losses;
+    this.skill = clamp(this.skill + (this.winRate - this.target) * .3, this.lo, this.hi);
+    if (this.useOdds) { this.calibrate(w, played); this.skill = clamp(this.skill, this.lo, this.hi); }
+    if (this.losses >= 3) { this.skill = clamp(this.skill - .25, this.lo, this.hi); this.losses = 0; }
+    this.rounds++;
+    if (this.player && this.rounds >= 5) this.player.note('skill', this.skill);
+    this.save();
+    return this;
+  }
+  save() { try { this.slot.save(JSON.stringify({ v: 1, k: +this.skill.toFixed(3), r: +this.winRate.toFixed(3), q: this.rounds, l: this.losses, ...(this.useOdds ? { o: Array.from(this.odds, v => +v.toFixed(2)) } : {}) })); } catch (_) {} }
+  load() {
+    let d; try { d = JSON.parse(this.slot.load() || 'null'); } catch (_) { return; }
+    if (!d || d.v !== 1) return;
+    this.skill = clamp(+d.k || .5, this.lo, this.hi); this.winRate = clamp(+d.r || this.target, 0, 1);
+    this.rounds = Math.max(0, d.q | 0); this.losses = clamp(d.l | 0, 0, 2);
+    if (Array.isArray(d.o) && d.o.length === this.odds.length) d.o.forEach((v, i) => { this.odds[i] = clamp(+v || 0, 0, 1e4); });
+  }
+}
+// The player's chance of winning at each skill level is learned the way a Brain learns it.
+Dial.prototype.winChance = Brain.prototype.winChance;
+Dial.prototype.calibrate = Brain.prototype.calibrate;
 
 // ---------------------------------------------------------------- Wave
 

@@ -1147,6 +1147,7 @@ waves.update(dt, kind => spawn(kind), things.count('enemy'));   // next wave onc
 // waves.number, waves.state ('spawning' | 'fighting' | 'breather' | 'done'), waves.breatherLeft
 
 director = new Director({ over: 90 });      // difficulty 0..1 that eases off when the player is struggling
+// new Director({ over: 90, dial }): with a gs.brains.Dial it also remembers the player between rounds
 director.hurt(1); director.scored(1); director.update(dt); gap = director.pick(1.4, .4);
 ```
 
@@ -1558,6 +1559,37 @@ style is an extra input, your teacher and rules get it as a third argument (`tea
 what it's doing, so the player can read it and react: longer when the skill dial is low and when it's
 torn. While `bot.telling` is set (`{ action, left, t }`), draw a glance, a crouch or a flash. Each
 wave mind has its own `mind.telling`. `bot.unsure` (0..1) is how torn its last choice was.
+
+### A dial for opponents that aren't brains
+
+`gs.brains.Dial` is the win-rate rail by itself: a number from 0 to 1 that follows this player. Pass
+it wherever a kit takes a `skill`, and tell it how each game ended.
+
+```js
+const { Dial } = gs.brains;
+function make(api) {
+  const dial = new Dial(api, { name: 'draughts', target: .55 });   // the player should win 55% of games
+  ...
+  const move = search.best(state, { skill: dial });                // gs.solve.Search, table.think(search, state, { skill: dial })
+  away = new Team(pitch, 1, { skill: dial });                      // gs.sports: it reads the dial each time it thinks
+  chaseBall(car, arena, { skill: dial });                          // gs.arena
+  chess.think({ skill: dial });                                    // gs.tabletop Chess: the dial as one of its five levels
+  director = new Director({ over: 90, dial });                     // gs.pacing: climbs sooner for a winner, later and lower for a loser
+  // when the game ends:
+  dial.result(playerWon);                                          // true, false, 'draw', or 0..1 for how well they did
+}
+```
+
+- It goes up while the player wins more than `target` (default .6) and down while they win less,
+  with a big step down after three losses in a row, and it learns the player's real chance at each
+  level the way a Brain does. In the kit test a weak made-up player wins 57% of games, a middling one
+  62% and a strong one 64%, at dials of .10, .40 and .96.
+- A new game starts where this player's other games settled (the `Player` profile); `start: .3` sets
+  it yourself, `range: [.2, .8]` keeps it between two levels, `profile: false` keeps it to itself.
+- `dial.skill` is the number and `dial.level(5)` a level from 1 to 5; the dial stands in for its
+  number in sums (`1 - dial`, `dial > .4`), so it works for your own opponent too.
+- It is saved with the game's brains in a few bytes. Give each opponent its own `name`.
+- A game with no winner (an endless runner) can use the score: `dial.result(score >= goal)`.
 
 ### Nemesis, Shadow and teaching by playing
 

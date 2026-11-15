@@ -878,6 +878,70 @@ console.log('physics ok');
   console.log('brains 4: two kinds of spot for one move, "not this", recalled, saved, minds ok');
 }
 
+// ---- Tiny Brains: a dial for opponents that aren't brains
+{
+  const { Dial, Player } = await import('../src/kit/brains.js');
+  const { Director } = await import('../src/kit/pacing.js');
+  const { Search } = await import('../src/kit/solve.js');
+  const { Pitch, Team } = await import('../src/kit/sports.js');
+  let sd = 11; const rand = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 2 ** 32, sig = x => 1 / (1 + Math.exp(-x));
+  // a made-up player of strength ps against an opponent as strong as the dial says
+  const season = (ps, o = {}) => {
+    const d = new Dial(null, { name: 'dial-' + ps + (o.tag || ''), profile: false, ...o });
+    let wins = 0, run = 0, worst = 0, sum = 0;
+    for (let r = 0; r < 300; r++) {
+      const won = rand() < sig((ps - d.skill) * 7 + .4); d.result(won);
+      run = won ? 0 : run + 1; worst = Math.max(worst, run);
+      if (r >= 200) { wins += won; sum += d.skill; }
+      assert.ok(d.skill >= d.lo && d.skill <= d.hi && isFinite(d.winRate), 'the dial stays in its range');
+    }
+    return { rate: wins / 100, skill: sum / 100, worst, d };
+  };
+  const weak = season(.15), mid = season(.5), strong = season(.95);
+  assert.ok(weak.rate >= .45, 'a weak player still wins often: ' + weak.rate);
+  assert.ok(Math.abs(mid.rate - .6) <= .15, 'a middling player wins about the target: ' + mid.rate);
+  assert.ok(strong.skill > mid.skill + .1 && mid.skill > weak.skill + .1, `the dial follows the player: ${weak.skill.toFixed(2)} ${mid.skill.toFixed(2)} ${strong.skill.toFixed(2)}`);
+  assert.ok(weak.worst <= 8, 'a losing run always ends: ' + weak.worst);
+  const half = season(.5, { target: .4, tag: 't' });
+  assert.ok(Math.abs(half.rate - .4) <= .15 && half.skill > mid.skill, 'a lower target is a harder opponent: ' + half.rate);
+  const ranged = season(.95, { range: [.3, .7], tag: 'r' });
+  assert.ok(ranged.skill <= .7 + 1e-9 && ranged.d.level(5) === 5 && new Dial({ name: 'lv', range: [.3, .7], start: .3, profile: false }).level(5) === 1, 'it keeps to its range, and level() spreads the range over the levels');
+  // three losses in a row: a big step down; a draw is half a win
+  const d3 = new Dial({ name: 'three', start: .6, profile: false }); const before = d3.skill;
+  d3.result(false); d3.result(false); d3.result(false);
+  assert.ok(d3.skill <= before - .25, 'three losses in a row bring relief: ' + d3.skill.toFixed(2));
+  const dd = new Dial({ name: 'draws', profile: false, odds: false }); for (let i = 0; i < 40; i++) dd.result('draw');
+  assert.ok(Math.abs(dd.winRate - .5) < .01 && dd.skill < .5, 'a run of draws is below a 60% target, so it eases off');
+  // it stands in for a number
+  const dn = new Dial({ name: 'num', start: .7, profile: false });
+  assert.ok(Math.abs((1 - dn) - .3) < 1e-9 && dn > .4 && +dn === .7 && Math.max(0, dn) === .7, 'it stands in for its number in sums');
+  // saved and brought back; a new dial starts at the player's usual level
+  const saved = new Map(), prof = {};
+  const api = { brains: { load: n => saved.get(n) ?? null, save: (n, t) => { saved.set(n, t); return true; }, player: { read: () => JSON.parse(JSON.stringify(prof)), write: (k, v, n) => { prof[k] = { v, n }; return true; } } } };
+  const s1 = new Dial(api, { name: 'kept' }); for (let i = 0; i < 12; i++) s1.result(true);
+  const s2 = new Dial(api, { name: 'kept' });
+  assert.ok(s1.skill > .6 && Math.abs(s2.skill - s1.skill) < .002 && s2.rounds === 12 && saved.get('kept').length < 200, 'saved in a few bytes and brought back: ' + saved.get('kept').length);
+  assert.ok(new Player(api).count('skill') > 0 && new Dial(api, { name: 'next-game' }).skill > .55, 'a new game starts at the player\'s usual level');
+  assert.equal(new Dial(api, { name: 'own', start: .2 }).skill, .2, 'start wins over the profile');
+  s2.forget(); assert.ok(new Dial(api, { name: 'kept', profile: false }).skill === .5, 'forget() starts it again');
+  // the kits take it: a director, a search, a team
+  const at = (dial, t) => { const dr = new Director({ over: 60, dial }); dr.update(t); return dr.level; };
+  assert.ok(Math.abs(at(null, 30) - at(.5, 30)) < 1e-9 && Math.abs(at(null, 90) - 1) < 1e-9, 'a director with no dial, or one at the middle, is the game as made');
+  const lo = new Dial({ name: 'dlo', start: .1, profile: false }), hi = new Dial({ name: 'dhi', start: .9, profile: false });
+  assert.ok(at(hi, 30) > at(null, 30) + .1 && at(lo, 30) < at(null, 30) - .1 && at(lo, 500) < .75 && at(hi, 500) === 1, `a director climbs sooner for a winner, later and lower for a loser: ${at(lo, 30).toFixed(2)} ${at(null, 30).toFixed(2)} ${at(hi, 30).toFixed(2)}`);
+  // a counting game: take 1 to 3, the one who takes the last wins; from 21 the best move is to take 1
+  const game = { moves: s => [1, 2, 3].filter(m => m <= s.n), play: (s, m) => ({ n: s.n - m, turn: 1 - s.turn }), over: s => s.n === 0, score: (s, me) => (s.n === 0 ? (s.turn === me ? -1000 : 1000) : 0), turn: s => s.turn };
+  const dsearch = new Search(game);
+  const picks = dial => { let best = 0; for (let i = 0; i < 60; i++) if (dsearch.best({ n: 21, turn: 0 }, { skill: dial, depth: 12, time: 200, rng: () => rand() }) === 1) best++; return best; };
+  const top = picks(new Dial({ name: 'smax', start: 1, profile: false })), low = picks(new Dial({ name: 'smin', start: .05, profile: false }));
+  assert.ok(top === 60 && low < 55, `a search plays its best at a full dial and slips at a low one: ${top} ${low}`);
+  const pitch = new Pitch({ w: 200, h: 300 }), td = new Dial({ name: 'team', start: .2, profile: false }), team = new Team(pitch, 1, { skill: td });
+  const world = { ball: { x: 100, y: 150, vx: 0, vy: 0 }, foes: [] };
+  team.think(world, 1); const slow = team.thinkT; td.skill = .9; team.think(world, 1); const quick = team.thinkT;
+  assert.ok(slow > quick + .1, `a team reads the dial each time it thinks: ${slow.toFixed(2)} ${quick.toFixed(2)}`);
+  console.log(`brains 5: a dial follows the player (weak ${(weak.rate * 100).toFixed(0)}% at ${weak.skill.toFixed(2)}, middling ${(mid.rate * 100).toFixed(0)}% at ${mid.skill.toFixed(2)}, strong ${(strong.rate * 100).toFixed(0)}% at ${strong.skill.toFixed(2)}), saved, kits take it ok`);
+}
+
 // ---- round 6 game kits
 {
   const { Board } = await import('../src/kit/board.js');

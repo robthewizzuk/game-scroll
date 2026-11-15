@@ -829,7 +829,7 @@ export interface PacingPart {
   ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number;
   Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; count: number; pause(sec: number): Loose; burst(n: number, gap?: number): Loose; update(dt: number, spawn: (i: number) => void): Loose; reset(): Loose };
   Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state: string; update(dt: number, spawn: (wave: Loose) => void, alive?: number): Loose; onStart?: Loose; [k: string]: Loose };
-  Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number }) => { readonly level: number; readonly calm: boolean; hurt(amount?: number): Loose; scored(amount?: number): Loose; update(dt: number): Loose; pick(easy: number, hard: number): number };
+  Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who usually wins, later and not all the way for one who usually loses. */ dial?: Skill | null }) => { readonly level: number; readonly calm: boolean; hurt(amount?: number): Loose; scored(amount?: number): Loose; update(dt: number): Loose; pick(easy: number, hard: number): number };
 }
 
 export interface AimResult { target: Loose | null; on: boolean; lock: number; fire: boolean; angle?: number; dir?: Loose }
@@ -870,10 +870,10 @@ export interface SearchGame<S, M> { moves(s: S): M[]; play(s: S, m: M): S; turn(
 export interface SolvePart {
   Puzzle: new () => PuzzleSolver;
   Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => {
-    best(s: S, o?: { time?: number; depth?: number; skill?: number; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): M | null;
+    best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): M | null;
     rank(s: S, o?: { time?: number; depth?: number; mode?: 'minimax' | 'mcts'; rng?: number }): { move: M; value: number; visits?: number }[];
     /** best(), a few milliseconds at a time: call job.step(ms) each frame until it returns true, then play job.move. time is the total thinking time. */
-    think(s: S, o?: { time?: number; depth?: number; skill?: number; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): SearchJob<M>;
+    think(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); mode?: 'minimax' | 'mcts' }): SearchJob<M>;
     readonly nodes: number;
   };
 }
@@ -964,7 +964,7 @@ export interface TableT {
   /** Plays a turn written as an async function; busy is true while it runs. */
   run(fn: () => unknown): void;
   /** A gs.solve.Search opponent's move, thought about a little each frame. wait: seconds it takes at least (.5); slice: milliseconds a frame (4). */
-  think<S = Loose, M = Loose>(search: Loose, state: S, o?: { time?: number; depth?: number; skill?: number; mode?: 'minimax' | 'mcts'; rng?: number | string | (() => number); wait?: number; slice?: number }): Promise<M | null>;
+  think<S = Loose, M = Loose>(search: Loose, state: S, o?: { time?: number; depth?: number; skill?: Skill; mode?: 'minimax' | 'mcts'; rng?: number | string | (() => number); wait?: number; slice?: number }): Promise<M | null>;
   hop(obj: Loose, to: BoardPoint, o?: { h?: number; time?: number; sound?: boolean; spin?: number; ease?: TableEase }): Promise<void>;
   slide(obj: Loose, to: BoardPoint, o?: { time?: number; ease?: TableEase; sound?: boolean }): Promise<void>;
   drop(obj: Loose, o?: { from?: number; time?: number; sound?: boolean }): Promise<void>;
@@ -1019,7 +1019,7 @@ export interface ChessT {
   move(m: { from: string; to: string; promotion?: string | null }): ChessMove | null;
   undo(): ChessMove | null;
   /** The computer's move for the side to move, thought about in a worker. level 1..5. */
-  think(o?: { level?: number; time?: number | null }): Promise<{ from: string; to: string; promotion?: string | null } | null>;
+  think(o?: { level?: number; time?: number | null; /** 0..1 instead of a level: a number, or a gs.brains.Dial. */ skill?: Skill }): Promise<{ from: string; to: string; promotion?: string | null } | null>;
 }
 /** Colour or a three.js material, and the options gs.hd.pbr takes (rough, metal, clear, glow, transparent, opacity...). */
 export type PieceLook = string | Loose;
@@ -1874,6 +1874,47 @@ export declare class Player {
   readonly skill: number; readonly reaction: number; readonly aim: number;
   get(kind: string, fallback?: number): number; count(kind: string): number; note(kind: string, value: number): this; clear(): this;
 }
+/** A skill from 0 to 1 wherever a kit takes one: a number, or a Dial that follows the player. */
+export type Skill = number | { valueOf(): number };
+/**
+ * The win-rate guard rail by itself, for an opponent that isn't a Brain (a search, a team, a director):
+ * a number 0..1 that follows this player. Pass the dial wherever a kit takes a skill; call result() at
+ * the end of each game or round.
+ */
+export declare class Dial {
+  constructor(api: GameApi | null, opts?: DialOptions);
+  constructor(opts?: DialOptions);
+  name: string;
+  /** The dial, 0..1 (within range). */
+  skill: number;
+  /** The player's win rate, smoothed, and the rate it steers to. */
+  winRate: number; readonly target: number;
+  /** Results seen. */
+  rounds: number;
+  valueOf(): number;
+  /** The dial as a level 1..n (default 5). */
+  level(n?: number): number;
+  /** The end of a game or round: did the player win? true, false, 'draw', or 0..1 for how well they did. */
+  result(playerWon: boolean | 'draw' | number): this;
+  /** The player's learned chance of winning at a skill (default: the current one). */
+  winChance(skill?: number): number;
+  /** Forgets what it learned about this player. */
+  forget(): this;
+}
+export interface DialOptions {
+  /** Its name in the game's saved brains (default 'dial'): one per opponent. */
+  name?: string;
+  /** The share of games the player should win (default .6). */
+  target?: number;
+  /** Where it starts for a player with no profile yet (default .5). */
+  start?: number;
+  /** The lowest and highest it goes (default [.05, 1]). */
+  range?: [number, number];
+  /** Learn the player's real win chance at each skill (true). */
+  odds?: boolean;
+  /** Start at the player's usual level and add to their profile (true). */
+  profile?: boolean;
+}
 /** A rival who remembers you between sessions. */
 export declare class Nemesis {
   constructor(api: GameApi | null, opts: { name?: string; moves: number | string[]; target?: number; lines?: Partial<Record<'first' | 'back' | 'long' | 'habit' | 'won' | 'lost' | 'streak', string[]>> });
@@ -1915,6 +1956,7 @@ export interface BrainsPart {
   /** Learns the player's habits and guesses their next move (board, card, rhythm, turn games). */
   Predict: typeof Predict;
   Player: typeof Player;
+  Dial: typeof Dial;
   Nemesis: typeof Nemesis;
   Shadow: typeof Shadow;
   /** Finds game-feel numbers whose trial result is closest to want (for makers, not players' phones). */
@@ -2206,14 +2248,14 @@ export interface ArtPart {
 export interface SportsPitch { w: number; h: number; goal: number; x: number; y: number; goalFor(side: 0 | 1): { x: number; y: number; half: number }; toPitch(side: 0 | 1, u: number, v: number): { x: number; y: number }; upfield(side: 0 | 1, p: { x: number; y: number }): number }
 export interface SportsAct { do: 'chase' | 'shoot' | 'pass' | 'dribble' | 'support' | 'mark' | 'keep'; x: number; y: number; to?: Loose; kick?: { x: number; y: number; power: number } }
 export interface SportsTeam {
-  pitch: SportsPitch; side: 0 | 1; skill: number; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
+  pitch: SportsPitch; side: 0 | 1; skill: Skill; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
   home(p: Loose, ball: { x: number; y: number }): { x: number; y: number };
   think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>;
   kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number };
 }
 export interface SportsPart {
   Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch;
-  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: number; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
+  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
 }
 export interface DragPart { Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; axis?: 'x' | 'y' } | null; swap?: boolean }) => Drag }
 
@@ -2521,7 +2563,7 @@ export interface ArenaPart {
     playback(t: number): { p: P3; q: Loose }[] | null; readonly replayLength: number; readonly clockText: string;
   };
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
-  chaseBall(car: BallCar, arena: Loose, o?: { skill?: number }): { throttle: number; steer: number; boost: boolean; jump: boolean };
+  chaseBall(car: BallCar, arena: Loose, o?: { skill?: Skill }): { throttle: number; steer: number; boost: boolean; jump: boolean };
 }
 /** What gs.models.vehicle takes. Colours are '#rrggbb'. */
 export interface VehicleOptions {
