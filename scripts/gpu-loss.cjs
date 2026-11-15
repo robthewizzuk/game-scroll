@@ -100,10 +100,12 @@ const path = require('path'), fs = require('fs');
         if (when === 'gate') { await p.waitForFunction(() => __gs.active.starting && __gs.active.starting.phase !== 'load', null, { timeout: 60000 }); await lose(); }
         await p.waitForFunction(() => __gs.active.state === 'playing' && !__gs.active.starting, null, { timeout: 120000 });
         await p.waitForTimeout(2500);
-        const r = await p.evaluate(() => ({ back: window.__hd?.info.backend || window.__toon?.backend, L: window.__gpu.losses(), paused: __gs.active.paused, rep: [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')] }));
-        const fail = r.back !== 'webgpu' || r.L.last?.backend !== 'webgpu' || r.paused || !r.rep.length || errs.length;
+        const r = await p.evaluate(() => ({ back: window.__hd?.info.backend || window.__toon?.backend, L: window.__gpu.losses(), paused: __gs.active.paused, gl: window.__gpu.glMade?.(), rep: [...window.__gpuReps, ...__gs.perf.waiting.errors.filter(e => e.kind === 'gpu')] }));
+        // (and no WebGL renderer was made for the WebGPU card: its picture in the feed asked for one, made a moment after the
+        // GPU process went, and its first shaders failed on a context not back yet, "Shader Error 1282", one run in a few)
+        const fail = r.back !== 'webgpu' || r.L.last?.backend !== 'webgpu' || r.paused || r.gl || !r.rep.length || errs.length;
         if (fail) bad++;
-        console.log(`${fail ? 'BAD ' : 'ok  '} ${id.padEnd(16)} lost ${when === 'feed' ? 'in the feed' : 'under the loading screen'}: back in ${((r.L.last?.ms || 0) / 1000).toFixed(1)} s on ${r.L.last?.backend}, the round started${r.paused ? ' PAUSED' : ''} and drew with ${r.back} · report: ${r.rep.map(e => `"${e.msg}"`).join(', ') || 'NONE'}${known ? ` · ${known} error${known === 1 ? '' : 's'} logged by three at the loss` : ''}`);
+        console.log(`${fail ? 'BAD ' : 'ok  '} ${id.padEnd(16)} lost ${when === 'feed' ? 'in the feed' : 'under the loading screen'}: back in ${((r.L.last?.ms || 0) / 1000).toFixed(1)} s on ${r.L.last?.backend}, the round started${r.paused ? ' PAUSED' : ''} and drew with ${r.back}${r.gl ? ' (and a WebGL renderer was MADE for it)' : ''} · report: ${r.rep.map(e => `"${e.msg}"`).join(', ') || 'NONE'}${known ? ` · ${known} error${known === 1 ? '' : 's'} logged by three at the loss` : ''}`);
         for (const e of errs.slice(0, 4)) console.log('     ! ' + e.slice(0, 220));
         await b.close(); continue;
       }

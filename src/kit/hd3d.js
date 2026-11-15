@@ -670,7 +670,7 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 // test hook: __hd.force = 3 pins ultra. Dev and test builds and test browsers only, not the store apps.
 // (window.__hdView: the view drawn last, for the test scripts)
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
-if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending() }; }
+if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending(), glMade: () => !!R }; }
 
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
@@ -2958,6 +2958,7 @@ export class HDView {
   warmOn(G, extra = []) {
     this.holdBase = 'all';   // (what it builds never waits: holdNew)
     if (G) { gpuSwap(this, G); this.warmed = true; try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ } this.scene.environment = this.envFor(G); this.aheadAgain = true; compileGPU(G.r, this.scene, this.cam, null, null, this).catch(buildFailed); return; }   // (hidden things: buildAhead, from the next frame)
+    if (gpuMending()) return;   // (a lost graphics chip being made again: warmed for the new one later, not on WebGL now)
     const r = renderer(); if (!r) return; this.warmed = true; gpuSwap(this, null);
     const hidden = [], tmp = [];
     this.scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
@@ -2988,6 +2989,9 @@ export class HDView {
    */
   precompile() {
     const G = gpuFor(this);
+    // (a lost graphics chip being made again: built for the new one once it is there. On WebGL meanwhile every shader of
+    // the scene was built for a renderer the view would not draw with)
+    if (!G && gpuMending()) return gpuMending().then(() => this.precompile());
     if (G) {
       gpuSwap(this, G); this.scene.environment = this.envFor(G); this.warmed = true;
       // (the hidden things too, before it says it is ready, once the view has drawn a frame of the game: before that the
@@ -3540,7 +3544,9 @@ export class HDView {
    * its canvas (and the camera picture under that, for AR), so the card keeps its picture.
    */
   bake(c, small = false) {
-    const r = renderer(); if (!r) return;
+    // (on the renderer the view draws with: asking for the WebGL one made a WebGL context, and built its studio
+    // reflections, for a view drawn on WebGPU; while a lost chip is made again nothing is drawn, draw3d)
+    const G = gpuFor(this); if (!G && (gpuMending() || !renderer())) return;
     this.render(c, this.W, this.H, small ? 'small' : true);
     const u = this.under;
     c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-over';
@@ -4152,11 +4158,14 @@ const idle = () => new Promise(res => (typeof requestIdleCallback === 'function'
 function bakeLater(view, c) {
   if (speed.busy() || speed.playing()) { if (waiting.has(c)) return; waiting.add(c); setTimeout(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(view, c); }, 250); return; }
   if (host && host.canvas.isConnected && performance.now() - (host.view.drawnAt || 0) < 300) { if (!bakes.some(b => b[1] === c)) bakes.push([view, c]); return; }
+  // (a lost graphics chip being made again: the picture waits for the new one. Asked for now, the WebGL renderer was
+  // made a moment after the browser's graphics process went, its shaders built on a context that was lost or not yet back)
+  const mend = gpuMending(); if (mend) { if (waiting.has(c)) return; waiting.add(c); mend.then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(view, c); }); return; }
   // no 3D game is being played: give the card that holds the 3D canvas its own last picture, take the
-  // canvas off it, and draw this card's picture
-  const r = renderer(); if (!r) return;
+  // canvas off it, and draw this card's picture (on the renderer the view draws with: a WebGPU view's card made no WebGL)
+  const G = gpuFor(view), r = G ? G.r : renderer(); if (!r) return;
   if (host) { const old = host; host = null; if (old.canvas.isConnected) try { old.view.bake(old.ctx); } catch (_) { /* best effort */ } old.canvas.classList.remove('hd-host'); old.under?.remove(); }
-  r.domElement.remove(); webgpu()?.r.domElement.remove();
+  R?.domElement.remove(); webgpu()?.r.domElement.remove();
   try { view.bake(c, true); } catch (_) { /* best effort */ }
 }
 // Getting a round ready (getready.js; the app draws the round's first frames under its loading screen): what
