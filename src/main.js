@@ -22,6 +22,8 @@ import { initWallet, toast, shopHTML, bindShop } from './kit/wallet-ui.js';
 
 import { haptic, want } from './kit/device.js';
 import { pollPads } from './kit/gamepad.js';
+import { padNav } from './padnav.js';
+import { computer } from './kit/speed.js';
 import { stopAll, pauseAll, resumeAll, ownedBy, release } from './kit/cleanup.js';
 import * as slices from './kit/slices.js';
 import { stats as jobStats } from './kit/jobs.js';
@@ -54,12 +56,12 @@ import { makeDebug } from './debug.js';
 import { show as showTweaks, knobs as knobList, setKnobs } from './kit/tweak.js';
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
-import { desktop } from './desktop.js';
+import { desktop, consoleMode } from './desktop.js';
 import { update } from './update.js';
 import { onGpuLoss, gpuMending, glStats, webgpu as webgpuNow } from './kit/gpu.js';
 import { PIPES, primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
 // (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
-const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
+const NEXT_CUE=consoleMode?'Press ↓ for the next game · A plays':desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
 import BUNDLED,{fresh as FRESH} from 'virtual:bundled-games';
 
 /* ---------- catalogue ---------- */
@@ -1045,9 +1047,11 @@ function lite2d(s,now,step){
   else if(a<step*1.044){L2.slow=0;if(s.lite&&!L2.back&&++L2.fast>=8){L2.fast=0;L2.back=1;s.lite=false;fit(s)}}
   else L2.slow=L2.fast=0;
 }
+// A controller alone (src/padnav.js): menus, the feed's buttons, and a pointer for games played by touch
+const PADS=padNav({active:()=>active,toast:(el,t)=>toast(el,t,'info'),feedOpts:()=>[...document.querySelectorAll('#feed-menu [role=option]')],get feedMenu(){return document.getElementById('feed-menu')},get bar(){return document.querySelector('.top')},input:()=>{lastGameInput=performance.now()}});
 function frame(now){
   requestAnimationFrame(frame);
-  pollPads(padInput);
+  PADS.begin();pollPads(padInput,PADS.take);PADS.frame(now);
   tickHz(now);
   const s=active;
   // the screen's rate for the game being played (src/kit/screenrate.js; the phone decides between rounds)
@@ -1105,7 +1109,7 @@ function frame(now){
 function keyInput(k,down){
   const s=active;if(!s)return false;
   if(down&&k==='Escape'&&s.state==='playing'){s.paused?resumeGame(s):pauseGame(s,'key');return true}
-  if(s.state==='playing'){if(s.paused){if(down&&(k===' '||k==='Enter'))resumeGame(s);return true}lastGameInput=performance.now();if(s.game.key)s.game.key(k,down);return[' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(k)}
+  if(s.state==='playing'){if(s.paused){if(down&&(k===' '||k==='Enter'))resumeGame(s);else if(down&&(k==='ArrowDown'||k==='PageDown'))goNext(s);else if(down&&(k==='ArrowUp'||k==='PageUp'))goPrev(s);return true}lastGameInput=performance.now();if(s.game.key)s.game.key(k,down);return[' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(k)}
   if(!down)return false;
   if(k===' '||k==='Enter'){if(Date.now()-s.overAt>550)startGame(s);return true}
   if(k==='ArrowDown'||k==='PageDown'){goNext(s);return true}
@@ -1227,4 +1231,4 @@ if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refres
 // Its prompts wait for a round to end; the catalogue can name the oldest version that may carry on.
 update.init({busy:()=>!!active&&active.state==='playing',min:()=>+remote.app()?.android?.min||0});
 
-if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},heat:()=>import('./kit/heat.js'),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},knobs:id=>knobList(id),shaders:()=>[...(glStats.r?.info?.programs||[])].map(p=>(p.name?p.name+' ':'')+(p.type||'?')),gl3d:()=>{const d=active?.def,hd=['nextgen','ar','board'].includes(d?.era)?window.__hd?.info:null,r=glStats.r?.info,G=webgpuNow?.()?.r?.info;return{calls:(hd?hd.calls:glStats.frame?.calls??r?.render?.calls)||0,tris:(hd?hd.tris:glStats.frame?.tris??r?.render?.triangles)||0,programs:(glStats.programs||0)+(G?.memory?.programs||0),textures:(r?.memory?.textures||0)+(G?.memory?.textures||0),geometries:(r?.memory?.geometries||0)+(G?.memory?.geometries||0),backend:hd?.backend||'webgl'}},setKnobs:(id,v)=>setKnobs(id,v),shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},heat:()=>import('./kit/heat.js'),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),handheld:speed.handheld,pc:computer(),pad:PADS.context,hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},knobs:id=>knobList(id),shaders:()=>[...(glStats.r?.info?.programs||[])].map(p=>(p.name?p.name+' ':'')+(p.type||'?')),gl3d:()=>{const d=active?.def,hd=['nextgen','ar','board'].includes(d?.era)?window.__hd?.info:null,r=glStats.r?.info,G=webgpuNow?.()?.r?.info;return{calls:(hd?hd.calls:glStats.frame?.calls??r?.render?.calls)||0,tris:(hd?hd.tris:glStats.frame?.tris??r?.render?.triangles)||0,programs:(glStats.programs||0)+(G?.memory?.programs||0),textures:(r?.memory?.textures||0)+(G?.memory?.textures||0),geometries:(r?.memory?.geometries||0)+(G?.memory?.geometries||0),backend:hd?.backend||'webgl'}},setKnobs:(id,v)=>setKnobs(id,v),shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

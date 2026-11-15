@@ -14,7 +14,8 @@
 // 0..1), p.held('a' | 'b' | 'x' | 'y' | 'l' | 'r' | 'start' | 'select' | 'up' | 'down' | 'left' |
 // 'right'), p.pressed(name) (just pressed this frame), p.released(name), p.index (which player).
 
-import { hapticSettings } from './device.js';
+import { hapticSettings, hapticHooks } from './device.js';
+import { desktop } from '../desktop.js';
 
 const NAMES = ['a', 'b', 'x', 'y', 'l', 'r', 'lt2', 'rt2', 'select', 'start', 'ls', 'rs', 'up', 'down', 'left', 'right', 'home'];
 const DEAD = .18;
@@ -45,9 +46,24 @@ function read(gp) {
 // now and then a wait on it) on every phone, almost none of which has a pad.
 let seen = typeof navigator !== 'undefined' && typeof addEventListener === 'function' ? false : true, idle = 0;
 if (!seen) addEventListener('gamepadconnected', () => { seen = true; });
+// The controllers Steam stands in for (desktop/device.cjs ignoredPads: Steam Input reads a handheld's own buttons and
+// hands games a controller of its own). Left out, so each press doesn't come twice; unless they are all there is.
+const IGNORE = (desktop?.device?.ignorePads || []).map(p => `${p.vendor}:${p.product}`);
+const idOf = g => { const m = /Vendor: ([0-9a-f]{4}) Product: ([0-9a-f]{4})/i.exec(g.id || '') || /^([0-9a-f]{4})-([0-9a-f]{4})-/i.exec(g.id || ''); return m ? `${m[1].toLowerCase()}:${m[2].toLowerCase()}` : ''; };
+/** The connected pads less the ones Steam stands in for (pure: tests). */
+export function keepPads(l, ignore = IGNORE) {
+  if (!ignore.length) return l;
+  const kept = l.filter(g => !ignore.includes(idOf(g)));
+  return kept.length ? kept : l;
+}
+const live = [];
 function list() {
   if (!seen && (idle = (idle + 1) % 120)) return [];
-  try { const l = [...(navigator.getGamepads?.() || [])].filter(g => g && g.connected); if (l.length) seen = true; return l; } catch { return []; }
+  try {
+    const all = navigator.getGamepads?.() || []; live.length = 0;
+    for (const g of all) if (g && g.connected) live.push(g);
+    if (live.length) seen = true; return IGNORE.length ? keepPads(live) : live;
+  } catch { return []; }
 }
 /** The first connected controller (or the one for player `i`), or null. */
 export function pad(i) { const l = list(); const g = i == null ? l[0] : l.find(p => p.index === i) || l[i]; return g ? read(g) : null; }
@@ -61,17 +77,32 @@ export function rumble(strength = .5, ms = 150, i) {
 }
 
 /* ---------- app use: pads as keys ---------- */
-const KEYS = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', a: ' ', b: 'x', x: 'z', y: 'c', l: 'q', r: 'e', select: 'Escape' };
+export const KEYS = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', a: ' ', b: 'x', x: 'z', y: 'c', l: 'q', r: 'e', select: 'Escape' };
+// what every pad together holds: a key goes down when the first pad presses it and up when the last lets go (two pads
+// on one key, or a handheld's own buttons seen twice, send it once)
+let held = new Set(), was = new Set();
+const sent = new Set();   // the keys sent down (a button the app took is held but never sent)
 /**
  * Called by the app once per frame. Sends key(k, down) for buttons, and tells it about start (pause),
- * a (play) and up / down (move through the feed). Kit use only.
+ * a (play) and up / down (move through the feed). take(name) (optional): true where the app used a button
+ * itself this frame (src/padnav.js: menus, the pointer), so it isn't sent as a key too. Kit use only.
  */
-export function pollPads(send) {
+export function pollPads(send, take) {
   frameNo++;
+  [was, held] = [held, was]; held.clear();
+  let start = false;
   for (const g of list()) {
     const p = read(g);
-    for (const [n, k] of Object.entries(KEYS)) { if (p.pressed(n)) send('key', k, true); else if (p.released(n)) send('key', k, false); }
-    if (p.pressed('start')) send('start');
+    for (const n of Object.keys(KEYS)) if (p.held(n)) held.add(n);
+    if (p.pressed('start')) start = true;
   }
+  for (const [n, k] of Object.entries(KEYS)) {
+    const on = held.has(n), before = was.has(n);
+    if (on && !before) { if (!take?.(n)) { sent.add(n); send('key', k, true); } }   // (a button the app took stays up for the game)
+    else if (!on && before && sent.delete(n)) send('key', k, false);
+  }
+  if (start && !take?.('start')) send('start');
 }
+/** Shakes the controller in use for the app's own haptics (device.js haptic, on a computer with a pad). */
+hapticHooks.pad = (strength, ms) => { if (list().length) rumble(strength, ms); };
 export const padConnected = () => list().length > 0;

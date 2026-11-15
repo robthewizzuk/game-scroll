@@ -88,7 +88,7 @@ import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } fro
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenPick, frameGenFailed, frameGenReady, frameGenPace, frameGenSlack, frameGenOne, frameGenRoom, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
-import { desktop } from '../desktop.js';
+import { desktop, handheld } from '../desktop.js';
 
 export * as THREE from 'three';
 
@@ -129,7 +129,9 @@ export const TIERS = [
 // 2026-11-14, and the phone performance report had its Next Gen games at 54 to 58 with 7% of frames slow; it climbs to
 // high by itself where the frames show room)
 const START = { top: 2, mid: 1, low: 1 };
-const CAP = desktop ? 3 : 2;
+// (a games handheld, src/desktop.js, runs on a battery in the hands: it is held to high as a phone is, and climbs as one)
+const PC = !!desktop && !handheld;
+const CAP = PC ? 3 : 2;
 /**
  * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
  * phone's class, computer: the Mac and Windows app. A computer's saved tier above its class's start only counts
@@ -261,7 +263,7 @@ const fxSaved = () => Object.keys(Q.fx).length ? { ...Q.fx } : null;
 // (and the resolution step it settled on, so a round doesn't start too sharp, stutter and step down again)
 function startGame(def) {
   Q.game = def; let s = settledFor(def?.id);
-  Q.tier = startTier(s, phoneClass(), desktop); Q.room = !!s?.room;
+  Q.tier = startTier(s, phoneClass(), PC); Q.room = !!s?.room;
   if (s?.tier != null && Q.tier < Math.min(CAP, s.tier)) s = null;   // (a saved tier not taken up: its resolution and effects were for that tier)
   Q.lvl = Math.min(LEVELS.length - 1, s?.lvl ?? 0); Q.ceil = Q.lvl; Q.ceilT = performance.now(); Q.tierCeil = 3;
   Q.out = Math.min(UPS.length - 1, s?.out | 0); Q.outCeil = Q.out;
@@ -391,7 +393,7 @@ function stepped(t, a, late, v, was) {
   else if (Q.game && fpsFor(Q.game) !== was.fps) did = `${Math.round(fpsFor(Q.game))} fps`;
   else if (v === 'slow') did = Q.slow ? 'waits for a second slow window' : Q.want != null ? `${TIERS[Q.want].name} waits for the next round` : 'nothing left to step down';
   else if (v === 'ok') did = 'holds';
-  else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), desktop, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
+  else if (v === 'fast') did = Q.fast ? `${Q.fast} fast in a row` : Q.lvl === 0 && !Q.fxLast.length && Q.tier < CAP && !mayClimb(Q.tier, phoneClass(), PC, false) ? `stays on ${TIERS[Q.tier].name} (the chip's own times show no room)` : 'nothing to step up';
   STEPS.log.push({ t: Math.round(t), avg: +a.toFixed(1), late, v, did }); if (STEPS.log.length > 400) STEPS.log.shift();
 }
 function adapt(gap) {
@@ -448,7 +450,7 @@ function decide(v, now, fps, budget) {
     // (drawing 30 with frames made between on a phone: 60 drawn again comes first, once the chip's times show room for it)
     else if (Q.lvl === 0 && Q.out === 0 && autoThirty() && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && !hot(now) && back60() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }
     else if (Q.lvl === 0 && Q.fxLast.length && now - Q.ceilT > Q.hold && !hot(now) && roomUp()) { fxUp(); Q.upT = now; }
-    else if (top && Q.out === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, Q.capNow) && mayClimb(Q.tier, phoneClass(), desktop, gpuRoom) && roomUp()) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
+    else if (top && Q.out === 0 && Q.want == null && Q.tier < Math.min(Q.tierCeil, Q.capNow) && mayClimb(Q.tier, phoneClass(), PC, gpuRoom) && roomUp()) { Q.want = Q.tier + 1; Q.upT = now; Q.wantRoom = gpuRoom; }
     // a long spell of easy frames at the top tier, a while after stepping the frame rate down: try one notch up
     // (with frames made between, only when a real frame would have room in each refresh: the chip's time, speed.cost)
     else if (Q.lvl === 0 && Q.tier === CAP && ++Q.easy >= 3 && now - Q.fpsT > Q.fpsHold && roomUp() && stepUp(Q.game)) { Q.easy = 0; Q.fpsT = now; Q.fpsUpT = now; }

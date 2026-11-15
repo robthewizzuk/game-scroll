@@ -4,7 +4,9 @@
 //       The app as it is being worked on (desktop/main.cjs with desktop/node_modules' Electron) over the test
 //       build in dist/ (every game built in): the app's address, what the page can reach, the computer's speed
 //       class and frame rate, a 2D game and a Next Gen game played, gamescroll:// links, links out, and
-//       that the page can't leave the app or read its files. (Linux: run it under xvfb-run.)
+//       that the page can't leave the app or read its files. (Linux: run it under xvfb-run.) On Linux it then opens it as a
+//       ROG Ally X in Steam's games mode: full screen, drawn bigger, its class, and the feed, Settings and a touch game
+//       played with a controller alone (--no-handheld: not that).
 //   node scripts/desktop-test.cjs --app "<the built app's program>"
 //       A packaged app (CI, after electron-builder; games stream from the games host, as players get them):
 //       it opens on its own address, streams the catalogue and a game, and its page has no errors.
@@ -81,6 +83,82 @@ async function dev() {
   } finally { await app.close().catch(() => {}); fs.rmSync(data, { recursive: true, force: true }); }
 }
 
+// A games handheld in Steam's games mode (a ROG Ally X stood in for: GS_HANDHELD, desktop/device.cjs), played with a
+// controller alone (one made up in the page: navigator.getGamepads). Linux only (the handheld facts are Linux's).
+async function handheld() {
+  const exe = require(path.join(DESK, 'node_modules/electron'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-hand-'));
+  const app = await _electron.launch({
+    executablePath: exe, args: ['--no-sandbox', DESK],
+    env: { ...process.env, GS_WEB: path.join(ROOT, 'dist'), GS_USER_DATA: data, GS_HANDHELD: 'ROG Ally X RC72LA_RC72LA', GS_HANDHELD_VENDOR: 'ASUSTeK COMPUTER INC.', GS_HANDHELD_CPU: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics', SDL_GAMECONTROLLER_IGNORE_DEVICES: '0x0b05/0x1b4c' },
+  });
+  try {
+    const p = await app.firstWindow(), errs = watch(p);
+    await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(800);
+    const { zoomFor } = require(path.join(DESK, 'device.cjs'));
+    const scr = await app.evaluate(({ screen, BrowserWindow }) => ({ h: screen.getPrimaryDisplay().size.height, full: BrowserWindow.getAllWindows()[0].isFullScreen() }));
+    const f = await p.evaluate(() => ({ dev: gsDesktop.device, dpr: devicePixelRatio, ih: innerHeight, info: __gs.desk() }));
+    ok(f.dev && f.dev.handheld && f.dev.handheld.id === 'rog-ally-x' && f.dev.console, 'a ROG Ally X is known as a handheld in console mode', JSON.stringify(f.dev && f.dev.handheld));
+    ok(scr.full, 'console mode opens full screen');
+    ok(Math.abs(f.dpr - zoomFor(scr.h)) < .01, 'and draws the app bigger to read from a hand\'s length', `zoom ${f.dpr} on a ${scr.h} px screen, ${f.ih} px tall to the page`);
+    // (its class is the model's, 'top', unless it draws in software, as the test machine does: then 'low')
+    ok(f.info.handheld === 'top' && !f.info.pc && (f.info.klass === 'low' || f.info.klass === 'top' && f.info.auto3d === 60), 'it plays 3D games as a top phone does (its class from the model, 60 a second)', `handheld ${f.info.handheld}, class ${f.info.klass}, 3D ${f.info.auto3d} fps, 2D ${f.info.auto2d} fps`);
+    // a made-up controller: buttons by the standard layout's numbers, and the pad Steam stands in for (left out)
+    await p.evaluate(() => {
+      const mk = (i, id) => ({ index: i, id, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) });
+      window.__pad = mk(0, 'Microsoft X-Box 360 pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)');
+      window.__real = mk(1, 'ASUS ROG Ally X (STANDARD GAMEPAD Vendor: 0b05 Product: 1b4c)');
+      navigator.getGamepads = () => [window.__pad, window.__real];
+      dispatchEvent(new Event('gamepadconnected'));
+    });
+    const B = { a: 0, b: 1, x: 2, y: 3, l: 4, r: 5, select: 8, start: 9, ls: 10, up: 12, down: 13, left: 14, right: 15 };
+    // press on both pads, as a handheld's own buttons and Steam's stand-in both would: it must count once
+    const press = async (n, ms = 90) => { for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: true, value: 1 }; }, [g, B[n]]); await p.waitForTimeout(ms); for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: false, value: 0 }; }, [g, B[n]]); await p.waitForTimeout(160); };
+    const id = () => p.evaluate(() => __gs.active && __gs.active.def.id);
+    await p.waitForFunction(() => __gs.active && !__gs.active.loading, null, { timeout: 30000 });
+    // (the feed may still be making the next card: a press then does nothing, as a key's does, so up to three)
+    const first = await id();
+    for (let i = 0; i < 3 && await id() === first; i++) { await press('down'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, first, { timeout: 5000 }).catch(() => {}); }
+    const second = await id();
+    ok(second && second !== first, 'the d-pad moves through the feed', `${first} → ${second}`);
+    await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id === was, first, { timeout: 8000 }).catch(() => {});
+    ok(await id() === first, 'one press is one game, though two pads report it', await id());
+    const liked = () => p.evaluate(() => __gs.active.el.querySelector('.like').getAttribute('aria-pressed'));
+    const l0 = await liked(); await press('y');
+    ok(await liked() !== l0, 'Y hearts the game');
+    await press('y');
+    // the top bar and the game's buttons: View, then → to Settings, A opens it, ↓ moves inside it, B closes it
+    await press('select');
+    const inBar = await p.evaluate(() => !!document.activeElement && (!!document.activeElement.closest('.top') || !!document.activeElement.closest('.slide')) && document.documentElement.classList.contains('pad-ui'));
+    ok(inBar, 'View goes to the top bar, with the focus ring');
+    for (let i = 0; i < 8 && !(await p.evaluate(() => document.activeElement?.id === 'settings')); i++) await press('right');
+    await press('a'); await p.waitForTimeout(300);
+    const open = await p.evaluate(() => !!document.querySelector('dialog.settings[open]'));
+    ok(open, 'A opens Settings from there');
+    const at0 = await p.evaluate(() => document.activeElement?.outerHTML.slice(0, 60));
+    await press('down'); await press('down');
+    const at1 = await p.evaluate(() => ({ html: document.activeElement?.outerHTML.slice(0, 60), inside: !!document.activeElement?.closest('dialog.settings') }));
+    ok(at1.inside && at1.html !== at0, '↓ moves between its buttons', `${at0} → ${at1.html}`);
+    const ctl = await p.evaluate(() => !!document.querySelector('dialog.settings .set-pad') && !!document.querySelector('dialog.settings .set-quit'));
+    ok(ctl, 'Settings says which button does what, and has Quit');
+    await press('b'); await p.waitForTimeout(300);
+    ok(!(await p.evaluate(() => !!document.querySelector('dialog[open]'))), 'B closes it');
+    await press('b');
+    // a game played by touch gets a pointer: the stick moves it, A is the finger
+    await p.evaluate(() => __gs.only('fly-swatter', true)); await p.waitForTimeout(400);
+    await p.waitForFunction(() => __gs.active && __gs.active.def.id === 'fly-swatter' && !__gs.active.loading, null, { timeout: 30000 });
+    await press('a'); await p.waitForTimeout(600);
+    const taps = await p.evaluate(() => { const g = __gs.active.game, log = window.__taps = []; for (const k of ['down', 'move', 'up']) { const f = g[k]; if (f) g[k] = (...a) => { log.push([k, Math.round(a[0]), Math.round(a[1]), a[a.length - 1]]); return f.apply(g, a); }; } return __gs.active.state; });
+    await p.evaluate(() => { window.__pad.axes[0] = 1; }); await p.waitForTimeout(400); await p.evaluate(() => { window.__pad.axes[0] = 0; });
+    await press('a', 120);
+    const t = await p.evaluate(() => ({ taps: window.__taps, cur: !!document.querySelector('.pad-cursor:not([hidden])'), w: __gs.active.w, hasUp: !!__gs.active.game.up }));
+    const down = t.taps.find(x => x[0] === 'down'), up = t.taps.find(x => x[0] === 'up');
+    ok(taps === 'playing' && down && (up || !t.hasUp) && down[1] > t.w / 2 && t.cur, 'a touch game gets a pointer: the stick moves it and A taps', JSON.stringify(t.taps.slice(-4)));
+    ok(!errs.length, 'no page errors', errs.join(' | '));
+    if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT.replace(/(\.png)?$/, '-handheld.png') });
+  } finally { await app.close().catch(() => {}); fs.rmSync(data, { recursive: true, force: true }); }
+}
+
 async function packaged() {
   const port = 9300 + Math.floor(Math.random() * 500);
   const proc = spawn(appAt, [`--remote-debugging-port=${port}`, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -111,4 +189,4 @@ async function packaged() {
   } finally { if (b) await b.close().catch(() => {}); proc.kill(); }
 }
 
-(appAt ? packaged() : dev()).catch(e => { console.error(e); failed++; }).finally(() => { console.log(failed ? `${failed} check(s) failed` : 'all desktop checks passed'); process.exit(failed ? 1 : 0); });
+(appAt ? packaged() : dev().then(() => process.platform === 'linux' && !argv.includes('--no-handheld') ? handheld() : null)).catch(e => { console.error(e); failed++; }).finally(() => { console.log(failed ? `${failed} check(s) failed` : 'all desktop checks passed'); process.exit(failed ? 1 : 0); });

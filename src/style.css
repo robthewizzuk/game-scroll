@@ -524,3 +524,11 @@ body:not(.fullscreen) .fs-pill{display:none}
 .upd-wall .info-card .tag{background:var(--accent);color:var(--ink)}
 .upd-wall::backdrop{background:#000d}
 @media (prefers-reduced-motion:reduce){.upd{transition:opacity .2s}}
+
+/* A controller alone (src/padnav.js): a clear ring on the button it is on, and a pointer for games played by touch */
+html.pad-ui :focus{outline:3px solid #ffd54a!important;outline-offset:3px;border-radius:10px}
+html.pad-ui{cursor:none}
+.pad-cursor{position:absolute;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #0009,inset 0 0 0 2px #0006;pointer-events:none;z-index:6;transition:width .08s,height .08s,margin .08s,background .08s}
+.pad-cursor::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px #0009}
+.pad-cursor.down{width:26px;height:26px;margin:-13px 0 0 -13px;background:#ffffff40}
+.pad-cursor[hidden]{display:none}

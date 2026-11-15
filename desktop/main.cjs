@@ -14,6 +14,7 @@ const { app, BrowserWindow, Menu, ipcMain, net, protocol, screen, session, shell
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { thisDevice, zoomFor } = require('./device.cjs');
 
 const HOST = 'localhost', ORIGIN = `https://${HOST}`, SCHEME = 'gamescroll';
 const mac = process.platform === 'darwin', win32 = process.platform === 'win32';
@@ -37,8 +38,21 @@ if (win32) sw('disable-features', 'CalculateNativeWinOcclusion');
 // makes a new one and carries on (src/kit/gpu.js). Chromium itself would block the app's own address from WebGL and
 // WebGPU after a few of those, for good until the app restarted, leaving the 3D games blank.
 app.disableDomainBlockingFor3DAPIs();
-// Linux is only for the tests (scripts/desktop-test.cjs): WebGPU there is still behind a switch.
-if (process.platform === 'linux') { sw('enable-unsafe-webgpu'); sw('enable-features', 'Vulkan'); }
+// Linux (SteamOS on a ROG Ally or Steam Deck, any Linux PC; and the tests): Chromium keeps WebGPU behind a switch there
+// for most graphics chips, AMD's among them; it draws through Vulkan (Mesa's RADV on an AMD handheld).
+// --gs-webgl (a Steam launch option) keeps every game on WebGL, for a driver whose WebGPU shows nothing.
+const webgl = process.argv.includes('--gs-webgl');
+if (process.platform === 'linux') {
+  if (webgl) sw('disable-blink-features', 'WebGPU');
+  else { sw('enable-unsafe-webgpu'); sw('enable-features', 'Vulkan'); }
+}
+// The computer it runs on (desktop/device.cjs): a games handheld, and Steam's games mode (gamescope: SteamOS's Game
+// Mode, Big Picture). There the app is a console's: full screen from the start, drawn bigger to read at a hand's
+// length or from a sofa, played with the controller. Gamescope shows X11 windows; Chromium would otherwise pick
+// Wayland wherever it finds one, and gamescope's own Wayland is newer and less tried.
+const DEVICE = thisDevice();
+const CONSOLE = DEVICE.gamescope || !!DEVICE.handheld || process.argv.includes('--gs-console');
+if (process.platform === 'linux' && DEVICE.gamescope) sw('ozone-platform', 'x11');
 
 // One copy at a time: a second launch (a gamescroll:// link on Windows) hands its link to the first.
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
@@ -101,6 +115,13 @@ function keepState(w) {
 function onScreen(b) {
   return b && screen.getAllDisplays().some(d => { const a = d.workArea; return b.x < a.x + a.width - 80 && b.x + b.width > a.x + 80 && b.y >= a.y - 20 && b.y < a.y + a.height - 80; });
 }
+// A console's games mode draws the app bigger (desktop/device.cjs zoomFor): the screen's height in the app's own
+// units. GS_ZOOM pins it (a Steam launch option: GS_ZOOM=1.5 %command%).
+function consoleZoom(d = screen.getPrimaryDisplay()) {
+  const pin = +process.env.GS_ZOOM;
+  if (pin >= .5 && pin <= 4) return pin;
+  return CONSOLE ? zoomFor(d.size.height) : 1;
+}
 function show() { if (!main) return; if (main.isMinimized()) main.restore(); main.show(); main.focus(); }
 
 function createWindow() {
@@ -108,6 +129,7 @@ function createWindow() {
   // first run: most of the screen (the feed lays itself out to any window; Next Gen games fill a wide one)
   const h = Math.round(Math.min(1000, area.height * .88)), w = Math.round(Math.min(area.width * .88, h * 1.45));
   const b = onScreen(st?.bounds) ? st.bounds : { width: w, height: h };
+  const zoom = consoleZoom();
   main = new BrowserWindow({
     ...b, minWidth: 380, minHeight: 600, show: false, title: 'Game Scroll', backgroundColor: '#0c0e12',
     autoHideMenuBar: true, fullscreenable: true,
@@ -117,11 +139,12 @@ function createWindow() {
       spellcheck: false, enableWebSQL: false, navigateOnDragDrop: false,
       backgroundThrottling: true,   // (a hidden window stops drawing: the app pauses its round then anyway)
       v8CacheOptions: 'bypassHeatCheck',   // keep compiled code for the app's scripts from the first run (faster starts)
-      additionalArguments: [`--gs-version=${app.getVersion()}`],
+      zoomFactor: zoom,
+      additionalArguments: [`--gs-version=${app.getVersion()}`, `--gs-device=${encodeURIComponent(JSON.stringify({ ...DEVICE, console: CONSOLE, zoom, webgl }))}`],
     },
   });
   if (st?.maximized) main.maximize();
-  if (st?.fullScreen) main.setFullScreen(true);
+  if (st?.fullScreen || CONSOLE) main.setFullScreen(true);
   for (const e of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) main.on(e, () => keepState(main));
   main.once('ready-to-show', show);
   main.on('closed', () => { main = null; });
@@ -166,6 +189,8 @@ const ALLOWED = new Set(['media', 'geolocation', 'geolocation-approximate', 'sen
 const ours = url => { try { return new URL(url).origin === ORIGIN; } catch (_) { return false; } };
 
 ipcMain.handle('gs:take-links', e => (e.sender === main?.webContents ? links.splice(0) : []));
+// Settings › Quit (a console's games mode is full screen with no window to close; the Steam menu's Exit Game works too)
+ipcMain.handle('gs:quit', e => { if (e.sender === main?.webContents) app.quit(); });
 // the graphics chip in use and its driver, for the phone and driver steering list (src/steer.js): a rule can name a
 // driver version that misbehaves. Chromium's own basic list (quick: it doesn't start the full GPU survey)
 ipcMain.handle('gs:gpu', async e => {
@@ -184,6 +209,8 @@ app.whenReady().then(() => {
   s.setPermissionCheckHandler((_wc, perm, origin) => ALLOWED.has(perm) && ours(origin));
   menu();
   createWindow();
+  // docked to a TV, or the games mode's resolution changed: draw to the new screen's size
+  if (CONSOLE) screen.on('display-metrics-changed', () => { if (main && !main.isDestroyed()) main.webContents.setZoomFactor(consoleZoom()); });
   app.on('activate', () => { if (!main) createWindow(); else show(); });   // macOS: the Dock icon
 });
 app.on('window-all-closed', () => { app.quit(); });

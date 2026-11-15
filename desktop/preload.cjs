@@ -4,6 +4,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const arg = name => (process.argv.find(a => a.startsWith(`--${name}=`)) || '').slice(name.length + 3);
+// the computer it runs on, from main.cjs (desktop/device.cjs): a games handheld, Steam's games mode
+let device = null; try { device = JSON.parse(decodeURIComponent(arg('gs-device'))); } catch (_) { /* an older main */ }
 const os = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : process.platform;
 
 // gamescroll:// links: the main process keeps them until asked, and nudges when one comes
@@ -12,8 +14,15 @@ const pull = () => { if (take) ipcRenderer.invoke('gs:take-links').then(urls => 
 ipcRenderer.on('gs:links', pull);
 
 contextBridge.exposeInMainWorld('gsDesktop', Object.freeze({
-  /** 'mac' | 'windows' (| 'linux' in the tests) */
+  /** 'mac' | 'windows' | 'linux' */
   os,
+  /**
+   * Where it runs, where that changes how it plays: { handheld: { id, name, klass } | null (a ROG Ally, a Steam Deck...),
+   * gamescope (Steam's games mode: SteamOS's Game Mode, Big Picture), steamos, steam (started by Steam), console (full
+   * screen, drawn bigger, played with a controller), zoom (how much bigger), ignorePads (controllers Steam stands in
+   * for: [{ vendor, product }]), webgl (--gs-webgl: no WebGPU) }, or null.
+   */
+  device: device ? Object.freeze(device) : null,
   arch: process.arch,
   /** the desktop app's version, e.g. '1.0.57' */
   version: arg('gs-version'),
@@ -21,6 +30,8 @@ contextBridge.exposeInMainWorld('gsDesktop', Object.freeze({
   electron: process.versions.electron,
   /** The graphics chip in use and its driver: a promise of { vendorId, deviceId, driverVendor, driverVersion, name } or null (src/steer.js). */
   gpuInfo: () => ipcRenderer.invoke('gs:gpu').catch(() => null),
+  /** Closes the app (Settings › Quit, in a console's games mode). */
+  quit: () => ipcRenderer.invoke('gs:quit').catch(() => {}),
   /** fn(url) for each gamescroll:// link the app is opened with, the one it started from included. */
   onOpenUrl(fn) { if (typeof fn === 'function') { take = fn; pull(); } },
 }));

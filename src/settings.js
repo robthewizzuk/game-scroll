@@ -9,10 +9,11 @@ import { geoSettings } from './geo.js';
 import { hasWebGPU } from './kit/gpu.js';
 import { OPEN_SOURCE, OTHER_PARTS } from './licences.js';
 import { feedBrain, resetRecommendations } from './feedsignals.js';
-import { desktop } from './desktop.js';
+import { desktop, handheld, consoleMode } from './desktop.js';
+import { padConnected } from './kit/gamepad.js';
 import { update } from './update.js';
 // (what Settings calls the thing the app runs on)
-const dev = desktop ? 'computer' : 'phone';
+const dev = handheld ? 'handheld' : desktop ? 'computer' : 'phone';
 
 const size = b => b < 1024 * 1024 ? `${Math.ceil(b / 1024)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
 
@@ -76,6 +77,10 @@ export function openSettings({ stream, cached, clear, arTest }) {
         <div class="qa-actions set-fps set-fg-how" role="group" aria-label="How frames are made">${[['game', 'Game’s choice'], ['blend', 'Blend'], ['ahead', 'Ahead']].map(([v, n]) => `<button data-how="${v}"${frameGenHow() === v ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}>${n}</button>`).join('')}</div>
         <p class="qa-help set-fg-now"><b>Now:</b> ${frameGenStatus(speed.game)}</p>
       </section>` : ''}
+      ${consoleMode || padConnected() ? `<section class="set-row set-pad">
+        <h3>Controller</h3>
+        <p class="qa-help">In the feed: ↑ ↓ the previous or next game, A plays, Y hearts it, X says how to play, LB and RB change the feed, View goes to the top bar and the game's buttons. In menus: move with the d-pad or left stick, A presses, B goes back, the right stick scrolls. Playing: Menu pauses, and the game's own buttons. Games played by touch get a pointer: the left stick moves it and A taps; L3 or R3 turns it on or off in any game.${handheld ? ` The ${handheld.name}'s touch screen works too.` : ''}</p>
+      </section>` : ''}
       ${arTest ? `<section class="set-row">
         <h3>AR test</h3>
         <p class="qa-help">A cube on your floor for checking how well AR games track the room: walk around it and it should stay put.${nativeARSupported() === false ? ' This phone or version plays AR games in look-around mode.' : ''}</p>
@@ -109,9 +114,15 @@ export function openSettings({ stream, cached, clear, arTest }) {
         </details>
         <p class="set-link"><a href="https://github.com/robthewizzuk/game-scroll/blob/main/LICENSE" target="_blank" rel="noopener">Read the full licence ↗</a></p>
       </section>
+      ${consoleMode && desktop?.quit ? `<section class="set-row">
+        <h3>Quit</h3>
+        <p class="qa-help">Closes Game Scroll (the Steam button's Exit game does too). Your saves stay.</p>
+        <div class="qa-actions"><button class="set-quit">Quit Game Scroll</button></div>
+      </section>` : ''}
       <footer class="set-made">Made by <b>Rob</b></footer>`;
     el.querySelector('.qa-x').onclick = () => el.close();
     el.querySelector('.set-ar')?.addEventListener('click', () => { el.close(); arTest(); });
+    el.querySelector('.set-quit')?.addEventListener('click', () => desktop.quit());
     el.querySelectorAll('.set-fps button[data-fps]').forEach(b => b.addEventListener('click', () => { setFpsPick(b.dataset.fps); render(); }));   // (the frame generation rows share the look)
     el.querySelectorAll('.set-fg button').forEach(b => b.addEventListener('click', () => { setFrameGenPick(b.dataset.fg); render(); }));
     el.querySelectorAll('.set-fg-how button').forEach(b => b.addEventListener('click', () => { setFrameGenHow(b.dataset.how); render(); }));

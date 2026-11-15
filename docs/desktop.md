@@ -1,4 +1,4 @@
-# Game Scroll for Mac and Windows
+# Game Scroll for Mac, Windows and Linux (SteamOS handhelds too)
 
 The same app as the phones, on a computer: `desktop/` wraps the web app (`npm run build`) in
 [Electron](https://www.electronjs.org/). Electron carries its own Chromium, the engine Android's web view is
@@ -11,7 +11,7 @@ Games stream in from the games host as they do on the phones, so a game change n
 
 ## Downloads
 
-Every push to `main` builds both and replaces the "Latest Mac and Windows builds" release
+Every push to `main` builds all three and replaces the "Latest Mac, Windows and Linux builds" release
 (`.github/workflows/desktop.yml`). The links never change:
 
 | Computer | File |
@@ -20,6 +20,8 @@ Every push to `main` builds both and replaces the "Latest Mac and Windows builds
 | Intel Mac | [Game-Scroll-mac-x64.dmg](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg) |
 | Windows | [Game-Scroll-windows-x64.exe](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe) |
 | Windows on Snapdragon | [Game-Scroll-windows-arm64.exe](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe) |
+| SteamOS (ROG Ally, Steam Deck, Legion Go) and Linux | [Game-Scroll-linux-x64.AppImage](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-linux-x64.AppImage) |
+| Linux on ARM | [Game-Scroll-linux-arm64.AppImage](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-linux-arm64.AppImage) |
 
 A pull request that changes the desktop app builds them too, as run artifacts (Actions › the run › Artifacts).
 
@@ -40,6 +42,45 @@ installs for you alone (no administrator needed), starts, and adds a Start menu 
 
 Installing a newer build over an older one keeps your saves, best scores and credits.
 
+## SteamOS (ROG Ally, Steam Deck) and Steam
+
+Once, in Desktop Mode (hold the power button › **Switch to Desktop**):
+
+1. Download `Game-Scroll-linux-x64.AppImage` (above) and move it somewhere it can stay, such as `~/Applications`.
+2. In Dolphin, right-click it › **Properties › Permissions** › tick **Is executable**.
+3. In Steam: **Games › Add a Non-Steam Game to My Library › Browse**, pick the AppImage, **Add Selected Programs**.
+4. **Return to Gaming Mode**: Game Scroll is under **Library › Non-Steam**.
+
+A newer build: download it over the old file (same name), and Steam starts the new one. Saves live in
+`~/.config/Game Scroll` and stay.
+
+**What changes on a handheld or in Steam's games mode** (`desktop/device.cjs`, read once at start):
+
+- **Which handheld**, from the computer's own name for its model (`/sys/class/dmi/id`) and its processor: ROG Ally
+  (Z1 or Z1 Extreme), ROG Ally X, ROG Xbox Ally and Ally X, Steam Deck and Steam Deck OLED, Legion Go, Go S and Go 2,
+  MSI Claw, and others by their handheld chips (Z1, Z2). Its class comes from that (an AMD handheld's chip says only
+  "AMD Radeon Graphics"): `top` for the Radeon 780M / 880M / 890M class (Ally, Ally X, Xbox Ally X, Legion Go), `mid`
+  for the Steam Deck class (Steam Deck, Xbox Ally, Ally Z1).
+- **Played as a phone** (`speed.handheld` in `src/kit/speed.js`, `PC` in `src/kit/hd3d.js`): it runs on a battery and
+  warms in the hands, so 3D games aim for 60 frames a second with nothing made between, and draw 30 with GSFG making
+  the other 30 where they can't hold 60 (the phones' rule since 2026-11-15); 2D games run at the screen's rate (120 on
+  an Ally). 3D starts on high (`top`) or medium (`mid`) and never climbs to ultra: high draws about 1.3 million pixels
+  and GSSR makes the Ally's 1920 × 1080 from them. A low battery (Chromium reads it through UPower) turns on GSFG's
+  power saving as on a phone. Crash and stutter reports name the handheld ("ROG Ally X") as the model.
+- **Console mode** (a handheld, or Steam's games mode: gamescope, `--gs-console`): the window opens full screen, and
+  the app is drawn bigger to read from a hand's length or a sofa: the screen's height over 640, in quarter steps
+  (1.75 on a 1080p Ally or a TV, 1.25 on a Steam Deck, as Valve's own browser shortcut does). A Steam launch option
+  `GS_ZOOM=1.5 %command%` pins it. Docked to a TV, it follows the new screen. Settings has a **Quit** button.
+- **Controllers** (`src/padnav.js`; `src/kit/gamepad.js`): Steam Input stands in for the handheld's own controls with
+  a controller of its own and tells games which real ones to leave alone (`SDL_GAMECONTROLLER_IGNORE_DEVICES`); a
+  browser reads them all, so the app leaves those out itself, or each press would come twice. Rumble follows the
+  app's haptics (the Sound & haptics sheet).
+- **Graphics**: WebGPU through Vulkan (Mesa's RADV on an AMD handheld; Chromium keeps WebGPU on Linux behind a switch
+  for AMD chips, which the app sets). In gamescope the app opens as an X11 window (`--ozone-platform=x11`). If 3D games
+  show nothing on some driver, the launch option `--gs-webgl` keeps them on WebGL.
+- If it doesn't start at all from Steam (a Linux without unprivileged user namespaces, which Chromium's sandbox
+  needs; SteamOS has them), the launch option `--no-sandbox` starts it without that sandbox.
+
 ## Keys
 
 | | |
@@ -50,7 +91,25 @@ Installing a newer build over an older one keeps your saves, best scores and cre
 | Frame lab (frame times, GPU, resolution) | Cmd+Shift+L (Mac; or fn+F3), Ctrl+Shift+L or F3 (Windows), or View › Frame Lab |
 | Developer tools | Ctrl+Shift+I (Windows), Alt+Cmd+I (Mac) |
 
-Game controllers work as they do on the phones (`gs.pad`).
+## Controller
+
+The whole app works with a controller alone (a ROG Ally's or Steam Deck's own controls, any Xbox, PlayStation or
+Switch pad; `src/padnav.js`):
+
+| | |
+| --- | --- |
+| Previous / next game | d-pad or left stick ↑ ↓ |
+| Play, play again | A (or Menu) |
+| ♥ the game / how to play | Y / X |
+| Previous / next feed (For you, New...) | LB / RB |
+| The top bar and the game's buttons (♥ My games, 🔊, ⚙, Share...) | View, then the d-pad, A to press, B to leave |
+| Menus and Settings | d-pad or left stick to move, A to press, ← → on a slider, B (or Menu) back, right stick to scroll |
+| Pause, carry on | Menu; while paused, ↑ ↓ leave for the previous or next game |
+| In a game | its own buttons (`gs.pad`; the d-pad and left stick are the arrow keys, A is Space, B x, X z, Y c, LB q, RB e) |
+| A game played by touch | a pointer: the left stick or d-pad moves it, A is the finger. L3 or R3 turns it on or off in any game |
+
+The yellow ring shows which button the controller is on; a touch, the mouse or a key hides it. Settings › Controller
+says the same on the device.
 
 ## What is different on a computer
 
@@ -100,7 +159,7 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
 **Where it runs.** The app is served from `https://localhost`, the Android app's own address, read straight
 from the app's files (`protocol.handle` in `desktop/main.cjs`): the games host, the API and the page's security
 policy already allow it, and saves belong to that address, so they stay put between versions. Saves live in
-`~/Library/Application Support/Game Scroll` (Mac) and `%APPDATA%\Game Scroll` (Windows).
+`~/Library/Application Support/Game Scroll` (Mac), `%APPDATA%\Game Scroll` (Windows) and `~/.config/Game Scroll` (Linux).
 
 **Links.** The `gamescroll://` links on shared-game pages ("Open in Game Scroll") open the desktop app at that
 game, as on the phones. Links out of the app open in the browser; the window itself never leaves the app.
@@ -124,7 +183,9 @@ npm run desktop:test     # the checks below, on a test build with every game bui
 files outside the app can't be read, the speed class and frame rate, that a 2D game plays with the mouse and a
 Next Gen game draws, that a `gamescroll://` link opens its game, that links out go to the browser, and that the
 window's size is kept. With `--app <the built program>` it checks a packaged app instead (CI runs it on the Mac
-and Windows builds): it opens, streams its games from the games host and has no page errors.
+Windows and Linux builds): it opens, streams its games from the games host and has no page errors. On Linux the
+check then opens the app again as a ROG Ally X in Steam's games mode (`GS_HANDHELD` stands in for the handheld's
+model) and plays the feed, Settings and a touch game with a made-up controller (`--no-handheld` skips it).
 
 ## Not done yet
 
@@ -132,3 +193,6 @@ and Windows builds): it opens, streams its games from the games host and has no 
   computers stop asking.
 - Updating itself: for now a newer build is downloaded and installed over the old one.
 - Game Center and Play Games trophies and cloud saves are phone-only; on a computer, progress stays on that computer.
+- On a handheld: reading how warm the chip is (the phones' heat model, `src/kit/heat.js`, has nothing to read on Linux
+  yet), Steam artwork for the library, and crash reports that say `linux` (they say `web` for now, with the handheld's
+  name as the model: the reports' server takes `linux` once its list of platforms has it).

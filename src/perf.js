@@ -32,7 +32,7 @@ import { heat as heatPlan } from './kit/heat.js';
 import { hintFrame } from './kit/perfhint.js';
 import { memory, onMemory } from './kit/memory.js';
 import { appHealth, judgeExit, memoryNote } from './exits.js';
-import { desktop } from './desktop.js';
+import { desktop, handheld } from './desktop.js';
 import { gpuName, chipLabel, onGpuLoss } from './kit/gpu.js';
 import { TRACE } from './kit/trace-guard.js';
 
@@ -72,7 +72,8 @@ const save = () => { if (!saveT) saveT = setTimeout(() => { saveT = 0; store.set
     const d = await Device.getInfo();
     info = { ...info, model: String(d.model || 'unknown').slice(0, 40), os: `${d.operatingSystem || ''} ${d.osVersion || ''}`.trim().slice(0, 40) };
     // a computer: its graphics chip stands for the phone model ("Apple M2 Pro", "NVIDIA GeForce RTX 4070"), not "Macintosh"
-    if (desktop) info.model = chipLabel(gpuName()) || info.model;
+    // (a handheld: its own name, "ROG Ally X", as a phone's model; its chip is only "AMD Radeon Graphics")
+    if (desktop) info.model = handheld?.name || chipLabel(gpuName()) || info.model;
   } catch (_) { /* keep 'unknown' */ }
 })();
 

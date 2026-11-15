@@ -186,11 +186,11 @@ import { StillLoading } from './kit/lazy.js';
 export const HIDDEN = {
   sound: ['sound', 'setSound', 'audio', 'setSfxOut', 'stopMusic', 'pauseMusic', 'resumeMusic', 'warm', 'voiceCap', 'kitBus'],
   util: ['store', 'deviceId'],
-  device: ['location', 'hapticSettings', 'setHaptics', 'stopSensors'],
+  device: ['location', 'hapticSettings', 'setHaptics', 'stopSensors', 'hapticHooks'],
   real: ['guessPlace', 'readOutputs'],
   fonts: ['whenFontArrives', 'pixelFont', 'want'],
   moves: ['stopMoves'],
-  pad: ['pollPads'],
+  pad: ['pollPads', 'keepPads', 'KEYS'],
   vision: ['stopVision'],
   gen: ['loadGen'],
   words: ['loadWords'],

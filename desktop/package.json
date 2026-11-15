@@ -2,7 +2,7 @@
   "name": "game-scroll-desktop",
   "productName": "Game Scroll",
   "version": "1.0.0",
-  "description": "Game Scroll for Mac and Windows: scroll a feed of quick mini games",
+  "description": "Game Scroll for Mac, Windows and Linux (SteamOS handhelds too): scroll a feed of quick mini games",
   "author": "Rob (https://github.com/robthewizzuk)",
   "license": "PolyForm-Shield-1.0.0",
   "private": true,
@@ -26,6 +26,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "device.cjs",
       "package.json",
       {
         "from": "../dist",
@@ -94,15 +95,32 @@
     },
     "linux": {
       "target": [
-        "dir"
+        {
+          "target": "AppImage"
+        }
       ],
       "icon": "build/icon.png",
-      "category": "Game"
+      "category": "Game",
+      "executableName": "game-scroll",
+      "artifactName": "Game-Scroll-linux-${arch}.${ext}",
+      "synopsis": "Scroll a feed of quick mini games",
+      "desktop": {
+        "entry": {
+          "Name": "Game Scroll",
+          "Comment": "Scroll a feed of quick mini games",
+          "Keywords": "games;mini games;"
+        }
+      },
+      "syncDesktopName": true
     },
-    "publish": null
+    "publish": null,
+    "appImage": {
+      "artifactName": "Game-Scroll-linux-${arch}.${ext}"
+    }
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/robthewizzuk/game-scroll.git"
-  }
+  },
+  "desktopName": "game-scroll.desktop"
 }

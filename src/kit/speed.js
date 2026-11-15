@@ -34,6 +34,11 @@
 // near 60). A 3D game that can't keep up steps down a whole number of refreshes at a time (144 -> 72 -> 48 ->
 // 36 on a 144 Hz screen), so its frames always land on refreshes.
 //
+// A games handheld (a ROG Ally, a Steam Deck: src/desktop.js handheld) is played as a phone is: it runs on a battery and
+// warms in the hands. Its class comes from its model (an AMD handheld's chip says only "AMD Radeon Graphics"), and Auto
+// plays 3D games at 60 with nothing made between, and at 30 with GSFG making the other 30 where they can't hold 60
+// (speed.handheld; Rob, 2026-11-15: "60 without frame gen, 30 + GSFG to 60 where needed").
+//
 // The screen's rate (src/kit/screenrate.js, Android): while a round is played the app asks the screen
 // for the rate that suits the game (screenWant): the fastest that's a whole number of refreshes per real
 // frame when frame generation fills in (so the phone can't drop the card to 60 Hz and turn it off), the
@@ -42,7 +47,7 @@ import { store } from '../util.js';
 import { gpuName } from './gpu.js';
 import { power } from './power.js';
 import { screen, askRate, pickRate } from './screenrate.js';
-import { desktop } from '../desktop.js';
+import { desktop, handheld } from '../desktop.js';
 import { steerFor, capKlass } from './steering.js';
 
 const PICK_KEY = 'gs_fps', SETTLE_KEY = 'gs_speed', FG_KEY = 'gs_fg', FG_HOW_KEY = 'gs_fg_how';
@@ -97,7 +102,8 @@ export function classify(name = '', mdl = '', cores = 8, mem = 8, phone = true, 
 export function phoneClass() {
   if (speed.klass) return speed.klass;   // (pinned: tests)
   if (klass) return capKlass(klass);   // (no better than the steering list allows: src/steer.js)
-  const c = classify(chip(), model, navigator.hardwareConcurrency || 8, navigator.deviceMemory || 8, touchy, speed.desktop);
+  // (a handheld: its model's class, unless it draws in software)
+  const c = speed.handheld && classifyDesktop(chip()) !== 'low' ? speed.handheld : classify(chip(), model, navigator.hardwareConcurrency || 8, navigator.deviceMemory || 8, touchy, speed.desktop);
   if (model || !touchy || speed.desktop) klass = c;   // on a phone, wait for the model before caching
   return capKlass(c);
 }
@@ -172,8 +178,8 @@ export const evenRate = (rate, target) => rate / Math.max(1, Math.floor(rate / t
 /** What Auto would choose for this game on this phone, before any stepping down. */
 export function autoFps(def) {
   const k = phoneClass();
-  // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes)
-  if (speed.desktop) return !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
+  // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes); a handheld as a phone
+  if (computer()) return !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
   // (a phone: 60, never 120 by itself. On 120 the Fold 8 got hot within minutes and then stuttered; pick 120 in Settings to have it)
   if (is3D(def)) return k === 'low' ? 30 : 60;
   return k === 'low' ? 60 : 120;
@@ -232,7 +238,7 @@ const fgMinHz = def => fgPick === 'thirty' || autoPhone(def) ? 60 : FG_HZ;
  * Next Gen game's real frame does on the Fold 8: so it never came on there, and a game that couldn't hold 60 went to
  * 30 frames a second with nothing made between, or gave up its picture. Auto fills no higher than 60 on a phone.
  */
-const autoPhone = def => fgPick === 'auto' && !speed.desktop && is3D(def);
+const autoPhone = def => fgPick === 'auto' && !computer() && is3D(def);
 /** 30 → 60 for this game now: the player's pick, or Auto on a phone where the game draws under 45 (rate, or its own) or the phone saves power. */
 export function thirtyFor(def, rate) {
   if (fgPick === 'thirty') return true;
@@ -485,7 +491,10 @@ export function screenWish(def) { def ||= speed.standIn; askRate(def ? screenWan
 // shield: the stutter shield is on (frameLate()).
 // standIn: a game definition the engine test scenes stand in for while no round is played (the screen's rate is asked for as for it).
 // desktop: running in the Mac and Windows app (src/desktop.js; tests may set it). klass: a class pinned in place of this phone's (tests)
-export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false, desktop: !!desktop, klass: null };
+// handheld: a games handheld's class ('top' | 'mid'; null: not one): played as a phone, though desktop is true (src/desktop.js)
+export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false, desktop: !!desktop, handheld: handheld?.klass || null, klass: null };
+/** Played as a computer: the desktop app, but not a handheld (a handheld plays as a phone). */
+export const computer = () => speed.desktop && !speed.handheld;
 Object.defineProperty(speed, 'shield', { get: shieldOn });
 
 /** The 3D kit settled on a tier and frame rate for this game: start there next time. */
@@ -505,7 +514,7 @@ export function settledFor(id) {
 /** The 3D kit can't keep up: step this game's frame rate down one notch (120 -> 60 -> 30). False if it can't. */
 export function stepDown(def) {
   if (pick !== 'auto' || !def) return false;
-  const f = fpsFor(def), next = speed.desktop ? rateBelow(hz, f) : f > 60 ? 60 : f > 30 ? 30 : 0;
+  const f = fpsFor(def), next = computer() ? rateBelow(hz, f) : f > 60 ? 60 : f > 30 ? 30 : 0;
   if (!next) return false;
   settle(def.id, { fps: next }); return true;
 }
@@ -513,7 +522,7 @@ export function stepDown(def) {
 export function stepUp(def) {
   if (pick !== 'auto' || !def) return false;
   const s = settled[def.id]; if (!s?.fps) return false;
-  const next = speed.desktop ? rateAbove(hz, s.fps) : s.fps < 60 ? 60 : 120;
+  const next = computer() ? rateAbove(hz, s.fps) : s.fps < 60 ? 60 : 120;
   if (next >= autoFps(def)) { settled[def.id] = { ...noFps(s), at: Date.now() }; store.set(SETTLE_KEY, settled); } else settle(def.id, { fps: next });
   return true;
 }
