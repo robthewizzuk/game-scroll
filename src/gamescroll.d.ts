@@ -2111,13 +2111,40 @@ export interface Fighter {
   buffs: { stat: string; by: number; turns: number }[]; statuses: Map<string, number>; readonly alive: boolean;
   stat(k: string): number; buff(stat: string, by: number, turns?: number): Fighter; has(status: string): boolean; heal(n: number): number; [more: string]: Loose;
 }
-export interface BattleMove { name?: string; power?: number; type?: string; accuracy?: number; status?: string; chance?: number; turns?: number; heal?: number; all?: boolean; [k: string]: Loose }
+/** A move for Battle.act: power (10; 0 for one that does no damage), type, special (uses mag and res), miss and crit (chances 0..1), hits, heal, status: ['poison', 3] with its chance, buff: ['atk', 1.5, 3] (below 1: on the target). */
+export interface BattleMove { name?: string; power?: number; type?: string; special?: boolean; miss?: number; crit?: number; hits?: number; heal?: number; status?: [string, number?]; chance?: number; buff?: [string, number, number?]; [k: string]: Loose }
+/** A turn for Battle.act, as an Opponent picks it. */
+export interface BattleChoice { move?: BattleMove; item?: Loose; target?: Fighter; wait?: boolean; /** The move's or item's name. */ name?: string; /** How much better than waiting it judged it, in shares of a fighter's health. */ worth?: number }
+/**
+ * A ready-made opponent for a Battle (Tiny Brains). It tries every move on every target in a copy of the fight, a
+ * few turns ahead by the fight's own rules, and learns how this player fights (what they do when hurt, who they go
+ * for), across fights and sessions. It knows only what a player could: health, stats, types, statuses and the moves
+ * it has seen the player's fighters use.
+ */
+export interface BattleOpponent {
+  /** 0..1, or a gs.brains.Dial. Set it any time. */
+  skill: Skill; /** The side it plays. */ side: number;
+  /** Watches a fight, so every turn the other side takes teaches it. Call it for each new Battle. */
+  join(fight: Battle): BattleOpponent;
+  /** The turn to take for `by` (the fight's turn by default), ready for fight.act(by, choice). moves: an array or { name: move } (by.moves by default); items: a Bag's list. */
+  pick(by?: Fighter | null, moves?: BattleMove[] | Record<string, BattleMove> | null, o?: { items?: Loose[] | null; fight?: Battle }): BattleChoice;
+  /** Every choice the last pick() weighed, best first. */
+  options: BattleChoice[];
+  /** What it expects the player to do next when their weakest fighter is at `low` (0..1 of its health): chances for hit, big, heal, status, buff, wait. */
+  expect(low?: number): number[];
+  /** A fighter on the other side took a turn (join() has the fight tell it). */
+  see(by: Fighter, choice: BattleChoice, fight?: Battle): BattleOpponent;
+  /** The end of a fight: did the player win? Tells a Dial given as its skill, and saves what it learned. */
+  result(playerWon: boolean | 'draw' | number): BattleOpponent;
+  /** Forgets how the player fights. */
+  forget(): BattleOpponent;
+}
 export interface Battle {
   sides: Fighter[][]; log: Loose[]; readonly fighters: Fighter[]; readonly turn: Fighter | null; readonly over: number | null;
   on(ev: string, fn: (e: Loose) => void): Battle; sideOf(f: Fighter): number; foes(f: Fighter): Fighter[]; friends(f: Fighter): Fighter[];
   next(): Fighter | null; preview(by: Fighter, target: Fighter, move?: BattleMove): number;
   damage(by: Fighter, target: Fighter, move?: BattleMove, roll?: boolean): { amount: number; crit: boolean; miss: boolean; effect: number; [k: string]: Loose };
-  act(by: Fighter, o?: { move?: BattleMove | null; item?: string | null; target?: Fighter | Fighter[] | null; wait?: boolean }): Loose;
+  act(by: Fighter, o?: { move?: BattleMove | null; item?: Loose; target?: Fighter | null; wait?: boolean }): Loose;
   inflict(target: Fighter, status: string, turns?: number): Loose; useItem(by: Fighter, item: string, target?: Fighter): Loose; endTurn(f: Fighter): Loose;
 }
 export interface Bag {
@@ -2129,6 +2156,8 @@ export interface BattlePart {
   Fighter: new (o?: { name?: string; hp?: number; atk?: number; def?: number; spd?: number; luck?: number; type?: string | null; level?: number; [k: string]: Loose }) => Fighter;
   Battle: new (sides: Fighter[][], o?: { types?: Record<string, Record<string, number>>; statuses?: Record<string, Loose>; rng?: () => number; crit?: number; spread?: boolean }) => Battle;
   Bag: new (defs?: Record<string, Loose>, o?: { slots?: number; stack?: number }) => Bag;
+  /** new Opponent(api, { name, skill, side, ahead, learn, rng, score }) in make(); join(fight) each fight; fight.act(fight.turn, foe.pick()). */
+  Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** The side it plays (1). */ side?: number; /** Turns it plays ahead (2). */ ahead?: number; /** false: it never learns the player. */ learn?: boolean; rng?: () => number; /** A number your game adds to a choice's worth. */ score?: (choice: BattleChoice, fight: Battle, by: Fighter) => number }) => BattleOpponent;
   xpFor(level: number, o?: { base?: number; power?: number }): number; levelFor(xp: number, o?: { base?: number; power?: number }): number;
   /** Adds XP and levels up (stats grow by growth per level). Returns the levels gained. */
   gainXp(f: Fighter, xp: number, o?: { growth?: Record<string, number>; curve?: { base?: number; power?: number } }): number;

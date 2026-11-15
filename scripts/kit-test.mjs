@@ -1058,6 +1058,102 @@ console.log('physics ok');
   assert.equal(loot([{ id: 'a', w: 1 }, { id: 'b', w: 3 }], () => .9).id, 'b');
   console.log('battle: turn order, types, a whole fight, bag, levels, loot ok');
 }
+// a ready-made opponent for battles: it plays turns ahead in a copy of the fight, against the player it has learned
+{
+  const { Fighter, Battle, Bag, Opponent } = await import('../src/kit/battle.js');
+  const { Dial } = await import('../src/kit/brains.js');
+  let seed = 11; const R = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const TYPES = { fire: { leaf: 2, water: .5 }, leaf: { water: 2, fire: .5 }, water: { fire: 2, leaf: .5 } };
+  const strike = { name: 'strike', power: 10, type: 'none' }, jet = { name: 'jet', power: 10, type: 'water' }, spore = { name: 'spore', power: 0, status: ['poison', 4] }, big = { name: 'big', power: 17, type: 'none', miss: .2 };
+  const two = (a = {}, b = {}) => [new Fighter({ name: 'Pip', hp: 30, atk: 8, def: 4, spd: 6, type: 'fire', ...a }), new Fighter({ name: 'Goo', hp: 30, atk: 8, def: 4, spd: 5, type: 'water', ...b })];
+  const state = f => JSON.stringify(f.fighters.map(x => [x.hp, [...x.statuses], x.buffs])) + f.log.length + f.round + f.queue.map(x => x.name);
+  // it uses the fight's own sums: the move its type is strong with, a finishing blow before a slow poison, no poison twice
+  {
+    const [hero, goo] = two(), fight = new Battle([[hero], [goo]], { types: TYPES, rng: R }), foe = new Opponent({ skill: 1, rng: R, name: 't1' }).join(fight);
+    const bag = new Bag({ potion: { name: 'potion', heal: 14 } }); bag.add('potion', 2);
+    foe.pick(goo, { strike, jet, spore }, { items: bag.list });
+    assert.ok(foe.options.length > 2 && !foe.options.some(o => o.name === 'potion'), 'no potion offered at full health');
+    fight.act(hero, { move: strike, target: goo });
+    const before = state(fight), c = foe.pick(goo, { strike, jet, spore }, { items: bag.list });
+    assert.equal(state(fight), before, 'thinking leaves the real fight as it was'); assert.equal(bag.count('potion'), 2, 'and the real bag');
+    assert.equal(c.name, 'jet', 'water on fire: the move its type is strong with (' + foe.options.map(o => o.name + ' ' + o.worth.toFixed(2)).join(', ') + ')');
+    assert.equal(c.target, hero); assert.ok(c.worth > 0, 'better than waiting'); assert.equal(foe.options[foe.options.length - 1].worth <= 0, true);
+    assert.ok(foe.options.some(o => o.wait && o.worth === 0), 'waiting is weighed too, at 0');
+    assert.equal(fight.act(goo, c).some(e => e.type === 'hit'), true, 'the choice goes straight to act()');
+    hero.hp = 3; fight.act(hero, { wait: true });
+    assert.equal(foe.pick(goo, { spore, strike }).name, 'strike', 'a finishing blow, not a slow poison');
+    hero.hp = 30; fight.inflict(hero, 'poison', 4);
+    foe.pick(goo, { spore, strike });
+    assert.ok(!foe.options.some(o => o.name === 'spore'), 'no poison on the poisoned');
+    assert.deepEqual(new Opponent({ name: 't1b' }).pick(), { wait: true, name: 'wait', worth: 0 }, 'no fight joined: it waits');
+  }
+  // a potion when the next hit would put it down, kept while it is in no danger
+  {
+    const [hero, goo] = two(), fight = new Battle([[hero], [goo]], { types: TYPES, rng: R }), foe = new Opponent({ skill: 1, rng: R, name: 't2' }).join(fight);
+    const bag = new Bag({ potion: { name: 'potion', heal: 14 } }); bag.add('potion', 1);
+    fight.act(hero, { move: strike, target: goo });
+    assert.notEqual(foe.pick(goo, { strike }, { items: bag.list }).name, 'potion', 'barely hurt: the potion is kept');
+    fight.act(goo, { move: strike, target: hero }); goo.hp = 5; fight.act(hero, { move: strike, target: goo }); goo.hp = 5; hero.hp = 30;
+    const c = foe.pick(goo, { strike }, { items: bag.list });
+    assert.equal(c.name, 'potion', 'about to fall: it drinks'); assert.equal(c.target, goo);
+    fight.act(goo, c); assert.equal(bag.count('potion'), 0); assert.ok(goo.hp > 5);
+  }
+  // it knows only what it has seen, and learns what this player does: here one who drinks a potion when under a third
+  {
+    const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+    const foe = new Opponent(api, { skill: 1, rng: R, name: 'slime' });
+    assert.ok(foe.expect(.2)[2] < .1 && foe.expect(.2)[0] > .7, 'a player it has never met: it expects a plain hit');
+    const play = (ai, n, healsAt = 1 / 3) => {
+      let wins = 0;
+      for (let g = 0; g < n; g++) {
+        const [hero, goo] = two({ type: 'leaf' }, { type: 'leaf' }), pSide = g % 2, fight = new Battle(pSide ? [[goo], [hero]] : [[hero], [goo]], { types: TYPES, rng: R });
+        const bags = [0, 1].map(() => { const b = new Bag({ potion: { name: 'potion', heal: 14 } }); b.add('potion', 2); return b; });
+        ai.side = 1 - pSide; ai.join(fight);
+        for (let k = 0; k < 200 && fight.over == null; k++) {
+          const f = fight.turn, potion = bags[0].list[0];
+          if (f === hero) fight.act(f, f.hp / f.maxHp < healsAt && potion ? { item: potion, target: f } : { move: f.hp > 20 ? strike : big, target: goo });
+          else fight.act(f, ai.pick(f, { strike, big }, { items: bags[1].list }));
+        }
+        if (fight.over === pSide) wins++; ai.result(fight.over === pSide);
+      }
+      return wins / n;
+    };
+    const first = play(foe, 150);
+    assert.ok(foe.expect(.2)[2] > .4, 'hurt badly, this player heals (while their two potions last): ' + foe.expect(.2)[2].toFixed(2)); assert.ok(foe.expect(.9)[2] < .1, 'and not when well: ' + foe.expect(.9)[2].toFixed(2));
+    assert.ok(foe.expect(.5)[1] > .5, 'under two thirds they bring out the big move: ' + foe.expect(.5)[1].toFixed(2));
+    assert.ok(kept.has('slime') && kept.has('slime-aim'), 'kept with the game\'s brains');
+    const again = new Opponent(api, { skill: 1, rng: R, name: 'slime' });
+    assert.ok(again.expect(.2)[2] > .4, 'a new session still knows them');
+    assert.ok(new Opponent(api, { skill: 1, name: 'other' }).expect(.2)[2] < .1, 'another name knows nothing');
+    const blind = play(new Opponent({ skill: 1, learn: false, rng: R, name: 't3b' }), 300), learned = play(again, 300), easy = play(new Opponent({ skill: 0, rng: R, name: 't3c' }), 300);
+    assert.ok(learned < blind - .08, 'the one that has learned the player wins more: the player wins ' + Math.round(learned * 100) + ' in 100 against it, ' + Math.round(blind * 100) + ' against one that never learns');
+    assert.ok(easy > learned + .2, 'and skill 0 is far easier: ' + Math.round(easy * 100) + ' in 100');
+    assert.ok(again.forget().expect(.2)[2] < .1, 'forgotten');
+    // a dial as its skill hears how each fight ended
+    const dial = new Dial({ name: 't3d', save: false }), k0 = dial.skill, withDial = new Opponent({ skill: dial, rng: R, name: 't3e' });
+    for (let i = 0; i < 6; i++) withDial.result(true);
+    assert.ok(dial.skill > k0, 'the player keeps winning: the dial goes up');
+    console.log('battle opponent: the strong type, the finishing blow, no poison twice, a potion only when it must; it learns a player who heals when low (they win ' + Math.round(blind * 100) + ' in 100 against one that never learns, ' + Math.round(learned * 100) + ' against one that has, ' + Math.round(easy * 100) + ' at skill 0; ' + Math.round(first * 100) + ' while it was learning), saved, a dial ok');
+  }
+  // two a side: it plays for both of its fighters, and learns who the player goes for
+  {
+    const mk = () => [new Fighter({ name: 'A', hp: 30, atk: 8, def: 4, spd: 6, type: 'fire', moves: { strike, big } }), new Fighter({ name: 'B', hp: 30, atk: 8, def: 4, spd: 5, type: 'water', moves: { strike, jet } })];
+    const foe = new Opponent({ skill: 1, rng: R, name: 't4' }), vine = { name: 'vine', power: 10, type: 'leaf' }; let wins = 0, worst = 0;
+    for (let g = 0; g < 60; g++) {
+      const mine = mk(), theirs = mk(), fight = new Battle([mine, theirs], { types: TYPES, rng: R }); foe.side = 1; foe.join(fight);
+      for (let k = 0; k < 200 && fight.over == null; k++) {
+        const f = fight.turn;
+        if (fight.sideOf(f) === 0) fight.act(f, { move: vine, target: fight.foes(f).reduce((a, b) => (b.hp < a.hp ? b : a)) });   // this player always goes for the weakest, though the other is the one their move is strong against
+        else { const t = performance.now(), c = foe.pick(f); worst = Math.max(worst, performance.now() - t); assert.ok(c.wait || fight.foes(f).includes(c.target) || fight.friends(f).includes(c.target), 'a target still standing'); fight.act(f, c); }
+      }
+      if (fight.over === 0) wins++;
+    }
+    assert.equal(foe.aims.guess(), 'weak', 'it has seen who this player goes for');
+    assert.ok(wins < 20, 'against a player with one move it wins most fights: the player won ' + wins + ' of 60');
+    assert.ok(foe.tried <= 2100, 'it stops trying turns at its limit: ' + foe.tried);
+    console.log('battle opponent: two a side, the player won ' + wins + ' of 60, it knows they go for the weakest; the slowest pick ' + worst.toFixed(1) + ' ms ok');
+  }
+}
 {
   const { cost, afford, short, Earner } = await import('../src/kit/idle.js');
   assert.ok(Math.abs(cost(15, 1.15, 0, 2) - (15 + 15 * 1.15)) < 1e-9);

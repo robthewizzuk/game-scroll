@@ -1950,6 +1950,37 @@ regen, stun, sleep, shield, or your own). `battle.act(who, { move, item, target 
 `battle.over`, and events (`on('hit')`, `on('faint')`). `Bag` holds items and saves with `api.save()`;
 `xpFor`, `levelFor`, `gainXp` and `loot` cover levelling and drops.
 
+A ready-made opponent for a battle (Tiny Brains): it tries every move on every target in a copy of
+the fight, a couple of turns ahead by the fight's own rules (types, statuses, buffs, potions), and
+learns how this player fights: what they do when they are hurt, and who they go for.
+
+```js
+const { Fighter, Battle, Opponent } = gs.battle;
+foe = new Opponent(api, { skill: .7 });                 // make(): what it learns is kept on the phone
+fight = new Battle([[hero], [slime]], { types }); foe.join(fight);        // each fight
+// the enemy's turn:
+fight.act(fight.turn, foe.pick(fight.turn, SLIME_MOVES, { items: slimeBag.list }));   // or the fighter's own .moves
+// at the end:
+foe.result(fight.over === 0);                           // did the player win?
+```
+
+- `skill` is 0..1, or a `gs.brains.Dial` that follows the player. At 1 it makes its best move; lower,
+  good-but-not-best moves more often, and under .3 it takes what looks best now with no thought for
+  the answer. It never chooses worse than at random, so a dial can't make it weaker than that.
+- It knows only what a player could: the fighters' health, stats, types and statuses, and the moves
+  it has seen the player's fighters use (before that it guesses a hit about as hard as its own).
+- `pick()` gives `{ move, target }`, `{ item, target }` or `{ wait: true }`, with `name` and `worth`
+  (how much better than waiting, in shares of a fighter's health); `foe.options` is everything it
+  weighed, best first, for a "thinking" display or your own rules. `score(choice, fight, by)` in the
+  options adds your game's own say.
+- `foe.expect(low)` is what it expects of the player when their weakest fighter is at `low` of its
+  health (chances for hit, big, heal, status, buff, wait): "You always drink when you're nearly out."
+- Measured on made-up fights with the same team each side: a player who only hits wins 5 in 100
+  against it one a side (26 against one that never learns, 52 against an enemy who only hits back);
+  one who drinks a potion when low wins 37 in 100 (64 against one that never learns). Two a side:
+  18 and 27 in 100. With a dial, those players win about 63 in 100. A pick takes about a fifth of a
+  millisecond on a laptop.
+
 **Stats that change while you play** (`gs.stats`, real time; gs.battle's statuses count turns):
 `new Stats({ speed: 6, armour: 0, hp: { max: 100 }, mana: { max: 50, regen: 8, delay: 1 } }, { buffs: TABLE })`.
 A stat is (base + every add) x every mul, held to its `min` and `max` (`{ base, min, max }`); `get('speed')`.
