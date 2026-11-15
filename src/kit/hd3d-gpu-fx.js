@@ -3,8 +3,9 @@
 // hd3d-gpu.js's GpuChain puts them in its chain; each matches the WebGL pass of the same name
 // (fx3d.js, hd3d.js), and reads its numbers from the pass the game holds, so a game changes an effect
 // the same way on both. Kit use only.
-import { Color, HalfFloatType, CubeRenderTarget, CubeCamera } from 'three/webgpu';
-import { uniform, uv, rtt, Fn, vec2, vec3, vec4, float, mix, smoothstep, max, floor, fract, dot, sin, cos, select, If, fwidth, screenCoordinate, materialReference } from 'three/tsl';
+import { Color, HalfFloatType, CubeRenderTarget, CubeCamera, Matrix4 } from 'three/webgpu';
+import { uniform, uv, rtt, Fn, vec2, vec3, vec4, float, mix, smoothstep, max, min, floor, fract, dot, sin, cos, select, If, fwidth, screenCoordinate, materialReference,
+  passTexture, ivec2, clamp, abs, normalize, reflect, getViewPosition, pmremTexture, DFGLUT, specularColorBlended, roughness, interleavedGradientNoise } from 'three/tsl';
 import { outline } from 'three/examples/jsm/tsl/display/OutlineNode.js';
 import { afterImage } from 'three/examples/jsm/tsl/display/AfterImageNode.js';
 import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js';
@@ -132,26 +133,74 @@ export function fxDispose(ch) {
 }
 
 /* ---------- reflections (v.reflect()) ---------- */
-// The scene's pass writes one more picture: which pixels belong to the things the game marked shiny, and
-// how rough each is. three.js's screen-space reflections trace only those, and the result is added on.
+// The scene's pass writes one more picture: each shiny pixel's mirror colour (what the material reflects head on,
+// negative for a material with surroundings of its own, v.room()) and how smooth it is. three.js's screen-space
+// reflections march rays from those pixels only; what they find is then laid over the picture the way the ray traced
+// reflections are (hd3d-gpu-trace.js): where a ray found a thing, the thing takes the place of the sky that the
+// material already shows there (both by the material's own share of reflected light), and where it found nothing the
+// sky stays. Added on top of that sky instead, as it was, a floor showed the sky and the thing at once: washed out,
+// and the search against the ray traced truth (scripts/tune.cjs) could only bring it closer by turning it down.
 const SHINY = uniform(0).onObjectUpdate(({ object }) => (object?.userData?.gsReflect ? 1 : 0));
-const ROUGH = uniform(1).onObjectUpdate(({ material }) => material?.roughness ?? 1);
-/** The extra picture for the scene pass's MRT (name it gsRefl). */
-export const reflMRT = () => vec4(SHINY, ROUGH, 0, 1);
+/** The extra picture's value for a material, in the scene pass's MRT (name the picture gsRefl). */
+export function reflMRT(m) {
+  if (!m.isMeshStandardMaterial && !m.isMeshStandardNodeMaterial) return vec4(0);
+  return vec4(specularColorBlended.mul(SHINY).mul(m.envNode ? -1 : 1), float(1 + 1 / 64).sub(clamp(roughness, 0, 1)));
+}
 /**
- * three's screen-space reflections' settings: how far a ray marches (metres), how thick a thing on the screen is taken
- * to be, how strong the reflections are, how many steps (quality: the cost), how wide the fade at the screen's edges
- * is, the brightest a reflection may be. For scripts/tune.cjs, whose search against the ray traced reference sets
- * others before the effects chain is built again. Not on gs: games don't reach it.
+ * The screen-space reflections' settings: how far a ray marches (metres), how thick a thing on the screen is taken
+ * to be, how many steps (quality: the cost), how wide the fade at the screen's edges is, the brightest a found thing
+ * may be (three's SSRNode); how strong the reflections are, how much of the sky a found thing takes the place of and
+ * how wide a rough surface's blur is, as its cone's (laid over the picture here). For scripts/tune.cjs, whose search
+ * against the ray traced reference sets others before the effects chain is built again. Not on gs: games don't reach it.
  */
-export const SSR_SETTINGS = { maxDistance: 8, thickness: .05, intensity: .55, quality: .5, screenEdgeFade: .2, maxLuminance: 10 };
-/** The scene's colour with the reflections added (a picture node). */
+export const SSR_SETTINGS = { maxDistance: 20, thickness: .05, quality: .5, screenEdgeFade: .18, maxLuminance: 9, intensity: 1.05, replace: 1, blur: 1 };
+const OWN_SSR = ['maxDistance', 'thickness', 'quality', 'screenEdgeFade', 'maxLuminance'];
+const VOGEL = Array.from({ length: 6 }, (_, i) => { const r = Math.sqrt((i + .5) / 6), a = i * 2.399963; return [r * Math.cos(a), r * Math.sin(a)]; });
+const ROUGH_MAX = .65, ROUGH_FADE = .45;   // (as the ray traced reflections: rougher than this a surface shows no reflection worth a ray)
+/** The scene's colour with the reflections laid over it (a picture node). */
 export function reflStage(ch, sp, colT) {
-  const R = sp.getTextureNode('gsRefl'), C = colT;
-  const n = ch.ssrN = ssr(C, sp.getTextureNode('depth'), ch.nrmN, { metalnessNode: R.r, roughnessNode: R.g, camera: ch.cam });
-  for (const [k, val] of Object.entries(SSR_SETTINGS)) n[k].value = val;
-  const hit = n.getTextureNode();
-  { const sum = Fn(() => vec4(C.sample(uv()).rgb.add(hit.sample(uv()).rgb), 1))(); ch.ssrT = rtt(ch.hdrOut ? ch.hdrOut(sum) : sum, 1, 1, ch.pic3 || HALF); }
+  const R = sp.getTextureNode('gsRefl'), C = colT, dT = sp.getTextureNode('depth'), nT = ch.nrmN, S = SSR_SETTINGS;
+  const shiny = select(abs(R.r).add(abs(R.g)).add(abs(R.b)).greaterThan(1e-3), float(1), float(0)), rough = clamp(float(1 + 1 / 64).sub(abs(R.a)), 0, 1);
+  const n = ch.ssrN = ssr(C, dT, nT, { metalnessNode: shiny, roughnessNode: rough, camera: ch.cam });
+  for (const k of OWN_SSR) n[k].value = S[k];
+  n.intensity.value = 1; n.blurQuality = 1;   // (the strength is laid on below; its own blurred picture isn't read, so its blur is the cheapest)
+  const U = ch.ssrU = { invProj: uniform(new Matrix4()), camWorld: uniform(new Matrix4()), focal: uniform(1), envI: uniform(1), maxD: uniform(S.maxDistance), k: uniform(S.intensity), sky: uniform(S.replace), blur: uniform(S.blur) };
+  // (what a ray found, as three's SSRNode leaves it: the thing's colour faded by how far the ray went and by its own
+  // rough Fresnel term, which come off again here; how far, in alpha, nothing where it found nothing)
+  const raw = passTexture(n, n.getRenderTarget().texture), env = ch.scene.environment, envs = ch.ssrEnvs = [];
+  const envAt = (dir, r) => { if (!env) return vec3(0); const e = pmremTexture(env, dir, r); envs.push(e); return e.rgb.mul(U.envI); };
+  const lay = Fn(() => {
+    const q = uv(), c = C.sample(q), r4 = R.sample(q), out = vec3(c.rgb).toVar(), f0 = abs(r4.rgb), smooth = abs(r4.a);
+    If(f0.r.add(f0.g).add(f0.b).greaterThan(1e-3).and(smooth.greaterThan(1 + 1 / 64 - ROUGH_MAX)), () => {
+      const rg = clamp(float(1 + 1 / 64).sub(smooth), 0, 1).toVar();
+      const vp = getViewPosition(q, dT.sample(q).r, U.invProj).toVar(), nv = normalize(nT.sample(q)).toVar(), vd = normalize(vp).negate().toVar(), nov = clamp(dot(nv, vd), 0, 1).toVar();
+      const rr = reflect(vd.negate(), nv), fres = max(dot(vd.negate(), rr).add(1).mul(.5), .05).toVar(), zc = vp.z;
+      const sz = vec2(raw.size(0)), top = ivec2(sz).sub(1), acc = vec3(0).toVar(), cov = float(0).toVar(), ws = float(0).toVar();
+      // each found pixel counts by how near its surface is to this one's (the wall behind says nothing about the floor)
+      const tap = (px, w0) => {
+        const p = clamp(px, ivec2(0), top), s = raw.load(p), tq = vec2(p).add(.5).div(sz), z = getViewPosition(tq, dT.sample(tq).r, U.invProj).z;
+        const w = w0.mul(max(float(1).sub(abs(z.sub(zc)).div(abs(zc).mul(.04).add(.03))), .002)).toVar(), got = select(s.a.greaterThan(0), float(1), float(0));
+        const fall = clamp(float(1).sub(s.a.mul(nov).div(U.maxD)), 0, 1);
+        acc.addAssign(s.rgb.div(fres).mul(w).mul(got)); cov.addAssign(fall.mul(fall).mul(w).mul(got)); ws.addAssign(w);
+      };
+      const hp = q.mul(sz).sub(.5), b = floor(hp), fr = hp.sub(b), bi = ivec2(b);
+      tap(bi, fr.x.oneMinus().mul(fr.y.oneMinus())); tap(bi.add(ivec2(1, 0)), fr.x.mul(fr.y.oneMinus())); tap(bi.add(ivec2(0, 1)), fr.x.oneMinus().mul(fr.y)); tap(bi.add(ivec2(1, 1)), fr.x.mul(fr.y));
+      // a rough surface: more from round about, over a circle as wide as its blur is at the found thing's distance
+      If(rg.greaterThan(.07), () => {
+        const tn = raw.load(clamp(ivec2(hp.add(.5)), ivec2(0), top)).a, th = select(tn.greaterThan(0), tn, U.maxD), dist = vp.length();
+        const rad = clamp(rg.mul(rg).mul(1.3).mul(U.blur).mul(th.div(th.add(dist))).mul(U.focal).mul(sz.y), 1, 14), ang = interleavedGradientNoise(screenCoordinate.xy).mul(6.2832), cs = cos(ang), sn = sin(ang);
+        for (const [x, y] of VOGEL) tap(ivec2(floor(hp.add(.5).add(vec2(cs.mul(x).sub(sn.mul(y)), sn.mul(x).add(cs.mul(y))).mul(rad)))), float(.6));
+      });
+      const k = float(1).div(max(ws, 1e-4)), fab = DFGLUT({ roughness: rg, dotNV: nov }), W = f0.mul(fab.x).add(fab.y);
+      // what the material drew there already: its surroundings along the mirror direction (as three.js reads them)
+      const rv = normalize(mix(rr, nv, rg.mul(rg).mul(rg).mul(rg))), own = r4.r.add(r4.g).add(r4.b).lessThan(0);
+      const sky = select(own, vec3(0), envAt(normalize(U.camWorld.mul(vec4(rv, 0)).xyz), rg));
+      const fade = smoothstep(ROUGH_MAX, ROUGH_FADE, rg).mul(select(own, float(.6), float(1)));
+      out.addAssign(W.mul(acc.mul(k).sub(sky.mul(cov.mul(k).mul(min(U.sky, 1))))).mul(fade).mul(U.k));
+    });
+    return vec4(max(out, 0), 1);
+  })();
+  ch.ssrT = rtt(ch.hdrOut ? ch.hdrOut(lay) : lay, 1, 1, ch.pic3 || HALF);
   ch.ssrT.renderTarget.gsPart = 'reflections';   // (hd3d.js gpuTime: the chip's time by pass; three's own SSR passes are found by name)
   return ch.ssrT;
 }
@@ -159,8 +208,12 @@ export function reflFrame(ch, w, h, scale) {
   if (!ch.ssrT) return;
   ch.ssrT.setSize(w, h);
   if (ch.ssrN.resolutionScale !== scale) ch.ssrN.resolutionScale = scale;
+  const U = ch.ssrU, cam = ch.cam, e = ch.scene.environment;
+  U.invProj.value.copy(cam.projectionMatrixInverse); U.camWorld.value.copy(cam.matrixWorld); U.focal.value = cam.projectionMatrix.elements[5] * .5;
+  U.envI.value = ch.scene.environmentIntensity ?? 1;
+  if (e) for (const x of ch.ssrEnvs || []) if (x.value !== e) x.value = e;
 }
-export function reflDispose(ch) { ch.ssrN?.dispose(); ch.ssrT?.renderTarget?.dispose(); ch.ssrN = ch.ssrT = null; }
+export function reflDispose(ch) { ch.ssrN?.dispose(); ch.ssrT?.renderTarget?.dispose(); ch.ssrN = ch.ssrT = ch.ssrU = ch.ssrEnvs = null; }
 
 /* ---------- light probes (v.bakeLight()) ---------- */
 /** The surroundings of a point as a cube picture on this renderer (three's LightProbeGenerator reads the light from it). */

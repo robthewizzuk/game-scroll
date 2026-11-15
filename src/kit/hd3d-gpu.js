@@ -2855,7 +2855,7 @@ export class GpuChain {
     // reflections (v.reflect()): one more picture, of which pixels are shiny things and how rough
     // (ray traced, hd3d-gpu-trace.js: each pixel's own mirror colour and smoothness, and whether the traced level holds the thing)
     const reflOn = aoOn && this.reflOn && fit >= (giOn ? 2 : 1), tr = reflOn ? this.tracer : null;
-    if (reflOn) nrm.gsRefl = tr ? new PerMaterial(m => drawnOver(m) ? vec4(0) : TR.tracedMRT(m)) : surface(reflMRT());
+    if (reflOn) nrm.gsRefl = tr ? new PerMaterial(m => drawnOver(m) ? vec4(0) : TR.tracedMRT(m)) : new PerMaterial(m => drawnOver(m) ? vec4(0) : reflMRT(m));
     // (motion blur alone: velocity for each thing's own move; see-through things leave the motion behind them, as frameGenMRT's do)
     const pics = mrtOn ? frameGenMRT(nrm) : mbOn ? ownBlend(mrt({ output, velocity: new PerMaterial(m => seeThrough(m) ? vec4(0) : vec4(velocity, 0, 1)), ...nrm }), ['velocity']) : aoOn ? mrt({ output, ...nrm }) : null;
     if (pics) { sp.setMRT(ownBlend(pics, Object.keys(nrm))); slimPictures(sp, { normals: !!nrm.normal, motion: mrtOn || mbOn }); }
