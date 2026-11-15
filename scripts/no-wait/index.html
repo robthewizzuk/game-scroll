@@ -1,0 +1,87 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+// scripts/no-wait.cjs: no frame of a view waits for a shader (src/kit/nowait.js). The kit's own builds ahead are
+// turned off (HD.hold = false), so everything new comes to three's draw in the frame: a thing added mid-round (lit,
+// casting a shadow), a light added (every lit shader is written again), a thing switched on. ?nw=1 (the default):
+// each is left out of its frame and built in the background, and shows a few frames later; ?nw=0: three builds it
+// in the frame, for the comparison. Counted in the frames: shader text three wrote, and pipelines made at once
+// (createRenderPipeline: the frame waits for the driver). Also: pipelines the chip refused (a build made for the
+// wrong picture), the longest frame, and the picture once everything is built, to compare between the two. Last, a
+// thing put off and thrown away before its turn: the frames after must draw without an error.
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU, webgpu } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), NW = Q.get('nw') !== '0';
+setGpuPick('webgpu');
+await loadParts();
+if (!await prepareGPU()) { window.result = { error: 'WebGPU did not start' }; throw new Error('no WebGPU'); }
+const T = gs.THREE, HD = window.__hd, frame = () => new Promise(r => requestAnimationFrame(r));
+HD.force = 2; HD.hold = false; HD.noWait = NW;
+const v = new gs.hd.HDView({ bg: '#9ab4d0', amb: .3 }), c = document.createElement('canvas'); c.width = 240; c.height = 320; document.body.append(c); const x = c.getContext('2d', { willReadFrequently: true });
+v.cam.position.set(0, 3, 8); v.cam.lookAt(0, 1, 0);
+const sun = gs.hd.sun(); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(T => sun.setTier(T));
+const ground = new T.Mesh(new T.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), gs.hd.pbr('#6a7a58', { rough: .9 })); ground.receiveShadow = true; v.scene.add(ground);
+const G = webgpu(), r = G.r, dev = r.backend.device;
+// the frames: shader text written and pipelines made at once while a view draws
+let drawing = false; const inFrame = { text: [], pipes: [] }, refused = [];
+{ const f = dev.createRenderPipeline.bind(dev); dev.createRenderPipeline = d => { if (drawing) inFrame.pipes.push(d.label || '?'); return f(d); }; }
+{ const fa = dev.createRenderPipelineAsync.bind(dev); dev.createRenderPipelineAsync = d => fa(d).catch(e => { refused.push(d.label || '?'); throw e; }); }
+dev.addEventListener('uncapturederror', e => refused.push(String(e.error?.message || e).split('\n')[0].slice(0, 120)));
+{
+  const N = r._nodes, nf = N.getForRender.bind(N), kept = N.nodeBuilderCache;
+  N.getForRender = (ro, ...a) => {
+    const had = kept.has(N.getForRenderCacheKey(ro)) || N.get(ro).nodeBuilderState !== undefined, out = nf(ro, ...a);
+    if (drawing && !had && !out?.then && !ro.object?.isQuadMesh) inFrame.text.push(ro.material?.name || ro.material?.type || '?');
+    return out;
+  };
+}
+// which things the chip was asked to draw this frame
+const drawn = new Set();
+{ const be = r.backend, d = be.draw.bind(be); be.draw = (ro, info) => { drawn.add(ro.object); return d(ro, info); }; }
+let worst = 0;
+const draw = async () => { drawn.clear(); drawing = true; const t = performance.now(); try { v.render(x, 240, 320); } finally { drawing = false; } worst = Math.max(worst, performance.now() - t); await frame(); };
+const settle = async (most = 600) => { let i = 0; for (; i < most && (i < 4 || r.gsBuilding > 0); i++) await draw(); for (let k = 0; k < 3; k++) await draw(); return i; };
+const kind = (color, o) => new T.Mesh(new T.TorusKnotGeometry(.5, .16, 64, 12), new T.MeshPhysicalMaterial({ color, ...o }));
+const a = kind('#cc4', {}); a.name = 'there from the start'; a.material.name = 'start'; a.position.set(2, 1, 0); a.castShadow = true; v.scene.add(a);
+// the first frames: everything in them is new
+const startFrames = await settle();
+const W0 = worst; worst = 0; const reset = () => { inFrame.text.length = 0; inFrame.pipes.length = 0; worst = 0; };
+const phases = {};
+const phase = async (name, act, thing) => {
+  reset(); act();
+  let shownAt = -1, i = 0;
+  for (; i < 600 && (i < 4 || r.gsBuilding > 0 || (thing && shownAt < 0)); i++) { await draw(); if (thing && shownAt < 0 && drawn.has(thing)) shownAt = i; }
+  phases[name] = { text: inFrame.text.slice(), pipes: inFrame.pipes.slice(), worst, frames: i, shownAt };
+};
+// a new lit thing that casts a shadow
+const b = new T.Mesh(new T.TorusKnotGeometry(.8, .25, 128, 24), new T.MeshPhysicalMaterial({ color: '#c44', clearcoat: 1, sheen: 1, iridescence: .8 }));
+b.name = 'new'; b.material.name = 'new thing'; b.position.set(0, 1.5, 0); b.castShadow = true;
+await phase('new thing', () => v.scene.add(b), b);
+// one switched on that was hidden from the start (nothing built it: the kit's builds ahead are off)
+const h = kind('#4c4', { clearcoat: 1, sheen: .5 }); h.name = 'switched on'; h.material.name = 'switched on'; h.position.set(-2, 1, 0); h.visible = false; v.scene.add(h);
+await settle();
+await phase('switched on', () => { h.visible = true; }, h);
+// another light: three writes every lit shader again
+const fill = new T.DirectionalLight('#ffd8b0', .4); fill.position.set(-3, 4, 2);
+await phase('a light added', () => v.scene.add(fill), ground);
+await settle();
+// some put off and thrown away before their turn (a game's reset() under the loading screen): three freed their render
+// objects, never set up, as if they had been, and the camera's and lights' shared block went with them (the frames after
+// threw). The page fails through its errors, and the frames after must still draw. (This page did not bring the fault
+// back with the guard taken out; Long Shadow's start did: scripts/shader-replay.cjs long-shadow.)
+{
+  // (several: each freed one took one off the shared block's count, and it took a few to reach none)
+  const geo = new T.IcosahedronGeometry(.3, 3), mat = new T.MeshPhysicalMaterial({ color: '#48c', clearcoat: .6, transmission: .2 }); mat.name = 'thrown away';
+  const gone = []; for (let i = 0; i < 64; i++) { const m = new T.Mesh(geo, mat); m.name = 'thrown away'; m.position.set(-3 + (i % 8) * .8, 2.2 + (i >> 3) * .4, -1); m.castShadow = true; gone.push(m); v.scene.add(m); }
+  await draw();
+  // (thrown away in the middle of a frame, as a game's update can be: three looks up the shared block of the picture
+  // being drawn then, and frees from that one)
+  let thrown = false;
+  ground.onBeforeRender = () => { if (thrown) return; thrown = true; for (const m of gone) v.scene.remove(m); mat.dispose(); geo.dispose(); };
+  await draw(); ground.onBeforeRender = () => {};
+  await settle();
+}
+const img = x.getImageData(0, 0, 240, 320).data, pix = [];
+for (let y = 0; y < 320; y += 4) for (let xx = 0; xx < 240; xx += 4) { const k = (y * 240 + xx) * 4; pix.push(img[k], img[k + 1], img[k + 2]); }
+const texts = {}; if (Q.has('png')) for (const [k, st] of r._nodes.nodeBuilderCache) { const n = (st.fragmentShader.match(/fn main/)) ? 1 : 0; texts[k] = { f: st.fragmentShader, v: st.vertexShader, mat: (st.gsMat || ''), tex: (st.bindings || []).flatMap(g => (g.bindings || []).map(b => (b.texture ? 'T:' + (b.texture.name || b.texture.constructor?.name || '?') : b.name || '?'))) }; }
+window.result = { png: Q.has('png') ? c.toDataURL() : null, nw: NW, startFrames, firstWorst: W0, phases, refused, stats: { ...window.__nowait.NOWAIT_STATS, names: window.__nowait.NOWAIT_STATS.names.slice(-12) }, pix };
+</script>
