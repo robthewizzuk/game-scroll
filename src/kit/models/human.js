@@ -973,7 +973,8 @@ export function human(o = {}) {
       // (seen on screen: both levels drawn for a moment, each dithered, rather than a pop: lod-fade.js)
       if (fadeLevels(root, parts(from), parts(v), () => posedAs(cur))) posedAs(Math.min(from, v, posed));
     } });
-    fadeable(root, () => [...lods, wet, occ, ...strips, strandMesh].filter(Boolean));
+    const fadeParts = [...lods, wet, occ, ...strips, strandMesh].filter(Boolean);   // (one list: lod-fade.js asks for it each frame the person is on screen)
+    fadeable(root, () => fadeParts);
     /** Picks the level of detail by how tall the person stands on screen (pixels): call each frame, or now and then. A phone on a lower quality tier moves to the coarser levels sooner. */
     const wp = new Vector3();
     root.see = (cam, screenH = 800) => {

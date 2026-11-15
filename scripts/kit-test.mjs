@@ -8801,6 +8801,31 @@ console.log('physics ok');
   P2.place([flash, { ...flash, x: 16 }], 15, 1, 0, 0, T, 2, true, true);
   assert.ok(v2.lamps.filter(l => l.intensity > 0).length === 2, 'WebGPU: every flash is lit (clustered lights)');
   console.log('light from effects: flashes before the lamps round them, one light for flashes alone on WebGL, their light on particles ok');
+  // lamps that swap which is lit ease in and out instead of popping (Parcel Dash's car lights flickered on a Galaxy Z Fold)
+  const v3 = view(), P3 = new LampPool(v3, 10), T3 = { lights: 1, shadow: 0 }, row3 = [0, 10, 20, 30, 40, 50, 60, 70, 80].map(x => ({ x, y: 2, z: 0, i: 6 }));
+  P3.place(row3, 0, 2, 0, 0, T3, 0, true, true);
+  const lit3 = s => P3.used.get(s)?.intensity ?? 0;
+  assert.ok(lit3(row3[0]) === 6 && lit3(row3[7]) === 6 && !P3.used.get(row3[8]), 'WebGPU: the first placing puts the nearest eight straight in');
+  const comer = { x: 5, y: 2, z: 0, i: 6 }, row4 = [comer, ...row3];
+  P3.place(row4, 0, 2, 0, 1 / 30, T3, 0, true, true);
+  assert.ok(lit3(comer) > 0 && lit3(comer) < 1.5 && lit3(row3[7]) > 4 && lit3(row3[7]) < 6, 'a lamp that comes in nearer eases in, and the one it pushes out keeps its light while it eases out');
+  for (let k = 2; k < 20; k++) P3.place(row4, 0, 2, 0, k / 30, T3, 0, true, true);
+  assert.ok(lit3(comer) === 6 && !P3.used.get(row3[7]) && v3.lamps.filter(l => l.intensity > 0).length === 8, 'a moment later: the new one full, the one pushed out dark and its light given back');
+  const lamp6 = row4[6]; P3.place(row4.filter(s => s !== row3[3]), 0, 2, 0, 21 / 30, T3, 0, true, true);
+  assert.ok(lit3(row3[7]) > 0 && lit3(row3[7]) < 1.5 && lit3(lamp6) > 0, 'one taken away: the next comes in from dark');
+  console.log('lamps that swap ease in and out: pushed out lights keep their light while they fade on WebGPU ok');
+}
+
+// a car in its lane faces along it when it has stopped, whatever slides it sideways (city-drive.js laneMove; a car stood
+// beside Parcel Dash's van turned end to end each time its slide back into its lane changed way)
+{
+  const { laneMove } = await import('../src/kit/city-drive.js'), T = { LANE: 3.4, sideK: 1 };
+  const c = { edge: { dx: 1, dz: 0 }, v: 0, lat: 0, latTo: 1, s: 0, hurry: 0 }, along = Math.atan2(1, 0);
+  laneMove(T, c, 0, 1 / 30); const h1 = c.heading; c.latTo = -1; laneMove(T, c, 0, 1 / 30);
+  assert.ok(Math.abs(h1 - along) < 1e-6 && Math.abs(c.heading - along) < 1e-6, 'stopped and sliding either way: nose along the lane');
+  c.v = 10; c.latTo = 2; laneMove(T, c, 10, 1 / 30); const off = c.heading - along;
+  assert.ok(Math.abs(off) > .01 && Math.abs(off) < .41, 'moving and changing lanes: turned a little towards where it goes');
+  console.log('lane cars face along their lane when stopped ok');
 }
 
 // kits that find each other (src/kit/links.js): what one game makes finds the rest of what it made

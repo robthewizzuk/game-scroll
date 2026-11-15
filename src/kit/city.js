@@ -651,7 +651,9 @@ export class Traffic {
     // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
     this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, this.cap, { crowd: () => city.people?.crowd }) : null;   // (its close cars' drivers are the crowd's)
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
-    const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: false, color: '#ffffff' });
+    // (with real cars the boxes stand in for the far ones' lamps, so they are tone mapped as the close cars' lamps are, and
+    // a car swapped between the two keeps the same lamps: drawFleet)
+    const lit = () => new MeshBasicMaterial({ vertexColors: false, toneMapped: !!this.fleet, color: '#ffffff' });
     this.meshes = {};
     for (const [k, geo] of this.fleet ? [] : [['car', carGeo()], ['van', vanGeo()]]) {
       const m = new InstancedMesh(geo, paint, this.cap); m.count = 0; m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
@@ -867,14 +869,26 @@ export class Traffic {
   // real cars (city-cars.js): the nearest few whole, the rest as copies; the lamp boxes stand in for the far ones' lamps
   drawFleet(night, dt) {
     const F = this.fleet, n = this.list.length; F.focus = this.city.focus || this.city.start; F.draw(this.list, night, dt);
+    const { head, tail, k: brake } = this.lampLooks(night);
     this.list.forEach((c, i) => {
       if (F.close.has(c)) { this.head.setMatrixAt(i, _none.makeScale(0, 0, 0).setPosition(c.x, 0, c.z)); this.tail.setMatrixAt(i, _none); return; }
       const k = F.kits[c.style]; carMatrix(c, _s.set(1, k.lampY / .64, c.len / 4.53));
-      this.head.setMatrixAt(i, _m); this.tail.setMatrixAt(i, _m); this.tail.setColorAt(i, _c.setScalar(c.braking ? 2.4 : 1));
+      this.head.setMatrixAt(i, _m); this.tail.setMatrixAt(i, _m); this.tail.setColorAt(i, _c.setScalar(c.braking ? brake : 1));
     });
     _s.set(1, 1, 1);
     for (const m of [this.head, this.tail]) { m.count = n; sendUsed(m.instanceMatrix, n); sendUsed(m.instanceColor, n); }
-    this.head.material.color.set('#fff3d6').multiplyScalar(.35 + night * 3.2); this.tail.material.color.set('#ff2c1c').multiplyScalar(.5 + night * 1.6);
+    this.head.material.color.copy(head); this.tail.material.color.copy(tail);
+  }
+  // the far cars' lamp boxes as bright as the close cars' own lamps (city-cars.js lampMat: their glow, and a share of the
+  // light on their glass): they were brighter and not tone mapped, so a car's lamps jumped in brightness each time it
+  // swapped between the two as it came near or went away (Parcel Dash's car lights flickered on a Galaxy Z Fold)
+  lampLooks(night) {
+    const L = this._looks ||= { head: new Color(), tail: new Color(), brake: new Color(), base: new Color(), k: 1 }, lit = .25 * (1 - night * .6);
+    L.head.set('#fff1d0').multiplyScalar(.05 + night * 3.2).add(L.base.set('#f2eee2').multiplyScalar(lit));
+    L.tail.set('#ff2414').multiplyScalar(.1 + night * 1.6).add(L.base.set('#9c1010').multiplyScalar(lit));
+    L.brake.set('#ff2414').multiplyScalar(2.2 + night * 1.4).add(L.base.set('#9c1010').multiplyScalar(lit));
+    L.k = L.brake.r / Math.max(1e-3, L.tail.r);   // (a braking car's tail boxes: its colour times this)
+    return L;
   }
   /** The light bars of police cars (made when the first is added; Wanted makes them up front, so their shaders are built before play). */
   lightBars() {

@@ -270,7 +270,9 @@ export class Fleet {
     // which cars are drawn whole: the nearest few within reach (a car already close keeps it a little further)
     const f = this.focus, d2 = this._d2 ||= [];
     d2.length = 0;
-    if (f) for (const c of list) { const d = Math.hypot(c.x - f.x, c.z - f.z), r = this.close.has(c) ? this.reach + 6 : this.reach; if (d < r) d2.push([d, c]); }
+    // (and among them a car already close counts as a few metres nearer, so two cars about as far off don't swap back and
+    // forth between whole and copy, their lamps and headlights with them, as they drive along)
+    if (f) for (const c of list) { const d = Math.hypot(c.x - f.x, c.z - f.z), was = this.close.has(c), r = was ? this.reach + 6 : this.reach; if (d < r) d2.push([was ? d - 5 : d, c]); }
     d2.sort((a, b) => a[0] - b[0]);
     const want = new Set(d2.slice(0, this.nearMax).map(e => e[1]));
     for (const c of [...this.close.keys()]) if (!want.has(c)) this.drop(c);
@@ -349,15 +351,18 @@ export class Fleet {
   }
   /**
    * The headlights of the cars drawn whole, as spots for view.placeLamps (src/kit/lamps.js): a dipped beam's shape,
-   * with shadows for the nearest. night 0..1 sets how bright. The same objects each frame (out is filled anew).
+   * with shadows for the nearest. night 0..1 sets how bright. Each car keeps its own two objects while it is drawn
+   * whole (out is filled anew each frame), so the light a lamp pool gave a beam stays with that car; a car's beams fade
+   * out over its last metres before reach, so they are gone (i 0) before it goes back to a copy.
    */
   headlamps(night, out = []) {
-    out.length = 0; const pool = this._hl ||= []; let n = 0;
-    for (const c of this.close.keys()) {
+    out.length = 0; const F = this.focus;
+    for (const [c, r] of this.close) {
       const k = this.kitOf(c), sh = Math.sin(c.heading), ch = Math.cos(c.heading), f = k.length / 2 + .05, s = k.width * .36;   // (its nose along (sin, cos) of its heading)
+      const fade = F ? Math.max(0, Math.min(1, (this.reach - Math.hypot(c.x - F.x, c.z - F.z)) / 8)) : 1;
       for (const side of [-1, 1]) {
-        const p = pool[n++] ||= { x: 0, y: 0, z: 0, dir: [0, -.05, 0], angle: .5, soft: .35, shape: 'headlamp', shadow: true, near: .3, col: '#fff3dc', i: 0, reach: 26 };
-        p.x = c.x + sh * f - ch * s * side; p.y = k.lampY + (c.y || 0); p.z = c.z + ch * f + sh * s * side; p.dir[0] = sh; p.dir[1] = -.05 + Math.sin(c.pitch || 0); p.dir[2] = ch; p.i = 30 * night;
+        const p = (r.beams ||= [])[side > 0 ? 1 : 0] ||= { x: 0, y: 0, z: 0, dir: [0, -.05, 0], angle: .5, soft: .35, shape: 'headlamp', shadow: true, near: .3, col: '#fff3dc', i: 0, reach: 26 };
+        p.x = c.x + sh * f - ch * s * side; p.y = k.lampY + (c.y || 0); p.z = c.z + ch * f + sh * s * side; p.dir[0] = sh; p.dir[1] = -.05 + Math.sin(c.pitch || 0); p.dir[2] = ch; p.i = 30 * night * fade;
         out.push(p);
       }
     }

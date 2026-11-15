@@ -1630,7 +1630,7 @@ function make(api) {
     streak: ['{streak} in a row. Who IS this?'],
   } });
   const MARR = 'COL. MARR · GREY ORDER';
-  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensT = 0, lensAcc = 0, mirX = 0, mirT = 0;
+  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensGrad = null, lensT = 0, lensAcc = 0, mirX = 0, mirT = 0;
   // The commander also thinks a few seconds ahead (Tiny Brains' Imagine) with a rough sketch of the
   // fight: [heat, your favourite nest, quiet, men left, your health, masked, alerted, time, how close
   // they are, mortar ready]. Pushing closes in but costs men while you're watching; flanking is slower
@@ -2438,23 +2438,27 @@ function make(api) {
     if (!m.passed && zip.t > ZIP_PASS) { m.passed = true; noise(.45, { vol: .09, from: 600, to: 2600, filter: 'bandpass', q: 2 }); noise(.5, { vol: .06, from: 2600, to: 500, filter: 'bandpass', q: 2, at: .25 }); haptic('light'); }
   }
   // does a straight line from a to b miss every wall and building?
+  // (the three axes one after another, with no lists made: it is asked about every man, many times a frame)
+  const SLAB = { t0: 0, t1: 1 };
+  function slab(p, d, lo, hi) {
+    if (Math.abs(d) < 1e-9) return p >= lo && p <= hi;
+    let u = (lo - p) / d, w = (hi - p) / d; if (u > w) { const k = u; u = w; w = k; }
+    if (u > SLAB.t0) SLAB.t0 = u; if (w < SLAB.t1) SLAB.t1 = w; return SLAB.t0 <= SLAB.t1;
+  }
   function clearLine(a, b) {
-    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-    for (const s of WD.solids) {
-      let t0 = 0, t1 = 1, hit = true;
-      for (const [p, d, lo, hi] of [[a.x, dx, s.x0, s.x1], [a.y, dy, s.y0, s.y1], [a.z, dz, s.z0, s.z1]]) {
-        if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) { hit = false; break; } continue; }
-        let u = (lo - p) / d, w = (hi - p) / d; if (u > w) [u, w] = [w, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, w); if (t0 > t1) { hit = false; break; }
-      }
-      if (hit) return false;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, S = WD.solids;
+    for (let i = 0; i < S.length; i++) {
+      const s = S[i]; SLAB.t0 = 0; SLAB.t1 = 1;
+      if (slab(a.x, dx, s.x0, s.x1) && slab(a.y, dy, s.y0, s.y1) && slab(a.z, dz, s.z0, s.z1)) return false;
     }
     return true;
   }
   // Could a shot from the eye e reach this man? (walls and buildings, then the ground, as the bullets see it.)
   // His whole head must show: the top of a helmet over a parapet is no target, so a man like that counts as
   // hidden, and comes out. (Kneeling his head is at 1.2 m, right down behind cover under 1 m.)
+  const _sho = { x: 0, y: 0, z: 0 };
   function shootable(e, s) {
-    const p = { x: s.x, y: s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44), z: s.y };
+    const p = _sho; p.x = s.x; p.y = s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44); p.z = s.y;
     return clearLine(e, p) && overLand(e, p);
   }
   // the line from e to p stays above the ground all the way (sampled every two metres)
@@ -2467,7 +2471,7 @@ function make(api) {
   const _ins = { x: 0, y: 0, z: 0 };
   function inSight(e, s) {
     const top = s.gy + (s.low ? .65 : s.crouch ? .91 : 1.44);
-    for (const y of [top, top - .42]) { _ins.x = s.x; _ins.y = y; _ins.z = s.y; if (clearLine(e, _ins) && overLand(e, _ins)) return true; }
+    for (let k = 0; k < 2; k++) { _ins.x = s.x; _ins.y = k ? top - .42 : top; _ins.z = s.y; if (clearLine(e, _ins) && overLand(e, _ins)) return true; }
     return false;
   }
   // the nearest open ground that a shot from e reaches (standing), not right under the nest, by the way he would
@@ -3919,16 +3923,24 @@ function make(api) {
     for (; lensAcc >= 1; lensAcc--) if (lensDrops.length < 40) { const a = rnd(0, TAU), r = Math.sqrt(Math.random()) * R * .95; lensDrops.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, r: rnd(2, 5.5), life: rnd(4, 9), vy: 0 }); }
     if (!lensDrops.length) return;
     c.save(); c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.clip();
-    for (const d of lensDrops) {
+    // (one drop's shading made once, a drop wide round 0, 0, and each drop drawn with it moved and sized, its fading as
+    // globalAlpha: the same picture as a gradient and four colours made for every drop each frame, with nothing made)
+    const g = lensGrad?.c === c ? lensGrad.g : (lensGrad = { c, g: c.createRadialGradient(-.3, -.35, .1, 0, 0, 1) }).g;
+    if (!g.gsStops) { g.gsStops = true; g.addColorStop(0, 'rgba(255,255,250,.85)'); g.addColorStop(.25, 'rgba(220,228,236,.3)'); g.addColorStop(.7, 'rgba(120,130,140,.15)'); g.addColorStop(.88, 'rgba(6,8,12,.7)'); g.addColorStop(1, 'rgba(0,0,0,0)'); }
+    let n = 0;
+    for (let i = 0; i < lensDrops.length; i++) {
+      const d = lensDrops[i];
       d.life -= dt; if (d.r > 4.6) { d.vy = Math.min(d.vy + dt * 30, 45); d.y += d.vy * dt; d.r -= dt * .4; }
-      const x = cx + d.x, y = cy + d.y, a = clamp(d.life, 0, 1) * .8, g = c.createRadialGradient(x - d.r * .3, y - d.r * .35, d.r * .1, x, y, d.r);
-      g.addColorStop(0, `rgba(255,255,250,${.85 * a})`); g.addColorStop(.25, `rgba(220,228,236,${.3 * a})`); g.addColorStop(.7, `rgba(120,130,140,${.15 * a})`); g.addColorStop(.88, `rgba(6,8,12,${.7 * a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
-      c.fillStyle = g; c.beginPath(); c.arc(x, y, d.r, 0, TAU); c.fill();
-      c.fillStyle = `rgba(230,236,240,${.35 * a})`; c.beginPath(); c.arc(x + d.r * .25, y + d.r * .45, d.r * .28, 0, TAU); c.fill();   // light gathered at the bottom, as through a lens
-      if (d.vy > 4) { c.strokeStyle = `rgba(190,200,210,${.18 * a})`; c.lineWidth = d.r * .7; c.beginPath(); c.moveTo(x, y - d.r); c.lineTo(x, y - d.r - Math.min(30, d.vy * .8)); c.stroke(); }
+      const x = cx + d.x, y = cy + d.y, a = clamp(d.life, 0, 1) * .8;
+      c.save(); c.globalAlpha = a; c.translate(x, y); c.scale(d.r, d.r);
+      c.fillStyle = g; c.beginPath(); c.arc(0, 0, 1, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(230,236,240,.35)'; c.beginPath(); c.arc(.25, .45, .28, 0, TAU); c.fill();   // light gathered at the bottom, as through a lens
+      c.restore(); c.globalAlpha = a;
+      if (d.vy > 4) { c.strokeStyle = 'rgba(190,200,210,.18)'; c.lineWidth = d.r * .7; c.beginPath(); c.moveTo(x, y - d.r); c.lineTo(x, y - d.r - Math.min(30, d.vy * .8)); c.stroke(); }
+      if (d.life > 0 && d.y < R) lensDrops[n++] = d;
     }
-    c.restore();
-    lensDrops = lensDrops.filter(d => d.life > 0 && d.y < R);
+    lensDrops.length = n;
+    c.globalAlpha = 1; c.restore();
   }
   function scopeView(c, brass, red) {
     const cx = W / 2, cy = H / 2, R = Math.min(W, H) * .44, fovR = fovNow() * Math.PI / 180, px = H / fovR;   // units per radian

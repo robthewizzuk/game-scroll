@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readKnobs, writeKnobs } from './lib/knobs.mjs';
+import { parseChanges, readKnobs, writeKnobs } from './lib/knobs.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2), JSONOUT = argv.includes('--json'), args = argv.filter(a => !a.startsWith('--'));
@@ -37,19 +37,7 @@ if (!args.length) {
   process.exit(0);
 }
 
-const changes = {}, bad = [];
-for (const a of args) {
-  const m = a.match(/^([\w$]+(?:\.[\w$]+)?)\s*([=*])\s*(.+)$/); if (!m) { bad.push(a); continue; }
-  const [, name, op, raw] = m;
-  if (op === '*') {
-    const [f, k] = name.includes('.') ? name.split('.') : [null, name];
-    const hit = knobs.find(x => x.key === k && (!f || x.folder === f) && x.kind === 'number');
-    if (!hit || !Number.isFinite(+raw)) { bad.push(a); continue; }
-    let v = hit.value * +raw; if (hit.min != null) v = Math.max(hit.min, Math.min(hit.max, v));
-    changes[name] = +v.toFixed(4); continue;
-  }
-  changes[name] = raw === 'true' ? true : raw === 'false' ? false : Number.isFinite(+raw) && raw.trim() !== '' ? +raw : raw.replace(/^['"]|['"]$/g, '');
-}
+const { changes, bad } = parseChanges(knobs, args);
 const r = writeKnobs(src, changes); r.missing.push(...bad);
 if (r.changed.length) writeFileSync(file, r.src);
 if (JSONOUT) console.log(JSON.stringify({ changed: r.changed, missing: r.missing }, null, 2));

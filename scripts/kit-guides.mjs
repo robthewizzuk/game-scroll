@@ -163,7 +163,7 @@ const pagePath = kit => join(DIR, kit + '.md');
 function upper(kit) {
   const p = pagePath(kit); if (!existsSync(p)) return null;
   const t = readFileSync(p, 'utf8'), i = t.indexOf(MARK);
-  return (i < 0 ? t : t.slice(0, i)).trimEnd() + '\n\n';
+  return (i < 0 ? t : t.slice(0, i)).replace(/\n{3,}/g, '\n\n').trimEnd() + '\n\n';
 }
 const summary = up => (up.split('\n').find((l, i) => i > 0 && l.trim() && !l.startsWith('#')) || '').trim();
 function indexLines() {
