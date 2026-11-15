@@ -3951,10 +3951,17 @@ export interface HearPart {
 export interface DoodlePart {
   /** Make it in make() or reset() (the model loads first). */
   Doodle: {
-    new (): {
+    /** new Doodle(): the model alone. new Doodle(api, { name }): what learn() is shown is kept on the phone with the game's brains (name: 'doodle'; save: false: this session only). */
+    new (api?: GameApi | null, o?: { name?: string; save?: boolean }): {
       readonly things: string[];
-      /** Most likely first, sures adding up to 1. strokes: arrays of { x, y } or gs.strokes Strokes. */
-      guess(strokes: Loose[], o?: { among?: string[] }): { name: string; sure: number }[];
+      /** Most likely first, sures adding up to 1. strokes: arrays of { x, y } or gs.strokes Strokes. `yours: true` on a thing this drawing was made like the player's own way of drawing it (learn). */
+      guess(strokes: Loose[], o?: { among?: string[] }): { name: string; sure: number; yours?: true }[];
+      /** "That drawing was a cat": keeps this player's way of drawing a thing (the newest three of each), so a later drawing made the same way is guessed as it. Call it when the game knows what was drawn. False, and nothing learned, for a thing the model doesn't know or a drawing that looks nothing like it. */
+      learn(strokes: Loose[], name: string): boolean;
+      /** Forgets what learn() was shown: one thing's, or all of it. */
+      forget(name?: string): Loose;
+      /** The things it has learned this player's way of drawing, and how many examples of each. */
+      readonly learned: Record<string, number>;
     };
     /** Every thing it can recognise. */
     readonly things: string[];
@@ -3962,6 +3969,8 @@ export interface DoodlePart {
   /** The strokes drawn into a 28 x 28 picture (0..1), the way the model sees them. */
   picture(strokes: Loose[], size?: number): Float32Array;
   scores(img: Float32Array, model: Loose): Float32Array;
+  /** What the network makes of a picture just before it names it (its last hidden layer). */
+  features(img: Float32Array, model: Loose): Float32Array;
 }
 
 /** gs.phoneai: the phone's own built-in AI, for flavour only. Every ask has a fallback; play must never depend on it. */
