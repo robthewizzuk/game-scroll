@@ -5,6 +5,7 @@
 import gs from '../gamescroll.js';
 const { haptic } = gs.device;
 const { Search } = gs.solve;
+const { Dial } = gs.brains;
 const { Table, slab, pawn, chessman, ring, dot, sounds } = gs.tabletop;
 const { pbr } = gs.hd;
 
@@ -69,6 +70,9 @@ function worth(s, p) {                                             // how good i
 const brain = new Search({ moves, play: (s, m) => { const n = play(s, m); return { b: n.b, t: n.t, win: n.win }; }, turn: s => s.t, over: s => s.win >= 0, score: worth });
 
 function make(api) {
+  // the win-rate dial (Tiny Brains): the raiders plays between a looser and a sharper game, following this
+  // player's results so they win a little over half their games
+  const dial = new Dial(api, { name: 'kings-table', start: .88, range: [.6, .98] });
   let T, s, men, sel, goes, dots, selRing, state, taken, stuff;
 
   function setup() {
@@ -114,7 +118,7 @@ function make(api) {
     s = { b: next.b, t: next.t, win: next.win };
   }
   async function finish() {
-    state = 'done'; choose(null);
+    state = 'done'; choose(null); dial.result(s.win === 0);
     if (s.win === 0) { taken += ESCAPE; api.score(taken); sounds.gong(); const k = at(s.b.indexOf(KING)); T.puff({ x: k.x, y: .8, z: k.z }, { col: '#ffe08a', glow: true, n: 26, speed: 2.2, up: 2.4, size: .24 }); api.win(); } else sounds.thud(1.4);
     await T.wait(1.7); api.clearSave(); T.stop(); api.over();
   }
@@ -122,7 +126,7 @@ function make(api) {
     state = 'busy'; choose(null);
     await act(m);
     if (s.win >= 0) return finish();
-    const reply = await T.think(brain, s, { time: 320, depth: 4, skill: .88, wait: .6 });
+    const reply = await T.think(brain, s, { time: 320, depth: 4, skill: dial, wait: .6 });
     if (reply == null) { s.win = 0; return finish(); }
     await act(reply);
     if (s.win >= 0) return finish();
