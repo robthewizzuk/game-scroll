@@ -18,7 +18,8 @@
 //
 // In a gs.physics world (2D): new Soft({ world: phys }) or new Liquid({ world: phys }): the points stay out of every shape
 // in it (crates, the level, a tile map made solid, the player) and, with weight (kg a point), push loose things back:
-// jelly that knocks a crate over, water that floats a ball and turns a wheel.
+// jelly that knocks a crate over, water that floats a ball and turns a wheel. In 3D (dims: 3) the world is a
+// gs.physics3d World3D: cloth and ropes drape over its bodies, lie on its ground and are carried by what moves.
 import { timed } from './prof.js';
 import { linksFor, linked } from './links.js';
 
@@ -27,10 +28,11 @@ export class Soft {
    * gravity: { x, y, z } (default 2D, 900 down the screen); iterations: stick passes a step (more =
    * stiffer); damping: 0..1 kept each step; bounds: [x0, y0, x1, y1] walls (2D); floor: a y the
    * points can't pass (3D: up is +y so it's a minimum); bounce off walls; friction on them. world: a gs.physics world
-   * (2D) whose shapes the points stay out of; weight: kg a point, to push loose things there back.
+   * (2D; a gs.physics3d World3D with dims: 3) whose shapes the points stay out of; weight: kg a point, to push loose
+   * things there back.
    */
   constructor({ gravity = null, dims = 2, iterations = 8, damping = .995, bounds = null, floor = null, bounce = .3, friction = .9, step = 1 / 120, world = null, weight = 0, link = true } = {}) {
-    world = dims === 3 ? world || null : linked(world, linksFor(null, link), 'world2d');   // (links.js: with none given, the 2D physics world the game made, made before this; false: none)
+    world = linked(world, linksFor(null, link), dims === 3 ? 'world' : 'world2d');   // (links.js: with none given, the physics world the game made (2D, or its World3D for dims: 3), made before this; false: none)
     this.dims = dims; this.gravity = gravity || (dims === 3 ? { x: 0, y: -9.8, z: 0 } : { x: 0, y: 900, z: 0 });
     Object.assign(this, { iterations, damping, bounds, floor, bounce, friction, step, world, weight });
     this.points = []; this.sticks = []; this.bodies = []; this.solids = []; this.acc = 0; this.handlers = {};
@@ -38,7 +40,7 @@ export class Soft {
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   emit(ev, ...a) { for (const f of this.handlers[ev] || []) f(...a); }
   /** A point. pinned: held in place; mass: heavier points move less when pulled; r: its size for collisions. */
-  point(x, y, z = 0, { pinned = false, mass = 1, r = 2 } = {}) {
+  point(x, y, z = 0, { pinned = false, mass = 1, r = this.dims === 3 ? .04 : 2 } = {}) {
     const p = { x, y, z, px: x, py: y, pz: z, pinned, inv: pinned ? 0 : 1 / mass, r }; this.points.push(p); return p;
   }
   /** A stick keeping two points apart. stiff: 0..1; len: rest length (default now); tear: breaks past this many times its length; slack: a rope (only pulls). */
@@ -111,7 +113,7 @@ export class Soft {
   wind(w) { this.windV = w; return this; }
   update(dt) {
     this.acc = Math.min(this.acc + dt, this.step * 8);
-    this.felt = this.world && this.dims !== 3 ? nearAll(this.world, this.points) : null;
+    this.felt = this.world ? nearAll(this.world, this.points, this.dims === 3) : null;
     while (this.acc >= this.step) { this.tick(this.step); this.acc -= this.step; }
     return this;
   }
@@ -135,7 +137,7 @@ export class Soft {
       for (const body of this.bodies) if (body.kind === 'jelly') this.inflate(body);
       this.collide();
     }
-    if (this.felt?.length) for (const p of this.points) if (!p.pinned) keepOut(this.world, p, p.r, this.felt, h, this.weight, this.friction);
+    if (this.felt?.length) { const out = three ? keepOut3 : keepOut; for (const p of this.points) if (!p.pinned) out(this.world, p, p.r, this.felt, h, this.weight, this.friction); }
     if (this.sticks.some(s => s.broken)) { const gone = this.sticks.filter(s => s.broken); this.sticks = this.sticks.filter(s => !s.broken); for (const b of this.bodies) b.sticks = b.sticks.filter(s => !s.broken); for (const s of gone) this.emit('tear', s); }
   }
   // jelly: push the ring's points out along their normals to keep its area
@@ -181,11 +183,21 @@ export class Soft {
   }
 }
 // the shapes of a gs.physics world near a set of points (reach: as far as they may go before the next look)
-function nearAll(world, pts) {
-  if (!pts.length) return null;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r = 0;
-  for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; if (p.r > r) r = p.r; }
-  return world.near(x0, y0, x1, y1, r + 24);   // (and a little more: where they may get to this frame)
+function nearAll(world, pts, three = false) {
+  if (!pts.length || !world.world) return null;   // (a world the game has freed: nothing to stay out of)
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity, r = 0;
+  for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; if (three) { if (p.z < z0) z0 = p.z; if (p.z > z1) z1 = p.z; } if (p.r > r) r = p.r; }
+  return three ? world.around({ x: x0, y: y0, z: z0 }, { x: x1, y: y1, z: z1 }, r + .5) : world.near(x0, y0, x1, y1, r + 24);   // (and a little more: where they may get to this frame)
+}
+// the same in a gs.physics3d World3D (cloth and ropes in 3D): a point stays out of its bodies and its level, and cannot go through ground
+const WAS = { x: 0, y: 0, z: 0 };
+function keepOut3(world, p, r, near, h, weight, friction = 1) {
+  WAS.x = p.px; WAS.y = p.py; WAS.z = p.pz;
+  const o = world.outOf(p, r, near, WAS); if (!o) return;
+  const vx = p.x - p.px, vy = p.y - p.py, vz = p.z - p.pz, vn = vx * o.nx + vy * o.ny + vz * o.nz, n = Math.max(0, vn);
+  p.x = o.x; p.y = o.y; p.z = o.z;
+  p.px = p.x - ((vx - vn * o.nx) * friction + n * o.nx); p.py = p.y - ((vy - vn * o.ny) * friction + n * o.ny); p.pz = p.z - ((vz - vn * o.nz) * friction + n * o.nz);
+  const t = o.thing; if (weight > 0 && t?.body && !t.fixed && !t.body.isKinematic()) { const k = weight * Math.min(o.depth / h, 30); t.body.applyImpulseAtPoint({ x: -o.nx * k, y: -o.ny * k, z: -o.nz * k }, world.inner(p), true); }
 }
 // a point kept out of the world's shapes: it stops going into them (and slides along with friction); weight pushes loose things back
 function keepOut(world, p, r, near, h, weight, friction = 1) {

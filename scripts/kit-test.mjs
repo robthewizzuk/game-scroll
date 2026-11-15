@@ -942,6 +942,93 @@ console.log('physics ok');
   console.log(`brains 5: a dial follows the player (weak ${(weak.rate * 100).toFixed(0)}% at ${weak.skill.toFixed(2)}, middling ${(mid.rate * 100).toFixed(0)}% at ${mid.skill.toFixed(2)}, strong ${(strong.rate * 100).toFixed(0)}% at ${strong.skill.toFixed(2)}), saved, kits take it ok`);
 }
 
+// ---- brains 7: a coach for things that decide by rules (gs.brains.Coach; Team, Squad, Choose and Tree take one)
+{
+  const { Coach } = await import('../src/kit/brains.js');
+  const { Team, Pitch } = await import('../src/kit/sports.js');
+  const { Squad, CoverMap } = await import('../src/kit/tactics.js');
+  const { Tree, Choose } = await import('../src/kit/bt.js');
+  let sd = 7; const R = () => { sd = (sd * 1664525 + 1013904223) >>> 0; return sd / 4294967296; }, rnd = (a, b) => a + (b - a) * R();
+  // a keeper's rules: dive when the ball is near and fast, else stay. The lesson: near, slow and alone -> rush
+  const rules = s => (s[0] > .7 && s[1] > .5 ? 'dive' : 'stay'), spot = () => [R(), R(), R() < .5 ? 1 : 0];
+  const lesson = s => s[0] > .72 && s[1] < .28 && s[2] === 1, nearIt = s => s[0] > .55 && s[1] < .45 && s[2] === 1;
+  const taught = n => {
+    let inOk = 0, IN = 0, same = 0, OUT = 0;
+    for (let t = 0; t < 6; t++) {
+      const c = new Coach({ name: `k${n}-${t}`, inputs: 3, actions: ['stay', 'dive', 'rush'], save: false });
+      for (let i = 0; i < 200; i++) { const s = spot(); assert.equal(c.pick(s, rules(s)), rules(s), 'with nothing taught it is the rules'); }
+      for (let i = 0; i < n; i++) c.correct([rnd(.74, 1), rnd(0, .26), 1], 'rush');
+      for (let i = 0; i < 500; i++) { const s = spot(), a = c.pick(s, rules(s)); if (lesson(s)) { IN++; if (a === 'rush') inOk++; } else if (!nearIt(s)) { OUT++; if (a === rules(s)) same++; } }
+    }
+    return { inside: inOk / IN, outside: same / OUT };
+  };
+  const one = taught(1), four = taught(4);
+  assert.ok(one.inside > .9 && one.outside > .9 && four.inside > .97 && four.outside > .93, `a coach changes the lesson's spots and leaves the rest: ${JSON.stringify([one, four])}`);
+  const c = new Coach({ name: 'not', inputs: 3, actions: ['stay', 'dive', 'rush'], save: false });
+  assert.equal(new Coach({ name: 'bare', save: false }).pick([1, 2], 'x'), 'x', 'a coach no kit has shaped yet passes the rules through');
+  for (let i = 0; i < 200; i++) { const s = spot(); c.pick(s, rules(s)); }
+  for (let i = 0; i < 4; i++) c.avoid([rnd(.75, 1), rnd(.6, 1), 1], 'dive');
+  let n = 0, rush = 0; for (let i = 0; i < 1500; i++) { const s = spot(); if (!(s[0] > .78 && s[1] > .63 && s[2] === 1)) continue; n++; if (c.pick(s, ['dive', 'rush', 'stay']) === 'rush') rush++; }
+  assert.ok(rush / n > .95 && c.recalled && c.recalled.not && c.recalled.action === 'dive', `"not this" goes to the rules' next best: ${rush}/${n} ${JSON.stringify(c.recalled)}`);
+  assert.equal(c.pick([.9, .9, 1], ['dive', 'stay']), 'stay', 'and never to a move that is not in the list');
+  assert.ok(c.lean([.9, .9, 1])[1] < -3 && c.lean([.1, .1, 0]) === null && c.heed === 2 && c.corrections.length === 4, 'lean, heed and corrections say what it holds');
+  const mem = new Map(), api = { brains: { load: k => mem.get(k) ?? null, save: (k, t) => (mem.set(k, t), true) } };
+  const a = new Coach(api, { name: 'kept', inputs: 3, actions: ['stay', 'dive', 'rush'] }); a.pick([.9, .1, 1], 'stay'); a.correct('rush'); a.correct([.8, .2, 1], 'rush');
+  const b = new Coach(api, { name: 'kept' }); assert.equal(b.pick([.85, .15, 1], 'stay'), 'stay', 'unshaped: the rules'); b.shape(3, ['stay', 'dive', 'rush']);
+  assert.ok(b.corrections.length === 2 && b.pick([.85, .15, 1], 'stay') === 'rush' && mem.get('kept').length < 120, 'saved with the game\'s brains and read back once a kit shapes it');
+  b.uncorrect('nonsense'); assert.equal(b.corrections.length, 2); b.uncorrect(); assert.equal(new Coach(api, { name: 'kept', inputs: 3, actions: ['stay', 'dive', 'rush'] }).corrections.length, 0, 'uncorrect() forgets');
+
+  // a team: out wide near the goal its rules shoot; told "pass" there three times, it passes from out wide and still shoots from the middle
+  const P = new Pitch({ w: 300, h: 500 }), mk = coach => { const t = new Team(P, 0, { formation: '2-2', rnd: () => .5, coach }); t.players[1].x = 150; t.players[1].y = 95; t.players[2].x = 60; t.players[2].y = 300; t.players[3].x = 240; t.players[3].y = 300; return t; };
+  const foes = [{ x: 150, y: 6 }, { x: 150, y: 260 }], doAt = (t, x, y) => { const p = t.players[0]; p.x = x; p.y = y; return t.think({ ball: { x, y, vx: 0, vy: 0, owner: p }, foes }, 1).get(p); };
+  const plain = mk(null), team = mk(true);
+  for (let i = 0; i < 150; i++) { const x = rnd(20, 280), y = rnd(30, 470), u = doAt(plain, x, y), v = doAt(team, x, y); assert.ok(u.do === v.do && u.x === v.x && u.y === v.y, `a coached team with nothing taught plays as before: ${u.do} ${v.do}`); }
+  for (const [x, y] of [[40, 70], [55, 95], [45, 85]]) { assert.equal(doAt(plain, x, y).do, 'shoot', 'its rules shoot from out wide'); doAt(team, x, y); team.coach.correct('pass'); }
+  let wide = 0, mid = 0, far = 0; for (let i = 0; i < 40; i++) { if (doAt(team, rnd(30, 60), rnd(65, 110)).do === 'pass') wide++; if (doAt(team, rnd(130, 170), rnd(100, 125)).do === 'shoot') mid++; const x = rnd(20, 280), y = rnd(250, 470); if (doAt(team, x, y).do === doAt(plain, x, y).do) far++; }
+  assert.ok(wide >= 36 && mid >= 36 && far >= 36 && team.coach.recalled === null, `a team told "pass" out wide passes there, and plays its own game elsewhere: ${wide} ${mid} ${far}`);
+  team.coach.uncorrect(); for (const [x, y] of [[150, 110], [140, 120], [160, 105]]) { doAt(team, x, y); team.coach.avoid('shoot'); }
+  assert.ok(doAt(team, 150, 112).do !== 'shoot' && doAt(team, 150, 30).do === 'shoot', '"not a shot from there" and he passes or runs on; close in he still shoots');
+
+  // a squad: the man at the back who can't see the target is told to go round; then he does, in spots like it
+  const sees = (m, t) => Math.abs(m.x - t.x) < 6, men = () => [{ x: 2, y: 8 }, { x: 4, y: 9 }, { x: 14, y: 16 }], tgt = { x: 3, y: 0 };
+  const run = (sq, ms, far) => { ms[2].x = far.x; ms[2].y = far.y; sq.nextThink = 0; sq.lastFlank = sq.t; sq.update(.01, tgt); return ms[2].order.role; };
+  const m0 = men(), m1 = men(), s0 = new Squad(m0, { sees, think: .1, rng: () => .5, cover: false }), s1 = new Squad(m1, { sees, think: .1, rng: () => .5, cover: false, coach: true });
+  for (let i = 0; i < 60; i++) { const f = { x: rnd(0, 20), y: rnd(4, 20) }; run(s0, m0, f); run(s1, m1, f); assert.deepEqual(m1.map(m => m.order.role), m0.map(m => m.order.role), 'a coached squad with nothing taught gives the orders it always did'); }
+  for (const f of [{ x: 14, y: 16 }, { x: 15, y: 15 }, { x: 13, y: 17 }]) { assert.equal(run(s0, m0, f), 'advance', 'its rules send him forward'); run(s1, m1, f); s1.correct(m1[2], 'flank'); }
+  assert.ok(run(s1, m1, { x: 14.5, y: 16.5 }) === 'flank' && s1.recalled(m1[2]).action === 'flank' && m1[0].order.role !== 'flank', `told to go round, he does (${m1[2].order.role}), and the others are as they were`);
+  s1.coach.uncorrect(); for (const f of [{ x: 14, y: 16 }, { x: 15, y: 15 }, { x: 13, y: 17 }]) { run(s1, m1, f); s1.avoid(m1[2], 'advance'); }
+  assert.ok(run(s1, m1, { x: 14.2, y: 16.2 }) !== 'advance' && s1.recalled(m1[2]).not && run(s1, m1, { x: 3, y: 9 }) === run(s0, m0, { x: 3, y: 9 }), `"not what he was told, there" and he is given the next role (${m1[2].order.role})`);
+  // "not that cover"
+  const lv = ['..........', '..#....#..', '..........', '..........', '..........'], cm = new CoverMap(10, 5, (cc, r) => lv[r]?.[cc] === '#');
+  const from = { x: 2.5, y: 3.5 }, threat = { x: 2.5, y: -6 }, first = cm.find(from, threat, { band: [0, 99] });
+  cm.avoid(first); const second = cm.find(from, threat, { band: [0, 99] }); cm.forgive();
+  assert.ok(first && second && second !== first && cm.find(from, threat, { band: [0, 99] }) === first, 'cover.avoid(spot): the next man takes other cover; forgive() takes it back');
+
+  // a pet's wants: it sleeps when tired; told to eat when it is tired AND starving, it does, and still sleeps when only tired
+  const s = { food: .5, tired: .5, near: 0 }, want = new Choose({ eat: [() => 1 - s.food, Choose.quad], sleep: () => s.tired, play: () => s.near * .5 }, { stick: 0, coach: true });
+  const wants = (food, tired) => { s.food = food; s.tired = tired; return want.pick(); };
+  for (let i = 0; i < 100; i++) wants(R(), R());
+  for (const [f, t] of [[.1, .9], [.15, .85], [.05, .95]]) { wants(f, t); assert.ok(want.scores.sleep > want.scores.eat, 'its own scores say sleep'); want.coach.correct('eat'); }
+  let eats = 0, sleeps = 0; for (let i = 0; i < 30; i++) { if (wants(rnd(.05, .15), rnd(.85, .95)) === 'eat') eats++; if (wants(rnd(.6, .9), rnd(.7, .95)) === 'sleep') sleeps++; }
+  assert.ok(eats >= 28 && sleeps >= 28, `a coached Choose: ${eats} ${sleeps}`);
+
+  // a tree: "not Chase when weak" and it walks instead; told "Flee when cornered", the Told branch takes it
+  const me = { hp: 10, sees: true, cornered: 0, log: [] };
+  const tree = new Tree(`root { selector {
+      sequence { condition [Told, "Flee"] action [Flee] }
+      sequence { condition [Sees] action [Chase] }
+      action [Walk]
+  } }`, { Sees: () => me.sees, Flee: () => { me.log.push('flee'); return Tree.ok; }, Chase: () => { me.log.push('chase'); return Tree.ok; }, Walk: () => { me.log.push('walk'); return Tree.ok; } },
+  { coach: true, see: () => [me.hp / 10, me.cornered] });
+  const does = (hp, cornered) => { me.hp = hp; me.cornered = cornered; me.log.length = 0; tree.update(.1); return me.log[me.log.length - 1]; };
+  for (let i = 0; i < 100; i++) assert.equal(does(rnd(0, 10), R() < .3 ? 1 : 0), 'chase', 'a coached tree with nothing taught runs as written');
+  for (const hp of [1, 2, 1.5]) { does(hp, 0); tree.avoid('Chase'); }
+  assert.ok(does(1.2, 0) === 'walk' && tree.told.not && does(8, 0) === 'chase', 'an action told "not here" fails there, and the tree goes on to its next branch');
+  for (const hp of [6, 7, 8]) { me.hp = hp; me.cornered = 1; tree.correct('Flee'); }
+  assert.ok(does(7.5, 1) === 'flee' && does(7.5, 0) === 'chase', `Told is true in moments like the ones it was told about: ${me.log}`);
+  console.log(`brains 7: a coach for rules: one example ${(one.inside * 100).toFixed(0)}% in the lesson's spots and ${(one.outside * 100).toFixed(0)}% unchanged elsewhere, four ${(four.inside * 100).toFixed(0)}% and ${(four.outside * 100).toFixed(0)}%; "not this", saved; a team, a squad, cover, a Choose and a tree take it ok`);
+}
+
 // ---- round 6 game kits
 {
   const { Board } = await import('../src/kit/board.js');
@@ -970,6 +1057,102 @@ console.log('physics ok');
   assert.equal(levelFor(xpFor(5)), 5); const f2 = new Fighter({ hp: 10 }); assert.equal(gainXp(f2, xpFor(3)), 2); assert.equal(f2.maxHp, 16);
   assert.equal(loot([{ id: 'a', w: 1 }, { id: 'b', w: 3 }], () => .9).id, 'b');
   console.log('battle: turn order, types, a whole fight, bag, levels, loot ok');
+}
+// a ready-made opponent for battles: it plays turns ahead in a copy of the fight, against the player it has learned
+{
+  const { Fighter, Battle, Bag, Opponent } = await import('../src/kit/battle.js');
+  const { Dial } = await import('../src/kit/brains.js');
+  let seed = 11; const R = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const TYPES = { fire: { leaf: 2, water: .5 }, leaf: { water: 2, fire: .5 }, water: { fire: 2, leaf: .5 } };
+  const strike = { name: 'strike', power: 10, type: 'none' }, jet = { name: 'jet', power: 10, type: 'water' }, spore = { name: 'spore', power: 0, status: ['poison', 4] }, big = { name: 'big', power: 17, type: 'none', miss: .2 };
+  const two = (a = {}, b = {}) => [new Fighter({ name: 'Pip', hp: 30, atk: 8, def: 4, spd: 6, type: 'fire', ...a }), new Fighter({ name: 'Goo', hp: 30, atk: 8, def: 4, spd: 5, type: 'water', ...b })];
+  const state = f => JSON.stringify(f.fighters.map(x => [x.hp, [...x.statuses], x.buffs])) + f.log.length + f.round + f.queue.map(x => x.name);
+  // it uses the fight's own sums: the move its type is strong with, a finishing blow before a slow poison, no poison twice
+  {
+    const [hero, goo] = two(), fight = new Battle([[hero], [goo]], { types: TYPES, rng: R }), foe = new Opponent({ skill: 1, rng: R, name: 't1' }).join(fight);
+    const bag = new Bag({ potion: { name: 'potion', heal: 14 } }); bag.add('potion', 2);
+    foe.pick(goo, { strike, jet, spore }, { items: bag.list });
+    assert.ok(foe.options.length > 2 && !foe.options.some(o => o.name === 'potion'), 'no potion offered at full health');
+    fight.act(hero, { move: strike, target: goo });
+    const before = state(fight), c = foe.pick(goo, { strike, jet, spore }, { items: bag.list });
+    assert.equal(state(fight), before, 'thinking leaves the real fight as it was'); assert.equal(bag.count('potion'), 2, 'and the real bag');
+    assert.equal(c.name, 'jet', 'water on fire: the move its type is strong with (' + foe.options.map(o => o.name + ' ' + o.worth.toFixed(2)).join(', ') + ')');
+    assert.equal(c.target, hero); assert.ok(c.worth > 0, 'better than waiting'); assert.equal(foe.options[foe.options.length - 1].worth <= 0, true);
+    assert.ok(foe.options.some(o => o.wait && o.worth === 0), 'waiting is weighed too, at 0');
+    assert.equal(fight.act(goo, c).some(e => e.type === 'hit'), true, 'the choice goes straight to act()');
+    hero.hp = 3; fight.act(hero, { wait: true });
+    assert.equal(foe.pick(goo, { spore, strike }).name, 'strike', 'a finishing blow, not a slow poison');
+    hero.hp = 30; fight.inflict(hero, 'poison', 4);
+    foe.pick(goo, { spore, strike });
+    assert.ok(!foe.options.some(o => o.name === 'spore'), 'no poison on the poisoned');
+    assert.deepEqual(new Opponent({ name: 't1b' }).pick(), { wait: true, name: 'wait', worth: 0 }, 'no fight joined: it waits');
+  }
+  // a potion when the next hit would put it down, kept while it is in no danger
+  {
+    const [hero, goo] = two(), fight = new Battle([[hero], [goo]], { types: TYPES, rng: R }), foe = new Opponent({ skill: 1, rng: R, name: 't2' }).join(fight);
+    const bag = new Bag({ potion: { name: 'potion', heal: 14 } }); bag.add('potion', 1);
+    fight.act(hero, { move: strike, target: goo });
+    assert.notEqual(foe.pick(goo, { strike }, { items: bag.list }).name, 'potion', 'barely hurt: the potion is kept');
+    fight.act(goo, { move: strike, target: hero }); goo.hp = 5; fight.act(hero, { move: strike, target: goo }); goo.hp = 5; hero.hp = 30;
+    const c = foe.pick(goo, { strike }, { items: bag.list });
+    assert.equal(c.name, 'potion', 'about to fall: it drinks'); assert.equal(c.target, goo);
+    fight.act(goo, c); assert.equal(bag.count('potion'), 0); assert.ok(goo.hp > 5);
+  }
+  // it knows only what it has seen, and learns what this player does: here one who drinks a potion when under a third
+  {
+    const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+    const foe = new Opponent(api, { skill: 1, rng: R, name: 'slime' });
+    assert.ok(foe.expect(.2)[2] < .1 && foe.expect(.2)[0] > .7, 'a player it has never met: it expects a plain hit');
+    const play = (ai, n, healsAt = 1 / 3) => {
+      let wins = 0;
+      for (let g = 0; g < n; g++) {
+        const [hero, goo] = two({ type: 'leaf' }, { type: 'leaf' }), pSide = g % 2, fight = new Battle(pSide ? [[goo], [hero]] : [[hero], [goo]], { types: TYPES, rng: R });
+        const bags = [0, 1].map(() => { const b = new Bag({ potion: { name: 'potion', heal: 14 } }); b.add('potion', 2); return b; });
+        ai.side = 1 - pSide; ai.join(fight);
+        for (let k = 0; k < 200 && fight.over == null; k++) {
+          const f = fight.turn, potion = bags[0].list[0];
+          if (f === hero) fight.act(f, f.hp / f.maxHp < healsAt && potion ? { item: potion, target: f } : { move: f.hp > 20 ? strike : big, target: goo });
+          else fight.act(f, ai.pick(f, { strike, big }, { items: bags[1].list }));
+        }
+        if (fight.over === pSide) wins++; ai.result(fight.over === pSide);
+      }
+      return wins / n;
+    };
+    const first = play(foe, 150);
+    assert.ok(foe.expect(.2)[2] > .4, 'hurt badly, this player heals (while their two potions last): ' + foe.expect(.2)[2].toFixed(2)); assert.ok(foe.expect(.9)[2] < .1, 'and not when well: ' + foe.expect(.9)[2].toFixed(2));
+    assert.ok(foe.expect(.5)[1] > .5, 'under two thirds they bring out the big move: ' + foe.expect(.5)[1].toFixed(2));
+    assert.ok(kept.has('slime') && kept.has('slime-aim'), 'kept with the game\'s brains');
+    const again = new Opponent(api, { skill: 1, rng: R, name: 'slime' });
+    assert.ok(again.expect(.2)[2] > .4, 'a new session still knows them');
+    assert.ok(new Opponent(api, { skill: 1, name: 'other' }).expect(.2)[2] < .1, 'another name knows nothing');
+    const blind = play(new Opponent({ skill: 1, learn: false, rng: R, name: 't3b' }), 300), learned = play(again, 300), easy = play(new Opponent({ skill: 0, rng: R, name: 't3c' }), 300);
+    assert.ok(learned < blind - .08, 'the one that has learned the player wins more: the player wins ' + Math.round(learned * 100) + ' in 100 against it, ' + Math.round(blind * 100) + ' against one that never learns');
+    assert.ok(easy > learned + .2, 'and skill 0 is far easier: ' + Math.round(easy * 100) + ' in 100');
+    assert.ok(again.forget().expect(.2)[2] < .1, 'forgotten');
+    // a dial as its skill hears how each fight ended
+    const dial = new Dial({ name: 't3d', save: false }), k0 = dial.skill, withDial = new Opponent({ skill: dial, rng: R, name: 't3e' });
+    for (let i = 0; i < 6; i++) withDial.result(true);
+    assert.ok(dial.skill > k0, 'the player keeps winning: the dial goes up');
+    console.log('battle opponent: the strong type, the finishing blow, no poison twice, a potion only when it must; it learns a player who heals when low (they win ' + Math.round(blind * 100) + ' in 100 against one that never learns, ' + Math.round(learned * 100) + ' against one that has, ' + Math.round(easy * 100) + ' at skill 0; ' + Math.round(first * 100) + ' while it was learning), saved, a dial ok');
+  }
+  // two a side: it plays for both of its fighters, and learns who the player goes for
+  {
+    const mk = () => [new Fighter({ name: 'A', hp: 30, atk: 8, def: 4, spd: 6, type: 'fire', moves: { strike, big } }), new Fighter({ name: 'B', hp: 30, atk: 8, def: 4, spd: 5, type: 'water', moves: { strike, jet } })];
+    const foe = new Opponent({ skill: 1, rng: R, name: 't4' }), vine = { name: 'vine', power: 10, type: 'leaf' }; let wins = 0, worst = 0;
+    for (let g = 0; g < 60; g++) {
+      const mine = mk(), theirs = mk(), fight = new Battle([mine, theirs], { types: TYPES, rng: R }); foe.side = 1; foe.join(fight);
+      for (let k = 0; k < 200 && fight.over == null; k++) {
+        const f = fight.turn;
+        if (fight.sideOf(f) === 0) fight.act(f, { move: vine, target: fight.foes(f).reduce((a, b) => (b.hp < a.hp ? b : a)) });   // this player always goes for the weakest, though the other is the one their move is strong against
+        else { const t = performance.now(), c = foe.pick(f); worst = Math.max(worst, performance.now() - t); assert.ok(c.wait || fight.foes(f).includes(c.target) || fight.friends(f).includes(c.target), 'a target still standing'); fight.act(f, c); }
+      }
+      if (fight.over === 0) wins++;
+    }
+    assert.equal(foe.aims.guess(), 'weak', 'it has seen who this player goes for');
+    assert.ok(wins < 20, 'against a player with one move it wins most fights: the player won ' + wins + ' of 60');
+    assert.ok(foe.tried <= 2100, 'it stops trying turns at its limit: ' + foe.tried);
+    console.log('battle opponent: two a side, the player won ' + wins + ' of 60, it knows they go for the weakest; the slowest pick ' + worst.toFixed(1) + ' ms ok');
+  }
 }
 {
   const { cost, afford, short, Earner } = await import('../src/kit/idle.js');
@@ -1651,6 +1834,46 @@ console.log('physics ok');
   assert.equal(d.guess(ladder, { among: ['ladder', 'sword', 'door'] })[0].name, 'ladder', 'a ladder among three');
   assert.deepEqual(d.guess(ring, { among: ['spaceship'] }), [], 'unknown names are left out');
   console.log('doodle: 200 things, picture, guesses, among ok (top for a ring: ' + g[0].name + ')');
+
+  // it learns this player's own drawing: a ring taught as the model's fourth guess for it counts as that from then on
+  {
+    const { features, scores } = await import('../src/kit/doodle.js');
+    const f = features(picture(ring), d.M);
+    assert.equal(f.length, 256, 'features: the last hidden layer');
+    assert.deepEqual(Array.from(scores(picture(ring), d.M)), Array.from(scores(null, d.M, f)), 'scores from a picture or from its features');
+    const again = (rx, ry, wob, ph) => [Array.from({ length: 41 }, (_, i) => { const a = ph + i / 40 * Math.PI * 2, r = 1 + wob * Math.sin(a * 5 + ph); return { x: 300 + rx * r * Math.cos(a), y: 200 + ry * r * Math.sin(a) }; })];
+    const fourth = g[3].name, top = g[0].name, triTop = d.guess(tri)[0], ladTop = d.guess(ladder)[0];
+    assert.deepEqual(d.learned, {}, 'nothing learned to start with');
+    assert.equal(d.learn(ring, 'spaceship'), false, 'a thing the model does not know is not learned');
+    assert.equal(d.learn(ring, g[40].name), false, 'a ring is not learned as a thing it looks nothing like (' + g[40].name + ')');
+    assert.equal(d.learn(ladder, top), false, 'nor a ladder as a ' + top);
+    assert.deepEqual(d.learned, {}); assert.equal(d.guess(ring)[0].name, top, 'refused lessons change nothing');
+    assert.ok(!d.guess(ring).some(x => x.yours), 'no guess is marked yours before a lesson');
+    assert.equal(d.learn(ring, fourth), true, 'a ring taught as its fourth guess (' + fourth + ')');
+    assert.deepEqual(d.learned, { [fourth]: 1 });
+    let after = d.guess(ring);
+    assert.equal(after[0].name, fourth, 'the same drawing is now that'); assert.equal(after[0].yours, true, 'and marked yours');
+    assert.ok(Math.abs(after.reduce((a, b) => a + b.sure, 0) - 1) < 1e-5, 'sures still add up to 1');
+    assert.equal(after.filter(x => x.yours).length, 1, 'only the learned thing is marked');
+    for (const [rx, ry, w, ph] of [[60, 57, .01, 1], [50, 46, .03, .5], [60, 50, .04, 3]]) { const r = d.guess(again(rx, ry, w, ph))[0]; assert.ok(r.name === fourth && r.yours, 'drawn again a little differently (' + [rx, ry, w] + '), still ' + fourth + ': ' + r.name); }
+    assert.deepEqual(d.guess(tri)[0], triTop, 'a triangle is guessed exactly as before'); assert.deepEqual(d.guess(ladder)[0], ladTop, 'and a ladder');
+    assert.equal(d.guess(ring, { among: [top, 'square'] })[0].name, top, 'among things it was not taught, nothing changes');
+    assert.equal(d.guess(ring, { among: [top, fourth] })[0].name, fourth, 'among the two, the lesson wins');
+    for (let i = 0; i < 4; i++) d.learn(again(60, 58 - i, .01, i), fourth);
+    assert.deepEqual(d.learned, { [fourth]: 3 }, 'the newest three of a thing are kept');
+    assert.equal(d.forget(fourth), d); assert.deepEqual(d.learned, {}); assert.deepEqual(d.guess(ring)[0], g[0], 'forgotten: as it was');
+    // kept on the phone with the game's brains, by name; a doodle made with no api keeps nothing
+    const kept = new Map(), api = { brains: { load: n => kept.get(n) ?? null, save: (n, t) => { kept.set(n, t); } } };
+    const d1 = new Doodle(api); d1.learn(ring, fourth); d1.learn(tri, 'tent');
+    assert.ok(kept.has('doodle') && kept.get('doodle').length < 400, 'saved small: ' + (kept.get('doodle') || '').length + ' characters');
+    const d2 = new Doodle(api);
+    assert.deepEqual(d2.learned, { [fourth]: 1, tent: 1 }, 'a new session remembers'); assert.equal(d2.guess(ring)[0].name, fourth); assert.equal(d2.guess(tri)[0].name, 'tent');
+    assert.equal(d2.guess(ladder)[0].name, 'ladder', 'what it was not taught is untouched');
+    assert.deepEqual(new Doodle(api, { name: 'other' }).learned, {}, 'another name is another store');
+    const d3 = new Doodle(api, { save: false }); d3.learn(ladder, 'ladder'); assert.deepEqual(new Doodle(api).learned, { [fourth]: 1, tent: 1 }, 'save: false keeps a lesson to the session');
+    assert.deepEqual(new Doodle().learned, {}, 'no api: nothing carried over'); assert.deepEqual(new Doodle({ name: 'x' }).learned, {}, 'options alone are options');
+    console.log('doodle learns: a ring taught as a ' + fourth + ' is one from then on (redrawn too), a triangle and a ladder unchanged, look-nothing-alike refused, newest three kept, forgotten, saved in ' + kept.get('doodle').length + ' characters ok');
+  }
 
   const { Voice } = await import('../src/kit/hear.js');
   const v = new Voice({ words: ['jump', 'fire', 'turn left'], also: { fire: ['shoot'] } });
@@ -5026,7 +5249,7 @@ console.log('physics ok');
   const { Structure } = await import('../src/kit/structure.js'), { building, buildingPieces, BUILDING_STYLES } = await import('../src/kit/models/buildings.js');
   const M = () => new THREE.MeshBasicMaterial(), materials = { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() };
   const house = (o = {}, b = {}) => new Structure(new THREE.Group(), { building: { style: 'brick', w: 8, d: 6, floors: 2, seed: 3, materials, ...b }, ...o });
-  const play = (h, secs, w = h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
+  const play = (h, secs, w = h.world === h.mine ? null : h.world) => { const ev = { broke: 0, fell: 0, landed: 0 }; for (let i = 0; i < secs * 60; i++) { w?.step(1 / 60); h.update(1 / 60); for (const b of h.broke) { ev[b.how]++; assert.ok([b.x, b.y, b.z, b.size, b.mass, b.speed].every(Number.isFinite), 'an event has numbers'); } } return ev; };
   const up = (h, test) => { let n = 0; for (let i = 0; i < h.S.n; i++) if (h.state[i] <= 1 && test(h.S.C[i])) n++; return n; };
   // the building cut into pieces: every point is in exactly one piece, it fills the same space as the whole one, and whole it holds itself up
   for (const style of Object.keys(BUILDING_STYLES)) for (const [w, d, floors] of [[8, 6, 2], [13, 9, 3], [5, 5, 1]]) {
@@ -5067,7 +5290,8 @@ console.log('physics ok');
   // a big bomb flattens it: nothing left but rubble, within what is kept
   {
     const h = house({ bits: 120 }); h.blast({ x: 0, y: 1.5, z: 0 }, 6.5, { power: 7, push: 12 }); const ev = play(h, 7);
-    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length === 0, 'flat: ' + h.standing + ' ' + JSON.stringify(ev));
+    assert.ok(h.standing === 0 && h.left === 1 && ev.broke > 100 && !h.busy && h.loose.length <= h.keep, 'flat: ' + h.standing + ' ' + JSON.stringify(ev) + ' ' + h.busy + ' ' + h.loose.length);
+    for (const L of h.loose) assert.ok(L.rest && L.g.position.y > 0 && L.g.position.y < 2.5, 'what did not break up lies on the ground: y ' + L.g.position.y.toFixed(2));
     let lying = 0, low = 9; for (const s of h.bits.sets.values()) for (let i = 0; i < s.n; i++) if (s.st[i]) { assert.equal(s.st[i], 2, 'every bit has stopped'); lying++; low = Math.min(low, s.P[i * 3 + 1]); }
     assert.ok(lying > 150 && low > 0 && low < .2, 'its rubble lies on the ground: ' + lying + ' bits, the lowest at ' + low.toFixed(3));
     h.reset(); assert.ok(h.standing === 1 && h.left === h.pieces && h.meshes.every(m => m.geometry.index.array.every((v, i) => v === i)), 'reset: whole again');
@@ -5097,6 +5321,35 @@ console.log('physics ok');
     const run = () => { const h = house(); h.blast({ x: 4, y: .8, z: 3 }, 2.4); const ev = play(h, 5); return JSON.stringify([ev, h.left, h.standing.toFixed(4)]); };
     assert.equal(run(), run(), 'the same shell, the same ruin');
   }
+  // with no world of the game's it keeps a small one of its own (the same engine): what falls is bodies there too, it is stepped only
+  // while something is moving, a world given later takes its place, and a world freed with no word sends it back to its own
+  {
+    const h = house(), blow = () => h.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6);
+    assert.ok(h.world === h.mine && h.mine instanceof World3D && h.mine.bodies.length === 2 && !h.mine.links, 'a world of its own: the ground and the building, and not one the game\'s kits find');
+    let n = h.mine.steps || 0; play(h, 1); assert.equal(h.mine.steps || 0, n, 'whole, its world is not stepped');
+    blow(); const ev = play(h, 6);
+    assert.ok(ev.fell >= 6 && ev.landed >= 6 && !h.busy && h.loose.length > 0 && h.mine.bodies.length === 2 + h.loose.length, 'pieces fall as bodies and land: ' + JSON.stringify(ev) + ', ' + h.loose.length + ' lie there');
+    for (const L of h.loose) assert.ok(L.rest && L.body.sleeping && L.g.position.y < 3.6 && L.g.position.y > 0, 'a fallen piece lies at rest, not in the air: y ' + L.g.position.y.toFixed(2));
+    n = h.mine.steps; play(h, 1); assert.equal(h.mine.steps, n, 'at rest again, its world is not stepped');
+    const hole = h.ray({ x: .4, y: 1.2, z: 12 }, { x: 0, y: 0, z: -1 }), old = h.mine;
+    assert.ok(!hole || hole.point.z < 2.5, 'its ray goes in through the hole: ' + hole?.point.z.toFixed(2));
+    const w = new World3D({ gravity: -9.81 }); w.floor(0); h.reset({ world: w });
+    assert.ok(h.world === w && h.mine === null && !old.world && w.bodies.length === 2 && h.standing === 1, 'a world given at reset: it stands in that, its own freed');
+    blow(); play(h, .5); assert.ok(h.loose.length > 0 && w.bodies.length === 2 + h.loose.length); w.free(); h.update(1 / 60);
+    assert.ok(h.world === h.mine && h.mine.world && h.loose.length === 0 && h.mine.bodies.length === 2, 'the game frees its world with no word: back in one of its own, what was falling gone');
+    const wall = h.ray({ x: 3.3, y: 1, z: 12 }, { x: 0, y: 0, z: -1 }); assert.ok(wall && wall.kind === 'wall' && Math.abs(wall.point.z - 3) < .25, 'and solid there: ' + wall?.point.z.toFixed(2));
+    const mine = h.mine; h.remove(); assert.ok(!mine.world && h.mine === null, 'removed, its world is freed');
+    // on the game's ground (a slope): its own world has that ground, and what falls lies on it
+    const slope = (x, z) => z * .2, s = house({ ground: slope }); s.blast({ x: .4, y: 1.2, z: 3.3 }, 2.6); const es = play(s, 6);
+    assert.ok(es.landed >= 6 && !s.busy && s.loose.length > 0, 'on a slope: ' + JSON.stringify(es));
+    for (const L of s.loose) { const p = L.g.position, up = p.y - slope(p.x, p.z); assert.ok(up > -.05 && up < 3.6, 'a fallen piece lies on the slope: ' + up.toFixed(2) + ' above it at z ' + p.z.toFixed(1)); }
+    // made while the engine loads, it throws StillLoading before it has put anything in the scene (the app then makes the game again)
+    // (in a Node of its own: here the engine is already in)
+    const { execFileSync } = await import('node:child_process'), code = `const THREE = await import('three'), { Structure } = await import('./src/kit/structure.js'); const g = new THREE.Group(), M = () => new THREE.MeshBasicMaterial();
+      let e = null; try { new Structure(g, { building: { style: 'brick', w: 8, d: 6, floors: 2, materials: { wall: M(), trim: M(), frame: M(), roof: M(), door: M(), glass: M(), lit: M(), floor: M() } } }); } catch (x) { e = x; }
+      console.log(!!e?.kitLoading, g.children.length); process.exit(0);`;
+    assert.equal(execFileSync(process.execPath, ['--input-type=module', '-e', code], { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'true 0', 'still loading: it throws with nothing left in the scene');
+  }
   // the game's own boxes: two posts and a beam in three lengths, and a block the game holds up with two more hung under it.
   // The middle of the beam out, the ends stay; a post out, its end of the beam falls and the rest hangs from the other post
   {
@@ -5108,10 +5361,11 @@ console.log('physics ok');
     const a = mk(); assert.ok(a.pieces === 8 && a.S.loose === 0 && a.S.C[5].anchor && !a.S.C[6].anchor && a.S.C[2].strength < a.S.C[0].strength, 'posts, a beam, and a block the game holds up');
     assert.equal(a.hit([0, 3.2, 0], out), 1); play(a, 2); assert.deepEqual([...a.state], [0, 0, 0, 3, 0, 0, 0, 0], 'the middle of the beam out: its ends stay on their posts');
     assert.equal(a.hit([0, 9, 0], out), 0, 'a fixed block does not break');
-    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 3, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
-    b.hit([0, 8, 0], out); play(b, 3); assert.deepEqual([...b.state].slice(5), [0, 3, 3], 'and what hung from a piece falls when that goes');
+    const b = mk(); b.hit([-2, 1.5, 0], out); play(b, 3); assert.deepEqual([...b.state], [3, 0, 2, 0, 0, 0, 0, 0], 'a post out: its end of the beam falls, the rest hangs on');
+    const plank = b.loose[0]; assert.ok(b.loose.length === 1 && plank.i === 2 && plank.rest && plank.body.sleeping && Math.abs(plank.g.position.y - .25) < .1 && !b.busy, 'and lies on the ground, a body at rest in the building\'s own world: y ' + plank.g.position.y.toFixed(2));
+    b.hit([0, 8, 0], out); play(b, 3); assert.ok(b.state[5] === 0 && b.state[6] === 3 && b.state[7] >= 2, 'and what hung from a piece falls when that goes: ' + [...b.state].slice(5));
   }
-  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics, reset and your own boxes ok');
+  console.log('buildings that come apart: cut into pieces, hits and blasts, what holds what (a wall closes over a small hole; a wide one brings it down), styles, a big bomb, physics (in a world of the game or one of its own), reset and your own boxes ok');
 }
 
 // water you can disturb (src/kit/water.js: gs.outdoors.Water)
@@ -6909,6 +7163,106 @@ console.log('physics ok');
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
 }
 
+// no kit is a physics engine of its own: the simple 2D World, where an arena's ball goes and 3D soft things all ask Rapier
+// (physics2d.js, arena.js predict(), soft.js in 3D; World3D sweep(), around(), outOf())
+{
+  const t0 = performance.now(), THREE = await import('three');
+  const { Physics, Body } = await import('../src/kit/physics.js'), { World } = await import('../src/kit/physics2d.js');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Arena } = await import('../src/kit/arena.js'), { Soft } = await import('../src/kit/soft.js');
+  // the simple 2D world, with the names and numbers it always had
+  {
+    const w = new World({ gravity: 900, walls: [0, 0, 360, 640] });
+    const ball = w.circle(100, 50, 12, { bounce: .6 }), floor = w.box(180, 630, 360, 20, { fixed: true }), crate = w.box(200, 100, 30, 30, { tag: 'crate' }), heavy = w.circle(300, 300, 10, { mass: 7 });
+    assert.ok(w instanceof Physics && ball instanceof Body && crate instanceof Body, 'it is a Physics, and what it makes are its bodies');
+    assert.ok(Math.abs(ball.mass - Math.PI * 144 * .01) < .01 && Math.abs(crate.mass - 9) < .01 && Math.abs(heavy.mass - 7) < .01 && floor.fixed, 'mass by size in game units, or as given: ' + [ball.mass, crate.mass, heavy.mass].map(m => m.toFixed(2)));
+    assert.ok(w.bodies.length === 4 && !w.bodies.includes(w.edge) && ball.kind === 'circle' && Math.abs(ball.bounce - .6) < 1e-6 && crate.tag === 'crate', 'bodies lists them, not the walls');
+    assert.deepEqual(crate.bounds.map(Math.round), [185, 85, 215, 115]); assert.deepEqual(ball.bounds.map(Math.round), [88, 38, 112, 62]);
+    const hits = []; w.onHit((a, b, speed) => hits.push([a, b, speed]));
+    for (let i = 0; i < 240; i++) w.step(1 / 60);
+    assert.ok(Math.abs(crate.y - 605) < 1 && crate.angle === 0 && crate.sleeping, 'a crate rests upright on the floor: ' + crate.y.toFixed(1));
+    assert.ok(Math.abs(ball.y - 608) < 2 && hits.some(h => h[0] === ball && h[1] === floor && h[2] > 300) && hits.every(h => h[2] > 30), 'the ball bounces to rest on it, and the hits are told: ' + ball.y.toFixed(1));
+    const v0 = crate.vx; crate.push(30, 0); assert.ok(Math.abs(crate.vx - v0 - 30) < .01, 'push is a kick: ' + crate.vx);
+    assert.deepEqual(w.near(200, 600, 10), [crate]); assert.equal(w.near(100, 300, 10).length, 0); assert.equal(w.at(100, 608), ball);
+    hits.length = 0; ball.x = 20; ball.vx = -400; for (let i = 0; i < 30; i++) w.step(1 / 60);
+    assert.ok(ball.x > 11.5 && hits.some(h => h[0] === ball && h[1] === null), 'the walls hold it, and a wall hit has b null');
+    // the less bouncy of the two decides: a bouncy ball on a dead floor stays down, on a bouncy one it comes back up
+    const dead = w.box(60, 500, 80, 10, { fixed: true, bounce: 0 }), live = w.box(300, 500, 80, 10, { fixed: true, bounce: .9 }), b1 = w.circle(60, 380, 8, { bounce: .9 }), b2 = w.circle(300, 380, 8, { bounce: .9 });
+    let up1 = 0, up2 = 0; for (let i = 0; i < 90; i++) { w.step(1 / 60); up1 = Math.max(up1, -b1.vy); up2 = Math.max(up2, -b2.vy); }
+    assert.ok(up1 < 40 && up2 > 250, 'bounce is the lesser of the two: ' + up1.toFixed(0) + ' against ' + up2.toFixed(0));
+    // a sensor reports and does not push; a body that floats; fields set later
+    const gate = w.box(180, 300, 60, 60, { fixed: true, sensor: true }), drop = w.circle(180, 240, 6), floaty = w.circle(40, 100, 6, { gravity: 0 }); hits.length = 0; drop.vy = 5;
+    for (let i = 0; i < 40; i++) w.step(1 / 60);
+    assert.ok(gate.sensor && drop.y > 340 && hits.some(h => (h[0] === gate || h[1] === gate) && (h[0] === drop || h[1] === drop)) && Math.abs(floaty.y - 100) < .01, 'a sensor says who came in and lets it through; gravity: 0 floats');
+    gate.sensor = false; b2.bounce = .1; b2.friction = .9; assert.ok(!gate.sensor && Math.abs(b2.bounce - .1) < 1e-6 && Math.abs(b2.friction - .9) < 1e-6, 'bounce, friction and sensor can be set');
+    crate.vy = 0; w.blast(200, 612, 80, 500); assert.ok(crate.vy < -100, 'a blast throws it: ' + crate.vy);
+    w.remove(ball); assert.ok(ball.dead && !w.bodies.includes(ball)); w.clear(); assert.equal(w.bodies.length, 0);
+    const open = new World({ gravity: { x: 0, y: 0 } }); assert.ok(open.edge === null && open.bodies.length === 0, 'no walls unless asked');
+    // and, being a Physics, the rest works in it: a hinge, a ray
+    const arm = open.box(100, 100, 60, 8), pin = open.hinge(arm, null, 70, 100), seen = (open.step(1 / 60), open.ray(100, 0, 100, 200)); assert.ok(pin && seen?.thing === arm, 'a hinge and a ray in the simple world');
+  }
+  // a shape swept through the 3D world: what it would first touch, where, and how far along
+  {
+    const w = new World3D(); w.floor(0); const wall = w.box(null, 1, 4, 10, { fixed: true, at: { x: 5, y: 2, z: 0 } }), crate = w.box(null, 1, 1, 1, { at: { x: 2, y: .5, z: 0 } }), ball = { ball: .5 };
+    let h = w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: -10, z: 0 });
+    assert.ok(h && Math.abs(h.distance - 2.5) < .01 && Math.abs(h.share - .25) < .001 && h.normal.y > .99 && Math.abs(h.at.y - .5) < .01 && Math.abs(h.point.y) < .01, 'a ball dropped at the floor: ' + JSON.stringify(h && [h.distance, h.share, h.at.y]));
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }); assert.ok(h.thing === crate && Math.abs(h.distance - 1) < .01 && h.normal.x < -.99, 'along the ground: the crate first');
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }, { still: true }); assert.ok(h.thing === wall && Math.abs(h.distance - 4) < .01, 'still: true: only what never moves (the wall)');
+    h = w.sweep(ball, { x: 0, y: .6, z: 0 }, { x: 10, y: 0, z: 0 }, { not: crate }); assert.ok(h.thing === wall, 'not: leaves one thing out');
+    assert.equal(w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: 2, z: 0 }), null, 'nothing in the way: null'); assert.equal(w.sweep(ball, { x: 0, y: 3, z: 0 }, { x: 0, y: 0, z: 0 }), null);
+    h = w.sweep({ box: [1, 1, 1] }, { x: -3, y: 4, z: 0 }, { x: 0, y: -10, z: 0 }); assert.ok(Math.abs(h.at.y - .5) < .01, 'a box swept down stops with its underside on the floor: ' + h.at.y.toFixed(3));
+    h = w.sweep(ball, { x: -3, y: .5, z: 0 }, { x: .3, y: -.01, z: 0 }, { still: true }); assert.ok(h && h.share < 1e-3 && h.normal.y > .99, 'already touching: met at once');
+    w.free();
+  }
+  // where an arena's ball will go: the world is asked (its real floor, walls, ramps and goals), so it lands where the ball does
+  {
+    const far = (vel, at, secs = 2) => {
+      const w = new World3D(), a = new Arena(w, { time: 0 }); a.ball.place(at, { x: 0, y: 0, z: 0, w: 1 }); a.ball.setVel(vel.x, vel.y, vel.z);
+      const path = a.predict(secs), first = path.find(q => q.bounce); let sum = 0, land = 0;
+      for (const q of path) { w.step(1 / 60); w.step(1 / 60); const b = a.ball.pos, d = Math.hypot(b.x - q.x, b.y - q.y, b.z - q.z); sum += d; if (q === first) land = d; }
+      w.free(); return { mean: sum / path.length, land, n: path.length, first };
+    };
+    const drop = far({ x: 0, y: 0, z: 0 }, { x: 0, y: 6, z: 0 }), lob = far({ x: 6, y: 8, z: 10 }, { x: 0, y: 2, z: 0 }), ramp = far({ x: 14, y: 0, z: 0 }, { x: 5, y: 1.15, z: 0 }, 2.5), goal = far({ x: 0, y: 2, z: 30 }, { x: 0, y: 2, z: 5 });
+    assert.ok(drop.n === 60 && drop.first && drop.mean < .15 && drop.land < .15, 'a dropped ball: ' + JSON.stringify(drop));
+    assert.ok(lob.first && lob.mean < .3 && lob.land < .3, 'a lob lands where it said, and rolls on as it said: ' + lob.mean.toFixed(2) + ' m off on average, ' + lob.land.toFixed(2) + ' at the bounce');
+    assert.ok(ramp.mean < .5, 'up the curved ramp at the side: ' + ramp.mean.toFixed(2)); assert.ok(goal.mean < 1, 'into the goal and round its back: ' + goal.mean.toFixed(2));
+    // once a frame however many ask; a longer look carries on from a shorter; a new frame or a touch on the ball starts again
+    const w = new World3D(), a = new Arena(w, { time: 0 }); a.ball.place({ x: 0, y: 4, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }); a.ball.setVel(5, 3, 8); w.step(1 / 60);
+    let asked = 0; const sweep = w.sweep; w.sweep = function (...x) { asked++; return sweep.apply(this, x); };
+    const one = a.predict(1), n1 = asked, again = a.predict(1), short = a.predict(.5), n2 = asked, long = a.predict(2), n3 = asked, fresh = new Arena(new World3D(), { time: 0 });
+    assert.ok(one.length === 30 && again === one && n2 === n1 && short.length === 15 && short[14] === one[14], 'asked again in the same frame: the same path, nothing worked out: ' + [one.length, again === one, n1, n2, short.length, short[14] === one[14]]);
+    assert.ok(long.length === 60 && long[29] === one[29] && one.length === 30 && n3 - n2 >= 30 && n3 - n2 < 30 + n1, 'a longer look carries on from the shorter one (which stays as it was)');
+    assert.ok(a.danger(2) === -1 && a.predict(2) === long && asked === n3, 'danger() reads the same path');
+    a.ball.setVel(0, 0, 0); const still = a.predict(1); assert.ok(still !== long && Math.abs(still[5].x - a.ball.pos.x) < .01, 'the ball is touched: worked out again');
+    w.step(1 / 60); assert.ok(a.predict(1) !== still, 'and each frame');
+    fresh.world.free(); w.free();
+  }
+  // 3D soft things are kept out of the 3D world's bodies: a rope over a crate, a sheet over a ball, a rope on ground that is only a surface
+  {
+    const w = new World3D(); w.floor(0); w.box(null, 1, 1, 1, { at: { x: 0, y: .5, z: 0 }, fixed: true }); const ball = w.ball(null, .3, { at: { x: 3, y: .3, z: 0 }, fixed: true }), cup = w.ball(null, .2, { at: { x: -3, y: .2, z: 3 }, sensor: true, fixed: true });
+    const soft = new Soft({ dims: 3, world: w }), rope = soft.rope({ x: -2, y: 2, z: 0 }, { x: 2, y: 2, z: 0 }, 24, { pinA: false }), sheet = soft.cloth(2.5, 1.5, 1, 1, 8, 8, { pin: 'none', plane: 'xz', z: -.5 });
+    assert.ok(Math.abs(rope.points[0].r - .04) < 1e-9, 'a 3D point is centimetres thick, not the 2D world\'s two units');
+    for (let i = 0; i < 240; i++) { w.step(1 / 60); soft.update(1 / 60); }
+    const ys = rope.points.map(p => p.y), top = Math.max(...ys);
+    assert.ok(rope.points.every(p => p.y > .03 && !(Math.abs(p.x) < .49 && p.y < .99 && Math.abs(p.z) < .49)) && top > 1 && top < 1.1 && Math.min(...ys) < .06, 'a rope lies over the crate and down to the floor each side: top ' + top.toFixed(2));
+    assert.ok(sheet.points.every(p => p.y > .03 && Math.hypot(p.x - 3, p.y - .3, p.z) > .3) && Math.max(...sheet.points.map(p => p.y)) > .55, 'a sheet lies over the ball, not in it');
+    const near = w.around({ x: -4, y: 0, z: 2 }, { x: -2, y: 1, z: 4 }); assert.ok(near.every(s => s.thing !== cup) && near.length === 1 && near[0].reach === Infinity, 'around(): the shapes in a box (not sensors): here only the floor');
+    const by = w.around({ x: 2.5, y: 0, z: -.5 }, { x: 3.5, y: 1, z: .5 }).filter(s => s.thing === ball), o = w.outOf({ x: 3, y: .5, z: 0 }, .05, by);
+    assert.ok(by.length === 1 && Math.abs(by[0].reach - .3) < 1e-6 && o && Math.abs(o.y - .65) < .001 && o.ny > .99 && Math.abs(o.depth - .15) < .001 && o.thing === ball, 'outOf(): a point inside a ball is put on its skin: ' + JSON.stringify(o && [o.y, o.depth]));
+    assert.equal(w.outOf({ x: 3, y: 1.5, z: 0 }, .05, by), null, 'and one clear of it is left alone');
+    const light = w.ball(null, .3, { at: { x: 6, y: .3, z: 0 } }), s2 = new Soft({ dims: 3, world: w, weight: .0005 }); s2.cloth(5.4, .9, 1.2, 1.2, 6, 6, { pin: 'none', plane: 'xz', z: -.6 });
+    for (let i = 0; i < 120; i++) { w.step(1 / 60); s2.update(1 / 60); }
+    assert.ok(light.speed < 2 && Math.abs(light.pos.x - 6) < 1 && light.pos.y > .25, 'a sheet that lands on a loose ball presses on it and does not fling it: ' + light.speed.toFixed(2));
+    w.free();
+    const w2 = new World3D(), g = new THREE.Mesh(new THREE.PlaneGeometry(20, 20, 8, 8).rotateX(-Math.PI / 2)); g.position.y = 1; g.updateMatrixWorld(); w2.ground(g);
+    const s3 = new Soft({ dims: 3, world: w2 }), r3 = s3.rope({ x: -1, y: 3, z: 0 }, { x: 1, y: 3, z: 0 }, 10, { pinA: false });
+    for (let i = 0; i < 180; i++) { w2.step(1 / 60); s3.update(1 / 60); }
+    assert.ok(r3.points.every(p => p.y > 1.02 && p.y < 1.08), 'a rope dropped on a ground mesh (a surface with no inside) stays on top of it: ' + r3.points.map(p => p.y.toFixed(2)).join(' '));
+    w2.free(); s3.update(1 / 60); assert.ok(r3.points.every(p => Number.isFinite(p.y)), 'a world the game freed: the soft thing carries on without it');
+  }
+  console.log('no kit is its own physics engine: the simple 2D world, a swept shape, the arena ball\'s path and 3D soft things ask Rapier ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // finer sun shadows (sunmask.js): capsules for far people and their shadows, the grid they go in, the map of heights' tiles
 {
   const { binCapsules, figureCapsule, capsuleShade, HeightTiles, CAPS, GRID, PER } = await import('../src/kit/sunmask.js');
@@ -7050,7 +7404,9 @@ console.log('physics ok');
     heard = []; house.hit({ x: -4, y: 1.5, z: 0 }, { radius: 1, power: 50 }); next.step(1 / 60); house.update(1 / 60); const broke = house.broke.filter(b => b.how === 'broke').length; foley.update(1 / 60);
     assert.ok(broke > 0 && heard.length === broke, `what breaks is heard: ${broke} pieces, ${heard.length} sounds`);
     next.free?.(); const third = new World3D(); house.reset(); assert.equal(house.world, third, 'and reset() finds the round\'s new world');
-    assert.equal(new Structure(null, { building: { style: 'brick', w: 5, d: 5, floors: 1, materials }, world: false }).world, null, 'world: false: none');
+    const alone = new Structure(null, { building: { style: 'brick', w: 5, d: 5, floors: 1, materials }, world: false });
+    assert.ok(alone.world === alone.mine && alone.world !== third && !third.bodies.includes(alone.body), 'world: false: not in the game\'s world, but a small one of its own');
+    alone.reset(); assert.ok(alone.world === alone.mine, 'and reset() keeps it out');
     // the ears: the physics world is what stands in the way of sound
     const e2 = new Ears(); assert.ok(e2.level === third && e2.cast, 'ears with no level take the game\'s physics world'); assert.ok(new Ears({ level: false }).level === null && new Ears({ link: false }).level === null, 'level: false and link: false: nothing stands in the way');
   });
@@ -7111,10 +7467,11 @@ console.log('physics ok');
       const bits = ownedBy(null, () => shatter(pane, { pieces: 4, seed: 2 })); assert.ok(bits.length >= 2 && bits.every(b => b.body), 'a thing shattered during play (outside make() and reset()): its pieces are bodies in the game\'s world');
       const loose = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .1), new THREE.MeshBasicMaterial()); v.scene.add(loose); assert.ok(ownedBy(null, () => shatter(loose, { pieces: 4, seed: 2, world: false })).every(b => !b.body), 'world: false: pieces that are only meshes');
       assert.equal(new Regions(v).world, w, 'regions free their bodies in the game\'s world');
+      assert.ok(new Soft({ dims: 3 }).world === w && new Soft().world === null && new Soft({ dims: 3, world: false }).world === null, 'a 3D soft thing is kept out of the game\'s 3D physics world (a 2D one is not: that is the 2D world\'s)');
     });
     together(() => {
       const p = new Physics({ gravity: 900 }), soft = new Soft(), drops = new Liquid(), cloth3 = new Soft({ dims: 3 }), car = new Car(), free = new Car({ world: false });
-      assert.ok(soft.world === p && drops.world === p && cloth3.world === null && car.world === p && !free.world, 'soft things, liquid and a 2D car find the game\'s 2D physics world (3D soft things do not)');
+      assert.ok(soft.world === p && drops.world === p && cloth3.world === null && car.world === p && !free.world, 'soft things, liquid and a 2D car find the game\'s 2D physics world (a 3D soft thing looks for the 3D one)');
       const hero = new Platformer({ x: 50, y: 50 }); p.box(50, 200, 300, 20, { fixed: true }); for (let i = 0; i < 90; i++) { hero.update(1 / 60, undefined, {}); p.step(1 / 60); }
       assert.ok(hero.onGround && hero.y < 200, 'a platformer with no level given walks the game\'s 2D physics world: ' + hero.y.toFixed(1));
     });

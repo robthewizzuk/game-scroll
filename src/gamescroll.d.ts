@@ -699,7 +699,14 @@ export interface IconsPart {
 }
 
 /** Rapier 2D (lazy: make it in make() or reset()). */
-export interface PhysicsPart { Physics: new (o?: { gravity?: number; walls?: number[]; [k: string]: Loose }) => Loose; Body: Loose; World: Loose; loadPhysics(): Promise<Loose>; physicsReady(): boolean }
+export interface PhysicsPart {
+  Physics: new (o?: { gravity?: number; walls?: number[]; [k: string]: Loose }) => Loose;
+  /** What a Physics makes (for instanceof). Fields to read or set: x, y, vx, vy, angle, spin, bounce, friction, sensor, tag; to read: mass, fixed, sleeping, kind, bounds ([left, top, right, bottom]). */
+  Body: Loose;
+  /** The simple world: a Physics (the same engine, every method) with a few names of its own: balls and upright boxes whose mass goes by their size in game units, `bodies`, `near(x, y, r)`, `onHit((a, b, speed) => ...)` with b null for a wall. */
+  World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => Loose;
+  loadPhysics(): Promise<Loose>; physicsReady(): boolean;
+}
 
 /** Face and hand tracking (lazy). Positions are 0..1, mirrored like a selfie. In the phone apps it runs on the phone's AI chip
  *  (backend 'npu'), where the camera picture never reaches the game: pass `preview: true` if the game draws `picture`. */
@@ -1768,15 +1775,25 @@ export interface AiPart { Crowd: new (...a: Loose[]) => Loose; NavGrid: new (...
 
 /** A behaviour tree (mistreevous MDSL text); agent gives each action and condition by name. Actions return Tree.ok, Tree.fail or nothing (still going). */
 export declare class Tree {
-  constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number });
+  constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number; /** Corrections (with see): true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null; /** Numbers about the moment, for the coach's examples (the same count every time). */ see?: (() => ArrayLike<number>) | null });
   static ok: string; static fail: string; static run: string;
   update(dt: number): this; reset(): this; readonly state: 'running' | 'ok' | 'failed'; path(): string[];
+  /** The coach, when it was given one and a see. */
+  readonly coach: Coach | null;
+  /** "In a moment like this, do this": makes the built-in condition [Told, "Name"] true in moments like it, so give the tree a branch for it first: sequence { condition [Told, "Flee"] action [Flee] }. */
+  correct(name: string): this;
+  /** "Not that, in a moment like this": the action named (default: the one it last ran) fails at once in moments like it, and the tree goes on to its next branch. */
+  avoid(name?: string): this;
+  /** After update(): what the coach's examples changed this step, or null. */
+  readonly told: { action: string; not: boolean } | null;
 }
 type Consideration = ((...a: Loose[]) => number) & { curve?: true };
 /** Utility AI: the option whose considerations score highest (0..1, multiplied) wins; stick keeps the current pick a little longer. */
 export declare class Choose {
-  constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: number; seed?: number });
+  constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: number; seed?: number; /** Corrections about what it picks: true, or a gs.brains.Coach to keep them on the phone. Then every consideration is read on each pick. */ coach?: boolean | Coach | null });
   pick(...a: Loose[]): string; scores: Record<string, number>; current: string | null;
+  /** With coach: want.coach.correct('sleep') ("there, it should have wanted sleep"), want.coach.avoid(), want.coach.recalled. Its examples are about what the considerations read. */
+  readonly coach: Coach | null;
   static linear: Consideration; static quad: Consideration; static root: Consideration; static invert: Consideration;
   static logistic(mid?: number, k?: number): Consideration; static step(at?: number): Consideration;
 }
@@ -1927,6 +1944,45 @@ export interface DialOptions {
   profile?: boolean;
 }
 /**
+ * Corrections for anything that decides by rules, with no network to train: a kit's team or squad, a
+ * Choose, a behaviour tree, your own if / else. The rules choose as usual; in spots like the examples
+ * the coach says otherwise, and nowhere else. gs.sports.Team, gs.tactics.Squad, gs.ai.Choose and gs.ai.Tree
+ * take one as `coach` (true makes one for the session) and feed it what they look at themselves.
+ */
+export declare class Coach {
+  constructor(api: GameApi | null, opts?: CoachOptions);
+  constructor(opts?: CoachOptions);
+  name: string;
+  /** What it looks at and what it can say. A kit given a coach does this itself. */
+  shape(inputs: number, actions: string[] | number): this;
+  /** The move to make on inputs `see`: `usual` (the rules' choice; or a list, best first, of the moves that can be made here), unless corrections in spots like this one say otherwise. */
+  pick<T extends number | string>(see: ArrayLike<number>, usual: T | T[]): T;
+  /** "In this spot the right move was this": for the spot it last picked on, or one of your own. A couple that agree make a rule in spots like them; one alone is a lean. */
+  correct(action: number | string): this; correct(see: ArrayLike<number>, action: number | string): this;
+  /** "In this spot, not that": avoid() is about what it last picked (so name the move when teaching the same thing twice). */
+  avoid(action?: number | string): this; avoid(see: ArrayLike<number>, action: number | string): this;
+  /** After pick(): the correction that shaped it, or null. */
+  readonly recalled: { action: number | string; not: boolean; like: number } | null;
+  /** Forgets the corrections given while running (all, or one action's); the maker's own stay. */
+  uncorrect(action?: number | string): this;
+  /** Every correction it holds, as [see, action] ("not this": [see, action, false]). */
+  readonly corrections: ([number[], number | string] | [number[], number | string, false])[];
+  /** How far it trusts its corrections, 0..2. */
+  readonly heed: number;
+  /** What its examples say about a spot, per action: above 0 towards it, below 0 away (null: nothing like it). Past 3 either way outweighs a rule. */
+  lean(see: ArrayLike<number>): Float32Array | null;
+}
+export interface CoachOptions {
+  /** Its name in the game's saved brains (default 'coach'): one per thing coached. */
+  name?: string;
+  /** How many numbers it looks at, and the moves it can say (names, or how many). Left out when a kit is given the coach. */
+  inputs?: number; actions?: string[] | number;
+  /** The maker's own corrections, as [see, action] (or [see, action, false] where a move is wrong). */
+  corrections?: ([number[], number | string] | [number[], number | string, false])[];
+  /** Keep what it is taught on the phone (true); false: this session only. */
+  save?: boolean;
+}
+/**
  * Teach by example: show it a thing a few times under a name, and it says which name a new thing looks
  * like, or that it looks like none. For any list of numbers: a hand's shape (gs.vision Hands), a pose
  * (Body), a move made with the phone (gs.moves), a sound (gs.hear Sounds).
@@ -2010,6 +2066,7 @@ export interface BrainsPart {
   Predict: typeof Predict;
   Player: typeof Player;
   Dial: typeof Dial;
+  Coach: typeof Coach;
   Examples: typeof Examples;
   Nemesis: typeof Nemesis;
   Shadow: typeof Shadow;
@@ -2054,13 +2111,40 @@ export interface Fighter {
   buffs: { stat: string; by: number; turns: number }[]; statuses: Map<string, number>; readonly alive: boolean;
   stat(k: string): number; buff(stat: string, by: number, turns?: number): Fighter; has(status: string): boolean; heal(n: number): number; [more: string]: Loose;
 }
-export interface BattleMove { name?: string; power?: number; type?: string; accuracy?: number; status?: string; chance?: number; turns?: number; heal?: number; all?: boolean; [k: string]: Loose }
+/** A move for Battle.act: power (10; 0 for one that does no damage), type, special (uses mag and res), miss and crit (chances 0..1), hits, heal, status: ['poison', 3] with its chance, buff: ['atk', 1.5, 3] (below 1: on the target). */
+export interface BattleMove { name?: string; power?: number; type?: string; special?: boolean; miss?: number; crit?: number; hits?: number; heal?: number; status?: [string, number?]; chance?: number; buff?: [string, number, number?]; [k: string]: Loose }
+/** A turn for Battle.act, as an Opponent picks it. */
+export interface BattleChoice { move?: BattleMove; item?: Loose; target?: Fighter; wait?: boolean; /** The move's or item's name. */ name?: string; /** How much better than waiting it judged it, in shares of a fighter's health. */ worth?: number }
+/**
+ * A ready-made opponent for a Battle (Tiny Brains). It tries every move on every target in a copy of the fight, a
+ * few turns ahead by the fight's own rules, and learns how this player fights (what they do when hurt, who they go
+ * for), across fights and sessions. It knows only what a player could: health, stats, types, statuses and the moves
+ * it has seen the player's fighters use.
+ */
+export interface BattleOpponent {
+  /** 0..1, or a gs.brains.Dial. Set it any time. */
+  skill: Skill; /** The side it plays. */ side: number;
+  /** Watches a fight, so every turn the other side takes teaches it. Call it for each new Battle. */
+  join(fight: Battle): BattleOpponent;
+  /** The turn to take for `by` (the fight's turn by default), ready for fight.act(by, choice). moves: an array or { name: move } (by.moves by default); items: a Bag's list. */
+  pick(by?: Fighter | null, moves?: BattleMove[] | Record<string, BattleMove> | null, o?: { items?: Loose[] | null; fight?: Battle }): BattleChoice;
+  /** Every choice the last pick() weighed, best first. */
+  options: BattleChoice[];
+  /** What it expects the player to do next when their weakest fighter is at `low` (0..1 of its health): chances for hit, big, heal, status, buff, wait. */
+  expect(low?: number): number[];
+  /** A fighter on the other side took a turn (join() has the fight tell it). */
+  see(by: Fighter, choice: BattleChoice, fight?: Battle): BattleOpponent;
+  /** The end of a fight: did the player win? Tells a Dial given as its skill, and saves what it learned. */
+  result(playerWon: boolean | 'draw' | number): BattleOpponent;
+  /** Forgets how the player fights. */
+  forget(): BattleOpponent;
+}
 export interface Battle {
   sides: Fighter[][]; log: Loose[]; readonly fighters: Fighter[]; readonly turn: Fighter | null; readonly over: number | null;
   on(ev: string, fn: (e: Loose) => void): Battle; sideOf(f: Fighter): number; foes(f: Fighter): Fighter[]; friends(f: Fighter): Fighter[];
   next(): Fighter | null; preview(by: Fighter, target: Fighter, move?: BattleMove): number;
   damage(by: Fighter, target: Fighter, move?: BattleMove, roll?: boolean): { amount: number; crit: boolean; miss: boolean; effect: number; [k: string]: Loose };
-  act(by: Fighter, o?: { move?: BattleMove | null; item?: string | null; target?: Fighter | Fighter[] | null; wait?: boolean }): Loose;
+  act(by: Fighter, o?: { move?: BattleMove | null; item?: Loose; target?: Fighter | null; wait?: boolean }): Loose;
   inflict(target: Fighter, status: string, turns?: number): Loose; useItem(by: Fighter, item: string, target?: Fighter): Loose; endTurn(f: Fighter): Loose;
 }
 export interface Bag {
@@ -2072,6 +2156,8 @@ export interface BattlePart {
   Fighter: new (o?: { name?: string; hp?: number; atk?: number; def?: number; spd?: number; luck?: number; type?: string | null; level?: number; [k: string]: Loose }) => Fighter;
   Battle: new (sides: Fighter[][], o?: { types?: Record<string, Record<string, number>>; statuses?: Record<string, Loose>; rng?: () => number; crit?: number; spread?: boolean }) => Battle;
   Bag: new (defs?: Record<string, Loose>, o?: { slots?: number; stack?: number }) => Bag;
+  /** new Opponent(api, { name, skill, side, ahead, learn, rng, score }) in make(); join(fight) each fight; fight.act(fight.turn, foe.pick()). */
+  Opponent: new (api?: GameApi | null, o?: { name?: string; skill?: Skill; /** The side it plays (1). */ side?: number; /** Turns it plays ahead (2). */ ahead?: number; /** false: it never learns the player. */ learn?: boolean; rng?: () => number; /** A number your game adds to a choice's worth. */ score?: (choice: BattleChoice, fight: Battle, by: Fighter) => number }) => BattleOpponent;
   xpFor(level: number, o?: { base?: number; power?: number }): number; levelFor(xp: number, o?: { base?: number; power?: number }): number;
   /** Adds XP and levels up (stats grow by growth per level). Returns the levels gained. */
   gainXp(f: Fighter, xp: number, o?: { growth?: Record<string, number>; curve?: { base?: number; power?: number } }): number;
@@ -2303,13 +2389,15 @@ export interface SportsPitch { w: number; h: number; goal: number; x: number; y:
 export interface SportsAct { do: 'chase' | 'shoot' | 'pass' | 'dribble' | 'support' | 'mark' | 'keep'; x: number; y: number; to?: Loose; kick?: { x: number; y: number; power: number } }
 export interface SportsTeam {
   pitch: SportsPitch; side: 0 | 1; skill: Skill; keeper: boolean; shootRange: number; players: Loose[]; chaser: Loose; plan: Map<Loose, SportsAct>;
+  /** With coach: about the last choice of the one with the ball ('shoot' | 'pass' | 'dribble'): team.coach.correct('pass'), team.coach.avoid('shoot'), team.coach.recalled. Its examples are about where he was, how pressed, and how open the shot and the best pass were. */
+  readonly coach: Coach | null;
   home(p: Loose, ball: { x: number; y: number }): { x: number; y: number };
   think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>;
   kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number };
 }
 export interface SportsPart {
   Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch;
-  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number }) => SportsTeam;
+  Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?: Loose[] | null; rnd?: () => number; /** Corrections for the one with the ball: true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null }) => SportsTeam;
 }
 export interface DragPart { Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; axis?: 'x' | 'y' } | null; swap?: boolean }) => Drag }
 
@@ -2515,14 +2603,24 @@ export interface CombatPart {
   Explosives: new (o?: { fuse?: number; radius?: number; damage?: number; world?: Loose | false; knock?: number; link?: boolean }) => On<Loose> & { list: Loose[]; add(o: Loose): Loose; light(b: Loose, now?: boolean): Loose; boom(b: Loose): Loose; near(p: P3, r?: number): Loose; update(dt: number): Loose };
 }
 export interface CoverSpot { x: number; y: number; col: number; row: number; nx: number; ny: number; low: boolean; by: Loose }
+export type SquadRole = 'suppress' | 'advance' | 'flank' | 'grenade' | 'retreat';
 export interface TacticsPart {
   CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => boolean; link?: boolean }) => {
     spots: CoverSpot[]; size: number; protects(spot: CoverSpot, threat: P3): boolean;
     find(from: P3, threat: P3, o?: { near?: number; band?: [number, number]; flank?: number; who?: Loose; sees?: (a: P3, b: P3) => boolean }): CoverSpot | null;
     take(spot: CoverSpot | null, who: Loose): CoverSpot | null; free(who: Loose): Loose; peek(spot: CoverSpot, threat: P3): P3; at(col: number, row: number): CoverSpot | null;
+    /** "Not that cover" (a man fell there): the spot, or the one nearest a point, counts as `by` cells further to walk (default 6) and its neighbours within `near` half that, so others take it only when nothing else will do. forgive() takes it all back. */
+    avoid(spot: CoverSpot | P3, o?: { by?: number; near?: number }): Loose; forgive(): Loose;
   };
-  Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number }) => On<Loose> & {
+  Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m: Loose, t: P3) => boolean; range?: number; grenades?: number; camp?: number; think?: number; aggression?: number; rng?: () => number; /** Corrections about the roles it hands out: true, or a gs.brains.Coach to keep them on the phone. */ coach?: boolean | Coach | null }) => On<Loose> & {
     members: Loose[]; readonly left: Loose[]; update(dt: number, target: P3): Loose; hurt(m: Loose): Loose; reloading(m: Loose): Loose;
+    readonly coach: Coach | null;
+    /** With coach: "there, he should have been told this", about the spot the member was last given a role in. A couple of times and the squad does so in spots like it (how far, how hurt, whether he sees the target, how many are left). */
+    correct(m: Loose, role: SquadRole): Loose;
+    /** With coach: "not that, there": the role he was last given (or the one named). */
+    avoid(m: Loose, role?: SquadRole): Loose;
+    /** The correction that shaped the member's last role, or null. */
+    recalled(m: Loose): { action: SquadRole; not: boolean; like: number } | null;
   };
   Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: number, ally: P3, player: P3): Loose };
 }
@@ -2613,7 +2711,7 @@ export interface BallCar {
 export interface ArenaPart {
   Arena: new (world: Loose, o?: { w?: number; l?: number; h?: number; curve?: number; segments?: number; goal?: { w?: number; h?: number; d?: number }; ball?: Loose; ballR?: number; bounce?: number; time?: number; punch?: number; replay?: number; pads?: boolean }) => On<Loose> & {
     ball: Loose; cars: Loose[]; score: [number, number]; clock: number; overtime: boolean; over: boolean; wait: number; pads: { x: number; z: number; big: boolean; wait: number }[]; spawns: (P3 & { facing: number })[][]; lastTouch: Loose; frames: Loose[];
-    restart(): Loose; kickoff(countdown?: number): Loose; inGoal(p: P3): number; update(dt: number): Loose; predict(seconds?: number, step?: number): (P3 & { t: number; bounce: boolean })[]; danger(seconds?: number): number;
+    restart(): Loose; kickoff(countdown?: number): Loose; inGoal(p: P3): number; update(dt: number): Loose; /** Where the ball will be, ignoring cars: the physics world is asked where it next meets the arena. Worked out once a frame however many ask. */ predict(seconds?: number, step?: number): (P3 & { t: number; bounce: boolean })[]; danger(seconds?: number): number;
     playback(t: number): { p: P3; q: Loose }[] | null; readonly replayLength: number; readonly clockText: string;
   };
   BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: number; boostUse?: number; boostPush?: number; jump?: number; dodge?: number; air?: number; start?: number; w?: number; h?: number; l?: number }) => BallCar;
@@ -3004,7 +3102,7 @@ export interface StructureOptions {
   span?: number;
   /** Where its foot is ([x, y, z] or { x, y, z }) and its turn about y (radians). A building's door faces +z before the turn. */
   at?: number[] | XYZ; turn?: number;
-  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Left out: the one the game made (reset() finds a new round's). false, or none made: pieces fall and break up where they land. */
+  /** A gs.physics3d World3D: the walls are solid in it (movers, rays, sound that knows the level), and what falls tumbles and piles up as real bodies. Left out: the one the game made (reset() finds a new round's). false, or none made: it keeps a small physics world of its own (its walls, the ground under it, what has fallen), stepped by update() only while something is falling. */
   world?: Loose | null | false;
   /** false: it keeps to itself (it finds nothing else the game made, and is not found). */ link?: boolean;
   /** The height rubble lands at, (x, z) => y. Default: flat at its foot. */
@@ -3773,7 +3871,7 @@ export interface SoftPoint { x: number; y: number; z: number; px: number; py: nu
 export interface SoftBody { points: SoftPoint[]; sticks: Loose[]; [k: string]: Loose }
 export interface SoftPart {
   /** world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. */
-  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; /** A 2D Physics the points stay out of. Left out (2D): the one the game made before this; false: none. */ world?: Loose | false; weight?: number; link?: boolean }) => On<Loose> & {
+  Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bounce?: number; friction?: number; step?: number; /** A physics world the points stay out of, pressing on its loose things by `weight`: a 2D Physics, or with dims: 3 a World3D. Left out: the one the game made before this; false: none. */ world?: Loose | false; weight?: number; link?: boolean }) => On<Loose> & {
     points: SoftPoint[]; sticks: Loose[]; bodies: SoftBody[]; solids: Loose[];
     point(x: number, y: number, z?: number, o?: { pinned?: boolean; mass?: number; r?: number }): SoftPoint;
     stick(a: SoftPoint, b: SoftPoint, o?: { stiff?: number; len?: number | null; tear?: number; slack?: boolean }): Loose;
@@ -3889,10 +3987,17 @@ export interface HearPart {
 export interface DoodlePart {
   /** Make it in make() or reset() (the model loads first). */
   Doodle: {
-    new (): {
+    /** new Doodle(): the model alone. new Doodle(api, { name }): what learn() is shown is kept on the phone with the game's brains (name: 'doodle'; save: false: this session only). */
+    new (api?: GameApi | null, o?: { name?: string; save?: boolean }): {
       readonly things: string[];
-      /** Most likely first, sures adding up to 1. strokes: arrays of { x, y } or gs.strokes Strokes. */
-      guess(strokes: Loose[], o?: { among?: string[] }): { name: string; sure: number }[];
+      /** Most likely first, sures adding up to 1. strokes: arrays of { x, y } or gs.strokes Strokes. `yours: true` on a thing this drawing was made like the player's own way of drawing it (learn). */
+      guess(strokes: Loose[], o?: { among?: string[] }): { name: string; sure: number; yours?: true }[];
+      /** "That drawing was a cat": keeps this player's way of drawing a thing (the newest three of each), so a later drawing made the same way is guessed as it. Call it when the game knows what was drawn. False, and nothing learned, for a thing the model doesn't know or a drawing that looks nothing like it. */
+      learn(strokes: Loose[], name: string): boolean;
+      /** Forgets what learn() was shown: one thing's, or all of it. */
+      forget(name?: string): Loose;
+      /** The things it has learned this player's way of drawing, and how many examples of each. */
+      readonly learned: Record<string, number>;
     };
     /** Every thing it can recognise. */
     readonly things: string[];
@@ -3900,6 +4005,8 @@ export interface DoodlePart {
   /** The strokes drawn into a 28 x 28 picture (0..1), the way the model sees them. */
   picture(strokes: Loose[], size?: number): Float32Array;
   scores(img: Float32Array, model: Loose): Float32Array;
+  /** What the network makes of a picture just before it names it (its last hidden layer). */
+  features(img: Float32Array, model: Loose): Float32Array;
 }
 
 /** gs.phoneai: the phone's own built-in AI, for flavour only. Every ask has a fallback; play must never depend on it. */

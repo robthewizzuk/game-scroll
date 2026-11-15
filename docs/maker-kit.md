@@ -545,7 +545,8 @@ debug(c) { phys.debugDraw(c); }
 - **Things that aren't bodies** (your own particles, `gs.soft`'s points): `near(x0, y0, x1, y1)` gives the shapes in a
   box and `outOf(x, y, r, shapes)` says where a point of radius `r` must go to be out of them (`null` when it's clear).
 - The raw engine is there too: `phys.R` and `phys.world` (Rapier works in metres: `phys.toWorld(px)`).
-- The old simple engine is still there as `gs.physics.World` (balls and upright boxes, no joints).
+- The simple world, `gs.physics.World` (balls and upright boxes, mass by size in game units, `bodies`, `near(x, y, r)`,
+  `onHit` with `b` null for a wall), is this same engine with those few names kept: every `Physics` method works in it.
 
 ## 3D physics
 
@@ -605,11 +606,31 @@ a flag wraps round a passing ball. Give the same world to each and step it once 
 | `gs.city` | `city.solid(world, { furniture, parked, cars, people })`: buildings, kerbs, posts and benches, parked cars, and bodies that follow the nearest traffic and people (a car hit hard stops, a person hit falls) |
 | `gs.voxels` | `vox.physics(world)`: the solid blocks as ground, made again as chunks change |
 | `gs.outdoors` `Cloth` | `new Cloth(view, { world })`: goes round the bodies near it by itself |
-| `gs.soft` `Soft`, `Liquid` | `{ world, weight }` (2D): points and drops stay out of its shapes and push loose things back (a ball floats) |
+| `gs.soft` `Soft`, `Liquid` | `{ world, weight }`: points and drops stay out of its shapes and push loose things back (a ball floats); a `Soft({ dims: 3 })` rope or sheet does the same in a `World3D` (it lies over crates, balls and the ground) |
+| `gs.destruction` `Structure` | solid in the world, what falls is bodies in it; with no world it keeps a small one of its own |
+| `gs.arena` `Arena` | `predict()` asks the world where the ball next meets the arena |
 | `gs.flow` `Streams` | `streams.carry(body, dt)` drifts a loose 2D body with the current |
 | `gs.fluid`, `gs.gas` | a solid's `follow` can be a physics body: the liquid and smoke go round it as it moves |
 
 A `World3D` made in `make()` or `reset()` is also found by the kits made beside it, with nothing passed: see the next section.
+
+For your own things that are not bodies, a `World3D` answers the same questions the kits ask it:
+`sweep(shape, from, move, { still, not })` is a ball, box or capsule moved through the world (`{ thing, point,
+normal, distance, share, at }` for what it first touches, or `null`; `still: true` looks only at what never
+moves), `around(lo, hi)` the shapes in a box and `outOf(p, r, shapes, from)` where a point of radius `r` must go to
+be out of them.
+
+**What is not on Rapier, and why.** Anything rigid that moves and collides asks the physics engine. These keep a
+cheaper way of their own, on purpose:
+
+| What | Why it stays |
+| --- | --- |
+| Cloth, rope, jelly, liquid, fluid, gas, sand, rivers, the sea (`gs.soft`, `Cloth`, `gs.fluid`, `gs.gas`, `gs.sand`, `gs.flow`, `Sea`) | Rapier is a rigid-body engine with no solver for these; several run on the graphics chip. They collide with the world's bodies and push them |
+| Particles, `Bullets`, `Swarm`, a `Structure`'s small rubble, `Table.crumble` | Hundreds or thousands of tiny things there for a moment: a body each would cost far more than the look is worth. (`crumble` would also load the engine into every board game) |
+| `TileMap.move`/`ray`, `Voxels.move`/`ray`, `Land.floor`/`ray`, `Level3D.height`, `City.collide`/`ray`, `Crowd.ray` | Exact answers read straight from the kit's own grid or height map, with no engine to load. Each makes itself solid in a world when the game has one (`phys.tiles(map)`, `vox.physics(world)`, `land.solid`, `level.solid`, `city.solid`, `props.solid`) |
+| How a `Car`, `Kart`, `Plane`, `Boat`, `Hover`, `Platformer` or `TopDown` handles | Drift, lift, coyote time and the like are game feel, not collisions. What they run into is the world's, whenever the game has one |
+| `climb.Rope`, `Zipline`, the `Grapple` rope, `arc`/`lob`, `Shots` | Maths for a hero the game moves (a pendulum, a parabola, a ray); with a world, the rays and what they land on are the world's |
+| `Reactions`' acted falls, planted feet, `Things` overlaps, steering | Animation and game logic. With a world a knocked-down person is a jointed ragdoll in it |
 
 ## Kits that find each other
 
@@ -639,7 +660,7 @@ function make(api) {
 | `gs.sky` `Weather` | `Marks` (snow, wet earth: a weather made with a `level`), `Foley`; a blast makes it look again at what is still a roof |
 | `gs.sky` `Sky` | `gs.city` `City` (lights come on as it darkens); a storm's lightning lights its clouds |
 | `gs.outdoors` `Water`, `Sea` | `Weather` rains on every one; a 3D blast or a shot going in splashes it, if it was made with `ripples`; `Foley` sounds what lands in it; a `Boat` or `Floater` given no water floats on the newest (`new Boat({ power: 9 })`) |
-| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray), `Kart`, `Plane`, `Boat`, `Hover` (solid in it), `Grapple` (`fire(from, dir)`), `shatter` and `slice` (the pieces are bodies), `Regions` |
+| `gs.physics3d` `World3D` | `Explosives`, `Shots` (`shots.update(dt)`), `Cloth`, `Structure`, `Reactions`, `Foley` (knocks), `Ears` (what stands in the way of sound), `CameraRig` (stays this side of its still things, one ray), `Kart`, `Plane`, `Boat`, `Hover` (solid in it), `Grapple` (`fire(from, dir)`), `shatter` and `slice` (the pieces are bodies), `Regions`, a `Soft({ dims: 3 })` (its ropes and sheets stay out of the bodies) |
 | `gs.physics` `Physics` (2D) | `Explosives`, `Shots`, `Car`, `Soft`, `Liquid`, `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`) |
 | `gs.tiles` `TileMap` | `Platformer` and `TopDown` (`hero.update(dt, undefined, input)`), guards' sight (`Senses`), flat `Ears` |
 | `gs.ai` `NavGrid` | `Senses` (sight stops at its walls), agents that hunt (`agent.hunt(target)`) |
@@ -734,6 +755,11 @@ const goal = want.pick();   // 'eat', 'sleep' or 'fight'; want.scores has them a
 
 Curves: `Choose.linear`, `quad`, `root`, `invert`, `logistic(mid, k)`, `step(at)`. Use a Choose inside a
 tree action, or to pick a `Brain` state.
+
+Both can be coached: `new Choose(options, { coach: true })` then `want.coach.correct('sleep')`, and
+`new Tree(text, agent, { coach: true, see: () => [me.hp / 10, cornered ? 1 : 0] })` then
+`tree.avoid('Bite')` and `tree.correct('Flee')`
+([A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules)).
 
 ### Swarms: thousands of flockers
 
@@ -1597,6 +1623,49 @@ function make(api) {
 - It is saved with the game's brains in a few bytes. Give each opponent its own `name`.
 - A game with no winner (an endless runner) can use the score: `dial.result(score >= goal)`.
 
+### A coach for things that decide by rules
+
+`gs.brains.Coach` is corrections with no network: your rules (or a kit's) choose as usual, and in
+spots like the ones it was shown the coach says otherwise. "There, pass." "Not that, here." It holds
+from the next decision, with nothing to train.
+
+```js
+const { Coach } = gs.brains;
+const coach = new Coach(api, { name: 'keeper', inputs: 3, actions: ['stay', 'dive', 'rush'] });
+const usual = ballNear > .7 && ballFast > .5 ? 'dive' : 'stay';      // your own rules
+const a = coach.pick([ballNear, ballFast, alone], usual);            // theirs, unless it was taught otherwise here
+coach.correct('rush');        // "there, the right move was rush" (the spot it last picked on)
+coach.avoid('dive');          // "not a dive there"; avoid() alone: not what it just picked
+if (coach.recalled) showThatItRemembered(coach.recalled);            // { action, not, like }
+```
+
+Four kits take one and feed it what they look at themselves. `coach: true` lasts the session;
+`coach: new Coach(api, { name: 'away' })` is kept on the phone with the game's brains.
+
+| Kit | What is coached | How |
+| --- | --- | --- |
+| `gs.sports.Team` | the one with the ball: `'shoot'`, `'pass'`, `'dribble'` | `team.coach.correct('pass')`, `team.coach.avoid('shoot')` |
+| `gs.tactics.Squad` | each member's role: `'suppress'`, `'advance'`, `'flank'`, `'grenade'`, `'retreat'` | `squad.correct(member, 'flank')`, `squad.avoid(member)`, `squad.recalled(member)` |
+| `gs.ai.Choose` | which want wins | `want.coach.correct('sleep')`, `want.coach.avoid()` |
+| `gs.ai.Tree` | which actions run (give it `see: () => [numbers about the moment]`) | `tree.avoid('Bite')`: Bite fails in moments like this, so the tree goes on to its next branch; `tree.correct('Flee')` makes `condition [Told, "Flee"]` true in them |
+
+And for cover, `cover.avoid(spot)` is "not that cover" (a man fell there): the others take it only
+when nothing else will do, until `cover.forgive()`.
+
+- One example is already a lean in spots much like it; a couple that agree make a rule. In the kit
+  test one example changes the lesson's spots every time and leaves 95% of other spots as they were;
+  four leave 96%.
+- "Spots like them" means alike in the numbers the coach is given (a team: where he is, how pressed,
+  how open the shot and the best pass are). Where an action's examples differ on a number, that number
+  stops mattering, so show it the move in a few different spots of the same kind.
+- `usual` may be a list, best first, of the moves that can be made here; then a "not this" goes to
+  the next in the list and it never picks a move that isn't in it. The kits do this themselves.
+- `avoid()` alone is about what it just picked. When teaching the same thing several times, name the
+  move (`avoid('dive')`): after the first time it may already be picking something else.
+- A game's own lessons go in `corrections: [[see, action], [see, action, false]]`; the debug overlay's
+  B key copies what a coach was taught while you played. `uncorrect()` forgets what it was taught.
+- A coached team, squad, Choose or tree with nothing taught plays exactly as it did before.
+
 ### Teach by example: signs, poses, moves and sounds of your own
 
 `gs.brains.Examples` learns a thing from a few examples and says which one a new thing looks like, or
@@ -1881,6 +1950,37 @@ regen, stun, sleep, shield, or your own). `battle.act(who, { move, item, target 
 `battle.over`, and events (`on('hit')`, `on('faint')`). `Bag` holds items and saves with `api.save()`;
 `xpFor`, `levelFor`, `gainXp` and `loot` cover levelling and drops.
 
+A ready-made opponent for a battle (Tiny Brains): it tries every move on every target in a copy of
+the fight, a couple of turns ahead by the fight's own rules (types, statuses, buffs, potions), and
+learns how this player fights: what they do when they are hurt, and who they go for.
+
+```js
+const { Fighter, Battle, Opponent } = gs.battle;
+foe = new Opponent(api, { skill: .7 });                 // make(): what it learns is kept on the phone
+fight = new Battle([[hero], [slime]], { types }); foe.join(fight);        // each fight
+// the enemy's turn:
+fight.act(fight.turn, foe.pick(fight.turn, SLIME_MOVES, { items: slimeBag.list }));   // or the fighter's own .moves
+// at the end:
+foe.result(fight.over === 0);                           // did the player win?
+```
+
+- `skill` is 0..1, or a `gs.brains.Dial` that follows the player. At 1 it makes its best move; lower,
+  good-but-not-best moves more often, and under .3 it takes what looks best now with no thought for
+  the answer. It never chooses worse than at random, so a dial can't make it weaker than that.
+- It knows only what a player could: the fighters' health, stats, types and statuses, and the moves
+  it has seen the player's fighters use (before that it guesses a hit about as hard as its own).
+- `pick()` gives `{ move, target }`, `{ item, target }` or `{ wait: true }`, with `name` and `worth`
+  (how much better than waiting, in shares of a fighter's health); `foe.options` is everything it
+  weighed, best first, for a "thinking" display or your own rules. `score(choice, fight, by)` in the
+  options adds your game's own say.
+- `foe.expect(low)` is what it expects of the player when their weakest fighter is at `low` of its
+  health (chances for hit, big, heal, status, buff, wait): "You always drink when you're nearly out."
+- Measured on made-up fights with the same team each side: a player who only hits wins 5 in 100
+  against it one a side (26 against one that never learns, 52 against an enemy who only hits back);
+  one who drinks a potion when low wins 37 in 100 (64 against one that never learns). Two a side:
+  18 and 27 in 100. With a dial, those players win about 63 in 100. A pick takes about a fifth of a
+  millisecond on a laptop.
+
 **Stats that change while you play** (`gs.stats`, real time; gs.battle's statuses count turns):
 `new Stats({ speed: 6, armour: 0, hp: { max: 100 }, mana: { max: 50, regen: 8, delay: 1 } }, { buffs: TABLE })`.
 A stat is (base + every add) x every mul, held to its `min` and `max` (`{ base, min, max }`); `get('speed')`.
@@ -2096,7 +2196,9 @@ says where to lean out. `Squad(members, { cover, sees })` gives each enemy an or
 (`move`, `shoot`, `throw`, `hold`) with roles: some pin you down while others move up or flank, a
 grenade flushes you out of cover you've camped in, the hurt fall back, and they call out
 (`on('call')`: contact, reloading, man down) for your barks. `Route(points)` is an ally who leads
-and waits for you.
+and waits for you. A squad can be coached (`coach: true`, then `squad.correct(member, 'flank')` and
+`squad.avoid(member)`), and `cover.avoid(spot)` is "not that cover":
+[A coach for things that decide by rules](#a-coach-for-things-that-decide-by-rules).
 
 **Climbing** (`gs.climb`): `Ledges.fromLevel(level3d)` finds every edge you can hang from (or `add()`
 your own). `Climber` grabs a ledge in reach, shimmies, turns corners, climbs up, leaps to the next
@@ -2266,7 +2368,8 @@ gap, pin by pin) and `Code` (repeat the sequence).
 
 **Ball games with cars** (`gs.arena`, Rapier through `gs.physics3d`): `Arena(world, { w, l, goal, ball })`
 builds the walls, curved ramps, ceiling and goals, keeps the score and clock (with overtime), adds
-punch to touches, has boost pads, `predict()`s the ball's path for a landing marker, and keeps a
+punch to touches, has boost pads, `predict()`s the ball's path for a landing marker (the physics world is
+asked where the ball next meets the real floor, walls, ramps and goals, once a frame however many ask), and keeps a
 few seconds of replay (`playback(t)`). `BallCar` is a real suspension car with boost, jump, a second
 jump that flips you the way you push, and air control. `chaseBall(car, arena)` is a simple
 opponent to start from.
@@ -2465,7 +2568,8 @@ body bob on the water (crates, buoys, barrels).
 along the top, tears if you like), `rope()`, `jelly()` (a pressure blob that squashes and springs
 back), with round and box `solids` to hit. `grab(x, y)` lets a finger pull a point, `cut()` slices
 everything a swipe crosses, `push()` blasts and `wind()` blows. Draw the points your way, or send a
-3D cloth to a mesh with `toGeometry()`. `Liquid()` is a simple 2D liquid of particles that pools,
+3D cloth to a mesh with `toGeometry()`. In a game with a physics world (2D or 3D) the points stay out of
+its shapes and press on loose ones. `Liquid()` is a simple 2D liquid of particles that pools,
 splashes and pours (`pour()`, `near()`, `count()`) for water and goo puzzles.
 
 **Cards** (`gs.cards`): `Deck({ seed, jokers, decks })` shuffles, deals, draws (reshuffling the discards
@@ -2559,13 +2663,35 @@ motorbike, palm tree, cactus, rain, skateboard, skyscraper, stairs, stop sign, s
 tractor, traffic light, train, truck, windmill, campfire, bed, chair, table, bench, television,
 laptop, hand, moustache, mermaid, angel, soccer ball, tennis racquet, basketball.
 
-Measured on drawings it never saw: 76 in 100 are named right among all 200, 89 in 100 are in its
-first three guesses, and 96 in 100 are right when the game asks it to choose among five. So pass
-`among` with the few things your game cares about, and take the top guess only when its `sure` is
-high. Animals that look alike as doodles are the hard ones (dog, bear, bird, frog, raccoon and tiger
-are right a third to a half of the time among all 200): don't put two of those in one `among`. The
-model is about 440 KB and is only fetched by a game that uses it. For plain shapes, `gs.strokes`
-`Shapes` needs no model.
+Measured on the dataset's own pictures of drawings it never saw: 76 in 100 are named right among
+all 200, 89 in 100 are in its first three guesses, and 96 in 100 are right when the game asks it to
+choose among five. So pass `among` with the few things your game cares about, and take the top guess
+only when its `sure` is high. Animals that look alike as doodles are the hard ones (dog, bear, bird,
+frog, raccoon and tiger are right a third to a half of the time among all 200): don't put two of
+those in one `among`. Drawn from strokes, the way a game does it, on 2,100 real drawings of 14 things
+(nine of them look-alike animals): 60 in 100 right among all 200, 80 in its first three, 95 among
+five. The model is about 440 KB and is only fetched by a game that uses it. For plain shapes,
+`gs.strokes` `Shapes` needs no model.
+
+It can learn this player's own way of drawing a thing. When the game knows what a drawing was (it
+asked for a cat, and the player says that was one), tell it:
+
+```js
+reset() { doodle = new Doodle(api); }                    // api: what it learns is kept on the phone
+// the game asked for a cat, the guess was something else, and the player taps "that was my cat":
+if (doodle.learn(strokes, 'cat')) say('Got it. I know your cat now.');
+const best = doodle.guess(strokes, { among })[0];       // best.yours: true when it knew it as the player's own
+```
+
+- It keeps the newest three drawings of each thing, as 48 numbers each, saved with the game's brains;
+  `doodle.learned` is `{ cat: 2 }` and `doodle.forget('cat')` (or `forget()`) takes it back.
+- Measured on real drawings of nine look-alike animals, choosing among the nine: for a player who
+  draws a thing alike each time, 70 in 100 right before, 91 after one example, 95 after three (84
+  for a wobblier hand). For a player who never draws a thing alike twice it changes nothing (75, then
+  76). Fewer than one in 100 of their other animals is lost to it.
+- `learn()` says no (false) to a drawing that looks nothing like the thing: one that isn't in the
+  model's first twenty guesses of the 200. So a scribble can't be taught as a cat, though a ring can
+  be taught as a clock. Only call it when the game knows what was drawn; never on every guess.
 
 **The phone's own AI** (`gs.phoneai.PhoneAI`): newer phones have a language model built in (Apple
 Intelligence on iPhone, Gemini Nano on Android, the browser's own on the web). Use it for flavour:
@@ -3148,8 +3274,10 @@ house.blast(shell.position, 3);                                      // an explo
 - **With a physics world** (`world: phys`, or `reset({ world })`) the walls are solid for movers, rays and
   `gs.sound.Ears`, a hole lets them through, and what falls is real tumbling bodies that pile up and can
   break what they land on (`crush: 0` turns that off). `phys.ray()` gives `hit.thing.structure` for the
-  building it struck. **Without one** pieces fall and break up where they land, the same way every time,
-  and `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind }`).
+  building it struck. **Without one** the building keeps a small physics
+  world of its own (its walls, the ground under it and what has fallen), so the collapse is the same one, the
+  same way every time; it steps that world itself, only while something is falling. Either way
+  `house.ray(from, dir)` finds the piece a shot strikes (`{ point, normal, distance, kind, piece }`).
 - Small rubble is cheap: boxes drawn as copies, in the building's own materials, that land on the ground
   (`ground: (x, z) => height`) or on what still stands. `bits` (240) is how many a material keeps and `keep`
   (40) how many fallen pieces stay as bodies; the oldest go first.

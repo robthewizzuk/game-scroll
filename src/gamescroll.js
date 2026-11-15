@@ -23,7 +23,7 @@
 //   gs.icons     528 game icons that look the same on every phone (game-icons.net); lazy
 //   gs.real      the real world: where the sun and moon are for the player, the battery, headphones
 //   gs.bricks    toy-brick drawing, 2D and 3D
-//   gs.physics   2D physics (Rapier): spinning shapes, hinges, ropes, springs. Also the simple World/Body.
+//   gs.physics   2D physics (Rapier): spinning shapes, hinges, ropes, springs. Also the simple World (the same engine, fewer names).
 //   gs.physics3d 3D physics (Rapier): bodies, level collisions, ray casts, a character mover
 //   gs.ai        steering, flocking, path finding, state machines (Yuka)
 //   gs.toon      Classic Console 3D (cel-shaded)       gs.hd   Next Gen 3D (PBR, bloom, shadows; upscaling and frame generation built in)
@@ -41,7 +41,7 @@
 //   gs.story     Story (branching dialogue in ink; lazy) and Typewriter text
 //   gs.replay    Ghost (record and race a run; packs for api.save), Recorder / Replayer (whole rounds)
 //   gs.look2d    Lights (with shadows off walls), Screen (CRT, bloom, glitch...; lazy), Batch (fast WebGL sprites; lazy)
-//   gs.brains    Tiny Brains: small neural networks that learn as you play, with guard rails (Brain, Wave, Imagine, Predict, Player, Dial, Examples, Nemesis, Shadow, tune)
+//   gs.brains    Tiny Brains: small neural networks that learn as you play, with guard rails (Brain, Wave, Imagine, Predict, Player, Dial, Coach, Examples, Nemesis, Shadow, tune)
 //   gs.board     grid boards: match, fall and refill, slide and merge, flood fill, hints
 //   gs.battle    turn-based battles: fighters, moves, types, status effects, items (Bag), XP and loot
 //   gs.stats     real-time stats: buffs that run out, perks, debuffs over time, pools that drain and refill, cooldowns with charges

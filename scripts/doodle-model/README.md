@@ -24,3 +24,11 @@ frog 38%, raccoon 39%, tiger 40%, lobster 42%, mouse 45%, dragon 49%. `train.py`
 numbers to `qd-data/report.json`; update the ones in `docs/maker-kit.md` and `src/kit/doodle.js`
 when the model is trained again. (With the first 46 things alone a smaller network was 90% right
 among all 46.)
+
+Those numbers are on the dataset's own 28 x 28 pictures. A game gives strokes, which `picture()` in
+`src/kit/doodle.js` draws, so how it draws them matters as much as the model: on 2,100 real drawings
+of 14 things the model never saw (the dataset's simplified strokes, nine of the things the look-alike
+animals above), lines drawn 1.6 pixels out from their middle were named right 45 in 100 times among
+all 200, and at 1.2 (`LINE`, what it is now) 60 in 100, 80 in the first three and 95 among five,
+which is what the same things score on the dataset's own pictures. If the model is trained again
+from other pictures, measure `LINE` again the same way before changing it.
