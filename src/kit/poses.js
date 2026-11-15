@@ -168,8 +168,39 @@ Object.assign(POSES, {
   dodgeBack: cyc(keys([[0, GUARD], [.3, { spine: [-.25, 0, 0], head: [-.15, 0, 0], legL: [.1, 0, .06], shinL: [.5, 0, 0], legR: [.5, 0, -.06], shinR: [.6, 0, 0], drop: .1 }], [1, GUARD]]), 0),
 });
 POSES.dodgeR = cyc(mirror(POSES.dodgeL.cycle), 0);
+// In the water (gs.climb Swimmer): treading water upright (arms sculling out to the sides, legs turning), the front crawl lying
+// face down at the surface (hips turned through a quarter, the body rolling with each stroke, legs fluttering), swimming under
+// (a breaststroke, level, head down or head up) and pulling out onto an edge (rig.play('climbOut', { at })). Wading is a walk
+// with the arms up out of the water.
+const crawl = p => {
+  const a = p * TAU, s = S(a), fl = S(a * 3), arm = b => { const c = Math.cos(b), up = Math.max(0, -S(b)); return [[-1.6 - 1.45 * c, 0, -.45 * up], [-.25 - 1.3 * up, 0, 0]]; };
+  const [aL, fL] = arm(a), [aR, fR] = arm(a + Math.PI);
+  return P({ hips: [1.45, 0, 0], spine: [-.08, .3 * s, 0], head: [-.75, -.25 * s, 0], armL: aL, foreL: fL, armR: [aR[0], 0, -aR[2]], foreR: fR,
+    legL: [.14 * fl - .05, 0, -.04], shinL: [.1 + .18 * Math.max(0, S(a * 3 + 1)), 0, 0], footL: [.9, 0, 0], legR: [-.14 * fl - .05, 0, .04], shinR: [.1 + .18 * Math.max(0, -S(a * 3 + 1)), 0, 0], footR: [.9, 0, 0] });
+};
+const breast = tilt => keys([
+  [0, { hips: [tilt, 0, 0], spine: [-.1, 0, 0], head: [-.35 + (tilt - 1.45) * .3, 0, 0], armL: [-3.05, 0, -.1], foreL: [0, 0, 0], armR: [-3.05, 0, .1], foreR: [0, 0, 0], legL: [0, 0, -.06], shinL: [.05, 0, 0], footL: [.9, 0, 0], legR: [0, 0, .06], shinR: [.05, 0, 0], footR: [.9, 0, 0] }],
+  [.3, { armL: [-2.3, -.3, -.9], foreL: [-.6, 0, 0], armR: [-2.3, .3, .9], foreR: [-.6, 0, 0] }],
+  [.45, { armL: [-1.3, 0, -.25], foreL: [-1.9, 0, 0], armR: [-1.3, 0, .25], foreR: [-1.9, 0, 0], legL: [-.55, 0, -.35], shinL: [2.0, 0, 0], legR: [-.55, 0, .35], shinR: [2.0, 0, 0], footL: [-.2, 0, 0], footR: [-.2, 0, 0] }],
+  [.65, { armL: [-2.7, 0, -.1], foreL: [-.5, 0, 0], armR: [-2.7, 0, .1], foreR: [-.5, 0, 0], legL: [-.1, 0, -.25], shinL: [.4, 0, 0], legR: [-.1, 0, .25], shinR: [.4, 0, 0], footL: [.6, 0, 0], footR: [.6, 0, 0] }],
+  [1, { armL: [-3.05, 0, -.1], foreL: [0, 0, 0], armR: [-3.05, 0, .1], foreR: [0, 0, 0], legL: [0, 0, -.06], shinL: [.05, 0, 0], legR: [0, 0, .06], shinR: [.05, 0, 0], footL: [.9, 0, 0], footR: [.9, 0, 0] }],
+], { loop: true });
+Object.assign(POSES, {
+  tread: cyc(p => { const s = S(p * TAU), c = Math.cos(p * TAU); return P({ spine: [.12, 0, 0], head: [-.12, 0, 0], armL: [-.45, .35 * s, -1.05], foreL: [-.55, 0, 0], armR: [-.45, -.35 * s, 1.05], foreR: [-.55, 0, 0],
+    legL: [-.75 + .3 * s, 0, -.18], shinL: [1.35 + .35 * c, 0, 0], footL: [.35, 0, 0], legR: [-.75 - .3 * s, 0, .18], shinR: [1.35 - .35 * c, 0, 0], footR: [.35, 0, 0] }); }, 0),
+  swim: cyc(crawl, .7),
+  dive: cyc(breast(1.45), 0), diveDown: cyc(breast(2.25), 0), diveUp: cyc(breast(.75), 0),
+  wade: cyc(p => { const s = S(p * TAU); return P({ spine: [.15, 0, 0], legL: [-.5 * s - .15, 0, 0], legR: [.5 * s - .15, 0, 0], shinL: [.25 + Math.max(0, .9 * S(p * TAU + 1.2)), 0, 0], shinR: [.25 + Math.max(0, -.9 * S(p * TAU + 1.2)), 0, 0],
+    armL: [-.25 + .3 * s, 0, -.55], foreL: [-.7, 0, 0], armR: [-.25 - .3 * s, 0, .55], foreR: [-.7, 0, 0] }, .02); }, .6),
+  climbOut: cyc(keys([
+    [0, { spine: [.15, 0, 0], head: [-.2, 0, 0], armL: [-2.45, 0, .2], foreL: [-.35, 0, 0], armR: [-2.45, 0, -.2], foreR: [-.35, 0, 0], legL: [.15, 0, 0], shinL: [.4, 0, 0], legR: [.05, 0, 0], shinR: [.3, 0, 0], footL: [.5, 0, 0], footR: [.5, 0, 0] }],
+    [.45, { spine: [.55, 0, 0], head: [-.4, 0, 0], armL: [-.35, 0, -.2], foreL: [-.15, 0, 0], armR: [-.35, 0, .2], foreR: [-.15, 0, 0], legL: [.1, 0, 0], shinL: [.2, 0, 0], legR: [.1, 0, 0], shinR: [.2, 0, 0] }],
+    [.72, { spine: [.65, 0, 0], head: [-.45, 0, 0], armL: [-.6, 0, -.2], foreL: [-.3, 0, 0], armR: [-.6, 0, .2], foreR: [-.3, 0, 0], legR: [-1.75, 0, .05], shinR: [2.1, 0, 0], footR: [-.3, 0, 0], legL: [.1, 0, 0], shinL: [.3, 0, 0] }],
+    [1, { spine: [.04, 0, 0], head: [0, 0, 0], armL: [0, 0, -.08], foreL: [-.15, 0, 0], armR: [0, 0, .08], foreR: [-.15, 0, 0], legL: [0, 0, 0], shinL: [0, 0, 0], legR: [0, 0, 0], shinR: [0, 0, 0], footL: [0, 0, 0], footR: [0, 0, 0] }],
+  ]), 0),
+});
 const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
-const TIMED = { guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
+const TIMED = { tread: .7, dive: .55, diveDown: .55, diveUp: .55, guard: .6, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
 
 // ---- smooth curves and key poses
 // A curve through [when, value] points that never swings past a point (so a knee can't bend backwards
