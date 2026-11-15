@@ -252,7 +252,8 @@ export class Land {
     // (hardly any shine: a blade edge-on to the eye would glint white against a low sun)
     const mat = new MeshPhysicalMaterial({ color: '#ffffff', vertexColors: true, roughness: .78, side: DoubleSide, specularIntensity: .12 });
     const look = LOOKS.meadow(mat, { reach: [reach * .55, reach * .97], part: this.parting });   // (parting: the grass field of a gs.outdoors.Marks on this land)
-    const mesh = new InstancedMesh(geo, mat, N); mesh.name = 'meadow'; mesh.frustumCulled = false; mesh.receiveShadow = true; mesh.castShadow = false;
+    const mesh = new InstancedMesh(geo, mat, N); mesh.name = 'meadow'; mesh.userData.noBake = true; mesh.frustumCulled = false; mesh.receiveShadow = true; mesh.castShadow = false;
+    // (noBake: grass kept round the camera is no scenery to bake light through)
     mesh.rotation.x = Math.PI / 2;   // (the land's own object is turned to lie flat: this turns the meadow back, so it is in the world's own metres)
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(N * 3), 3);
     const M = mesh.instanceMatrix.array, C = mesh.instanceColor.array, R = root.array, cs = colours.map(c => new Color(c)), tint = new Color();

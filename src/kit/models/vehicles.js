@@ -203,7 +203,7 @@ const mm = v => Math.round(v * 1000) / 1000;
 const meshes = (list, into) => { let t = 0; for (const p of list) { const m = new Mesh(p.geo, p.mat); m.castShadow = m.receiveShadow = true; m.name = p.slot; into.add(m); t += p.tris; } return t; };
 // a made vehicle stood up as its own Group: meshes, pivots, points and what it can do
 function stand(kind, v, k, opts) {
-  const plan = v.plan, root = new Group(), shell = new Group(); root.name = 'vehicle:' + kind; shell.name = 'shell'; root.add(shell);
+  const plan = v.plan, root = new Group(), shell = new Group(); root.name = 'vehicle:' + kind; shell.name = 'shell'; root.add(shell); root.userData.moves = true;   // (a vehicle moves: never part of the baked light)
   let tris = meshes(v.body, shell);
   wheelMat ||= pbr('#ffffff', { rough: .78, vertexColors: true });
   // the parts that turn, each on its own pivot (inside the part it rides on)
@@ -374,7 +374,7 @@ function sirens(root, plan, points, seed) {
 
 // a train: its cars in a row, nose to tail, coupled
 function coupled(cars, again, look) {
-  const root = new Group(), total = cars.reduce((t, c) => t + c.length, 0); root.name = 'vehicle:train'; let z = -total / 2, dist = 0;
+  const root = new Group(), total = cars.reduce((t, c) => t + c.length, 0); root.name = 'vehicle:train'; root.userData.moves = true; let z = -total / 2, dist = 0;
   for (const c of cars) { c.back = z + total / 2 + c.length / 2; c.position.z = z + c.length / 2; c.rotation.order = 'YXZ'; z += c.length; root.add(c); }
   Object.assign(root, { kind: 'train', style: cars[0].style, cars, parts: cars[0].parts, points: cars[0].points, wheels: [], size: { length: total, width: Math.max(...cars.map(c => c.size.width)), height: Math.max(...cars.map(c => c.size.height)) }, length: total, radius: cars[0].radius, tris: cars.reduce((t, c) => t + c.tris, 0), look });
   /** Turns every wheel for a distance travelled so far (metres). */
