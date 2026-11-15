@@ -514,6 +514,57 @@ console.log('physics ok');
   assert.ok(tw.done && ticks === 7, 'typewriter ' + ticks);
   console.log('story ok');
 }
+// a conversation played by people (Talk)
+{
+  const { Story, Talk } = await import('../src/kit/story.js');
+  const { Reputation } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const TALK = `
+  EXTERNAL did(deed)
+  EXTERNAL give(id, n)
+  VAR town_rank = "neutral"
+  VAR town = 0
+  #shot:two
+  Back again, are you? #who:mara #mood:frown
+  Just passing. #who:hero
+  * {town_rank == "loved"} [Ask for the key] Anything for you. #who:mara #mood:smile .5 #do:nod
+    ~ did("helped")
+    ~ give("key", 1)
+    -> END
+  * [Leave] Off you go then. #who:mara #wait:0
+    -> END`;
+  const face = () => ({ moods: {}, looked: null, said: [], set(n, a) { this.moods[n] = a; return this; }, look(t) { this.looked = t; return this; }, say(t) { this.said.push(t); return Promise.resolve(true); }, hush() {}, talking: false });
+  const at = (x, z) => ({ matrixWorld: { elements: [1,0,0,0, 0,1,0,0, 0,0,1,0, x, 1.6, z, 1] } });
+  const hero = { face: face(), bones: { head: at(0, 0) } }, mara = { face: face(), bones: { head: at(0, 2) } };
+  const cam = { position: { set(x, y, z) { Object.assign(this, { x, y, z }); } }, lookAt(x, y, z) { this.look = { x, y, z }; } };
+  let cuts = 0; const view = { cut: () => cuts++ };
+  for (const loved of [true, false]) {
+    const rep = new Reputation({ factions: { town: {} }, deeds: { helped: { town: 5, good: 5 } } }); if (loved) rep.move('town', 70);
+    const inv = new Inventory({ key: { stack: 1 } }, { slots: 2 });
+    hero.face = face(); mara.face = face();
+    const t = new Talk(new Story(TALK), { cast: { hero: { person: hero }, mara: { person: mara, name: 'Mara', voice: 'woman' } }, hero: 'hero', camera: cam, view, rep, inv });
+    const done = []; t.on('do', (m, w) => done.push(m + ':' + w)); t.on('end', () => done.push('end'));
+    t.start();
+    assert.equal(t.who, 'Mara'); assert.equal(t.text, 'Back again, are you?'); assert.equal(mara.face.moods.frown, 1); assert.equal(mara.face.said[0], 'Back again, are you?');
+    assert.ok(mara.face.looked === hero.bones.head && hero.face.looked === mara.bones.head, 'they look at each other');
+    assert.equal(t.shot.kind, 'two'); assert.ok(Math.abs(cam.position.x) > 1.5, 'two shot from the side ' + cam.position.x);
+    assert.equal(t.shown, ''); t.tap(); assert.equal(t.shown, t.text, 'first tap shows the line'); t.tap();
+    assert.equal(t.who, 'hero'); assert.equal(t.shot.kind, 'over'); assert.ok(cam.position.z > 2, 'over Mara\'s shoulder onto the hero: behind her ' + cam.position.z);
+    const side1 = Math.sign(cam.position.x);
+    t.update(10); assert.equal(t.choices.length, loved ? 2 : 1, 'choices by the town\'s feeling');
+    if (loved) {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Anything for you.'); assert.equal(mara.face.moods.smile, .5); assert.equal(mara.face.moods.frown, 0, 'the old mood goes');
+      assert.ok(cam.position.z < 0, 'over the hero\'s shoulder onto Mara ' + cam.position.z); assert.equal(Math.sign(cam.position.x), side1, 'same side of the line');
+      assert.deepEqual(done, ['nod:mara']);
+      t.update(10); t.tap(); assert.ok(t.ended && done.includes('end'));
+      assert.ok(rep.with('town') > 70 && inv.has('key'), 'the deed and the key reached the game');
+    } else {
+      t.choose(t.choices[0].index); assert.equal(t.text, 'Off you go then.'); t.update(1); t.update(.1); assert.ok(t.ended, 'a #wait line moves on by itself');
+    }
+  }
+  assert.ok(cuts >= 3, 'cuts ' + cuts);
+  console.log('story Talk: voices and moods on faces, eyes on each other, shots on one side of the line, cuts, choices by reputation, deeds and items through EXTERNAL functions, #wait ok');
+}
 
 // save versions: old saves go through migrate(), a newer save is kept safe
 {
@@ -2030,6 +2081,17 @@ console.log('physics ok');
   cs.on('say', () => lines++).on('end', () => ended++); for (let i = 0; i < 30; i++) cs.update(1 / 60); assert.ok(cs.shot && cs.shot.x > 0 && cs.shot.x < 10, 'camera moves along the path');
   cs.skip(); assert.ok(ended === 1 && !cs.playing, 'skip ends it');
   console.log('cutscene: camera path, lines, skip ok');
+  // actors: walk, gesture, mood, a line in their voice, turn; skip puts them where they were going
+  const played = [], p = { position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 }, rig: { play: n => played.push(n), blend() {} }, face: { look(t) { this.l = t; }, set(n, a) { this[n] = a; }, say(t) { this.s = t; return Promise.resolve(true); } } };
+  const c2 = new Cutscene([{ at: 0, actor: p, walk: { x: 2, z: 0 } }, { at: .5, actor: p, play: 'bow', mood: 'smile' }, { at: 1, actor: p, say: 'Hello.', who: 'M', look: { x: 0, y: 1, z: 0 } }, { at: 4, actor: p, turn: 0, time: 2 }]);
+  for (let i = 0; i < 30; i++) c2.update(1 / 60); assert.ok(c2.motion(p).speed > 0 && p.position.x > 0, 'walking');
+  for (let i = 0; i < 150; i++) c2.update(1 / 60);
+  assert.ok(Math.abs(p.position.x - 2) < .04 && Math.abs(p.rotation.y - Math.PI / 2) < .05, 'walked there, facing the way it went');
+  assert.ok(played.includes('bow') && played.includes('idle') && p.face.s === 'Hello.' && p.face.smile === 1 && p.face.l, 'gesture, stop, line in its voice, mood, eyes');
+  c2.skip(); assert.equal(p.rotation.y, 0, 'skip turns it as it was told');
+  const { GESTURES, Rig } = await import('../src/kit/poses.js');
+  for (const [n, g] of Object.entries(GESTURES)) { assert.ok(g.once && g.time > 0, n); const a = g.cycle(0).j, b = g.cycle(1).j; for (const k of Object.keys(a)) assert.ok(a[k].every((x, i) => Math.abs(x - b[k][i]) < 1e-9), n + ' ends where it began: ' + k); }
+  console.log('cutscene actors and gestures ok');
 }
 {
   const { Prompts } = await import('../src/kit/prompts.js');
@@ -2596,6 +2658,111 @@ console.log('physics ok');
     s.dispose(); s2.dispose(); assert.ok(!v.scene.children.includes(s.group), 'disposed: gone from the scene');
   }
   console.log('city to the horizon: the same for a seed, never on the city or the water, finer near, land from the city\'s edge, lit at night ok');
+}
+// districts side by side (layout centre) and the stand-ins for chunks not built (city-far.js Standins): a city moved is the
+// same city, every building as boxes of its own footprint and height in its chunk's one mesh, lit at night
+{
+  const THREE = await import('three'), { layout } = await import('../src/kit/city.js'), { Standins } = await import('../src/kit/city-far.js');
+  const a = layout({ seed: 8, blocks: [4, 3], style: 'oldtown' }), b = layout({ seed: 8, blocks: [4, 3], style: 'oldtown', centre: [1200, -800] });
+  assert.ok(a.buildings.length === b.buildings.length && a.buildings.every((q, i) => Math.abs(b.buildings[i].x0 - q.x0 - 1200) < 1e-6 && Math.abs(b.buildings[i].z1 - q.z1 + 800) < 1e-6 && b.buildings[i].h === q.h), 'a city moved by centre is the same city, moved');
+  assert.ok(Math.abs(b.bounds.x0 - a.bounds.x0 - 1200) < 1e-6 && b.nodes.every((n, i) => n.out.join() === a.nodes[i].out.join()) && b.centre.join() === '1200,-800', 'its bounds, junctions and roads moved with it');
+  const chunks = new Map(); for (const k of b.blocks) { const key = (k.i >> 1) + ',' + (k.j >> 1); if (!chunks.has(key)) chunks.set(key, { key, blocks: [] }); chunks.get(key).blocks.push(k); }
+  const g = new THREE.Group(), S = new Standins(g, b, chunks, { colourOf: () => '#a45a45' });
+  const parts = b.buildings.reduce((n, q) => n + q.parts.length, 0), meshes = [...chunks.values()].filter(c => c.stand).map(c => c.stand);
+  assert.ok(S.count === b.buildings.length && meshes.length === g.children[0].children.length && meshes.reduce((n, m) => n + m.geometry.index.count / 3, 0) === parts * 10, 'every building stands in, ten triangles a part, one mesh a chunk');
+  for (const c of chunks.values()) if (c.stand) {
+    const P = c.stand.geometry.attributes.position.array, x0 = Math.min(...c.blocks.map(k => k.x0)) - .01, x1 = Math.max(...c.blocks.map(k => k.x1)) + .01, z0 = Math.min(...c.blocks.map(k => k.z0)) - .01, z1 = Math.max(...c.blocks.map(k => k.z1)) + .01;
+    for (let i = 0; i < P.length; i += 3) assert.ok(P[i] >= x0 && P[i] <= x1 && P[i + 2] >= z0 && P[i + 2] <= z1, 'a chunk\'s stand-ins stay on its own blocks');
+  }
+  S.night = 1; assert.ok(S.mat.emissiveIntensity > 1, 'their windows light at night'); S.dispose(); assert.equal(g.children.length, 0, 'disposed: gone');
+  console.log('city districts side by side and stand-ins for chunks not built ok');
+}
+// a big city of districts (city-metro.js) as plain numbers: the districts placed apart with land between and the harbour on the
+// south edge, all joined by roads between their outer junctions, and a route across them with no gaps on the driving side
+{
+  const { Metro, metroPlan } = await import('../src/kit/city-metro.js'), { routeOn } = await import('../src/kit/city.js');
+  const M = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'], between: [120, 240] }), D = M.districts, again = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'suburb', 'harbour', 'suburb'] });
+  const apart = (a, b) => Math.max(b.x0 - a.x1, a.x0 - b.x1, b.z0 - a.z1, a.z0 - b.z1);
+  assert.ok(D.length === 5 && D.every((d, i) => d.plan.buildings.length === again.districts[i].plan.buildings.length && d.rect.x0 === again.districts[i].rect.x0), 'the same seed places the same districts');
+  for (const a of D) for (const b of D) if (a !== b) assert.ok(apart(a.rect, b.rect) >= 118, `${a.name} and ${b.name} are ${apart(a.rect, b.rect).toFixed(0)} m apart`);
+  const H = D.find(d => d.harbour); assert.ok(D.every(d => d === H || d.rect.z1 < H.rect.z0) && H.plan.water && D[0].plan.centre.join() === '0,0', 'the harbour is south of every other district, the first in the middle');
+  assert.ok(D.filter(d => d.style === 'suburb').length === 2 && new Set(D.map(d => d.name)).size === 5, 'two suburbs, each named its own');
+  const { Ways, WayTraffic, RING } = await import('../src/kit/city-ways.js');
+  const m = Object.assign(Object.create(Metro.prototype), { districts: D, bounds: M.bounds, side: 'right', seed: 3 }); m.connectors = m.connect();
+  const w = new Ways(m, { seed: 3, hills: .8, river: M.river, highway: true, meshes: false }); m.ways = w; m.ring = w.ring; m.ramps = w.ramps;   // (the plan alone: no meshes)
+  const seen = new Set([D[0]]); for (let k = 0; k < D.length; k++) for (const r of m.connectors) { if (seen.has(r.a)) seen.add(r.b); if (seen.has(r.b)) seen.add(r.a); }
+  assert.ok(seen.size === D.length, 'every district is joined to the rest by road');
+  const outer = (P, n) => n.i === 0 || n.j === 0 || n.i === P.nx || n.j === P.nz;
+  for (const r of m.connectors) {
+    assert.ok(outer(r.a.plan, r.from) && outer(r.b.plan, r.to) && r.len > 100 && r.width >= 9, `road ${r.id} runs between outer junctions (${r.a.name} to ${r.b.name}, ${r.len.toFixed(0)} m)`);
+    for (const [x, z] of r.points.slice(2, -2)) for (const d of D) if (d !== r.a && d !== r.b) assert.ok(x < d.rect.x0 || x > d.rect.x1 || z < d.rect.z0 || z > d.rect.z1, `road ${r.id} keeps out of ${d.name}`);
+    const p = m.along(r, r.len / 2), q = m.lanePos(r, 0, r.len / 2), w = m.lanePos(r, 0, r.len / 2, true);
+    assert.ok((q.x - p.x) * -p.dz + (q.z - p.z) * p.dx > 1 && (w.x - p.x) * -p.dz + (w.z - p.z) * p.dx < -1, 'its lanes keep to the right, each way');
+    const on = m.road(p.x + 1, p.z); assert.ok(on.road === r && on.d < 4, 'a point on it is on that road');
+  }
+  const mid = d => { const cx = (d.rect.x0 + d.rect.x1) / 2, cz = (d.rect.z0 + d.rect.z1) / 2, n = d.plan.nodes.reduce((m, n) => Math.hypot(n.x - cx, n.z - cz) < Math.hypot(m.x - cx, m.z - cz) ? n : m); return { x: n.x + 30, z: n.z + 2 }; };   // (on a road near the middle)
+  for (const b of D.slice(1)) {
+    const r = m.route(mid(D[0]), mid(b)); let gap = 0; for (let i = 1; i < r.points.length; i++) gap = Math.max(gap, Math.hypot(r.points[i][0] - r.points[i - 1][0], r.points[i][1] - r.points[i - 1][1]));
+    assert.ok(r && r.legs.some(l => l.road) && r.legs[0].district === D[0] && r.legs.at(-1).district === b && gap < 130 && Math.hypot(r.points.at(-1)[0] - mid(b).x, r.points.at(-1)[1] - mid(b).z) < 20, `a route from ${D[0].name} to ${b.name}: ${r.legs.map(l => l.road ? 'road ' + l.road.id : l.district.name).join(', ')}, no step over ${gap.toFixed(0)} m`);
+  }
+  const inside = m.route(mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 }), alone = routeOn(D[1].plan, mid(D[1]), { x: D[1].rect.x0 + 30, z: D[1].rect.z0 + 30 });
+  assert.ok(inside.legs.length === 1 && Math.abs(inside.length - alone.path.length) < 1, 'a route inside one district is that district\'s own');
+  const r0 = m.connectors[0], half = m.along(r0, r0.len * .3), fromRoad = m.route({ x: half.x, z: half.z }, mid(r0.b));
+  assert.ok(fromRoad.legs[0].road === r0 && fromRoad.legs.at(-1).district === r0.b, 'a route from the road between districts starts along it');
+  console.log('a big city of districts: placed apart, joined by roads, routes across them ok');
+  // the ways between (city-ways.js): hills, a river, the roads' heights over them, the highway and its slip roads, the cars on them
+  assert.ok(M.river && D.every(d => (M.river.axis === 'z' ? d.rect.x1 < M.river.c - 100 || d.rect.x0 > M.river.c + 100 : d.rect.z1 < M.river.c - 100 || d.rect.z0 > M.river.c + 100)), 'a river runs between the districts, clear of them all');
+  assert.ok(w.ring && w.ramps.length >= 3, `a highway round the city and a slip road to most districts (${w.ramps.length})`);
+  for (const r of w.roads) {
+    const limit = r.ring ? .05 : r.ramp ? .065 : .07; let g = 0; for (let i = 1; i < r.y.length; i++) g = Math.max(g, Math.abs(r.y[i] - r.y[i - 1]) / (r.at[i] - r.at[i - 1]));
+    assert.ok(g <= limit + .002, `${r.id} climbs no steeper than ${limit * 100}% (${(g * 100).toFixed(1)}%)`);
+    if (!r.ring) assert.ok(r.y[0] === 0 && (r.ramp ? Math.abs(r.y.at(-1) - w.ringY(r.ringS)) < .01 : r.y.at(-1) === 0), `${r.id} meets its district level and its other end at its height`);
+    for (let i = 0; i < r.points.length; i += 3) {
+      const [x, z] = r.points[i], y = r.y[i], k = r.kind[i];
+      if (w.riverD(x, z) < 12 && w.riverE(x, z) > .9) assert.ok(k === 1 && y > 1, `${r.id} bridges the river (${y.toFixed(1)} m up)`);
+      if (k === 0 && !w.holes.some(h => x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) && !(w.near(x, z, 40, q => q !== r)?.d < 34)) assert.ok(Math.abs(w.landAt(x, z) - (y - .08)) < .35, `the land is cut or filled to ${r.id} (${w.landAt(x, z).toFixed(2)} for ${y.toFixed(2)})`);
+      if (k === 2 && r.tunnels.every(t => Math.min(r.at[i] - t.s0, t.s1 - r.at[i]) > 12)) assert.ok(w.landAt(x, z) > y + 6.5, `the land covers ${r.id}'s tunnel (${w.landAt(x, z).toFixed(2)} over ${y.toFixed(2)} at ${r.at[i].toFixed(0)}, tunnels ${r.tunnels.map(t => t.s0.toFixed(0) + '-' + t.s1.toFixed(0))})`);
+      if (k === 1) { assert.ok(Math.abs(w.surface(x, z) - y - .05) < .1 && w.surface(x, z, y - 3) < y - 1, `on ${r.id}'s bridge the ground is the deck, under it the land (${w.surface(x, z).toFixed(2)} ${w.surface(x, z, y - 3).toFixed(2)} for ${y.toFixed(2)} at ${r.at[i].toFixed(0)} of ${r.len.toFixed(0)}, land ${w.landAt(x, z).toFixed(2)} natural ${w.natural(x, z).toFixed(2)})`); }
+    }
+  }
+  for (const q of w.ramps) assert.ok(outer(q.a.plan, q.from) && q.b === RING && Math.abs(w.near(q.to.x, q.to.z, 30, r => r.ring).d - (w.ring.width / 2 + 4.5)) < 1, `${q.id} runs from an outer junction to beside the highway`);
+  const hw = m.along(w.ring, w.ramps[0].ringS + 300), toHw = m.route(mid(w.ramps[0].a), { x: hw.x, z: hw.z });
+  assert.ok(toHw && toHw.legs.some(l => l.road === w.ramps[0]) && toHw.legs.at(-1).road === w.ring, 'a route onto the highway climbs a slip road');
+  const across = m.route(mid(w.ramps[0].a), mid(w.ramps.at(-1).a)); assert.ok(across && across.length > 100, 'routes still cross the whole city');
+  const T = new WayTraffic(w, 30), top = Math.max(...w.roads.map(r => r.speed)); let joined = 0, left = 0, fast = 0;
+  for (let f = 0; f < 2700; f++) { const before = T.list.map(c => c.r); T.update(1 / 30, { x: 0, z: 0 }); T.list.forEach((c, i) => { if (before[i] !== c.r && c.r.ring) joined++; if (before[i]?.ring && c.r.ramp) left++; if (c.v > top * 1.13) fast++; }); }
+  let close = 0; for (const a of T.list) for (const b of T.list) if (a !== b && a.r === b.r && a.back === b.back && a.k === b.k && Math.abs(a.u - b.u) < 4) close++;
+  assert.ok(joined > 0 && left > 0 && !fast && close === 0 && T.list.every(c => Number.isFinite(c.x + c.y + c.z) && c.u >= 0 && c.u <= c.r.len), `cars between districts keep their lanes and distance, join the highway (${joined}) and leave it (${left}); ${fast} too fast, ${close} too close`);
+  T.dispose();
+  console.log('the ways between districts: hills, a river bridged, cuttings and tunnels, a highway with slip roads, cars on them ok');
+}
+// finding the way round a city (city-gps.js): a route that follows the player and is worked out again when they leave it, the
+// next turn, arriving, where the route goes (the game's, the player's waypoint, a pinned marker), and the maps' sums
+{
+  const { Gps } = await import('../src/kit/city-gps.js'), { layout, routeOn, roadOn } = await import('../src/kit/city.js');
+  const P = layout({ seed: 5, blocks: 5 }), city = { plan: P, start: { x: 0, z: 0 }, route: (a, b) => routeOn(P, a, b), road: (x, z) => roadOn(P, x, z) };
+  const gps = new Gps(city), n = P.nodes, a = roadOn(P, n[1].x + 20, n[1].z), b = roadOn(P, n.at(-2).x - 20, n.at(-2).z);
+  assert.ok(gps.target === null && gps.update(.1, a).next === null, 'nowhere to go: no route');
+  gps.to(b); gps.update(.1, { x: a.x, z: a.z, heading: a.heading });
+  const r = gps.route; assert.ok(r && r.turns.length >= 1 && r.turns.every(t => t.turn === 'left' || t.turn === 'right') && Math.abs(gps.left - r.length) < 3 && gps.next.in > 0, `a route of ${r.length.toFixed(0)} m with ${r.turns.length} turns`);
+  const made = gps.routes; let lastLeft = Infinity, down = true, turns = new Set();
+  for (let s = 0; s <= r.path.length; s += 3) { const p = r.path.at(s); gps.update(.1, { x: p.x + .8, z: p.z }); down &&= gps.left <= lastLeft + .01; lastLeft = gps.left; turns.add(gps.next.turn); }
+  assert.ok(gps.routes === made && down && gps.arrived && gps.next.turn === 'arrive' && turns.has('arrive'), `driven along it: never worked out again, metres to go only fall, arrived (${[...turns].join(', ')})`);
+  const off = { x: a.x + 45, z: a.z + 45 }; for (let i = 0; i < 6; i++) gps.update(.1, off);
+  assert.ok(gps.routes === made + 1 && Math.hypot(gps.route.points[0][0] - off.x, gps.route.points[0][1] - off.z) < 40, 'off the route: it is worked out again from where the player is');
+  const ahead = gps.ahead(12); assert.ok(ahead && Math.hypot(ahead.x - off.x, ahead.z - off.z) < 60, 'a point ahead along it, for an arrow');
+  // where it goes: the game's to(), else the waypoint, else the first pinned marker (a watched list, read each frame)
+  const job = { at: { x: n[7].x, y: 0, z: n[7].z }, kind: 'job', pinned: true }, jobs = { markers: [{ at: { x: 1, y: 0, z: 2 }, kind: 'job' }, job] };
+  gps.to(null); gps.watch(jobs); assert.ok(gps.target === job.at && gps.all().length === 2, 'with nowhere set it goes to the pinned marker of what it watches');
+  gps.waypoint = { at: { x: n[3].x, z: n[3].z }, kind: 'waypoint', pinned: true }; assert.ok(gps.target === gps.waypoint.at && gps.all().length === 3, 'the player\'s waypoint before that');
+  gps.to(b); assert.ok(gps.target === b, 'and the game\'s own before both');
+  const moving = { x: n[2].x, z: n[2].z }; gps.to(moving); gps.update(.1, a); const before = gps.routes; moving.x += 60; gps.update(.1, a);
+  assert.ok(gps.routes === before + 1, 'a target that moves far is followed');
+  // the maps' sums: a city point to the canvas and back, turned
+  const M = { cx: 50, cy: 60, s: .5, turn: .7, at: { x: 10, z: -20 } }, q = gps.toMap(M, 130, 40), back = gps.fromMap(M, q[0], q[1]);
+  assert.ok(Math.abs(back.x - 130) < 1e-9 && Math.abs(back.z - 40) < 1e-9, 'a point on the map and back');
+  gps.clear(); assert.ok(gps.target === null && !gps.all().length, 'cleared');
+  console.log('finding the way: a route that follows the player, turns, arriving, waypoints and markers ok');
 }
 // the ground with no repeats (ground-paint.js): both levels painted whole at first, then only the strip a move uncovers, in
 // pieces inside the picture (it wraps round) over the world they stand for; marks painted where they fall; the read look on
@@ -7709,6 +7876,104 @@ console.log('physics ok');
   console.log('gs.stats: buffs, stacking, perks, immunity, cleanse, drain and heal over time, pools, regen delay, cooldowns with charges, saving ok');
 }
 
+// gs.rpg: a hero who grows (levels, attributes, skill tree, gear) and a world that remembers (reputation)
+{
+  const { Stats } = await import('../src/kit/stats.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Growth, Reputation, xpTo } = await import('../src/kit/rpg.js');
+  const hero = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } });
+  const TREE = { cleave: { ranks: 3, perk: { mul: { damage: 1.1 } } }, whirl: { needs: ['cleave:2'], level: 4 }, ward: { perk: { add: { armour: 5 } }, excludes: ['frenzy'] }, frenzy: { perk: { mul: { speed: 1.2 } }, excludes: ['ward'] } };
+  const g = new Growth(hero, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } });
+  assert.equal(hero.get('damage'), 9); assert.equal(hero.max('hp'), 100); assert.equal(hero.get('hp'), 60);
+  let lv = []; g.on('level', l => lv.push(l));
+  assert.equal(xpTo(2), 100); assert.equal(g.gain(99), 0); assert.ok(Math.abs(g.part - .99) < 1e-9);
+  assert.equal(g.gain(300), 2); assert.deepEqual(lv, [2, 3]); assert.equal(hero.get('hp'), 100, 'filled on level');
+  assert.equal(g.points, 6); assert.equal(g.skillPoints, 2);
+  assert.ok(g.raise('might', 2)); assert.equal(hero.get('damage'), 11); assert.equal(hero.max('hp'), 116);
+  assert.equal(g.can('whirl').why, 'level'); assert.ok(g.learn('cleave')); assert.ok(Math.abs(hero.get('damage') - 12.1) < 1e-9);
+  assert.ok(g.learn('ward')); assert.equal(g.can('frenzy').why, 'ranks' === 0 ? '' : 'excluded'); assert.equal(hero.get('armour'), 5);
+  g.gain(1000); assert.equal(g.level, 6); assert.equal(g.can('whirl').why, 'needs'); assert.deepEqual(g.can('whirl').needs, ['cleave:2']);
+  assert.ok(g.learn('cleave')); assert.ok(g.learn('whirl')); assert.ok(g.has('whirl'));
+  assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9);
+  const inv = new Inventory({ sword: { stack: 1, kind: 'hand', stats: { add: { damage: 3 } } }, ring: { stack: 1, kind: 'ring', stats: { mul: { speed: 1.5 } } } }, { slots: 4, extra: { hand: 'hand', ring: 'ring' } });
+  g.wear(inv); inv.add('sword'); assert.ok(inv.move(0, 'hand')); assert.ok(Math.abs(hero.get('damage') - 14 * 1.21) < 1e-9, 'sword counts ' + hero.get('damage'));
+  assert.ok(inv.move('hand', 0)); assert.ok(Math.abs(hero.get('damage') - 11 * 1.21) < 1e-9, 'sword off');
+  const p = g.pack(); const h2 = new Stats({ damage: 4, armour: 0, speed: 5, hp: { max: 60 } }); const g2 = new Growth(h2, { attributes: { might: 5, grace: 5 }, tree: TREE, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might, speed: a => .1 * a.grace } }).unpack(JSON.parse(JSON.stringify(p)));
+  assert.equal(h2.get('damage'), hero.get('damage')); assert.equal(g2.level, 6);
+  g.respec(); assert.equal(g.rank('cleave'), 0); assert.equal(g.attr('might'), 5); assert.equal(g.points, 15); assert.equal(g.skillPoints, 5); assert.equal(hero.get('damage'), 9);
+  // standalone
+  const s = new Growth(null, { attributes: { might: 3 }, derive: { damage: a => a.might } }); assert.equal(s.value('damage', 1), 4);
+  // reputation
+  const r = new Reputation({ factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+    deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } }, titles: [{ name: 'the Bright', good: [40, 100] }] });
+  assert.equal(r.mood('town'), 'ignore');
+  let out = r.did('rescue'); assert.equal(out.town, 20); assert.equal(out.bandits, -10); assert.equal(r.with('guard'), 10, 'ally moves with town');
+  assert.equal(r.rank('town'), 'liked'); r.did('rescue'); r.did('rescue'); assert.equal(r.with('town'), 60); assert.equal(r.rank('town'), 'loved'); assert.equal(r.mood('town'), 'bow');
+  assert.equal(r.title(), 'the Bright'); assert.equal(r.price(100, 'town'), 85); assert.equal(r.price(100, 'town', { sell: true }), 57);
+  out = r.did('steal', { seen: false }); assert.deepEqual(out, { good: -5 }); assert.equal(r.bounty('guard'), 0);
+  out = r.did('steal', { seen: ['guard'] }); assert.equal(r.bounty('guard'), 50); assert.equal(r.mood('guard'), 'arrest'); assert.equal(r.with('town'), 60, 'town did not see');
+  r.pay('guard'); assert.equal(r.bounty('guard'), 0); assert.equal(r.done('steal'), 2);
+  assert.equal(r.mood('bandits'), 'avoid'); r.move('bandits', -20); assert.equal(r.mood('bandits'), 'attack');
+  const r2 = new Reputation({ factions: { town: {}, guard: { law: true }, bandits: { start: -20, rivals: ['town'], fights: true } }, deeds: {} }).unpack(JSON.parse(JSON.stringify(r.pack())));
+  assert.equal(r2.with('town'), r.with('town')); assert.equal(r2.get('fame'), 30); assert.equal(r.vars().town_rank, 'loved', 'vars for a conversation');
+  assert.throws(() => new Reputation({ deeds: { x: { nope: 1 } } }));
+  console.log('gs.rpg: levels on a curve, attributes into stats, skill tree needs/excludes/ranks, gear from equip slots, respec, saving; reputation deeds seen and unseen, rivals and allies, bounties, moods, prices, titles ok');
+}
+// gs.rpg Quests and Flags: quests that branch, count, fail and reward; the journal; world flags; a conversation that moves a quest on
+{
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { Story, Talk, loadStory } = await import('../src/kit/story.js');
+  const { together } = await import('../src/kit/links.js');
+  await loadStory();
+  const TABLE = { key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+      ask: { text: 'Ask Mara about the gate key', at: { x: 0, z: 10 }, reach: 2, next: 'mill' },
+      mill: { text: 'Find the miller', at: [20, 0, 0], when: t => t > 1, next: 'flour' },
+      flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+      done: { end: 'helped', text: 'Mara gave you the key.' },
+      lost: { end: 'failed', text: 'Mara will never trust you now.' } },
+      rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+    wolves: { name: 'Wolves', stages: { hunt: { text: 'Drive off five wolves', count: 5, next: 'paid' }, paid: { end: 'done', text: 'The farmer paid you.' } } } };
+  let made;
+  together(() => { made = { grow: new Growth(null, { attributes: { might: 1 } }), rep: new Reputation({ factions: { town: {} }, deeds: { helped: { town: 10 } } }), inv: new Inventory({ key: { stack: 1 }, flour: { stack: 9 } }, { slots: 4 }), flags: new Flags(), quests: new Quests(TABLE) }; });
+  const { grow, rep, inv, flags, quests } = made, ev = [];
+  for (const e of ['start', 'stage', 'end', 'fail', 'reward']) quests.on(e, (...a) => ev.push(e + ':' + a[0] + (e === 'stage' ? ':' + a[1] : '')));
+  assert.equal(quests.can('key'), false, 'needs met_mara'); assert.equal(quests.start('key'), false);
+  flags.set('met_mara'); assert.ok(quests.start('key')); assert.equal(quests.stage('key'), 'ask'); assert.ok(quests.start('wolves'));
+  assert.deepEqual(quests.markers.map(m => [m.quest, m.at.z]), [['key', 10]], 'a marker where the stage is');
+  quests.update(.5, { x: 0, z: 5 }); assert.equal(quests.stage('key'), 'ask'); quests.update(.5, { x: 0, y: 0, z: 8.5 }); assert.equal(quests.stage('key'), 'mill', 'reaching it moves on');
+  quests.update(.6); assert.equal(quests.stage('key'), 'mill'); quests.update(.6); assert.equal(quests.stage('key'), 'flour', 'when() moves on');
+  assert.equal(quests.count('wolf'), 0, 'not enough yet to move on'); assert.equal(quests.progress('wolves').n, 1, 'a stage counts what it names');
+  quests.count('flour', 2); assert.equal(quests.progress('key').n, 2); quests.count('flour'); assert.equal(quests.ended('key'), 'helped');
+  assert.ok(grow.level >= 2 && inv.has('key') && rep.with('town') === 10 && flags.has('mara_friend'), 'rewards reached the growth, inventory, reputation and flags it found');
+  assert.ok(ev.includes('reward:key') && ev.includes('end:key'));
+  assert.deepEqual(quests.journal.slice(0, 2).map(j => j.text), ['Mara gave you the key.', 'Bring Mara three sacks of flour']);
+  assert.deepEqual(quests.list().active.map(q => q.id), ['wolves']); assert.deepEqual(quests.list().done.map(q => q.id), ['key']);
+  assert.equal(quests.start('key'), false, 'not again unless it repeats'); assert.deepEqual(quests.vars(), { quest_key: 'helped', quest_wolves: 'hunt' });
+  quests.fail('wolves'); assert.ok(quests.failed('wolves') && ev.includes('fail:wolves'));
+  const saved = JSON.parse(JSON.stringify(quests.pack())); assert.ok(JSON.stringify(saved).length < 400, 'small: ' + JSON.stringify(saved).length);
+  const q2 = new Quests(TABLE, { link: false }).unpack(saved); assert.equal(q2.ended('key'), 'helped'); assert.equal(q2.journal[0].text, quests.journal[0].text);
+  assert.throws(() => new Quests({ x: { stages: { a: { next: 'nope' } } } }), /not one of its stages/);
+  // a conversation finds them all and moves a quest on
+  let talk;
+  together(() => {
+    const f = new Flags(), q = new Quests(TABLE);
+    talk = new Talk(new Story(`
+  EXTERNAL quest(id, stage)
+  EXTERNAL flag(name)
+  VAR quest_key = ""
+  VAR met_mara = false
+  {quest_key == "": Hello, stranger.|Back about the key?} #who:mara
+  ~ flag("met_mara")
+  ~ quest("key", "ask")
+  Ask me about the key, then. #who:mara
+  -> END`), { cast: { mara: {} }, voices: false });
+    talk.start(); assert.equal(talk.text, 'Hello, stranger.'); talk.tap(); talk.tap();
+    assert.ok(f.has('met_mara') && q.is('key', 'ask'), 'the talk set a flag and started the quest it found');
+    assert.equal(talk.text, 'Ask me about the key, then.');
+  });
+  console.log('gs.rpg Quests: stages moved on by reaching, waiting and counting, needs, rewards to the kits it found, the journal, markers, failing, saving; Flags; a Talk that sets a flag and starts a quest ok');
+}
 // gs.magic: casts, mana and cooldowns, bolts that home, pierce, chain and splash, areas that warn and linger, beams, wards, heals, statuses that meet
 {
   const { Magic, STATUSES, Looks } = await import('../src/kit/magic.js');
@@ -8277,6 +8542,64 @@ console.log('physics ok');
   console.log('rapier through the engine: a true floor, riders, karts, craft, grapples, shots, lobs, barrels, shatter and slice, props, voxels, cloth, dents, rivers; 2D walkers, tiles, cars, jelly, water ok (' + Math.round(performance.now() - t0) + ' ms)');
 }
 
+// nothing goes through what is solid: cloth goes round the still things of the world (walls as boxes, posts, the ground as a mesh or a
+// grid of heights), and gs.characters.Solid keeps a posed body out of walls, finds the way with room to fall and keeps a held gun out of
+// its holder (src/kit/cloth.js, cloth-gpu.js, solid-body.js; weapon.wield uses it)
+{
+  const t0 = performance.now(), THREE = await import('three');
+  const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+  const { Cloth } = await import('../src/kit/cloth.js'), { Solid } = await import('../src/kit/solid-body.js'), { person, figure } = await import('../src/kit/poses.js');
+  const run = (w, n, f) => { for (let i = 0; i < n; i++) { f?.(i); w.step(1 / 60); } };
+  // a banner blown at a wall beside it stops at the wall's face (with the world; without it, it flies out through it)
+  const flies = [];
+  for (const world of [false, true]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .5 } }]);
+    const c = new Cloth(null, { wind: { x: 0, z: 6 }, world: world ? w : false }), b = c.banner({ from: [-1, 2.8, 0], to: [1, 2.8, 0], drop: 2.5 });
+    let most = -9; run(w, 200, () => { c.update(1 / 60); for (let k = b.base; k < b.base + b.cols * b.rows; k++) most = Math.max(most, c.P[k * 3 + 2]); });
+    flies.push(most); if (world) assert.ok(c.still.size === 1 && c.floor?.world, 'the wall is a box the cloth goes round, and the floor a grid of heights under it');
+  }
+  assert.ok(flies[0] > 1.5 && flies[1] < .36, 'a banner in the wind goes through a wall beside it with no world, and stops at its face (z .35) with one: ' + flies.map(v => v.toFixed(3)));
+  // a turned box of its own; a sheet dropped on a slope made of a grid of heights lies on it
+  { const c = new Cloth(null, { wind: { x: 0, z: 0 } }), s = c.sheet({ cols: 9, rows: 9, place: (i, j) => [-.6 + i * .15, 1.4, -.6 + j * .15] }); c.box({ at: [0, .5, 0], size: [.8, 1, .8], turn: .6 });
+    for (let i = 0; i < 180; i++) c.update(1 / 60);
+    let inside = 0; const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -.6);
+    for (let k = 0; k < c.N; k++) { const v = new THREE.Vector3(c.P[k * 3], c.P[k * 3 + 1] - .5, c.P[k * 3 + 2]).applyQuaternion(q); if (Math.abs(v.x) < .39 && Math.abs(v.y) < .49 && Math.abs(v.z) < .39) inside++; }
+    assert.ok(inside === 0 && c.P[(4 * 9 + 4) * 3 + 1] > .99, 'a sheet drapes over a turned box and none of it is inside: ' + inside); }
+  { const w = new World3D({ gravity: -9.8 }), n = 8, data = []; for (let r = 0; r <= n; r++) for (let q = 0; q <= n; q++) data.push(q * .5);
+    w.heights({ data, cols: n, rows: n, x: -4, z: -4, width: 8 });
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.sheet({ cols: 8, rows: 8, place: (i, j) => [-.5 + i / 7, 4, -.5 + j / 7] }); run(w, 240, () => c.update(1 / 60));
+    let under = 0; for (let k = 0; k < c.N; k++) if (c.P[k * 3 + 1] < (c.P[k * 3] + 4) * .5 - .02) under++;
+    assert.ok(under === 0 && c.P[1] < 2.2, 'a sheet lies on sloping ground made of a grid of heights, none of it under: ' + under); }
+  // a sheet dropped on a hill (a mesh made solid) lies on it, though another piece of the same cloth hangs 12 m away: each has its own grid
+  { const w = new World3D({ gravity: -9.8 }), hg = new THREE.PlaneGeometry(4, 4, 24, 24); hg.rotateX(-Math.PI / 2); const hp = hg.attributes.position, hill = (x, z) => .9 * Math.exp(-(x * x + z * z) / 1.6);
+    for (let i = 0; i < hp.count; i++) hp.setY(i, hill(hp.getX(i), hp.getZ(i))); w.ground(new THREE.Mesh(hg)); w.floor(0);
+    const c = new Cloth(null, { wind: { x: 0, z: 0 }, world: w }); c.banner({ from: [-13, 3, 0], to: [-11, 3, 0], drop: 2 }); c.sheet({ cols: 11, rows: 11, place: (i, j) => [-.8 + i * .16, 1.4, -.8 + j * .16] });
+    run(w, 200, () => c.update(1 / 60)); let under = 0; const s = c.pieces[1];
+    for (let k = s.base; k < s.base + s.cols * s.rows; k++) if (c.P[k * 3 + 1] < hill(c.P[k * 3], c.P[k * 3 + 2]) - .05) under++;
+    assert.ok(under === 0 && c.floor.grids.length === 2 && c.P[(s.base + 60) * 3 + 1] > .85, 'a sheet lies over a hill with a banner far off, none of it under: ' + under + ', grids ' + c.floor.grids.length + ', top ' + c.P[(s.base + 60) * 3 + 1].toFixed(2)); }
+  // a person standing into a wall is put back to its face; the way with room to go down in
+  for (const make of [figure, person]) {
+    const w = new World3D({ gravity: -9.8 }); w.floor(0); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .2 } }]);
+    const scene = new THREE.Scene(), f = make(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const s = new Solid(f, { world: w }), p = s.keepOut(); s.update();
+    assert.ok(p && p.z < -.05 && Math.abs(p.y) < 1e-6 && s.bounds().hi.z < .06 && f.position.z === p.z, make.name + ': standing into a wall, it is put back out of it (only along the ground): ' + JSON.stringify(p));
+    assert.ok(s.keepOut() === null, 'and then it is clear');
+    assert.ok(s.room({ x: 0, z: 1 }) < .1 && s.room({ x: 0, z: -1 }) > 1.7 && s.room([1, 0]) > 1.7, 'no room to fall into the wall, room the other ways');
+    // a stick held out through both thighs is turned out of them about its grip (its end, out at the side)
+    const stick = new THREE.Mesh(new THREE.BoxGeometry(.04, .04, 1)); scene.add(stick); stick.position.set(f.position.x, .7, f.position.z); stick.rotation.y = Math.PI / 2;
+    const turned = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false }), again = s.keepOff(stick, { pivot: [0, 0, .5], local: true, ahead: true, walls: false });
+    assert.ok(turned > .1 && again < .01, make.name + ': a stick held into the thighs is turned out (' + turned.toFixed(2) + ' rad), and then is clear');
+  }
+  // a held thing pointed at a wall is turned off it about the grip, and stays where the hand holds it
+  { const w = new World3D({ gravity: -9.8 }); w.shapes([{ box: [4, 3, .3], at: { x: 0, y: 1.5, z: .9 } }]);
+    const scene = new THREE.Scene(), f = person(); scene.add(f); f.rig.update(1 / 60, { speed: 0 });
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(.05, .08, 1)); scene.add(gun); gun.position.set(.2, 1.3, .25); gun.updateMatrixWorld(true);
+    const s = new Solid(f, { world: w }), grip = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld), t = s.keepOff(gun, { pivot: grip, ahead: true });
+    const tip = new THREE.Vector3(0, 0, .5).applyMatrix4(gun.matrixWorld), held = new THREE.Vector3(0, 0, -.4).applyMatrix4(gun.matrixWorld);
+    assert.ok(t > .2 && tip.z < .74 && held.distanceTo(grip) < 1e-6, 'a gun pointed into a wall is turned off it about the grip: ' + t.toFixed(2) + ' rad, its end at z ' + tip.z.toFixed(3)); }
+  console.log('nothing through what is solid: cloth stops at walls, drapes on boxes and lies on ground made of heights; bodies kept out of walls, room to fall, held things kept out of the holder and of walls ok (' + Math.round(performance.now() - t0) + ' ms)');
+}
+
 // no kit is a physics engine of its own: the simple 2D World, where an arena's ball goes and 3D soft things all ask Rapier
 // (physics2d.js, arena.js predict(), soft.js in 3D; World3D sweep(), around(), outOf())
 {
@@ -8832,6 +9155,44 @@ console.log('physics ok');
   console.warn = warn; radio.off(); (await import('../src/kit/sound.js')).stopTalking();   // (lines still waiting for the voice list must not speak in later tests)
   console.log('missions: open-world jobs, markers, phone calls, retry mid-city, world save in 8 KB ok');
 }
+// WorldSave for an RPG: the gs.rpg kits kept by themselves, a save soon after a quest moves on, parts on the phone, slots
+{
+  const { WorldSave } = await import('../src/kit/missions.js');
+  const { Growth, Reputation, Quests, Flags } = await import('../src/kit/rpg.js');
+  const { Inventory } = await import('../src/kit/items.js');
+  const { together } = await import('../src/kit/links.js');
+  let cloud = null, phone = null, writes = 0;
+  const api = { save: d => { cloud = JSON.parse(JSON.stringify(d)); writes++; return true; }, load: f => cloud ?? f,
+    saveLocal: d => { phone = JSON.parse(JSON.stringify(d)); return true; }, loadLocal: f => phone ?? f };
+  const TABLE = { gate: { name: 'The Gate', stages: { find: { text: 'Find the gate', next: 'open' }, open: { text: 'Open it', count: 2, next: 'won' }, won: { end: 'done', text: 'Open.' } }, rewards: { done: { xp: 120, deeds: ['brave'] } } } };
+  let k, crates;
+  const make = () => together(() => {
+    k = { grow: new Growth(null, { attributes: { might: 3 } }), rep: new Reputation({ factions: { town: {} }, deeds: { brave: { town: 10, fame: 5 } } }), flags: new Flags(), quests: new Quests(TABLE), inv: new Inventory({}, { slots: 2 }) };
+    crates = [[1, 2, 3]];
+    k.save = new WorldSave(api); k.save.keep('crates', () => crates, d => { crates = d; }, { local: true });
+  });
+  make(); assert.equal(k.save.load(), false, 'nothing saved yet');
+  k.quests.start('gate'); k.flags.set('met_gate');
+  k.save.update(.1); assert.equal(writes, 0); k.save.update(.5); assert.equal(writes, 1, 'a quest starting saves a moment later by itself');
+  assert.ok(cloud.Q && cloud.G && cloud.E && cloud.W && cloud._t >= 0, 'quests, growth, reputation and flags kept by themselves: ' + Object.keys(cloud));
+  assert.deepEqual(phone.w.crates, [[1, 2, 3]], 'a local part goes to the phone save');
+  assert.ok(!('crates' in cloud), 'and not to the 8 KB');
+  k.quests.to('gate', 'open'); k.quests.count('x', 2); k.save.update(.6);
+  assert.equal(cloud.Q.e.gate, 'done'); assert.equal(k.grow.level, 2);
+  crates = [[9, 9, 9]]; k.save.update(10);
+  assert.ok(k.save.slot(1, 'At the gate')); assert.deepEqual(k.save.slots.map(s => s && s.label), ['At the gate', null, null]);
+  k.flags.set('gate_smashed'); crates = []; k.save.now();
+  // a new phone with the same cloud save but no phone save
+  const keepPhone = phone; phone = null; make(); assert.ok(k.save.load());
+  assert.ok(k.quests.ended('gate') === 'done' && k.grow.level === 2 && k.rep.with('town') === 10 && k.flags.has('gate_smashed') && k.save.played > 10, 'the world comes back from the 8 KB');
+  assert.deepEqual(crates, [[1, 2, 3]], 'the phone-only part stays as made on a new phone');
+  phone = keepPhone; make(); k.save.load(); assert.deepEqual(crates, [], 'the phone save comes back on the same phone');
+  assert.ok(k.save.restore(1) && !k.flags.has('gate_smashed') && JSON.stringify(crates) === '[[9,9,9]]', 'a slot puts the world back as it was');
+  assert.ok(!cloud.W.gate_smashed, 'and becomes the save');
+  k.save.clear(1); assert.equal(k.save.slots[0], null);
+  assert.throws(() => k.save.slot(4), /slot 4/);
+  console.log('world save: gs.rpg quests, growth, reputation and flags kept by themselves, saved soon after a quest moves on, parts kept on the phone, save slots ok');
+}
 {
   // the car radio: stations that carry on, DJs, news, the car body, the phone AI's lines
   const { Radio } = await import('../src/kit/radio.js');
@@ -8857,6 +9218,79 @@ console.log('physics ok');
   assert.ok(none.station.after.parts.every(p => p.line && p.line.length > 5), 'no AI answer: the written lines stay');
   a.off(); c.off(); none.off(); (await import('../src/kit/sound.js')).stopTalking();
   console.log(`radio: ${a.stations.length} stations, DJs, news, outside the car, phone AI lines ok (${lines[0]})`);
+}
+// baked light (bake-trace.js, bake-grid.js; v.bakeLight({ ... }) in bake-light.js): the level's still triangles in one tree,
+// walked on the CPU. Every ray has to find what three-mesh-bvh's own ray caster finds; probes have to see the open sky as the
+// hemisphere light gives it, take colour from a sunlit wall, go dark under a roof and be filled in when inside something; the
+// grid's packing has to read back the way three's LightProbeGrid shader reads it; the ground's light map has to darken the
+// foot of a wall and nothing in the open.
+{
+  const THREE = await import('three');
+  const { MeshBVH } = await import('three-mesh-bvh');
+  const { buildScene, Rays, bakeReady, bakeProbes, bakeTexels, mapTexels, TRI } = await import('../src/kit/bake-trace.js');
+  const { gridOver, probeAt, fillIn, combine, hemisphereSH, shIrradiance, PROBE, packAtlas, atlasSize, aoBytes } = await import('../src/kit/bake-grid.js');
+  await bakeReady;
+  const I = Float32Array.from(new THREE.Matrix4().elements), at = (x, y, z, s = 1, sy = s) => Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(s, sy, s)).elements);
+  const geo = g => ({ pos: g.attributes.position.array, idx: g.index ? Uint32Array.from(g.index.array) : null, col: null });
+  // rolling ground and a few hundred boxes, against three-mesh-bvh
+  const land = new THREE.PlaneGeometry(200, 200, 64, 64).rotateX(-Math.PI / 2); { const P = land.attributes.position; for (let i = 0; i < P.count; i++) P.setY(i, 4 * Math.sin(P.getX(i) * .05) * Math.cos(P.getZ(i) * .04)); }
+  const cube = new THREE.BoxGeometry(1, 1, 1), R0 = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+  const ms = Array.from({ length: 300 }, () => at((R0() - .5) * 180, 2, (R0() - .5) * 180, 1 + R0() * 3, 1 + R0() * 6));
+  const sc = buildScene({ shapes: [geo(land), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.4, .5, .3] }, { shape: 1, ms, rgb: [.6, .5, .4] }] });
+  assert.equal(sc.n, 64 * 64 * 2 + 300 * 12, 'every triangle of every copy is in: ' + sc.n);
+  const rays = new Rays(sc), ref = (() => { const P = new Float32Array(sc.n * 9); for (let k = 0; k < sc.n; k++) for (let j = 0; j < 3; j++) { const o = k * TRI; P[k * 9 + j] = sc.T[o + j]; P[k * 9 + 3 + j] = sc.T[o + j] + sc.T[o + 3 + j]; P[k * 9 + 6 + j] = sc.T[o + j] + sc.T[o + 6 + j]; } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(P, 3)); return new MeshBVH(g); })();
+  const ray = new THREE.Ray(); let same = 0, hits = 0;
+  for (let i = 0; i < 4000; i++) {
+    const o = [(R0() - .5) * 160, 1 + R0() * 10, (R0() - .5) * 160], u = R0() * 2 - 1, a = R0() * 6.283, s = Math.sqrt(1 - u * u), d = [s * Math.cos(a), u, s * Math.sin(a)];
+    ray.origin.set(...o); ray.direction.set(...d); const h = ref.raycastFirst(ray, THREE.DoubleSide, 0, 60), t = rays.first(...o, ...d, 60);
+    if (h) hits++; if (h ? Math.abs(h.distance - t) < 1e-3 : t > 60) same++;
+  }
+  assert.ok(same === 4000 && hits > 800, `the flat walk finds what three-mesh-bvh finds: ${same}/4000 (${hits} hits)`);
+  // a probe in the open, one beside a red wall the sun shines on, one under a roof, one inside a box
+  const quad = new THREE.PlaneGeometry(1, 1), wallM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(0, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0)), new THREE.Vector3(20, 6, 1)).elements);
+  const roofM = Float32Array.from(new THREE.Matrix4().compose(new THREE.Vector3(30, 3, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)), new THREE.Vector3(10, 10, 1)).elements);
+  const flat = new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2);
+  const room = buildScene({ shapes: [geo(flat), geo(quad), geo(cube)], items: [{ shape: 0, ms: [I], rgb: [.5, .5, .5] }, { shape: 1, ms: [wallM], rgb: [.8, .05, .05] }, { shape: 1, ms: [roofM], rgb: [.5, .5, .5], both: true }, { shape: 2, ms: [at(-30, 2, 0, 4)], rgb: [.5, .5, .5] }] });
+  const rr = new Rays(room), sun = [Math.SQRT1_2, Math.SQRT1_2, 0];
+  const P = bakeProbes(rr, { at: new Float32Array([-60, 2, 40, .6, 1.5, 0, 30, 1.2, 0, -30, 2, 0]), rays: 256, sun, reach: 150 });
+  const up = (p, part = 0) => shIrradiance(P, p * PROBE + part, 1, 0, 1, 0) / Math.PI, toward = (p, ch, x) => shIrradiance(P, p * PROBE + 36 + ch * 9, 1, x, 0, 0);
+  assert.ok(Math.abs(up(0) - 1) < .04 && P[63] === 0, 'in the open a probe sees all the sky overhead: ' + up(0).toFixed(3));
+  assert.ok(toward(1, 0, -1) > 4 * toward(1, 1, -1) && toward(1, 0, -1) > .8, `beside a sunlit red wall the bounce is red: r ${toward(1, 0, -1).toFixed(2)} g ${toward(1, 1, -1).toFixed(2)}`);
+  assert.ok(up(2) < .2 && P[2 * PROBE + 63] < .05, 'under a two-sided roof little sky, and no backs seen: ' + up(2).toFixed(3));
+  assert.ok(P[3 * PROBE + 63] > .75, 'inside a box most rays hit a back: ' + P[3 * PROBE + 63].toFixed(2));
+  assert.deepEqual(Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), Array.from(bakeProbes(rr, { at: new Float32Array([5, 2, 5]), rays: 64, sun })), 'the same probe bakes the same twice');
+  // put together: an open probe lights an upward face as the hemisphere light it stands in for did
+  const C = [.3, .35, .4], G0 = [.1, .08, .05], hs = hemisphereSH(C, G0), comb = combine(P, 4, C, [2, 2, 2]);
+  const lit = shIrradiance(comb, 0, 1, 0, 1, 0), hemi = shIrradiance(hs, 0, 1, 0, 1, 0);
+  assert.ok(Math.abs(lit - .3) < .02 && Math.abs(hemi - .3) < .01, `an open probe's light on an upward face is the sky's (C): ${lit.toFixed(3)}, the hemisphere's SH ${hemi.toFixed(3)}`);
+  assert.ok(shIrradiance(combine(P, 4, C, [2, 2, 2], { openSky: false }), 0, 1, 0, 1, 0) < .02, 'with the sky left to the hemisphere light, only bounce is left facing up');
+  // a grid: a probe inside the ground is filled from the one above it
+  const g = gridOver({ min: [-10, -1, -10], max: [10, 9, 10] }, [5, 2, 5]);
+  assert.deepEqual(g.res, [4, 5, 4], 'a probe every spacing: ' + g.res);
+  assert.deepEqual(probeAt(g, 0), [-7.5, 0, -7.5], 'probes in the middle of their cells, as three puts them');
+  const data = new Float32Array(g.count * PROBE); for (let p = 0; p < g.count; p++) { data[p * PROBE] = p >= 16 ? 2 : 0; data[p * PROBE + 63] = p < 16 ? .9 : 0; }
+  fillIn(g, data); assert.ok([...Array(16).keys()].every(p => data[p * PROBE] === 2), 'probes under the ground take the light of those above');
+  assert.ok(gridOver({ min: [0, 0, 0], max: [1000, 50, 1000] }, 5, 6000).count <= 6000, 'a grid spreads out to stay under its count');
+  // the atlas read back as three's LightProbeGridNode reads it (seven sub-volumes, a padding slice either side)
+  const g2 = gridOver({ min: [0, 0, 0], max: [3, 2, 2] }, 1), sh = Float32Array.from({ length: g2.count * 27 }, (_, i) => (i % 97) / 10 - 4), [w, h, d] = atlasSize(g2), A = packAtlas(g2, sh, new Uint16Array(w * h * d * 4));
+  const F = THREE.DataUtils.fromHalfFloat, texel = (x, y, z) => [0, 1, 2, 3].map(c => F(A[((z * h + y) * w + x) * 4 + c])), pad = g2.res[2] + 2;
+  let packed = true;
+  for (let p = 0; p < g2.count; p++) {
+    const ix = p % 3, iy = (p / 3 | 0) % 2, iz = p / 6 | 0, s = [0, 1, 2, 3, 4, 5, 6].map(t => texel(ix, iy, t * pad + 1 + iz));
+    const c = [[s[0][0], s[0][1], s[0][2]], [s[0][3], s[1][0], s[1][1]], [s[1][2], s[1][3], s[2][0]], [s[2][1], s[2][2], s[2][3]], [s[3][0], s[3][1], s[3][2]], [s[3][3], s[4][0], s[4][1]], [s[4][2], s[4][3], s[5][0]], [s[5][1], s[5][2], s[5][3]], [s[6][0], s[6][1], s[6][2]]];
+    for (let k = 0; k < 9; k++) for (let ch = 0; ch < 3; ch++) if (Math.abs(c[k][ch] - sh[p * 27 + ch * 9 + k]) > .01) packed = false;
+    if (iz === 0 && texel(ix, iy, 0).join() !== texel(ix, iy, 1).join()) packed = false;
+  }
+  assert.ok(packed, 'the atlas holds each probe\'s nine colours where three\'s shader reads them, padding copied');
+  // the ground's light map: dark at the foot of the wall, open ground left alone
+  const T = mapTexels({ pos: flat.attributes.position.array, nrm: flat.attributes.normal.array, uv: flat.attributes.uv.array, idx: Uint32Array.from(flat.index.array) }, I, 200);
+  assert.equal(T.at.length, 200 * 200, 'every texel of the ground found');
+  const near = [], far = []; for (let i = 0; i < T.at.length; i++) { const x = T.pos[i * 3], z = T.pos[i * 3 + 2]; if (Math.abs(x) < 1.2 && Math.abs(z) < 5) near.push(i); if (Math.hypot(x + 100, z - 100) < 3) far.push(i); }
+  const sel = idx => ({ pos: Float32Array.from(idx.flatMap(i => [...T.pos.subarray(i * 3, i * 3 + 3)])), nrm: Float32Array.from(idx.flatMap(i => [...T.nrm.subarray(i * 3, i * 3 + 3)])) });
+  const vN = bakeTexels(rr, { ...sel(near), rays: 32 }), vF = bakeTexels(rr, { ...sel(far), rays: 32 }), avg = a => a.reduce((s, x) => s + x, 0) / a.length;
+  assert.ok(avg(vN) < .8 && avg(vF) === 1, `the foot of a wall sees less sky (${avg(vN).toFixed(2)}), open ground all of it (${avg(vF)})`);
+  assert.ok(aoBytes(vF).every(x => x === 255) && aoBytes(vN).some(x => x < 200), 'the light map: open ground left alone, the foot of the wall darker');
+  console.log(`baked light: the flat walk matches three-mesh-bvh on 4,000 rays, open sky ${up(0).toFixed(2)}, red bounce by a sunlit wall, ${up(2).toFixed(2)} of the sky under a roof, probes inside things filled in, the atlas as three reads it, the foot of a wall ${avg(vN).toFixed(2)} of the sky`);
 }
 
 // towns that live (src/kit/town.js: gs.town): the clock, plans from a seed, folk by the clock, shops, the night

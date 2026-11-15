@@ -1,23 +1,35 @@
 // __TITLE__: a starter Phone (Casual) game made with `npm run new`. Change anything you like.
 // It starts the way a finished game does: a fixed tick (the same game on every phone), Ready (nothing
 // moves until the first tap), Feel (particles, shake, sound and a buzz in one call), a soundtrack in
-// one line and a save slot.
+// one line, a save slot and knobs: the numbers that set how it feels, in one block (docs/feel-words.md).
 import gs from '../gamescroll.js';
 const { Feel } = gs.effects;
 const { Ready } = gs.rounds;
 const { mix } = gs.tick;
 const { ease } = gs.juice;
+const { tweak } = gs;
 
 let W = 360, H = 640;
 
 function make(api) {
   const feel = new Feel(), ready = new Ready();
+  // Knobs: change how it feels here. Sliders in npm run dev (Save to file writes them back);
+  // node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = tweak('Feel', {
+    spawn: [1.1, .4, 2.5, 'seconds between orbs at the start'],
+    fastest: [.35, .15, 1, 'seconds between orbs when it is hardest'],
+    ramp: [30, 10, 120, 'seconds until it is as hard as it gets'],
+    life: [2.4, 1, 5, 'seconds an orb waits before it fades'],
+    lives: [3, 1, 6, 1, 'missed orbs before the round ends'],
+    size: [28, 16, 44, 'orb radius'],
+    gold: [.12, 0, .5, 'share of orbs that are gold'],
+  });
   let orbs, score, t, lives, combo, spawn;
   // The save slot is this game's own: here it keeps a running total of orbs popped, ever.
   let total = api.load({ popped: 0 }).popped;
 
   return {
-    reset() { orbs = []; score = 0; t = 0; lives = 3; combo = 0; spawn = 0; feel.clear(); ready.reset(); },   // ALL round state here
+    reset() { orbs = []; score = 0; t = 0; lives = K.lives; combo = 0; spawn = 0; feel.clear(); ready.reset(); },   // ALL round state here
     resize(w, h) { W = w; H = h; },
     update(dt) {                                  // tick: 60 below, so dt is exactly 1/60 on every phone
       feel.update(dt);
@@ -25,10 +37,10 @@ function make(api) {
       if (!ready.update(dt)) return;              // nothing moves or scores until the first tap
       t += dt; spawn -= dt;
       if (spawn <= 0) {
-        spawn = Math.max(.35, 1.1 - t / 40);
-        const o = { x: 40 + Math.random() * (W - 80), y: 140 + Math.random() * (H - 260), was: 0, r: 0, life: 2.4, gold: Math.random() < .12 };
+        spawn = Math.max(K.fastest, K.spawn - (K.spawn - K.fastest) * t / K.ramp);
+        const o = { x: 40 + Math.random() * (W - 80), y: 140 + Math.random() * (H - 260), was: 0, r: 0, life: K.life, gold: Math.random() < K.gold };
         o.was = o.y;
-        feel.juice.tween(o, { r: o.gold ? 22 : 28 }, .35, ease.outBack);   // orbs pop in with a little overshoot
+        feel.juice.tween(o, { r: o.gold ? K.size * .8 : K.size }, .35, ease.outBack);   // orbs pop in with a little overshoot
         orbs.push(o);
       }
       for (const o of orbs) { o.was = o.y; o.y -= 14 * dt; o.life -= dt; }   // keep where it was: draw() shows the moment between

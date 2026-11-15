@@ -41,11 +41,22 @@ export function strands(kind = 'fur', seed = 1) {
     };
     lay(ACROSS.hair * 2, .75, 1, .22, .55, .58, .78); lay(ACROSS.hair, .5, .8, .55, 1, .78, 1);
   } else {
-    // each strand seen from its tip: round, tallest in the middle, so it is thinner the higher up it is cut
+    // each strand seen from its tip: round, tallest in the middle, so it is thinner the higher up it is cut. Real fur grows in locks: the strands
+    // near each other gather to a point at their tips (oil, and lying against each other), so a coat shows tufts with dark partings between
+    // them, not an even pile like a toy's plush. Here the strands of a lock lean to its middle the further up they are (put in again higher
+    // up, nearer the middle; the short undercoat stays even, so the skin is covered at the roots), the middle of a lock is tallest and
+    // each lock is its own length and a little its own shade
+    const LG = Math.round(ACROSS.fur / 2.6), lc = S / LG, locks = [];
+    for (let gy = 0; gy < LG; gy++) for (let gx = 0; gx < LG; gx++) locks.push([(gx + .2 + .6 * r()) * lc, (gy + .2 + .6 * r()) * lc, .72 + .4 * r(), .9 + .2 * r()]);
+    const lockOf = (x, y) => { let best = null, bd = 1e9; const gx = Math.floor(x / lc), gy = Math.floor(y / lc);
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const L = locks[((gy + j + LG) % LG) * LG + (gx + i + LG) % LG], dx = ((L[0] - x + S * 1.5) % S) - S / 2, dy = ((L[1] - y + S * 1.5) % S) - S / 2, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = [L, dx, dy, Math.sqrt(d)]; } }
+      return best; };
     const coat = (G, r0, r1, h0, h1, t0, t1) => {
       const c = S / G;
       for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
-        const cx = (gx + .15 + .7 * r()) * c, cy = (gy + .15 + .7 * r()) * c, rad = c * (r0 + (r1 - r0) * r()), h = h0 + (h1 - h0) * r(), tint = t0 + (t1 - t0) * r();
+        const x0 = (gx + .15 + .7 * r()) * c, y0 = (gy + .15 + .7 * r()) * c, [L, ldx, ldy, ld] = lockOf(x0, y0), edge = Math.min(1, ld / (lc * .75));
+        const pull = h0 > .4 ? .38 : 0, cx = x0 + ldx * pull, cy = y0 + ldy * pull;
+        const rad = c * (r0 + (r1 - r0) * r()), h = (h0 + (h1 - h0) * r()) * L[2] * (1 - .38 * edge * edge), tint = (t0 + (t1 - t0) * r()) * L[3] * (1 - .12 * edge);
         for (let y = Math.floor(cy - rad); y <= Math.ceil(cy + rad); y++) for (let x = Math.floor(cx - rad); x <= Math.ceil(cx + rad); x++) { const dx = x + .5 - cx, dy = y + .5 - cy, k = 1 - (dx * dx + dy * dy) / (rad * rad); if (k > 0) put(x, y, h * k, tint); }
       }
     };
@@ -72,6 +83,8 @@ function shell(geo, o = {}) {
   const n = P.count, I = o.index || geo.index?.array || null, nt = Math.floor((I ? I.length : n) / 3), at = k => I ? I[k] : k;
   const base = o.length ?? .03, w = o.where, len = new Float32Array(n);
   for (let i = 0; i < n; i++) len[i] = base * mx(0, w ? typeof w === 'function' ? +w(i, P.getX(i), P.getY(i), P.getZ(i)) || 0 : w[i] : 1);
+  // (vary: a coat is not one length all over: longer and shorter in patches a hand across, as a real animal's is, brushed and slept on)
+  if (o.vary > 0) { const k = 1 / mx(1e-4, (o.patch || base * 6)), v = mn(1, o.vary); for (let i = 0; i < n; i++) if (len[i] > 0) { const x = P.getX(i) * k, y = P.getY(i) * k, z = P.getZ(i) * k; len[i] *= 1 + v * .45 * (Math.sin(x * 1.7 + Math.sin(z * 1.3) * 2) * Math.sin(y * 1.9 + Math.sin(x * 1.1) * 2) + .5 * Math.sin(z * 3.1 + y * 2.3)) / 1.5; } }
   // no strand longer than `thin` of how thick what it grows on is there (an ear, a thin tail, a leg stay the shape they are):
   // each point looks straight in through the mesh for the nearest point of the far side
   const thin = o.thin ?? .45;

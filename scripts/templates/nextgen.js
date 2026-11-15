@@ -37,6 +37,16 @@ function make(api) {
   const ready = new Ready({ eat: false });        // the first touch starts the round and already steers
   const pad = twoThumb(W, H, { right: ['GO'] });
   const keys = new Keys();
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    roll: [16, 6, 34, 'how hard the ball speeds up (metres a second, each second)'],
+    boost: [34, 16, 60, 'how hard it speeds up while boosting'],
+    drag: [1.6, .3, 4, 'how quickly it slows down (lower is slippery)'],
+    bounce: [.6, .1, 1, 'how much speed it keeps off a wall'],
+    time: [30, 10, 60, 'seconds on the clock at the start'],
+    bonus: [2, 0, 5, 'seconds added for each orb'],
+  });
   let pos, was, vel, score, t, time, boost;       // pos: where the ball is; was: where it was a tick ago
   const spot = o => { o.position.set((Math.random() * 2 - 1) * (ARENA - 1.5), .6, (Math.random() * 2 - 1) * (ARENA - 1.5)); };
 
@@ -44,7 +54,7 @@ function make(api) {
     reset() {
       if (!v) setup();
       pos = new THREE.Vector3(0, .45, 0); was = pos.clone(); ball.position.copy(pos); ball.rotation.set(0, 0, 0);
-      vel = new THREE.Vector3(); score = 0; t = 0; time = 30; boost = 0;   // ALL round state here
+      vel = new THREE.Vector3(); score = 0; t = 0; time = K.time; boost = 0;   // ALL round state here
       orbs.forEach(spot); sparks.clear(); feel.clear(); ready.reset(); pad.release(); keys.clear();
     },
     resize(w, h) { W = w; H = h; pad.layout(w, h); },
@@ -55,19 +65,19 @@ function make(api) {
       t += dt; time -= dt; boost = Math.max(0, boost - dt);
       const k = keys.axis(), ax = pad.left.active ? pad.left.x : k.x, az = pad.left.active ? pad.left.y : k.y;
       if ((pad.buttons.GO.pressed() || keys.held(' ')) && boost <= 0) { boost = 1.2; feel.powerup(W / 2, H * .6, { color: '#ffb060', text: '' }); }
-      const acc = boost > .6 ? 34 : 16;
-      vel.x += ax * acc * dt; vel.z += az * acc * dt; vel.multiplyScalar(Math.exp(-1.6 * dt));
+      const acc = boost > .6 ? K.boost : K.roll;
+      vel.x += ax * acc * dt; vel.z += az * acc * dt; vel.multiplyScalar(Math.exp(-K.drag * dt));
       was.copy(pos); pos.addScaledVector(vel, dt);   // keep where it was: draw() shows the moment between
       for (const a of ['x', 'z']) if (Math.abs(pos[a]) > ARENA - .75) {
         pos[a] = Math.sign(pos[a]) * (ARENA - .75);
         if (Math.abs(vel[a]) > 2) { const [sx, sy] = v.toScreen(pos.x, pos.y, pos.z); feel.hit(sx, sy, { power: Math.min(.7, Math.abs(vel[a]) / 14) }); }
-        vel[a] *= -.6;
+        vel[a] *= -K.bounce;
       }
       ball.rotation.x += vel.z * dt / .45; ball.rotation.z -= vel.x * dt / .45;
       for (const o of orbs) {
         o.rotation.y += dt * 2; o.position.y = .6 + Math.sin(t * 3 + o.position.x) * .12;
         if (o.position.distanceTo(pos) < .8) {
-          score++; api.score(score); time = Math.min(30, time + 2);
+          score++; api.score(score); time = Math.min(K.time, time + K.bonus);
           for (let i = 0; i < 26; i++) sparks.emit({ x: o.position.x, y: o.position.y, z: o.position.z, vx: (Math.random() - .5) * 6, vy: Math.random() * 5, vz: (Math.random() - .5) * 6, life: .7, size: .12, col: [.6, 2.4, 3], drag: 1.5, grav: 6, floor: .02 });
           const [sx, sy] = v.toScreen(o.position.x, o.position.y + .5, o.position.z); feel.coin(sx, sy, { color: '#88ffff', text: '+1 · +2s', pitch: 1 + score * .01 });
           spot(o);

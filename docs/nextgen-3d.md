@@ -1274,6 +1274,31 @@ works on instanced meshes and on WebGL and WebGPU alike.
   window or green grass. Bake once the level is built, not every frame. Several probes blend as the
   camera moves (or `v.probeAt`, such as the player). Lower the view's `amb` when using probes.
   `v.clearProbes()`.
+- `v.bakeLight({ box, spacing: 8, maps: [land.mesh] })` bakes the light of a whole level, on the phone, the first time
+  the game is played. Background workers send rays through a copy of the still scenery (people, vehicles and anything that
+  moves are left out) while the loading screen builds the shaders, so a first play waits little or no longer (the loading
+  screen waits at most `wait` ms, 5000, for it; the rest comes in after, fading in). What it works out is kept on the phone,
+  tile by tile under what the tile's scenery was, so later plays read it back and trace nothing. It gives:
+  - light probes over `box` (a `Box3`, `{ min, max }` or an Object3D; one every `spacing` metres, up to `most`, 6000): the
+    light bounced onto each spot, the sky's and the sun's (a sunlit wall lights the shade beside it, a red roof tints the
+    lane under it). Every lit material reads them (three's LightProbeGrid, WebGL and WebGPU), so people walking through take
+    the colour of the wall beside them. The probes add to the view's hemisphere light (`amb`), which stays as it is (three
+    lets a probe grid add light, not take it away). Its colours are the game's each frame (a `gs.sky.Sky` changing the time
+    of day changes them for nothing); the sun's direction is traced again once it has moved 4 degrees.
+  - light maps for `maps` (big still meshes whose UVs are laid out with no overlaps, like `Land`'s ground; `mapSize` 512):
+    how much of the sky each texel sees, in the material's `aoMap`, which darkens the hemisphere light and the probes' there
+    (the dark foot of a wall, a hollow, under a boulder). A material with an `aoMap` of its own is left alone. Only where the
+    graphics chip lets a material read more than 16 pictures (a material past its limit isn't drawn at all).
+  On WebGPU both need a chip that lets a material read more than 16 pictures: the kit's busiest materials (a surface with
+  relief, lit by lamps and the sun, with decals and far shadows) already read 16, so on a chip that allows only that (some
+  phones, software drawing) nothing is baked and the view looks as it would without it.
+  The sun and its shadows, lamps, flashes and moving things stay live. Vehicles (`gs.models.vehicle`) and the meadow's grass
+  are left out by themselves, and `mesh.userData.moves = true` (on it or any of its parents) or `userData.noBake = true`
+  leaves out one of yours. Something else that moves while the level is played is taken out of the bake and the tiles round
+  it baked again, and remembered on the phone, so next time it is left out from the start; `.rebake()` after a change it
+  can't see (a colour). `rays` (96 a probe), `reach` (150 m), `texelRays` (24), `texelReach` (40 m) and `bounce` (1, how strong the
+  bounced light is) tune it. Where `v.liveBounce = 'traced'` runs, its live grid takes the place of the probes (the light maps stay).
+  `__hd.baked = false` hides it (comparisons).
 - `v.bounce(box, { spacing: 1.5, bounces: 1 })` adds bounce light (baked global illumination) over a
   box (`{ min: [x, y, z], max }`, a `Box3`, or an Object3D to cover): a 3D grid of light probes, one
   every `spacing` metres, that light every lit material by where it is. A red wall tints the floor
@@ -1733,7 +1758,7 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   `null` as sculpted; a number for the hand or one a finger, thumb first): it stays as set until
   `fingers({ R: 'auto' })` gives it back. At the middle and far levels the small bones (fingers, toes,
   forearm turn) stand still and cost nothing.
-  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle`, `iris`, `lips`, `moustache`, `stubble`, `face`
+  Looks: `sex`, `build`, `girth`, `skin`, `hair`, `hairStyle` (`'short'`, `'long'`, `'bun'`, `'curly'`, `'afro'`, `'bald'`), `hairTexture` (a real face's: `'straight'`, `'wavy'`, `'curly'`, `'coily'`; by heritage if left out), `iris`, `lips`, `moustache`, `stubble`, `face`
   (`{ jaw, chin, brow, nose, lips, cheeks, eyes }`, 1 is average), `hands: 'grip'`, and `outfit: { top, legs,
   feet, hat, belt, webbing, gloves, pack, extras }` (every option is listed above `human` in
   `src/kit/models/human.js`); `camo: [colour, colour]` on the top, legs or hat brushes blotches of those over
@@ -1901,7 +1926,8 @@ gs.models.relief(house, { depth: .02 });     // every mesh under a group that ha
   its normals, each cut by a picture of strands made in code. Creatures with a coat of fur wear it by
   themselves (`creature.fur`; `fur: false` to leave it off), and people's moustaches and beards are
   strands (`human({ beard: 1 })`, `person.hair`; `strands: true` for the hair of the head too, which is a
-  clean combed shape otherwise; `strands: false` for none). Close up
+  clean combed shape otherwise; `strands: false` for none; a real face's hair is single strands of its own on WebGPU close up, curling by
+  `hairTexture`: `hairStrands: false` leaves them off). Close up
   only: it thins out with distance by itself, and the slowest phones draw none. `coat.length = 1.5` stands
   fur on end; `fur(mesh, { length, kind: 'fur' | 'hair', where, lean })` puts a coat on any mesh. Guide:
   [Fur and hair](maker-kit.md#fur-and-hair).

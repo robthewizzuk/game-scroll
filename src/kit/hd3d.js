@@ -39,6 +39,7 @@ import { LUTCubeLoader } from 'three/examples/jsm/loaders/LUTCubeLoader.js';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
 import { LightProbeGenerator } from 'three/examples/jsm/lights/LightProbeGenerator.js';
 import { LightProbeGridWebGL } from 'three/examples/jsm/lighting/LightProbeGridWebGL.js';
+import { LightBake } from './bake-light.js';
 import { SSRPass } from 'three/examples/jsm/postprocessing/SSRPass.js';
 import { HorizontalBlurShader } from 'three/examples/jsm/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/examples/jsm/shaders/VerticalBlurShader.js';
@@ -2251,6 +2252,7 @@ export class HDView {
    * v.clearProbes() removes them all.
    */
   bakeLight(at, { radius = 10, strength = 1, size = 32 } = {}) {
+    if (at && !at.isVector3 && !Array.isArray(at)) return this.bakeLevel(at);
     // on the renderer the view draws with: baking on WebGL built every WebGL shader for a view that never uses them
     const G = gpuFor(this), r = G ? G.r : renderer(); if (!r) return Promise.resolve(null);
     gpuSwap(this, G);
@@ -2278,6 +2280,22 @@ export class HDView {
       this.blendProbes();
       return p;
     }, () => { rt.dispose(); return null; });
+  }
+  /**
+   * Baked light for a whole level (v.bakeLight({ ... }), bake-light.js): the phone works out the light of the still scenery
+   * itself the first time the game is played (rays in background workers while the loading screen builds the shaders), keeps
+   * it, and only reads it back after that. Light probes over box (the sky as each spot sees it and the sun bounced off
+   * what is round it: people and vehicles moving through take it up), and light maps on maps (big still meshes with UVs, like
+   * Land's ground: the dark foot of a wall, a hollow). The sun, its shadows, lamps and moving things stay live. Call it once the level's view is made,
+   * before the first frame. Returns the bake: .progress, .rebake(), .remove().
+   */
+  bakeLevel(o = {}) {
+    this._baked?.remove();
+    // (how many pictures a material may read on the chip that will draw it: light maps are one more, and are left off at
+    // 16, before any shader is made with them)
+    const G = webgpu(), pics = G ? G.r?.backend?.device?.limits?.maxSampledTexturesPerShaderStage ?? 16 : R?.capabilities?.maxTextures;
+    this._baked = new LightBake(this, o, pics);
+    return this._baked;
   }
   /**
    * Bounce light (baked global illumination): light that has hit the floor, the walls and the props
@@ -3557,6 +3575,10 @@ export class HDView {
    * v.underCss is a CSS background for it. With HD.direct off (tests), the frame is copied into c.
    */
   render(c, w = this.W, h = this.H, baking = false) {
+    // (baked light, bake-light.js: its probes and light maps for this frame's colours, in the world's own numbers)
+    // (baked for a round being played or got ready, not for a card in the feed; pics: how many pictures a material may read)
+    if (this._baked && HD.baked !== false) { const g = gpuFor(this); this._baked.before(g, !baking && !speed.offscreen && (getready.warming || speed.playing()), g ? g.r?.backend?.device?.limits?.maxSampledTexturesPerShaderStage ?? 16 : R?.capabilities?.maxTextures); }
+    else this._baked?.hide();
     // (far from the world's centre: drawn with every place worked out from near the camera, origin.js)
     const t0 = performance.now(), near = !baking && speed.offscreen ? false : originOn(this), t1 = performance.now();
     try { this.draw3d(c, w, h, baking); } finally { const t2 = performance.now(); if (near) originOff(this); if (!baking) HD.info.originMs = t1 - t0 + performance.now() - t2; }

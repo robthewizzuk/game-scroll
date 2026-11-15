@@ -1427,6 +1427,25 @@ export interface StoryPart {
   };
   Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: string): Loose; skip(): Loose; update(dt: number): Loose };
   loadStory(): Promise<Loose>;
+  /**
+   * A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other,
+   * #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide | none). rep / grow / vars set the
+   * ink's own VARs of those names before each line; bind (and rep: did, grow: xp, inv: has, give, take) answer its EXTERNAL functions.
+   */
+  Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; head?: Loose | (() => P3) }>; hero?: string | null; camera?: Loose; view?: Loose; speed?: number; voices?: boolean; shots?: boolean; rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; quests?: Quests | null; flags?: Flags | null; vars?: (() => Record<string, Loose>) | null; bind?: Record<string, (...a: Loose[]) => Loose>; link?: boolean }) => TalkScene;
+}
+export interface TalkScene {
+  on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this;
+  /** Starts (at a section of the story, or where it is). */ start(section?: string | null): this;
+  /** The speaker's cast id (null: a narrator). */ readonly speaker: string | null; /** Their name to draw. */ readonly who: string;
+  /** The line so far, typed out. */ readonly shown: string; readonly text: string;
+  /** Choices open once the line is typed out. */ readonly choices: StoryLine['choices'];
+  line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null;
+  /** The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). */
+  shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null;
+  ended: boolean;
+  /** Shows the whole line, or goes on. */ tap(): this; choose(index: number): this; stop(): this; update(dt: number): this;
+  save(): string; load(json: string): this;
 }
 
 export declare class Ghost {
@@ -1507,7 +1526,7 @@ export interface ToonPart {
   figure(o?: { h?: number; body?: string; skin?: string; legs?: string; shoes?: string; hair?: string | null; eyes?: string | null }): Loose & { rig: RigT };
 }
 /** An HDView's extras for the ray-traced look: v.reflect(...meshes) (reflections on shiny things; on the best phones they are ray traced on WebGPU, so a floor shows what is above the screen or behind the camera, and Ray Regeneration makes the rays into a full-size picture from the frames before, with nothing to set: smooth mirror edges and a real blur on rough surfaces; mesh.userData.moves = true for a thing that will move, mesh.userData.noTrace = true keeps one out of reflections), v.contact({ y, size }) (soft contact shadows) (mesh.userData.noAO = true keeps a mesh out of ambient occlusion), v.faceLight(person | null, { strength, colour, side, up }) (a soft fill light on a person's face from beside the camera for close-ups: call it once in make(); another person moves it, null dims it; returns the light). */
-/** HDView extras: v.lampLights(range) once, then v.placeLamps(spots, x, y, z, t) each frame (the nearest of many lamps get real lights, the rest only glow; spots: [{ x, y, z, col, i, flick, reach, dir: [x, y, z] (a spot light shining that way), angle (its half width, radians), soft (0..1, its edge), shadow: true (it casts shadows: the nearest few by quality, from one shared atlas on WebGPU, redrawn only when something they see moves), shape: 'headlamp' | 'window' | 'blinds' | 'cage' | 'leaves' | 'grille' | 'stained' | 'bars' (a light shape drawn in code that it shines through), near (metres from the lamp its shadow starts), tube: [x, y, z] (a neon tube's far end), rect: { w, h, normal } (a lit sign's face), picture (a sign's canvas or CanvasTexture that it lights with: a TV, a video wall, a stained window), live: true (a canvas redrawn every frame; a texture is read again when its version moves on) }]; v.lampShadows: { slots, drawn, waiting } last frame), v.flash(x, y, z, { col, i, reach, life, decay, keep, flicker }) or v.flash(point, o) (a short-lived light among the lamps, first in line: a muzzle flash, an explosion, sparks; keep: true stays until f.stop(), flicker 0..1 wavers; returns { at(x, y, z), stop(), on }; gs.fx3d fire/boom/sparks, GPUParticles bursts with flash and gs.gas bursts make theirs by themselves), v.wantFlashes() (in make(): WebGL's light for flashes made from the start), v.lightAt(x, y, z) ([r, g, b]: the lamps' and flashes' light at a point, for things you light yourself; soft particles take it by themselves; __hd.effectLights = false turns flashes, lamp-lit particles and gs.gas's sun shadow off), v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big meshes of 8,000 triangles or more (still or moving, sets of copies, several materials, cut-outs, skinned and morphing) are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.lens = Lens | null (a camera like a real lens: depth of field from the f-stop, focal length and focus, round or bladed bokeh discs on WebGPU, focus pulls and autofocus, exposure in stops from f-stop, shutter and ISO or iso 'auto'; v.lens.at is where it is focused now; high and ultra for the blur), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), v.shadersLeft (how many things' shaders are still being built in the background: hidden things and what is behind the camera are built over a view's first frames), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.contactShadows = true | false | { length, thickness, out } (WebGPU: short rays towards the sun through the depth picture, so cups, fingers and noses throw shadows the sun's map is too coarse for; on by itself at ultra), v.farShadows = true | false | { size, px, tiles, reach } (WebGPU: shadows past the sun map's box, from a map of heights round the camera; crowds' far members throw capsule shadows instead of being drawn into the sun's map by themselves: __hd.capsules = false keeps them in it, __hd.sunMask = false turns all three off), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.film = true | 'film' | 'anamorphic' | 'old' | { halation, grain, grainSize, grainColour, fringe, streaks, streakLength, flicker, halationTint, streakTint } (a film camera's finish: halation round bright things, grain that follows the brightness in clumps with a touch of colour, lens fringing, anamorphic streaks, flicker; halation and streaks need bloom; off by default), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | 'traced' | { kind, strength, res, box, spacing, rays, batch } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen, 'traced' a grid of probes relit by rays through the ray traced reflections' copy of the level, where those run: over box, or following the camera), v.farWorld = true | { from, every, res, slack } | null (WebGPU: what is still and at least from metres off (150) drawn into four pictures round the camera, one redrawn every `every` frames, and shown from them while the camera keeps within slack metres and doesn't zoom in; near and moving things stay live; mesh.userData.noFar = true keeps one live, userData.hollow = r: nothing within r metres of its middle; HD.info.far), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.drops (rain on the lens: drops that land on the camera's glass while it rains and it looks out under the open sky, each bending what is behind it, and the big ones running down; a gs.sky.Weather lands them by itself, its lens: false keeps the lens dry; v.drops.add(x, y, r) a splash of your own, x and y 0..1 across and up the screen, r a part of the screen's height; v.drops.clear() wipes the lens; v.drops.count), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off), far from the world's centre the view draws about a centre that moves along with its camera by itself, so places 20 km out don't shake (a floating origin: v.origin is where it is; __hd.origin is how far, 1024 m, the camera goes before it moves, 0 never; a gs.physics3d World3D follows it: world.at, world.centre(x, z) for a world with no view). */
+/** HDView extras: v.lampLights(range) once, then v.placeLamps(spots, x, y, z, t) each frame (the nearest of many lamps get real lights, the rest only glow; spots: [{ x, y, z, col, i, flick, reach, dir: [x, y, z] (a spot light shining that way), angle (its half width, radians), soft (0..1, its edge), shadow: true (it casts shadows: the nearest few by quality, from one shared atlas on WebGPU, redrawn only when something they see moves), shape: 'headlamp' | 'window' | 'blinds' | 'cage' | 'leaves' | 'grille' | 'stained' | 'bars' (a light shape drawn in code that it shines through), near (metres from the lamp its shadow starts), tube: [x, y, z] (a neon tube's far end), rect: { w, h, normal } (a lit sign's face), picture (a sign's canvas or CanvasTexture that it lights with: a TV, a video wall, a stained window), live: true (a canvas redrawn every frame; a texture is read again when its version moves on) }]; v.lampShadows: { slots, drawn, waiting } last frame), v.flash(x, y, z, { col, i, reach, life, decay, keep, flicker }) or v.flash(point, o) (a short-lived light among the lamps, first in line: a muzzle flash, an explosion, sparks; keep: true stays until f.stop(), flicker 0..1 wavers; returns { at(x, y, z), stop(), on }; gs.fx3d fire/boom/sparks, GPUParticles bursts with flash and gs.gas bursts make theirs by themselves), v.wantFlashes() (in make(): WebGL's light for flashes made from the start), v.lightAt(x, y, z) ([r, g, b]: the lamps' and flashes' light at a point, for things you light yourself; soft particles take it by themselves; __hd.effectLights = false turns flashes, lamp-lit particles and gs.gas's sun shadow off), v.decal(mesh, point, normal, { size, colour, paint, life }), v.clearDecals(), v.bakeLight(at, { radius, strength }) (light probes, blended by v.probeAt or the camera), v.bakeLight({ box, spacing, most, maps, mapSize, rays, reach, bounce, wait }) (baked light for a whole level: the phone works out the still scenery's light itself the first time it is played, in background workers while the loading screen builds the shaders, keeps it on the phone tile by tile and reads it back after: light probes over box (the sky's and the sun's light bounced off what is round each spot, added to the view's hemisphere light; people and vehicles moving through take it up) and light maps in the aoMap of maps (big still meshes with UVs, like Land's ground: how much sky each texel sees); on WebGPU only where the chip lets a material read more than 16 pictures; the sun, shadows, lamps and moving things stay live; a sun that moves is traced again, things that move are left out and the tiles round them baked again; call once in make() after the level's view is made; returns { progress, rebake(), remove() }; __hd.baked = false hides it), v.clearProbes(), v.bounce(box, { spacing, bounces, size }) (bounce light from a probe grid; returns { bake(), remove() }), v.clearBounce(), v.room(box, { size, strength, meshes }) (box-projected room reflections; returns { bake(), remove() }), v.detail(meshes, { px } | false) (cluster detail, a Nanite-style level of detail: big meshes of 8,000 triangles or more (still or moving, sets of copies, several materials, cut-outs, skinned and morphing) are drawn in clusters by themselves, each part only as finely as shows; this asks for it on smaller meshes from 2,000 triangles, sets how many pixels the simpler parts may be out by, or with false draws them whole; also mesh.userData.detail = true | px | false), occlusion culling by itself (what is fully hidden behind other things is left out of the frame, found from the last frame's own depth with nothing to list; mesh.userData.noOcclude = true always draws a mesh, v.autoOcclude = false stops it for the view; v.occluders(boxes | null, { max, w }) adds big solid boxes of your own { x0, x1, y0, y1, z0, z1 }, Box3s or box meshes; v.occlusion.stats), v.shafts = 0..2 (sun shafts), v.upscaler = 'sgsr1' (one-frame upscaling instead of Snapdragon GSR 2), v.focus = { at, range, depth, blur } | null (depth of field, high and ultra), v.lens = Lens | null (a camera like a real lens: depth of field from the f-stop, focal length and focus, round or bladed bokeh discs on WebGPU, focus pulls and autofocus, exposure in stops from f-stop, shutter and ISO or iso 'auto'; v.lens.at is where it is focused now; high and ultra for the blur), v.beams = { light, density, far, glow, strength, steps } | null (volumetric light: sun or spot beams through shadows, high and ultra), v.motionBlur = { amount, max, sharp, objects } | null (motion blur, high and ultra: the camera's move, and on WebGPU each thing's own; objects: false for the camera only), v.cut() (the camera jumped somewhere new: the upscaler and frame generation start fresh; big jumps are found by themselves), v.aimNow(cam => { cam.rotation.y = lookAngle; }) (frame generation's fresh aim: point the camera where the newest touch already says, without moving the game on; each made frame turns to it, so aiming answers at the screen's rate; gs.camera rigs and AR views do it themselves), v.precompile() (a promise: compiles the shaders of things added since, like a new floor, in the background; fade back in when it resolves), v.shadersLeft (how many things' shaders are still being built in the background: hidden things and what is behind the camera are built over a view's first frames), things needing a new shader mid-round wait hidden a frame or two while it builds in the background (mesh.userData.noHold = true draws at once), sun().fit(view, { far, near }) (near: a sharp shadow cascade over the first metres), sun().softShadows(deg = 2) (soft shadows that stay sharp where things touch: PCSS on WebGPU; deg is the sun's width in the sky), v.contactShadows = true | false | { length, thickness, out } (WebGPU: short rays towards the sun through the depth picture, so cups, fingers and noses throw shadows the sun's map is too coarse for; on by itself at ultra), v.farShadows = true | false | { size, px, tiles, reach } (WebGPU: shadows past the sun map's box, from a map of heights round the camera; crowds' far members throw capsule shadows instead of being drawn into the sun's map by themselves: __hd.capsules = false keeps them in it, __hd.sunMask = false turns all three off), v.tone = 'aces' | 'neutral' | 'agx' (three.js's tone mappers: ACES the default film look, Neutral true colours, AgX soft bright hues), v.flare = true | { strength, threshold, spacing, fade, tint, dirt } (lens flare ghosts and lens dirt), v.film = true | 'film' | 'anamorphic' | 'old' | { halation, grain, grainSize, grainColour, fringe, streaks, streakLength, flicker, halationTint, streakTint } (a film camera's finish: halation round bright things, grain that follows the brightness in clumps with a touch of colour, lens fringing, anamorphic streaks, flicker; halation and streaks need bloom; off by default), v.oit = true (WebGPU: order-independent transparency, see-through things blend right in any order), v.liveBounce = 'screen' | 'voxel' | 'traced' | { kind, strength, res, box, spacing, rays, batch } | null (WebGPU, high and ultra: bounce light worked out every frame, following a moving sun or lamps; 'screen' is three's SSGI, 'voxel' three's VXGI, which also counts walls off screen, 'traced' a grid of probes relit by rays through the ray traced reflections' copy of the level, where those run: over box, or following the camera), v.farWorld = true | { from, every, res, slack } | null (WebGPU: what is still and at least from metres off (150) drawn into four pictures round the camera, one redrawn every `every` frames, and shown from them while the camera keeps within slack metres and doesn't zoom in; near and moving things stay live; mesh.userData.noFar = true keeps one live, userData.hollow = r: nothing within r metres of its middle; HD.info.far), v.levelChanged() (the level's big still pieces changed: voxel bounce light rebuilds its picture of them), v.fog3d = { density, height, falloff, far, colour, glow, ambient, strength, noise, wind, lamps } | null (WebGPU, high and ultra: froxel fog lit by the sun through its shadows and by nearby lamps; WebGL keeps the view's plain fog), v.lut = 'film' | 'bleach' | 'noir' | 'sepia' | 'warm' | 'cold' | 'faded' | 'vivid' | 'night' | ((r, g, b) => [r, g, b]) | cubeFileText | null and v.lutAmount 0..1 (a colour look on the finished picture), v.autoExposure = true | { amount, min, max, speed, darken, key } (the eye adapts to dark and bright places, from how the scene looked when turned on; v.eye = null re-measures), v.drops (rain on the lens: drops that land on the camera's glass while it rains and it looks out under the open sky, each bending what is behind it, and the big ones running down; a gs.sky.Weather lands them by itself, its lens: false keeps the lens dry; v.drops.add(x, y, r) a splash of your own, x and y 0..1 across and up the screen, r a part of the screen's height; v.drops.clear() wipes the lens; v.drops.count), v.shadowsDirty() (redraw every shadow map next frame; still and moving shadows are kept apart by themselves: __hd.shadowCache = false turns it off), far from the world's centre the view draws about a centre that moves along with its camera by itself, so places 20 km out don't shake (a floating origin: v.origin is where it is; __hd.origin is how far, 1024 m, the camera goes before it moves, 0 never; a gs.physics3d World3D follows it: world.at, world.centre(x, z) for a world with no view). */
 export interface HdPart { ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose; HDView: new (...a: Loose[]) => Loose; HD: Loose; TIERS: Loose; hasHD(): boolean; pbr: Loose; rbox: Loose; surface: Loose; speckle: Loose; /** pbr(col, { rough, metal, glow, clear, sheen, tex, depth (parallax occlusion on WebGPU, in texture widths, e.g. .05), sss: true | { colour, power, scale, distortion, ambient, attenuation, thin (light only where the mesh's gsThin attribute says it is thin and open behind), back }, aniso (brushed metal streaks 0..1), anisoDir (radians), film (soap bubble / oil rainbow 0..1), glass: true | { thickness, ior, tint, distance }, wet (rain-soaked 0..1, porosity) }) (sss: subsurface scattering, light glowing through skin, wax, leaves). */ /** detail(big, fine, { times, strength }): mix a fine surface() normal (repeated `times` over) into a big one, so close-ups keep grain. Give it sets without repeat. */ detail(big: Loose, fine: Loose, o?: { times?: number; strength?: number }): Loose; /** panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). */ panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose; /** neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a long highlight on a wet road). */ neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose; /** sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights from its face, in front only. picture: true lights with its own picture (a TV, a video wall, a stained window: each part of the light takes the colour of the face where it comes from, on WebGPU; the face's average colour on WebGL); g.paint(fn) paints the face again (each frame for a screen that plays). */ sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: number; picture?: boolean }): Loose; /** lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. */ lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose; /** pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). */ pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose; Particles: Loose;
   /** Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). new GPUParticles(view, opts); p.emit(count, burst); p.update(dt). Looks only: positions can't be read back. */
   GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strength?: number; scale?: number; speed?: number } | null; wind?: Loose }) => {
@@ -1664,6 +1683,13 @@ export interface CharactersPart {
   Carry: new (person: Loose, o?: { spots?: Record<string, CarrySpot>; time?: number }) => CarryT;
   /** Where things are carried: hipL, hipR, back, backL, shield, quiver, bow, belt. */
   SPOTS: Record<string, CarrySpot>;
+  /**
+   * A person's body as solid rods (trunk, seat, thighs, shins, arms, head; the ones the cloth goes round), to keep what is posed by hand
+   * out of what is solid: acted falls and key poses out of walls (keepOut), the way with room to go down in (room), and a held gun or
+   * sword out of its holder and out of walls (keepOff; weapon.wield does it by itself). The world is the game's gs.physics3d World3D,
+   * found by itself, and what in it stands still.
+   */
+  Solid: new (person: Loose, o?: { world?: Loose | false; pad?: number; head?: boolean; link?: boolean }) => SolidT;
 }
 export interface CarrySpot { bone: string; /** where the grip sits, in the person's own space as they stand (1.8 m, facing +z, the left at +x) */ at: P3; /** which way its length points */ dir: P3; /** which way its flat faces */ face: P3; /** the hand that draws it */ hand?: 'L' | 'R' }
 export interface CarryT {
@@ -1680,6 +1706,20 @@ export interface CarryT {
   on(ev: 'grab' | 'drawn' | 'stowed', fn: (e: { name: string; to?: string }) => void): CarryT;
   update(dt: number): void;
   clear(): void;
+}
+export interface SolidRod { a: [number, number, number]; b: [number, number, number]; r: number; rb: number; part: 'trunk' | 'seat' | 'thigh' | 'shin' | 'arm' | 'fore' | 'head' }
+export interface SolidT {
+  person: Loose; readonly rods: SolidRod[]; readonly world: Loose | null;
+  /** The rods where the bones are now. */
+  update(): SolidT;
+  /** Puts the person back out of the world's still things after rig.update() (moves person.position): how far, or null if clear. up: false only along the ground; most: metres at most; ground: false leaves the ground out (a game that fits feet itself). */
+  keepOut(o?: { world?: Loose; up?: boolean; most?: number; ground?: boolean; tries?: number }): { x: number; y: number; z: number } | null;
+  /** Metres clear that way ({ x, z } or [x, z]; with y too) from the hips, up to length: for picking which way to go down. */
+  room(dir: XYZ | { x: number; z: number; y?: number } | number[], length?: number, o?: { world?: Loose; r?: number; heights?: number[] }): number;
+  /** Turns a held thing about pivot as little as it takes to get it out of this body (but the parts in skip) and out of walls: the turn made (radians). local: pivot in the thing's own space; ahead: only the longer side of the pivot; from, to, r: the line through it to test (default from its shape). */
+  keepOff(thing: Loose, o?: { pivot?: XYZ | number[] | null; local?: boolean; from?: XYZ | number[]; to?: XYZ | number[]; r?: number; skip?: string[]; ahead?: boolean; world?: Loose; walls?: boolean; most?: number; tries?: number }): number;
+  /** The box round every rod. */
+  bounds(pad?: number): { lo: XYZ; hi: XYZ };
 }
 export interface ReactionsOptions {
   /** A gs.physics3d World3D: falls are a jointed ragdoll in it. Left out: the one the game made; false, or none made: falls are acted. */
@@ -2164,8 +2204,9 @@ export interface BrainsPart {
   unpackWeights(s: string): { sizes: number[]; w: Float32Array } | null;
 }
 
-/** A tweak spec value: a number, [value, min, max, step?], a boolean, a '#colour', [choice, ...choices], or a function (a button). */
-export type TweakSpec = Record<string, number | [number, number, number, number?] | boolean | string | string[] | (() => void)>;
+/** A tweak spec value: a number, [value, min, max, step?, 'what it does'?], a boolean, a '#colour', [choice, ...choices], or a function (a button).
+ *  A game's knobs (the numbers that set how it feels) go in one gs.tweak('Feel', { ... }) block, with the words: docs/feel-words.md. */
+export type TweakSpec = Record<string, number | [number, number, number] | [number, number, number, number | string] | [number, number, number, number, string] | boolean | string | string[] | (() => void)>;
 /** Live sliders (npm run dev only); elsewhere it returns the starting values. Read the fields where they're used. */
 export interface TweakFn {
   (name: string, spec: TweakSpec): Record<string, Loose>;
@@ -2289,6 +2330,91 @@ export interface StatsPart {
   Stats: new (stats?: Record<string, number | { base: number; min?: number; max?: number } | { max: number; regen?: number; delay?: number; start?: number; min?: number }>, o?: { buffs?: Record<string, StatBuff> }) => Stats;
 }
 
+export interface GrowthSkill {
+  name?: string; /** Most ranks (1). */ ranks?: number; /** Skill points a rank (1). */ cost?: number; /** Level it opens at. */ level?: number;
+  /** Skills needed first: 'id' or 'id:rank'. */ needs?: string[]; /** Skills that rule this one out. */ excludes?: string[];
+  /** Put on the Stats once a rank: add (times the rank) and mul (to the power of the rank). */ perk?: { add?: Record<string, number>; mul?: Record<string, number> };
+  /** Where to draw it in your tree. */ at?: Loose; tags?: string[];
+}
+export interface GrowthNode { id: string; name: string; rank: number; ranks: number; ok: boolean; why: string | null; needs: { id: string; rank: number }[]; at: Loose; tags: string[] }
+export interface Growth {
+  stats: Stats | null; level: number; xp: number; /** Unspent attribute points. */ points: number; /** Unspent skill points. */ skillPoints: number;
+  attrs: Record<string, number>; ranks: Record<string, number>; cap: number;
+  on(ev: 'xp' | 'level' | 'raise' | 'learn' | 'respec', fn: (...a: Loose[]) => void): this;
+  /** XP needed in all for a level. */ need(level: number): number;
+  /** XP in all for the next level (Infinity at the cap). */ readonly next: number;
+  /** 0..1 of the way to the next level. */ readonly part: number;
+  /** Gives XP; returns the levels gained (pools filled on a level up unless refill: false). */ gain(n: number, why?: string | null): number;
+  attr(name: string): number; /** Spends points on an attribute; false if short or at its top. */ raise(name: string, n?: number): boolean;
+  rank(id: string): number; has(id: string, rank?: number): boolean;
+  can(id: string): { ok: boolean; why: 'ranks' | 'level' | 'needs' | 'excluded' | 'points' | null; needs: string[]; cost: number };
+  /** Learns a skill's next rank; false if can() says no. */ learn(id: string): boolean;
+  /** Every skill, for drawing the tree. */ readonly nodes: GrowthNode[];
+  /** Gives back every point spent (keep: 'attributes' keeps those). */ respec(o?: { keep?: 'attributes' | null }): this;
+  /** A piece of gear's numbers on a slot, or null to take them off. */ gear(slot: string, spec: { add?: Record<string, number>; mul?: Record<string, number>; tags?: string[] } | null): this;
+  /** Follows a gs.items Inventory: what is in its equip slots counts, from its defs' stats: { add, mul }. */ wear(inv: Inventory): this;
+  /** What attributes, skills and gear add to a stat and multiply it by. */ parts(stat: string): { add: number; mul: number };
+  /** A stat now (the Stats' own, or worked out from base with no Stats). */ value(stat: string, base?: number): number;
+  restart(level?: number, xp?: number | null): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface RepFaction { start?: number; /** Move the other way by share (both ways). */ rivals?: string[]; /** Move the same way by share (both ways). */ allies?: string[]; /** Puts bounties on crimes it sees; mood 'arrest'. */ law?: boolean; /** Attacks when it hates the hero (else flees). */ fights?: boolean; /** Runs from a famous villain. */ timid?: boolean; /** Points a second back to its start. */ fade?: number }
+export type RepMood = 'arrest' | 'attack' | 'flee' | 'avoid' | 'ignore' | 'stare' | 'greet' | 'bow' | 'cheer';
+export interface Reputation {
+  on(ev: 'change' | 'rank' | 'deed' | 'paid', fn: (...a: Loose[]) => void): this;
+  get(axis: string): number; /** An axis -1..1 (0..1 for one that starts at its bottom). */ lean(axis: string): number;
+  /** A faction's standing, -100..100. */ with(faction: string): number;
+  /** 'hated' | 'disliked' | 'neutral' | 'liked' | 'loved' (or your ranks). */ rank(faction: string): string;
+  bounty(faction: string): number; /** Pays a bounty off; returns it. */ pay(faction: string): number;
+  /** Times a deed was done. */ done(id: string): number;
+  move(key: string, by: number, why?: string | null): this;
+  /** The hero did a deed. seen: true (everyone), false (nobody: only inner axes move) or the factions that saw. Returns what moved. */
+  did(id: string, o?: { seen?: boolean | string[]; by?: number; spec?: Record<string, number> | null }): Record<string, number>;
+  update(dt: number): void;
+  /** How someone of a faction meets the hero. */ mood(faction: string): RepMood;
+  /** A price from a faction (dearer when disliked, cheaper when liked); sell: what they pay the hero. */ price(base: number, faction?: string | null, o?: { sell?: boolean; spread?: number }): number;
+  title(): string | null; /** Every number flat, for a conversation's variables. */ vars(): Record<string, number | string>;
+  log: { id: string; seen: boolean }[]; restart(): this; pack(): Loose; unpack(d: Loose): this;
+}
+export interface Flags {
+  on(ev: 'change', fn: (name: string, value: Loose, was: Loose) => void): this;
+  get(name: string, fallback?: Loose): Loose; /** Set and not false, 0 or ''. */ has(name: string): boolean;
+  /** false or null takes it out. */ set(name: string, value?: Loose): this; /** Adds to a number; returns it. */ add(name: string, n?: number): number;
+  /** How many set flags start with this. */ count(prefix?: string): number; readonly all: Record<string, Loose>;
+  pack(): Record<string, Loose>; unpack(d: Loose): this;
+}
+export interface QuestStage { text?: string; at?: P3 | [number, number, number] | { x: number; z: number } | (() => Loose); reach?: number; when?: (t: number) => boolean; count?: number; of?: string; next?: string; end?: string; hidden?: boolean; icon?: string; failText?: string }
+export interface QuestDef { name?: string; icon?: string; stages: Record<string, QuestStage>; rewards?: Record<string, { xp?: number; items?: Record<string, number>; deeds?: string[]; flags?: Record<string, Loose> } & Record<string, Loose>>; needs?: (string | (() => boolean))[]; repeat?: boolean }
+export interface JournalLine { quest: string; name: string; stage: string; text: string; end: string | null; t: number }
+export interface QuestLine { id: string; name: string; stage: string | null; text: string; end: string | null }
+export interface Quests {
+  on(ev: 'start' | 'stage' | 'count' | 'end' | 'fail' | 'reward', fn: (...a: Loose[]) => void): this;
+  table: Record<string, QuestDef>; journal: JournalLine[]; pinned: string | null;
+  restart(): this; /** Its stage ('' when not running). */ stage(id: string): string; is(id: string, stage: string): boolean;
+  active(id: string): boolean; /** How it ended, or null. */ ended(id: string): string | null; failed(id: string): boolean;
+  /** Not running, not done (unless repeat) and its needs met: 'quest:id', 'quest:id=way', 'flag:name', '!...' or a function. */ can(id: string): boolean;
+  start(id: string, stage?: string | null): boolean; /** Moves it to a stage; an end stage ends it. */ to(id: string, stage: string): this;
+  end(id: string, way?: string): this; fail(id: string): this;
+  /** Counts n of something for each running stage that counts it; returns how many stages moved on. */ count(what: string, n?: number): number;
+  progress(id: string): { n: number; of: number };
+  /** Each frame: stages with reach (near at) or when move on. */ update(dt: number, player?: Loose): this;
+  pin(id: string | null): this; readonly markers: { at: P3; kind: 'quest'; text: string; icon: string | null; pinned: boolean; quest: string }[];
+  list(): { active: QuestLine[]; done: QuestLine[]; failed: QuestLine[] };
+  /** quest_<id>: its stage or end, for a conversation. */ vars(): Record<string, string>;
+  pack(): Loose; unpack(d: Loose): this;
+  readonly rep: Reputation | null; readonly grow: Growth | null; readonly inv: Inventory | null; readonly flags: Flags | null;
+}
+export interface RpgPart {
+  /** XP needed in all to reach a level: base * (level - 1)^power (100, 1.5). */
+  xpTo(level: number, o?: { base?: number; power?: number }): number;
+  /** new Growth(stats, { attributes, derive, tree, curve, cap, points, skills, most, refill }) in reset(). */
+  Growth: new (stats?: Stats | null, o?: { attributes?: Record<string, number>; derive?: Record<string, (attrs: Record<string, number>, g: Growth) => number>; tree?: Record<string, GrowthSkill>; curve?: { base?: number; power?: number } | ((level: number) => number); cap?: number; points?: number; skills?: number; most?: number | Record<string, number>; refill?: boolean; level?: number; xp?: number | null }) => Growth;
+  /** new Reputation({ axes, factions, deeds, share, inner, good, fame, titles, ranks }) in reset(). */
+  Reputation: new (o?: { axes?: Record<string, [number, number, number?] | { min?: number; max?: number; start?: number; fade?: number }>; factions?: Record<string, RepFaction>; deeds?: Record<string, Record<string, number>>; share?: number; inner?: string[]; good?: string; fame?: string; titles?: ({ name: string } & Record<string, Loose>)[]; ranks?: [number, string][]; keep?: number }) => Reputation;
+  /** new Flags({ ...start }) in reset(): the world's own facts by name. */
+  Flags: new (start?: Record<string, Loose>, o?: { link?: boolean }) => Flags;
+  /** new Quests({ id: { name, stages, rewards, needs } }) in reset(); finds the game's Reputation, Growth, Inventory and Flags. */
+  Quests: new (table: Record<string, QuestDef>, o?: { rep?: Reputation | null; grow?: Growth | null; inv?: Inventory | null; flags?: Flags | null; keep?: number; link?: boolean }) => Quests;
+}
 /** A spell in a gs.magic book. */
 export interface Spell {
   kind: 'bolt' | 'area' | 'beam' | 'shield' | 'heal' | 'buff';
@@ -2702,7 +2828,7 @@ export interface TownPart {
   between(h: number, a: number, b: number): boolean;
 }
 export interface ItemsPart {
-  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number }) => Inventory;
+  Inventory: new (defs?: Record<string, ItemDef>, o?: { slots?: number; extra?: Record<string, string>; stack?: number; weight?: number; link?: boolean }) => Inventory;
   Recipes: new (defs?: Record<string, ItemDef>) => Recipes;
 }
 export interface AdvSpot { id: string; room: string; x?: number; y?: number; w?: number; h?: number; r?: number; poly?: [number, number][]; z?: number; look?: string | ((s: AdvSpot) => string); take?: boolean | string; took?: string; exit?: string; locked?: string | boolean; talk?: string | ((s: AdvSpot) => string); cant?: string | ((item: string) => string); when?: () => boolean; walk?: [number, number]; [k: string]: Loose }
@@ -3397,12 +3523,16 @@ export interface MissionsPart {
     ring(call: { from?: string; say: string | string[]; voice?: Loose; job?: string }, o?: { after?: number }): PhoneCall;
     text(from: string, text: string): Loose; answer(): Loose; decline(): Loose; skip(): Loose; update(dt: number): Loose; pack(): Loose; unpack(d: Loose): Loose;
   };
-  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone and Radio found by themselves; rounded, measured, saved when it changes. */
-  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean }) => {
-    size: number; readonly room: number; dropped: string[];
-    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean }): Loose;
-    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean };
+  /** The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone, Radio and the gs.rpg Quests, Growth, Reputation and Flags found by themselves; rounded, measured, saved when it changes; local parts and save slots on this phone (api.saveLocal). */
+  WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean; slots?: number }) => {
+    size: number; readonly room: number; dropped: string[]; /** Seconds of play, kept with the save. */ played: number;
+    keep(name: string, give: (() => Loose) | { pack(): Loose; unpack(d: Loose): Loose }, take?: ((d: Loose) => void) | null, o?: { optional?: boolean; local?: boolean }): Loose;
+    pack(): { text: string; data: Loose; size: number; dropped: string[]; fits: boolean; local: Loose | null };
     load(): boolean; now(force?: boolean): boolean; update(dt: number): Loose;
+    /** Saves in a moment (a quest moving on or a level gained calls it by itself). */ soon(after?: number): Loose;
+    /** Saves the world now into a slot on this phone (1..slots). */ slot(n: number, label?: string): boolean;
+    /** Puts the world back from a slot and makes that the save. */ restore(n: number): boolean;
+    clear(n: number): Loose; readonly slots: ({ n: number; label: string; played: number; at: number } | null)[];
   };
   /** Rounds every number in it to `places`. */
   compact<T>(v: T, places?: number): T;
@@ -3423,11 +3553,12 @@ export interface MissionsPart {
  * focus now), stops (the exposure it adds).
  */
 export interface Lens { fstop?: number; focal?: number; focus?: number | 'auto' | P3 | Loose; spot?: [number, number]; pull?: number; blades?: number; turn?: number; bokeh?: number; max?: number; blur?: number; sensor?: number; shutter?: number; iso?: number | 'auto'; ev?: number; key?: number; night?: number; speed?: number; readonly at?: number; readonly stops?: number }
-export interface CutsceneStep { at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
+export interface CutsceneStep { /** A person it directs: walk to { x, z } at speed, turn (an angle or a point), look (a point or thing; null: free), play (a gesture or move), mood + amount, and say in voice with the mouth moving. */ actor?: Loose; walk?: { x: number; z: number }; speed?: number; turn?: number | P3; play?: string; mood?: string; amount?: number; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
 export interface CutscenePart {
   along(points: P3[], u: number): P3;
   Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & {
     playing: boolean; done: boolean; bars: number; line: { text: string; who: string | null } | null; shot: { x: number; y: number; z: number; look: P3 } | null; readonly progress: number; /** the lens the last lens step set (for v.lens) */ lens: Lens | null;
+    /** What an actor is doing, for its rig: person.rig.update(dt, cut.motion(person)). */ motion(person: Loose): { speed?: number };
     update(dt: number): Loose; skip(): Loose; reset(): Loose; drawBars(c: CanvasRenderingContext2D, w: number, h: number, colour?: string): void; drawLine(c: CanvasRenderingContext2D, w: number, h: number, o?: Loose): void;
   };
 }
@@ -3906,6 +4037,8 @@ export interface RigT {
 }
 export interface PosesPart {
   POSES: Record<string, Loose>;
+  /** Gestures every rig has, played once from standing at ease: rig.play('nod'): nod, shake, bow, shrug, point, cheer, laugh, think, beckon. */
+  GESTURES: Record<'nod' | 'shake' | 'bow' | 'shrug' | 'point' | 'cheer' | 'laugh' | 'think' | 'beckon', Loose>;
   /** A joint in between (a person's shoulders, elbows, hips and knees: bones.elbowL...): a bone that takes half of another joint's turn by itself whenever the skeleton is worked out, for the skin round the joint to go with, so a bent limb keeps its girth. Kit use: gs.models.human() makes them; nothing poses them. of: the joint it follows; home: its place; out: where the outside of the bend is (metres), or null. */
   Between: new () => Loose & { of: Loose | null; home: Loose | null; out: [number, number, number] | null };
   /** A muscle that bulges (a person's biceps: bones.bicepL...): a bone that moves out from its place as another joint bends (of), by out (metres) at a right angle's bend times size, for the skin over it to swell. Kit use: gs.models.human() makes them; nothing poses them. */
@@ -4383,6 +4516,8 @@ export interface ClothPart {
   ball(o?: { x?: number; y?: number; z?: number; r?: number }): ClothSolid;
   /** A solid rod with round ends (a leg, a post): set(a, b) moves it; rb: its radius at b, if it narrows. */
   capsule(o?: { a?: Arr3; b?: Arr3; r?: number; rb?: number }): ClothSolid;
+  /** A solid box (a wall, a crate, a table): at its middle, size [w, h, d], turn (radians about up) or q (a quaternion); set(at, q) moves it. With a world the still boxes, balls and capsules in it are these by themselves. */
+  box(o?: { at?: Arr3; size?: Arr3; turn?: number; q?: { x: number; y: number; z: number; w: number } | null }): ClothSolid;
   /**
    * A skirt (a kilt, a long coat's skirts) worn by on, a gs.models.human: it rides their hips, cut to fit round them, and goes round their legs (body()).
    * length: metres down from the waist (.5); flare: how much wider round the hem than at the waist (.15); waist: its half widths across and front to back
@@ -4521,7 +4656,9 @@ export interface SculptShape {
 export interface Wield {
   person: Loose; gun: Loose; how: string; ease: number;
   /** Where shots leave (world) and the way it points (a thing swung: along its length). */ muzzle: Loose; dir: Loose;
-  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean }): Wield;
+  /** keep: false lets it go into its holder and walls (by default it is turned about the grip out of both: gs.characters.Solid). */
+  update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean; keep?: boolean }): Wield;
+  /** How far it was turned out of the body or a wall this frame (radians). */ readonly turned?: number;
   /** Takes it off the person: the weapon. */ drop(): Loose;
 }
 export type LookShape = 'weight' | 'muscle' | 'age' | 'jaw' | 'chin' | 'cheeks' | 'nose' | 'lips' | 'brow' | 'eyes';
@@ -4640,10 +4777,10 @@ export interface ModelsPart {
    * Their clothes on WebGPU: each cloth woven its own way at the size of its threads (outfit.top.weave, outfit.legs.weave, outfit.hat.weave: 'plain' | 'twill' | 'denim' | 'knit' |
    * 'canvas' | 'wool' | 'fine'; from the kind of garment when not given), leather with its grain, creases at the inside of an elbow and the back of a knee as far as it bends,
    * and person.grime (a GrimeT): wet, muddy, dusty and snowy, by itself in the weather and in gs.outdoors Marks' mud, or set by the game.
-   * Options: look, seed, age, weight, muscle, sex, heritage, gnm, build, girth, scale, skin, hair, hairStyle, iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
+   * Options: look, seed, age, weight, muscle, sex, heritage, gnm, build, girth, scale, skin, hair, hairStyle ('short' | 'long' | 'bun' | 'curly' | 'afro' | 'bald'), hairTexture (a real face's hair: 'straight' | 'wavy' | 'curly' | 'coily' or 0..1; by heritage if not given), hairStrands (false: no single strands on a real face's hair, WebGPU), iris, lips, moustache, stubble, beard, strands, face ({ jaw, chin, brow, nose, lips, cheeks, eyes }), hands ('open' | 'grip'), outfit ({ top, legs, feet, hat, belt, webbing, gloves, pack, extras }; camo: [colour, colour] on top, legs or hat brushes blotches over its colour), gear, slots, now (sculpt on the spot: tools). The plain options (body, legs, shoes: colours) still dress a simple person.
    */
   human: {
-    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' | 'european' | 'middle-eastern' | Partial<Record<'african' | 'east-asian' | 'european' | 'middle-eastern', number>> | false; gnm?: boolean; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'bald'; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; cards?: boolean; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
+    (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' | 'european' | 'middle-eastern' | Partial<Record<'african' | 'east-asian' | 'european' | 'middle-eastern', number>> | false; gnm?: boolean; build?: Record<string, number>; girth?: number; scale?: number; shadows?: boolean; skin?: string; hair?: string | null; hairStyle?: 'short' | 'long' | 'bun' | 'curly' | 'afro' | 'bald'; hairTexture?: 'straight' | 'wavy' | 'curly' | 'coily' | number; hairStrands?: boolean; eyes?: string; iris?: string; lips?: string; moustache?: boolean; stubble?: number; beard?: number | boolean; strands?: boolean | Pick<FurOptions, 'length' | 'layers' | 'lean' | 'tile' | 'rough' | 'root' | 'tip' | 'seed' | 'auto'>; cards?: boolean; jaw?: number; nose?: number; face?: Record<string, number>; hands?: 'open' | 'grip'; body?: string; legs?: string; shoes?: string; sleeves?: 'long' | 'short'; outfit?: Record<string, Loose>; gear?: Loose[]; slots?: Record<string, Loose>; now?: boolean }): Loose;
     /** Several people at once, in the same order: everything that still needs sculpting is started together, so the app waits once. */
     all(list: Loose[]): Loose[];
     /** Starts sculpting whatever these people still need and makes the app wait if anything does; nothing otherwise. First thing in make(), before anything costly. */
@@ -4735,7 +4872,32 @@ export interface CityPart {
     /** Parked cars along the kerbs wide enough for them, solid to collide() (default: on a Next Gen view). */ parked?: boolean;
     /** The ground painted round the camera with no repeats (patches, cracks and tar lines in the asphalt, slabs in a bond, stains, oil under parked cars, skid marks), read in place of the tiled ground pictures (default: on a Next Gen view). */ paint?: boolean;
     /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean;
-    /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number; [style: string]: Loose }) => CityWorld;
+    /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number;
+    /** Metres from the player within which the blocks are built (600); past it they are let go and stand as lit boxes, so a big city's memory stays bounded (less while the phone is short of memory; Infinity keeps all). */ keep?: number;
+    /** Where the city's middle is, [x, z] (a moved city is the same city, moved: districts side by side). */ centre?: [number, number] | null; [style: string]: Loose }) => CityWorld;
+  /**
+   * One big city of districts side by side (a downtown, an old town, suburbs, a harbour on the south edge with the sea past it),
+   * joined by roads across open land. Only the districts near the player are made (each a City), a few milliseconds a frame as
+   * the player comes near, and let go once well past; the rest stand as lit boxes, and with { far } the city goes on to the horizon.
+   * The districts share one crowd of people, one ground painter and one set of lamps. update(dt, player) each frame.
+   */
+  Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string | { style?: string; blocks?: number | [number, number]; seed?: number; name?: string; [style: string]: Loose })[];
+    /** [least, most] metres of land between districts ([120, 240]). */ between?: [number, number]; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
+    /** How hilly the land between and round the districts is, 0..1 (.5; districts stay level). */ hills?: number; /** A river down the gap between the first two districts, bridged (true). */ river?: boolean;
+    /** A highway round the whole city on piers, with a slip road to each district it can reach (true). */ highway?: boolean;
+    side?: 'right' | 'left'; at?: { x: number; z: number } | null; keep?: number; far?: boolean | number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; traffic?: number; people?: number; paint?: boolean; crowd?: boolean; link?: boolean; [option: string]: Loose }) => CityMetro;
+  /** A driving route across a plan's roads (from layout()), with no 3D: as City.route(). */
+  routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };
+  /** The nearest point in a lane of a plan's roads: as City.road(). */
+  roadOn(plan: CityPlan, x: number, z: number): { x: number; z: number; heading: number; edge: Loose; lane: number; s: number; d: number };
+  /**
+   * Finding the way round a City or a Metro: a route to where the player is going that follows them (worked out again when
+   * they leave it), the next turn, markers (a game's own, and those of anything watched, such as gs.missions Jobs), a minimap
+   * that turns with the player, a full map to pan, zoom and tap for a waypoint, and the way shown on the road in 3D.
+   */
+  Gps: new (city: CityWorld | CityMetro, o?: { /** Metres off the route before it is worked out again (18). */ off?: number; /** Seconds between routes worked out anyway (0). */ every?: number; /** Metres a target moves before it is (25). */ moved?: number; /** Metres from the end that count as there (14). */ arrive?: number; /** Degrees that count as a turn (30). */ turn?: number; /** Draws a marker's icon: gs.icons.icon. */ icon?: ((c: CanvasRenderingContext2D, name: string, x: number, y: number, size: number, o?: Loose) => void) | null; colour?: string }) => CityGps;
+  /** Where a big city's districts go, as plain numbers (no view). */
+  metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number } };
   /**
    * The police and the wanted level for a City: crimes seen by police (counted at once) or by people in the street
    * (phoned in a few seconds later, if nobody stops them), stars 0..5, police cars that come with sirens and chase,
@@ -4778,6 +4940,66 @@ export interface CityPart {
   STYLES: Record<'downtown' | 'oldtown' | 'harbour' | 'suburb', Record<string, Loose>>;
   /** Facade looks: kind, wall, trim, glass, win (window width m), floor (storey m), lit, warm. */
   FACADES: Record<string, Record<string, Loose>>;
+}
+export interface CityDistrict { name: string; style: string; plan: CityPlan; rect: { x0: number; x1: number; z0: number; z1: number }; harbour: boolean; /** The City while it is made, else null. */ city: CityWorld | null }
+/** A road between two districts: points along it every few metres, from junction `from` of district a to junction `to` of b. */
+/**
+ * A road between districts, a slip road (ramp: from a district to beside the highway, b the highway marker, ringS and join where and
+ * which way it joins) or the highway itself (ring, loop). y: its height at each point; kind: 0 on the land, 1 a bridge, 2 a tunnel,
+ * 3 the cutting before a tunnel; bridges and tunnels: their stretches in metres along it.
+ */
+export interface CityRoad { id: number | string; a: CityDistrict | Loose; b: CityDistrict | Loose; from: Loose; to: Loose; points: [number, number][]; at: number[]; len: number; width: number; lanes: number; speed: number;
+  y: Float32Array; kind: Uint8Array; bridges: { s0: number; s1: number }[]; tunnels: { s0: number; s1: number }[]; ring?: boolean; loop?: boolean; median?: boolean; ramp?: boolean; ringS?: number; join?: 1 | -1 }
+export interface CityMetro {
+  districts: CityDistrict[]; connectors: CityRoad[]; bounds: { x0: number; x1: number; z0: number; z1: number }; start: { x: number; z: number }; night: number;
+  /** The highway round the city (null with highway: false), and the slip roads up to it. */ ring: CityRoad | null; ramps: CityRoad[];
+  /** The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). */
+  ways: { river: Loose; roads: CityRoad[]; landAt(x: number, z: number): number; natural(x: number, z: number): number; hills(x: number, z: number): number; near(x: number, z: number, reach?: number): { d: number; road: CityRoad; s: number; x: number; y: number; z: number; lateral: number } | null; traffic: { list: Loose[] } | null };
+  /** The made districts. */ readonly cities: CityWorld[]; /** The made district the player is in, or null on the roads between. */ readonly city: CityWorld | null;
+  /** The district being made a step at a time, or null. */ making: CityDistrict | null;
+  /** The traffic and people of every made district. */ cars: CityWorld['cars']; people: CityWorld['people'];
+  update(dt: number, focus?: { x: number; z?: number; y?: number }): CityMetro; reset(focus?: { x: number; z: number }): CityMetro;
+  /** Makes now every district the player at `at` wants (from reset(), under the loading screen). */ prepare(at?: { x: number; z?: number; y?: number }): CityMetro;
+  districtAt(x: number, z: number, margin?: number): CityDistrict | null;
+  /** A driving route across districts and the roads between: as City.route(), plus its legs in order. */
+  route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district: CityDistrict; from: Loose; to: Loose } | { road: CityRoad; from: number; to: number })[] } | null;
+  /** The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). */
+  road(x: number, z: number): Loose;
+  /** A point s metres along a road between districts, a slip road or the highway { x, y, z, dx, dz, kind, grade }, and the middle of its lane k (back: driving from its second end). */
+  along(r: CityRoad, s: number, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; kind: number; grade: number }; lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; grade: number };
+  /** The ground at x, z: in a district as City.ground(); between them the road or the land, under height y when given (under a bridge, the land; in a tunnel, the road). */
+  ground(x: number, z: number, y?: number): number;
+  /** The height of the road at x, z (on a bridge its deck, in a tunnel its floor), else the land: for things drawn on the road. */ roadY(x: number, z: number): number;
+  avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro; buildingAt(x: number, z: number): CityBuilding | null;
+  collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null; ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null;
+  spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?: () => number }): CitySpot | null;
+  occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]; walls(): Loose[];
+  /** Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). */ solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro;
+  drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water' | 'land', string>> }): void;
+  mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
+  dispose(): void;
+}
+/** Something to find: at (a point, or a thing that moves, read each frame), kind ('target', 'waypoint', 'job', 'shop', 'danger', 'friend', 'home', or your own), text, icon (a gs.icons name), pinned (held at the minimap's edge when off it; the first pinned one is where the route goes with nothing else set). */
+export interface CityMarker { at: { x: number; y?: number; z?: number }; kind?: string; text?: string; icon?: string; pinned?: boolean; colour?: string; [k: string]: Loose }
+export interface CityGps {
+  route: { points: [number, number][]; path: Loose; length: number; at: number[]; turns: { s: number; x: number; z: number; turn: 'left' | 'right'; angle: number }[]; to: { x: number; z: number } } | null;
+  /** Metres to go along the route; how far along it the player is (s); there yet. */ left: number; s: number; arrived: boolean;
+  /** The next thing to do: turn left or right, keep on to the end, or arrived; in metres, and where. */ next: { turn: 'left' | 'right' | 'arrive'; in: number; at: { x: number; z: number } } | null;
+  /** The player's own waypoint (set by tap() on the full map), or null. */ waypoint: CityMarker | null; markers: CityMarker[]; readonly target: { x: number; z?: number; y?: number } | null; readonly opened: boolean;
+  /** How many routes it has worked out. */ routes: number;
+  to(target: { x: number; z?: number; y?: number } | null): CityGps; add(m: CityMarker): CityMarker; remove(m: CityMarker): CityGps; clear(): CityGps;
+  /** Also shows the markers of something else, read each frame: an array, or anything with .markers (gs.missions Mission or Jobs). */ watch(source: CityMarker[] | { markers: CityMarker[] }): CityGps; unwatch(source: Loose): CityGps; all(out?: CityMarker[]): CityMarker[];
+  reroute(): void;
+  /** Once a frame: player { x, z } (or a car's x, y) and its heading (radians, atan2(dx, dz)) to turn the minimap. */ update(dt: number, player: { x: number; z?: number; y?: number; heading?: number }, heading?: number): CityGps;
+  /** The point d metres along the route ahead of the player (an arrow over the car). */ ahead(d?: number, out?: Loose): { x: number; z: number } | null;
+  /** The minimap: streets round the player in a circle that turns with them, the route, markers (pinned ones held at the edge), the player's arrow. */
+  mini(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { range?: number; turn?: 'heading' | 'north' | number; round?: boolean; route?: boolean; colours?: Record<string, string> }): Loose;
+  /** The full map, north up: open() (it starts on the player), then map() each frame; pan(dx, dy), zoom(f, x, y) from your gestures, tap(x, y) for a waypoint (again on it clears it). */
+  open(range?: number): CityGps; close(): CityGps; map(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { colours?: Record<string, string> }): Loose;
+  pan(dx: number, dy: number): CityGps; zoom(f: number, x?: number, y?: number): CityGps; tap(x: number, y: number): CityMarker | null; pointAt(x: number, y: number): { x: number; z: number } | null;
+  /** Draws one marker at a canvas point. */ mark(c: CanvasRenderingContext2D, m: CityMarker, x: number, y: number, size: number): void;
+  /** The way on the road ahead in a view, as glowing arrows; hide() takes it away. */ show(view: Loose, o?: { reach?: number; width?: number; colour?: string; opacity?: number }): CityGps; hide(): CityGps;
+  dispose(): void;
 }
 export interface CityWorld {
   plan: CityPlan; group: Loose; seed: number; start: CitySpot; t: number;
@@ -4846,7 +5068,9 @@ export interface CityWorld {
    * and bodies for the nearest `cars` and `people` that move with them (refreshed in update()): a car hit hard stops a moment and a
    * person hit falls over by themselves. A hit body's .car or .person says which.
    */
-  solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
+  solid(world: Loose, o?: { buildings?: boolean; floor?: boolean; furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number; /** true: a car going fast enough knocks lamp posts, signals, signs, benches, hydrants and bins over (city.props.mend() stands them up). */ knock?: boolean }): CityWorld;
+  /** How many blocks' chunks have been let go behind the player (keep). */
+  freed: number;
   drawMap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, o?: { at?: { x: number; z?: number; y?: number }; range?: number; turn?: number; colours?: Partial<Record<'road' | 'block' | 'park' | 'building' | 'water', string>> }): void;
   mapPoint(p: { x: number; z?: number; y?: number }): [number, number];
   dispose(): void;
@@ -5032,7 +5256,7 @@ export interface GS {
   things: ThingsPart; rounds: RoundsPart; pacing: PacingPart; aim: AimPart; senses: SensesPart; prefs: PrefsPart; tick: TickPart; solve: SolvePart;
   camera2d: Camera2dPart; tiles: TilesPart; movers: MoversPart; anim: AnimPart; story: StoryPart; replay: ReplayPart; look2d: Look2dPart;
   tweak: TweakFn; brains: BrainsPart;
-  board: BoardPart; battle: BattlePart; stats: StatsPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
+  board: BoardPart; battle: BattlePart; stats: StatsPart; rpg: RpgPart; gen: GenPart; drag: DragPart; idle: IdlePart; history: HistoryPart; items: ItemsPart; town: TownPart; adventure: AdventurePart; hex: HexPart; rts: RtsPart; fight: FightPart; bullets: BulletsPart; sand: SandPart; flow: FlowPart; art: ArtPart; sports: SportsPart; party: PartyPart; rhythm: RhythmPart; strokes: StrokesPart; vehicles: VehiclesPart; paths: PathsPart; bones: BonesPart;
   level3d: Level3dPart; sky: SkyPart;
   combat: CombatPart; tactics: TacticsPart; climb: ClimbPart; missions: MissionsPart; cutscene: CutscenePart; prompts: PromptsPart;
   stealth: StealthPart; gadgets: GadgetsPart; campaign: CampaignPart; arena: ArenaPart; magic: MagicPart; monsters: MonstersPart; companions: CompanionsPart; poses: PosesPart; destruction: DestructionPart; props: PropsPart;

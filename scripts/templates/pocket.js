@@ -1,7 +1,8 @@
 // __TITLE__: a starter Dot matrix (Pocket) game made with `npm run new`. Change anything you like.
 // Four shades only, crisp pixels. It starts the way a finished game does: a fixed tick (the same game on
 // every phone), Ready (nothing moves until the first touch), Feel for pixel styles (particles, shake,
-// sound and a buzz in one call), pixel text, a slider stick and a chip tune in one line.
+// sound and a buzz in one call), pixel text, a slider stick, a chip tune in one line and knobs: the numbers
+// that set how it feels, in one block (docs/feel-words.md).
 import gs from '../gamescroll.js';
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
@@ -18,10 +19,22 @@ function make(api) {
   const ready = new Ready({ eat: false });        // the first touch starts the round and already steers
   const stick = new Stick({ r: 24, floating: true, axis: 'x', color: R[1] });
   const keys = new Keys();
+  // Knobs: change how it feels here. Sliders in npm run dev (Save to file writes them back);
+  // node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    speed: [110, 40, 220, 'how fast the catcher slides (pixels a second)'],
+    spawn: [.9, .4, 2, 'seconds between drops at the start'],
+    fastest: [.3, .15, .8, 'seconds between drops when it is hardest'],
+    ramp: [36, 10, 120, 'seconds until it is as hard as it gets'],
+    fall: [40, 20, 90, 'how fast drops fall at the start'],
+    faster: [1.5, 0, 4, 'how much faster drops fall each second'],
+    bad: [.25, 0, .6, 'share of drops that are dark'],
+    lives: [3, 1, 6, 1, 'dark drops caught before the round ends'],
+  });
   let px, pxWas, drops, score, t, spawn, lives;
 
   return {
-    reset() { px = pxWas = W / 2; drops = []; score = 0; t = 0; spawn = 0; lives = 3; feel.clear(); ready.reset(); stick.release(); keys.clear(); stick.place(W / 2, H - 20, [0, 0, W, H]); },   // ALL round state here
+    reset() { px = pxWas = W / 2; drops = []; score = 0; t = 0; spawn = 0; lives = K.lives; feel.clear(); ready.reset(); stick.release(); keys.clear(); stick.place(W / 2, H - 20, [0, 0, W, H]); },   // ALL round state here
     resize(w, h) { W = w; H = h; stick.place(W / 2, H - 20, [0, 0, W, H]); },
     update(dt) {                                  // tick: 60 below, so dt is exactly 1/60 on every phone
       feel.update(dt);
@@ -29,8 +42,8 @@ function make(api) {
       if (!ready.update(dt)) return;              // nothing falls until the first touch
       t += dt; spawn -= dt;
       const dir = stick.active ? stick.x : keys.axis().x;
-      pxWas = px; px = Math.max(8, Math.min(W - 8, px + dir * 110 * dt));
-      if (spawn <= 0) { spawn = Math.max(.3, .9 - t / 60); drops.push({ x: 6 + Math.random() * (W - 12) | 0, y: -6, was: -6, v: 40 + t * 1.5, bad: Math.random() < .25 }); }
+      pxWas = px; px = Math.max(8, Math.min(W - 8, px + dir * K.speed * dt));
+      if (spawn <= 0) { spawn = Math.max(K.fastest, K.spawn - (K.spawn - K.fastest) * t / K.ramp); drops.push({ x: 6 + Math.random() * (W - 12) | 0, y: -6, was: -6, v: K.fall + t * K.faster, bad: Math.random() < K.bad }); }
       for (const d of drops) { d.was = d.y; d.y += d.v * dt; }   // keep where it was: draw() shows the moment between
       for (const d of drops) {
         if (d.y > H - 22 && d.y < H - 12 && Math.abs(d.x - px) < 10) {

@@ -23,9 +23,59 @@ const SKIN = new Set(['skin', 'lips', 'lid', 'lash', 'brow']), HAIRK = 1, SKINK 
  * points near its edge, the skin's point nearest each and how far, 8 bits, its colour eases toward that one's: easeEdge) }.
  */
 export function hairStrips(head, { style = 'short', fem = false } = {}) {
+  const g = hairGuides(head, { style, fem }); if (!g) return null;
+  const { cards } = g;
+  cards.sort((a, b) => a.layer - b.layer);   // (drawn from the innermost out: what is see-through is laid over what is under it)
+  const { hairAll, cls, grid, nearSkin, cellOf, key, G, P } = g;
+
+  // ---- the strips' points: two across at each step, lifted off the sculpted hair by their layer
+  const m = cards.reduce((a, c) => a + c.spine.length * 2, 0), tris = cards.reduce((a, c) => a + (c.spine.length - 1) * 2, 0);
+  const Pp = new Float32Array(m * 3), Np = new Int16Array(m * 3), Up = new Float32Array(m * 2), At = new Uint32Array(m), Dm = new Uint8Array(m), Ip = m > 65535 ? new Uint32Array(tris * 3) : new Uint16Array(tris * 3);
+  let v = 0, t = 0;
+  for (const c of cards) {
+    const L = c.spine.length, cum = [0]; for (let k = 1; k < L; k++) { const a = c.spine[k - 1].p, b = c.spine[k].p; cum.push(cum[k - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])); }
+    // (the picture as long as the strip was meant to be, its tips at the strip's end: one cut short at the end of the hair shows the
+    // picture's tips there, not all of it squeezed in. The root sinks into the sculpted hair, so where a strip starts never shows)
+    const total = cum[L - 1] || 1, long = mx(total, c.full), u0 = (c.kind + (c.flip ? .985 : .015)) / CARD.n, u1 = (c.kind + (c.flip ? .015 : .985)) / CARD.n, lift = .0011 + .0026 * c.layer, dim = c.shade * (.93 + .07 * c.layer);
+    for (let k = 0; k < L; k++) {
+      const s = c.spine[k], a = c.spine[Math.max(0, k - 1)].p, b = c.spine[Math.min(L - 1, k + 1)].p, f = k / (L - 1);
+      let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+      const [nx, ny, nz] = s.n; let sx = ty * nz - tz * ny, sy = tz * nx - tx * nz, sz = tx * ny - ty * nx; const sl = Math.hypot(sx, sy, sz) || 1; sx /= sl; sy /= sl; sz /= sl;   // (across: the way along it, crossed with the normal)
+      const h = c.edge ? (s.skin ? .0005 : lift) : s.tip ? mn(lift, .0008) : -.0016 + (lift + .0016) * ss(0, .014, cum[k]) * (1 - .25 * f), wd = c.wide * (1 - .3 * f) / 2, cx = s.p[0] + nx * h, cy = s.p[1] + ny * h, cz = s.p[2] + nz * h;
+      for (let e = 0; e < 2; e++) {
+        const sg = e ? 1 : -1, j = v + e;
+        Pp[j * 3] = cx + sx * wd * sg; Pp[j * 3 + 1] = cy + sy * wd * sg; Pp[j * 3 + 2] = cz + sz * wd * sg;
+        Np[j * 3] = Math.round(nx * 32767); Np[j * 3 + 1] = Math.round(ny * 32767); Np[j * 3 + 2] = Math.round(nz * 32767);
+        Up[j * 2] = e ? u1 : u0; Up[j * 2 + 1] = c.edge ? -.15 + 1.15 * cum[k] / total : 1 - (total - cum[k]) / long;
+        At[j] = s.at; Dm[j] = Math.round(200 * dim);
+      }
+      if (k < L - 1) { const l0 = v, r0 = v + 1, l1 = v + 2, r1 = v + 3; Ip[t++] = l0; Ip[t++] = r0; Ip[t++] = l1; Ip[t++] = r0; Ip[t++] = r1; Ip[t++] = l1; }
+      v += 2;
+    }
+  }
+  // ---- the hair's edge: each of its points within G of the skin, with the nearest skin point and how near (easeEdge)
+  const ea = [], et = [], ek = [];
+  for (const i of hairAll) {
+    if (!nearSkin.has(cellOf(i))) continue;
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], ci = Math.floor((x - HC[0]) / G), cj = Math.floor((y - HC[1]) / G), ck = Math.floor((z - HC[2]) / G); let best = G, bi = -1;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      const l = grid.get(key(ci + a, cj + b, ck + c)); if (l) for (const q of l) { if (cls[q] !== SKINK) continue; const d = Math.hypot(P[q * 3] - x, P[q * 3 + 1] - y, P[q * 3 + 2] - z); if (d < best) { best = d; bi = q; } }
+    }
+    if (bi >= 0) { ea.push(i); et.push(bi); ek.push(Math.round(255 * (1 - ss(0, G, best)))); }
+  }
+  return { P: Pp, N: Np, U: Up, at: At, dim: Dm, I: Ip, cards: cards.length, edge: { at: Uint32Array.from(ea), to: Uint32Array.from(et), k: Uint8Array.from(ek) } };
+}
+
+/**
+ * The ways a real face's hair is combed over its sculpted hair (hairStrips, human-strands.js): lines (spines) walked from roots over it the way
+ * it lies, each a list of { p, n, at, tip, skin } (a point on the hair, the way the hair there faces, the head's point under it, past the end
+ * of the hair, rooted on the skin), with full (how long it was meant to be), layer (0 inner .. 1 outer), wide, kind, flip, shade and edge (rooted
+ * on the skin outside the hairline). space: how far apart their roots are; edgeSpace: the hairline's. Or null: too little hair.
+ */
+export function hairGuides(head, { style = 'short', fem = false, space: sp0 = 0, edgeSpace = .005, seed: s0 = 7 } = {}) {
   const n = head.n, P = head.P, NN = head.N, cls = new Uint8Array(n);
   for (let i = 0; i < n; i++) { const s = head.slots[head.slot[i]]; cls[i] = s === 'hair' ? HAIRK : SKIN.has(s) ? SKINK : 0; }
-  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  let seed = s0; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   // the head's surface points (its hair and its skin) by where they are, in cubes as big as the reach of a sample
   const G = .005, grid = new Map(), hair = [], hairAll = [], skinPts = [];
   // (cubes counted from the middle of the head, so a cube's number stays small, which a Map looks up fastest)
@@ -85,7 +135,7 @@ export function hairStrips(head, { style = 'short', fem = false } = {}) {
   const clipOf = p => fem ? 0 : ss(.035, -.03, p[1] - HC[1]) * (.75 + .25 * ss(-.02, -.06, p[2] - HC[2]));
 
   // ---- the roots: hair points picked at random, none nearer another than `space`
-  const space = style === 'long' ? .0105 : .0115, roots = [], taken = new Map(), RG = space;
+  const space = sp0 || (style === 'long' ? .0105 : .0115), roots = [], taken = new Map(), RG = space;
   const order = hair.slice(); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
   const nv = [0, 0, 0], pv = [0, 0, 0];
   for (const i of order) {
@@ -136,7 +186,7 @@ export function hairStrips(head, { style = 'short', fem = false } = {}) {
   // ---- the hairline: short strips rooted on the skin just outside it, running in over the sculpted hair's edge, so the hair starts with a
   // few fine hairs and thickens, as it grows, in place of the edge of a cap. Their picture starts before its first hairs, on the skin
   // (a bob has no hairline round the face: it hangs beside it, standing off it)
-  const edgeTaken = new Map(), EG = .005;
+  const edgeTaken = new Map(), EG = edgeSpace;
   if (bob) skinPts.length = 0;
   for (let i = skinPts.length - 1; i >= 0; i--) if (!nearHair.has(cellOf(skinPts[i]))) { skinPts[i] = skinPts[skinPts.length - 1]; skinPts.pop(); }
   for (let i = skinPts.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = skinPts[i]; skinPts[i] = skinPts[j]; skinPts[j] = t; }
@@ -171,44 +221,7 @@ export function hairStrips(head, { style = 'short', fem = false } = {}) {
     cards.push({ spine, edge: true, layer: .4 + .6 * rnd(), wide: .008 + .003 * rnd(), kind: Math.floor(rnd() * CARD.n), flip: rnd() < .5, shade: .96 + .08 * rnd(), full });
   }
   if (!cards.length) return null;
-  cards.sort((a, b) => a.layer - b.layer);   // (drawn from the innermost out: what is see-through is laid over what is under it)
-
-  // ---- the strips' points: two across at each step, lifted off the sculpted hair by their layer
-  const m = cards.reduce((a, c) => a + c.spine.length * 2, 0), tris = cards.reduce((a, c) => a + (c.spine.length - 1) * 2, 0);
-  const Pp = new Float32Array(m * 3), Np = new Int16Array(m * 3), Up = new Float32Array(m * 2), At = new Uint32Array(m), Dm = new Uint8Array(m), Ip = m > 65535 ? new Uint32Array(tris * 3) : new Uint16Array(tris * 3);
-  let v = 0, t = 0;
-  for (const c of cards) {
-    const L = c.spine.length, cum = [0]; for (let k = 1; k < L; k++) { const a = c.spine[k - 1].p, b = c.spine[k].p; cum.push(cum[k - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])); }
-    // (the picture as long as the strip was meant to be, its tips at the strip's end: one cut short at the end of the hair shows the
-    // picture's tips there, not all of it squeezed in. The root sinks into the sculpted hair, so where a strip starts never shows)
-    const total = cum[L - 1] || 1, long = mx(total, c.full), u0 = (c.kind + (c.flip ? .985 : .015)) / CARD.n, u1 = (c.kind + (c.flip ? .015 : .985)) / CARD.n, lift = .0011 + .0026 * c.layer, dim = c.shade * (.93 + .07 * c.layer);
-    for (let k = 0; k < L; k++) {
-      const s = c.spine[k], a = c.spine[Math.max(0, k - 1)].p, b = c.spine[Math.min(L - 1, k + 1)].p, f = k / (L - 1);
-      let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
-      const [nx, ny, nz] = s.n; let sx = ty * nz - tz * ny, sy = tz * nx - tx * nz, sz = tx * ny - ty * nx; const sl = Math.hypot(sx, sy, sz) || 1; sx /= sl; sy /= sl; sz /= sl;   // (across: the way along it, crossed with the normal)
-      const h = c.edge ? (s.skin ? .0005 : lift) : s.tip ? mn(lift, .0008) : -.0016 + (lift + .0016) * ss(0, .014, cum[k]) * (1 - .25 * f), wd = c.wide * (1 - .3 * f) / 2, cx = s.p[0] + nx * h, cy = s.p[1] + ny * h, cz = s.p[2] + nz * h;
-      for (let e = 0; e < 2; e++) {
-        const sg = e ? 1 : -1, j = v + e;
-        Pp[j * 3] = cx + sx * wd * sg; Pp[j * 3 + 1] = cy + sy * wd * sg; Pp[j * 3 + 2] = cz + sz * wd * sg;
-        Np[j * 3] = Math.round(nx * 32767); Np[j * 3 + 1] = Math.round(ny * 32767); Np[j * 3 + 2] = Math.round(nz * 32767);
-        Up[j * 2] = e ? u1 : u0; Up[j * 2 + 1] = c.edge ? -.15 + 1.15 * cum[k] / total : 1 - (total - cum[k]) / long;
-        At[j] = s.at; Dm[j] = Math.round(200 * dim);
-      }
-      if (k < L - 1) { const l0 = v, r0 = v + 1, l1 = v + 2, r1 = v + 3; Ip[t++] = l0; Ip[t++] = r0; Ip[t++] = l1; Ip[t++] = r0; Ip[t++] = r1; Ip[t++] = l1; }
-      v += 2;
-    }
-  }
-  // ---- the hair's edge: each of its points within G of the skin, with the nearest skin point and how near (easeEdge)
-  const ea = [], et = [], ek = [];
-  for (const i of hairAll) {
-    if (!nearSkin.has(cellOf(i))) continue;
-    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], ci = Math.floor((x - HC[0]) / G), cj = Math.floor((y - HC[1]) / G), ck = Math.floor((z - HC[2]) / G); let best = G, bi = -1;
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
-      const l = grid.get(key(ci + a, cj + b, ck + c)); if (l) for (const q of l) { if (cls[q] !== SKINK) continue; const d = Math.hypot(P[q * 3] - x, P[q * 3 + 1] - y, P[q * 3 + 2] - z); if (d < best) { best = d; bi = q; } }
-    }
-    if (bi >= 0) { ea.push(i); et.push(bi); ek.push(Math.round(255 * (1 - ss(0, G, best)))); }
-  }
-  return { P: Pp, N: Np, U: Up, at: At, dim: Dm, I: Ip, cards: cards.length, edge: { at: Uint32Array.from(ea), to: Uint32Array.from(et), k: Uint8Array.from(ek) } };
+  return { cards, hairAll, cls, grid, nearSkin, cellOf, key, G, P, hair, sample, outward, flow, F, rnd };
 }
 
 /**

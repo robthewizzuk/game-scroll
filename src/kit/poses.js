@@ -258,6 +258,31 @@ Object.assign(POSES, {
 });
 const AIMED = new Set(['aim', 'carAimL', 'carAimR', 'carAimF']);   // upper poses the aim (up and down) and aimYaw turn
 const TIMED = { tread: .7, dive: .55, diveDown: .55, diveUp: .55, guard: .6, armed: .6, shieldUp: .6, spearGuard: .6, bowReady: .25, idle: .25, aim: 0, wave: .8, hang: .35, swing: .3, cover: .2, downed: .25, fall: 2, coverHighL: .2, coverHighR: .2, coverLowL: .2, coverLowR: .2, blindOver: 1.2, blindSideL: 1.2, blindSideR: 1.2, drive: .2, ride: .25 };
+// Gestures for conversations and cutscenes (Rob's RPG pick 1, 2026-11-15): each plays once and ends where it
+// began, standing at ease (rig.play('nod'); rig.done when it is over). Upper body and head only move; the legs
+// stand as at ease. Signs: a head's +x looks down, +y turns it to its own left, +z tips it to its left; arms as above.
+const EASED = { hips: [0, 0, 0], spine: [.03, 0, 0], head: [0, 0, 0], armL: [0, 0, .06], foreL: [-.2, 0, 0], armR: [0, 0, -.06], foreR: [-.2, 0, 0], legL: [0, 0, 0], shinL: [.05, 0, 0], legR: [0, 0, 0], shinR: [.05, 0, 0] };
+const once = (time, list) => ({ cycle: keys(list), rate: 0, time, once: true });
+export const GESTURES = {
+  // yes: the head down and up, twice, the second smaller
+  nod: once(.9, [[0, EASED], [.2, { head: [.28, 0, 0] }], [.42, { head: [-.04, 0, 0] }], [.62, { head: [.2, 0, 0] }], [.82, { head: [0, 0, 0] }], [1, EASED]]),
+  // no: the head turned from side to side, each turn smaller
+  shake: once(1.1, [[0, EASED], [.16, { head: [.05, .34, 0] }], [.36, { head: [.05, -.3, 0] }], [.56, { head: [.05, .22, 0] }], [.76, { head: [.03, -.12, 0] }], [1, EASED]]),
+  // a bow from the waist, a hand to the chest, held a moment (an upper arm turned in, +y on the right and -y on the left, brings the forearm across the body)
+  bow: once(1.8, [[0, EASED], [.3, { spine: [.62, 0, 0], head: [.3, 0, 0], armR: [-.35, 1.0, .1], foreR: [-2.05, 0, 0], armL: [.05, 0, .1], foreL: [-.25, 0, 0] }], [.55, { spine: [.66, 0, 0], head: [.32, 0, 0] }], [.85, { spine: [.1, 0, 0], head: [.02, 0, 0], armR: [-.1, 0, -.02], foreR: [-.4, 0, 0] }], [1, EASED]]),
+  // who knows: the shoulders up, the forearms out with the palms up, the head tipped
+  shrug: once(1.3, [[0, EASED], [.3, { spine: [-.02, 0, 0], head: [.04, 0, .16], armL: [-.15, .2, .32], foreL: [-1.25, -.9, 0], armR: [-.15, -.2, -.32], foreR: [-1.25, .9, 0] }], [.6, { head: [.06, 0, .18] }], [1, EASED]]),
+  // that way: the right arm out ahead and a little across, the head after it
+  point: once(1.8, [[0, EASED], [.25, { spine: [.02, -.18, 0], head: [-.05, -.12, 0], armR: [-1.45, -.15, -.05], foreR: [-.08, 0, 0] }], [.7, { armR: [-1.42, -.15, -.05] }], [1, EASED]]),
+  // hooray: both arms flung up, a pump, and down
+  cheer: once(1.5, [[0, EASED], [.22, { spine: [-.14, 0, 0], head: [-.25, 0, 0], armL: [-2.75, 0, .45], foreL: [-.35, 0, 0], armR: [-2.75, 0, -.45], foreR: [-.35, 0, 0], drop: -.01 }], [.42, { armL: [-2.55, 0, .4], foreL: [-.9, 0, 0], armR: [-2.55, 0, -.4], foreR: [-.9, 0, 0], drop: .015 }], [.62, { armL: [-2.85, 0, .45], foreL: [-.25, 0, 0], armR: [-2.85, 0, -.45], foreR: [-.25, 0, 0], drop: -.01 }], [1, { ...EASED, drop: 0 }]]),
+  // a laugh: thrown back, then doubled up a little with a hand to the belly, the shoulders shaking
+  laugh: once(1.6, [[0, EASED], [.18, { spine: [-.16, 0, 0], head: [-.3, 0, 0] }], [.4, { spine: [.24, 0, 0], head: [.12, 0, 0], armL: [-.2, -1.1, -.1], foreL: [-1.65, 0, 0] }], [.5, { spine: [.18, 0, 0] }], [.6, { spine: [.26, 0, 0] }], [.7, { spine: [.17, 0, 0] }], [1, EASED]]),
+  // thinking: a hand to the chin, the head down a touch, the other arm across the waist
+  think: once(2.4, [[0, EASED], [.25, { head: [.14, .1, 0], armR: [-.65, .55, .15], foreR: [-2.45, 0, 0], armL: [-.15, -1.2, -.1], foreL: [-1.75, 0, 0] }], [.75, { head: [.18, .14, 0] }], [1, EASED]]),
+  // come here: the right forearm up and the hand drawn in, twice
+  beckon: once(1.4, [[0, EASED], [.2, { armR: [-1.0, 0, -.12], foreR: [-.5, 0, 0], head: [.04, 0, -.05] }], [.38, { foreR: [-1.7, 0, 0] }], [.55, { foreR: [-.6, 0, 0] }], [.72, { foreR: [-1.7, 0, 0] }], [1, EASED]]),
+};
 
 // ---- smooth curves and key poses
 // A curve through [when, value] points that never swings past a point (so a knee can't bend backwards
@@ -419,7 +444,7 @@ const grounded = (d, w, phase) => { if (!d?.ground || w <= 0) return; const G = 
  */
 export class Rig {
   constructor(parts, { fade = .18, height = 1.8, poses = {}, weight = 0, size = 1, full = false, joints = full ? FULL : JOINTS, body = null, momentum = false, follow = false, lead = follow } = {}) {
-    this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...poses }; this.weight = weight; this.size = size; this.done = false;
+    this.parts = parts; this.fade = fade; this.height = height; this.poses = { ...POSES, ...(parts.armL && parts.armR && parts.head ? GESTURES : {}), ...poses }; this.weight = weight; this.size = size; this.done = false;   // (gestures for figures with arms and a head: not a cat)
     this.base = new Map(); for (const k of joints) if (parts[k]) this.base.set(k, [parts[k].rotation.x, parts[k].rotation.y, parts[k].rotation.z]);
     // a full skeleton: the joints in between, which fill() works out (the waist under the rib cage, the neck under the head, each a
     // share of the bend and of the twist; a collar bone to each arm; the turn along each forearm)

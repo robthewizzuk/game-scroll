@@ -49,6 +49,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Match-3, 2048 sliding, flood fill on a grid | `gs.board` | [Game kits](#game-kits) |
 | Turn-based fights, items, XP and loot | `gs.battle` | [Game kits](#game-kits) |
 | Buffs, perks, poison over time, mana that refills, cooldowns with charges (real time) | `gs.stats` | [Game kits](#game-kits) |
+| RPG levels, attributes, skill trees, gear that counts; fame, good and evil, factions, bounties; quests, journal, world flags | `gs.rpg` | [Game kits](#game-kits) |
 | Dungeons, caves, mazes, islands, tile patterns | `gs.gen` (rot.js, WaveFunctionCollapse) | [Game kits](#game-kits) |
 | Drag pieces into slots, reorder a list | `gs.drag` | [Game kits](#game-kits) |
 | Undo and redo moves | `gs.history` | [Game kits](#game-kits) |
@@ -1299,6 +1300,26 @@ A `gs.models.weapon` brings all that with it: `kit.add('shield', gs.models.weapo
 goes to the left hand held by its grip, a bow too, and a spear, a staff or a longsword has the other hand on it once drawn
 (`both: false` for one hand).
 
+### A body that stays out of walls
+
+`const { Solid } = gs.characters;` The body of a posed person (a `gs.models.human`, a `gs.poses` person or a figure)
+as rods on the trunk, thighs, seat, shins and arms and a ball for the head, that follow the bones, for a body your
+game poses or plays clips on (a fall acted from a clip, a man leaning on a wall) rather than one a ragdoll moves:
+
+```js
+body = new Solid(man);                                   // finds the game's World3D, or { world }
+body.room({ x: 0, z: -1 }, 1.8);                         // how far he can go down that way before a wall, a kerb, a cart (0..1.8)
+update(dt) { man.rig.update(dt); const k = body.keepOut({ up: false, most: .12 }); if (k) { x += k.x; z += k.z; } }   // moved out of the walls
+body.keepOff(rifle, { pivot: grip, local: true });       // a thing he holds turned about its grip until it is out of his body
+```
+
+`keepOut()` looks at each rod against the world's still things and moves the whole body out of them by the
+smallest move (it never pushes down; `up: false` keeps it on the ground; `most` is the most it moves in one go) and
+gives back the move it made, or null. `room(dir, length)` sweeps a ball at shin and hip height from the hips that
+way. `keepOff(thing, { pivot, local, ahead })` turns something held about the pivot until it is clear of the
+body's rods and of the world's walls (`walls: false`: the body alone; `ahead: true`: only the longer side of the
+pivot, so a stock in the shoulder may touch); `weapon.wield()` does this by itself.
+
 ### People who react
 
 `const { Reactions } = gs.characters;` One for each character with a rig. It decides nothing about your
@@ -1912,8 +1933,20 @@ const T = gs.tweak('Car', {
 - **Copy values** puts the current numbers on the clipboard (and in the console) as a `gs.tweak`
   call to paste back into your file.
 - Values you changed survive hot reload. Change a number in the file and the file's number wins.
+- **Save to file** writes the panel's values into your game's file (the dev server rewrites only those
+  numbers; it works from a phone on the dev server too), and the game hot reloads with them.
+- `[value, min, max, step?, 'what it does']`: the words show on the slider and in `npm run knobs <id>`.
 - The store apps and test builds show no panel: `gs.tweak` just returns the starting values, so the
-  call can stay in your game.
+  call can stay in your game. Test builds can read and set them (`__gs.knobs(id)`,
+  `__gs.setKnobs(id, { 'Feel.speed': 2 })`, for every copy of the game, from its next read), so a test
+  can play a game with one knob changed.
+
+**Knobs.** Keep the numbers that set how your game feels (speeds, gravity, gaps between spawns, lives,
+how close counts as a hit) in one `const K = gs.tweak('Feel', { ... })` block in `make()`, each with a
+range and a few words, and read `K.x` where it's used. Every template starts like that. Then a change
+asked for in words ("slower fish", "a floatier jump") is one number, and
+`node scripts/knobs.mjs <id>` lists them and changes them in the file (`speed=140`, `speed*0.8` stays in
+range). [Feel words](feel-words.md) says which knob each word moves, and the usual knob names.
 
 ## Speed budget
 
@@ -1971,6 +2004,22 @@ with `anim.update(dt, 'run')` or play one with `anim.play('punch')`.
 `gs.story.Story(script)` runs a conversation written in ink (inklestudios.com/ink): `next()` gives
 `{ text, tags, choices }`, `choose(i)`, `vars` for ink variables, `ended`. `Typewriter` reveals the
 text with `shown`, `done`, `skip()` and `ticked` (for a blip sound). Your game draws the box.
+
+**A conversation played by people** (`gs.story.Talk`, for 3D games): the same ink, said by your cast.
+`new Talk(new Story(TALK), { cast: { hero: { person: me }, mara: { person: mara, name: 'Mara', voice: 'woman', pitch: 1.1 } }, hero: 'hero', camera: view.camera, view, rep })`,
+then `start()`, `update(dt)` each frame, `tap()` (shows the whole line, then goes on) and `choose(index)`; draw
+`talk.who`, `talk.shown` and `talk.choices`. Each line's `#who:mara` speaks in her voice with her mouth moving to
+it (`voices: false` for text only), the speaker looks at the one spoken to and everyone else at the speaker,
+`#mood:angry` (or `#mood:smile .5`) shows on the speaker's face until their next mood, `#do:nod` fires
+`on('do', (move, who) => ...)` (play the gesture), and `#wait:1` goes on by itself a second after the line.
+The camera is framed as a film crew would: `#shot:over` the listener's shoulder onto the speaker (the default),
+`close`, `two` (both, from the side), `wide` or `none`, always from one side of the line between them so cuts
+never flip them over; it cuts with `view.cut()`, or read `talk.shot` without a camera. The game's world comes
+in as ink variables: `rep` (a `gs.rpg` Reputation: `town`, `town_rank`, `good`, `fame`, `bounty_guard`...), `grow`
+(`level` and the attributes) and `vars: () => ({ gold })` set the ink's own `VAR`s of those names before each
+line, so `* {town_rank == "loved"} [Ask for the key]` only shows to someone the town loves. And out again:
+ink's `EXTERNAL did(deed)` reaches `rep.did`, `xp(n)` reaches `grow.gain`, `has`/`give`/`take(id, n)` an `inv`,
+and `bind: { name: fn }` anything else. `scripts/talk.cjs` films a scene and the gestures.
 
 `gs.replay.Ghost` records a few numbers over time (`record(dt, x, y, angle)`), plays them back
 smoothly (`at(t)`) and packs to about 1 KB (`pack()`, `Ghost.unpack()`) to keep with `api.save()`:
@@ -2087,6 +2136,74 @@ off). `buffs` lists what is on with `left` and `part` for icons and rings. Coold
 then `use('dash')` (false while waiting), `ready`, `left`, `charges`, `part('dash', 'cool')`, `hurry`. Events:
 `on('buff' | 'end' | 'tick' | 'change' | 'empty' | 'full' | 'ready' | 'blocked', fn)`. Call `update(dt)` each
 frame, make it in `reset()` (or `clear()` it there), and `pack()` / `unpack()` with `api.save()`.
+
+**Role-playing** (`gs.rpg`): a hero who grows, and a world that remembers what they did. Your game
+decides what a skill does and draws the bars, tree and people; the kit keeps the numbers.
+`new Growth(stats, { attributes: { might: 5, grace: 5 }, derive: { damage: a => a.might, 'hp.max': a => 8 * a.might }, tree })`
+on a `gs.stats` Stats (or `null`, then read `value(stat, base)`). `gain(xp)` returns the levels gained on a curve
+(`xpTo(level)`: 100 x (level - 1)^1.5; `curve: { base, power }` or your own function, `cap` 50), each level
+gives `points` (3) for `raise('might')` and `skills` (1) for `learn('cleave')`, and fills the pools. `part` is
+the bar to the next level. A tree skill: `{ ranks, cost, level, needs: ['cleave:2'], excludes: ['frenzy'], perk: { add, mul } }`
+(the perk goes on the Stats once a rank); `can(id)` says `{ ok, why, needs }` ('ranks', 'level', 'needs',
+'excluded', 'points'), `has('whirl')`, `rank(id)`, `nodes` for drawing it, `respec()`. Gear: `wear(inv)`
+follows a `gs.items` Inventory, and whatever sits in its equip slots counts from its def's `stats: { add, mul }`
+(or `gear(slot, spec)` by hand). Events `xp`, `level`, `raise`, `learn`, `respec`; `pack()` / `unpack()`.
+
+```js
+const { Growth, Reputation } = gs.rpg;
+rep = new Reputation({
+  factions: { town: {}, guard: { law: true, allies: ['town'] }, bandits: { start: -20, rivals: ['town'], fights: true } },
+  deeds: { rescue: { good: 15, fame: 10, town: 20 }, steal: { good: -5, town: -15, crime: 50 } },
+  titles: [{ name: 'the Bright', good: [50, 100], fame: [40, 100] }],
+});
+rep.did('rescue');                          // town +20, guard +10 (ally), bandits -10 (rival), good +15, fame +10
+rep.did('steal', { seen: ['guard'] });      // only the guard saw: a 50 bounty, and good -5 (the hero knows)
+rep.did('steal', { seen: false });          // nobody saw: good -5 only
+rep.mood('guard')                           // 'arrest' while there's a bounty; rep.pay('guard')
+rep.price(100, 'town')                      // 85 when the town loves you, 125 when it hates you
+```
+
+`Reputation` has axes (`good` -100..100 and `fame` 0..100 by default; your own as `{ min, max, start, fade }`)
+and factions (-100..100, `rank(f)` 'hated' .. 'loved'). A deed moves the `inner` axes (`['good']`, the
+hero's conscience) whoever saw it; fame, factions and bounties only when someone did. Rivals move the other
+way by `share` (.5), allies the same way, named on either side. `mood(f)`: 'arrest', 'attack' or 'flee'
+(`fights`), 'avoid', 'ignore', 'stare' (a famous stranger), 'greet', 'bow', 'cheer'; a `timid` faction
+flees a famous villain. `title()`, `done(id)` (times a deed was done), `log`, `update(dt)` (factions and axes
+with `fade` drift back), `vars()` (every number flat for a conversation) and `pack()` / `unpack()`.
+
+**Quests and the journal** (`gs.rpg.Quests`): quests that run side by side, branch, fail and pay out. A quest
+is a table of stages; the first is where it starts, and an `end` stage ends it that way. Your game draws the
+journal, the quest log and the markers; the kit keeps where each quest is.
+
+```js
+const { Quests, Flags } = gs.rpg;
+flags = new Flags();                         // the world's own facts: flags.set('met_mara'), has, get, add('wolves')
+quests = new Quests({
+  key: { name: 'The Gate Key', needs: ['flag:met_mara'], stages: {
+    ask:   { text: 'Ask Mara about the gate key', at: maraStall, reach: 2, next: 'mill' },  // walk within 2 m
+    mill:  { text: 'Find the miller', at: mill, when: () => talked.miller, next: 'flour' },
+    flour: { text: 'Bring Mara three sacks of flour', count: 3, of: 'flour', next: 'done' },
+    done:  { end: 'helped', text: 'Mara gave you the key.' },
+    lost:  { end: 'failed', text: 'Mara will never trust you now.' } },
+    rewards: { helped: { xp: 150, items: { key: 1 }, deeds: ['helped'], flags: { mara_friend: true }, gold: 20 } } },
+});
+quests.start('key'); quests.update(dt, player); quests.count('flour'); quests.to('key', 'lost');
+```
+
+A stage: `text` (the journal's line), `at` (where it is: a marker), `reach` (metres from `at` that moves it
+on), `when(t)` (moves it on when true; `t` is the time in the stage), `count` + `of` (moves on once that many
+are counted with `count(what, n)`; no `of` counts anything), `next`, `end`, `hidden`, `icon`. A quest's `needs`
+to start: `'flag:met_mara'`, `'quest:wolves'` (ended any way), `'quest:wolves=done'`, `'!…'` (not) or a
+function; `repeat: true` lets it run again. Rewards go by themselves to the game's `Growth` (`xp`),
+Inventory (`items`; the newest one made, so a game with a shop's Inventory too passes `inv`, or makes the shop's with `link: false`), `Reputation` (`deeds`) and `Flags` (`flags`); the rest (`gold`) comes with the `reward`
+event for your game. `stage(id)`, `is(id, stage)`, `active`, `ended`, `failed`, `can`, `progress(id)`
+(`{ n, of }`), `end(id, way)`, `fail(id)`, `journal` (newest first: `{ quest, name, stage, text, end, t }`),
+`list()` (`active`, `done`, `failed`), `markers` (`{ at, kind: 'quest', text, icon, pinned }`, the shape
+`gs.missions` Jobs gives, so one map draws both; `pin(id)` makes one the waypoint), `vars()` (`quest_key` is
+its stage or how it ended, for a conversation) and `pack()` / `unpack()` (a few hundred bytes: the journal's
+text comes back from the table). Events `start`, `stage`, `count`, `end`, `fail`, `reward`. A `Talk` finds
+the quests and flags too: ink's `EXTERNAL quest(id, stage)` starts or moves a quest, `count(what, n)`
+counts, `flag(name)` sets a flag, and declared `VAR`s named like a flag or `quest_key` are set before each line.
 
 **Made levels** (`gs.gen`, rot.js and WaveFunctionCollapse, loaded on first use: call them in `make()` or
 `reset()`): `dungeon`, `cave`, `maze`, `islands`, `heightmap` and `pattern(sample)` (new maps that look
@@ -2400,6 +2517,10 @@ leaves a mark on the surface, with its sound; what was hit is read from the mesh
 `{ surface: 'metal' }`). `fx.muzzle(at, dir, { kind })` is a flash that lights the scene and a wisp of smoke;
 `fx.shell(held.gun.points.eject, { kind })` throws a spent case out to the right that bounces on the world with a tinkle.
 `fx.update(dt)` each frame, `fx.clear()` in `reset()`. On WebGPU marks don't show on see-through things (glass).
+A held weapon never goes through the one holding it: each `held.update()` turns it about the grip, as little as it
+takes, until it is clear of the holder's body (and of the walls of the game's `World3D`, when there is one), so a rifle
+held across a man who turns lies along him rather than through his chest (`held.turned`: how far it was turned this
+frame; `keep: false` to hold it exactly as posed).
 
 **Shooting from a car** (`gs.combat`): `DriveBy(car, { seat: 'driver' })` (a `gs.models` vehicle, any Object3D, or a
 `gs.vehicles` Car) keeps the aim where it can go from that seat: out of the side window on its side (the gun leans
@@ -2502,6 +2623,9 @@ changes; `drop` lowers the hips, `shift: [x, y, z]` moves them, in metres). `rig
 1.2, once: true })` plays by the clock and holds its end (`rig.done`); `rig.play('climb', { at: rungs % 1 })` lets
 the game hold the phase itself, in step with a ladder or a cutscene. `gs.models.human` people use all of this, and
 `person.touch({ handL, footR, ... })` then puts hands and feet on points in the world (a rung, a bar, a ledge).
+Every figure with arms and a head also knows nine gestures (`GESTURES`), each played once from standing at ease:
+`rig.play('nod')`, `shake`, `bow` (a hand to the chest), `shrug`, `point`, `cheer`, `laugh`, `think` (a hand to the
+cheek) and `beckon`; `rig.done` when it is over.
 
 **Steps that are really taken** (`gs.models.human` people, by themselves): a walk is drawn for a body going
 straight ahead at the walk's own speed, and a game turns its people, starts and stops them and moves them a
@@ -2675,11 +2799,24 @@ update(dt) { save.update(dt); }    // saves when something changed, every few se
 The Jobs (done, money, a running job's checkpoint), Phone (texts) and Radio (the station) of the same game are kept
 by themselves. Numbers are rounded to two places and `rows()` writes a list of records without repeating the names;
 if it all comes to more than 8 KB, the `optional` parts are left out (`save.dropped`), and `save.size` / `save.room`
-say how much is used. A built world (every crate where you left it) is bigger: keep that with `api.saveLocal`.
+say how much is used. A built world (every crate where you left it) is bigger: keep it with `{ local: true }`, and it
+goes to `api.saveLocal` (512 KB that stays on this phone; call `load()` in `make()` or `reset()`).
+
+For a role-playing game, the `gs.rpg` `Quests`, `Growth`, `Reputation` and `Flags` of the same game are kept by
+themselves too, and a quest moving on, ending or failing, or a level gained, saves a moment later (`save.soon()`
+does the same for your own moments). Save slots live on the phone beside the one save that follows the player:
+`save.slot(1, 'Before the tower')` keeps the world as it is now, `save.restore(1)` puts it back and makes that the
+save, `save.slots` lists them for a menu (`{ n, label, played, at }` or `null`), `save.clear(1)` empties one
+(`slots: 3` by default). `save.played` is seconds of play, kept with the save.
 
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
 skipped. Put your camera at `scene.shot` each frame. Camera shakes follow Reduce motion.
+It directs people too: a step with `actor: mara` and `walk: { x, z }` (`speed`, 1.3 m/s: she turns, walks there and
+stops), `turn` (an angle or a point), `look` (a point or a thing; `null` lets the eyes go), `play: 'bow'` (a gesture
+or move), `mood: 'smile'` + `amount`, and `say` with `voice` (her own voice, the mouth moving to it). Update each
+rig once a frame with what the cutscene says it is doing: `person.rig.update(dt, cut.motion(person))`. `skip()`
+puts everyone where they were going.
 
 **Quick-time prompts** (`gs.prompts`): `Prompts().start([{ kind: 'tap', x, y }, { kind: 'swipe', dir: 'left' },
 { kind: 'hold', hold: 1 }, { kind: 'mash', count: 8 }])` checks taps, swipes, holds and mashing in
@@ -2949,7 +3086,11 @@ each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers
 `cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
 numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
 seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
-tactics and learns this player), officers on foot, searches, busted or escaped. The full guide is [docs/city.md](city.md).
+tactics and learns this player), officers on foot, searches, busted or escaped. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
+roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
+bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
+that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
+road. The full guide is [docs/city.md](city.md).
 
 **Planes, boats and hover craft** (`gs.craft`): `Plane({ at, speed, ground })` flies like arcade games
 feel: it banks into turns, holds its height when level, stalls when slow, lands, touches down and
@@ -3206,7 +3347,7 @@ planet. Nodes have `x`, `y`, `angle`, `scale` relative to their parent; `root.up
 
 **Next Gen extras** (`gs.hd` HDView): `v.decal(mesh, point, normal, { size, colour, paint, life })` puts a
 mark on a surface that wraps over its shape (scorches, footprints, paint; capped at 40, oldest
-first; on WebGPU hundreds cost no draws, as boxes in the lamps' grid), `v.bakeLight([x, y, z], { radius })` bakes the light around a point into a light probe so rooms
+first; on WebGPU hundreds cost no draws, as boxes in the lamps' grid), `v.bakeLight({ box, maps: [land.mesh] })` bakes a whole level's light on the phone the first time it is played (probes and the ground's light map, kept on the phone; docs/nextgen-3d.md), `v.bakeLight([x, y, z], { radius })` bakes the light around a point into a light probe so rooms
 and caves pick up the colour of their walls and windows (several blend as the camera, or
 `v.probeAt`, moves; bake once after building the level: it returns a promise and joins a frame or two later), `v.bounce(box)` adds bounce light over a level (a grid of probes: a red wall tints the floor, light from a door fills a room; WebGL and WebGPU), `v.room(box)` gives shiny things in a room box-projected reflections of that room, `v.detail(meshes)` asks for cluster detail on meshes under 8,000 triangles (big meshes get it by themselves, still or moving, copies, several materials, cut-outs, skinned and morphing: each part is drawn only as finely as shows, see docs/nextgen-3d.md; `v.detail(meshes, false)` draws them whole), what is fully hidden behind other things is left out of the frame by itself (occlusion culling, from the last frame's own depth: nothing to list; `mesh.userData.noOcclude = true` always draws a mesh, and `v.occluders(boxes)` adds big solid boxes of your own, as `gs.city` does for its buildings), and `v.shafts = 1` adds sun shafts streaming
 past whatever blocks the sky (not on the lowest tier).
@@ -4009,7 +4150,16 @@ update(dt) { wind.update(dt); cloth.update(dt); }        // after whatever its p
   hangs by the pole: cloth hardly stretches but shears and folds easily.
 - **Solid things.** `cloth.ball({ x, y, z, r })` and `cloth.capsule({ a, b, r })` (a leg, a post, a
   mast) push cloth out, and it grips them, so a sheet thrown over something stays on it; `set()` moves
-  one, `remove()` takes it away. `ground` (a height, or `(x, z) => height`) is what cloth lies on.
+  one, `remove()` takes it away. `cloth.box({ at, size: [w, h, d], turn })` is a box it drapes over
+  (a crate, a table; `turn` about the up axis, or a quaternion as `q`). `ground` (a height, or
+  `(x, z) => height`) is what cloth lies on.
+- **The world's still things.** With a `gs.physics3d` `World3D` (the game's own is found by itself), cloth
+  goes round what stands still in it as well as round its moving bodies: walls, posts and crates made with
+  `shape()` or `shapes()` (boxes, balls and capsules: the nearest to each piece, looked for again as it
+  moves) stop a banner blown at a wall and hold up a sheet dropped on them, and the world's ground (a mesh
+  made solid with `ground()`, a grid of `heights()`, a `floor()`) is what it lies on, read as a grid of
+  heights round each piece (16 a side, a metre and a half spare, four grids at most), so a sheet on a hill
+  lies on the hill. Nothing to call; `world: false` for none.
 - **Pins that move.** `piece.ride(object3D)` keeps its pins in their place on a moving thing (a flag
   on a boat, a pennant on a lance); `piece.move(dx, dy, dz)` moves them by hand. Put somewhere else at
   once (half a metre or a fifth of a turn in a frame: a round starting, a cut), a piece goes with it
@@ -4360,7 +4510,16 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   round the head from the crown), which reads well at every distance and costs nothing extra; `strands: true`
   lays real strands over it as well, streaming from the crown (from the bun, for `hairStyle: 'bun'`), and
   `strands: { length: .02, layers: 8 }` tunes them. With `look: 'real'` a beard and a moustache are single
-  hairs in the head's own close-up mesh instead, over the beard's colour painted under them, and wear no coat.
+  hairs in the head's own close-up mesh instead, over the beard's colour painted under them, and wear no coat
+  (a greying beard is white hairs among dark ones, as a real one is). A real face's hair is single strands
+  too, close up on WebGPU (a groom, as films and the newest console games draw hair): tens of thousands of
+  them grown over the sculpted hair in clumps, each its own length, a few strays, darker deep in the hair,
+  lit as hair is (two bands of shine, light through it from behind), and fewer and thicker further off so the
+  hair stays as full. Grey hair is white strands among darker ones. How it curls is `hairTexture: 'straight'
+  | 'wavy' | 'curly' | 'coily'` (or 0..1); left out, it follows the heritage (Afro-textured hair coils by
+  itself, some of anyone's hair waves); `hairStyle: 'afro'` is a round of coils standing out all over the
+  head and `'curly'` a shorter curly crop. WebGL draws the hair strips as before; `hairStrands: false` leaves
+  the strands off.
   `person.hair` is the coat, or `null`: no beard or moustache (or a real face's) and no strands asked for, under a hat (the hair there stays as sculpted, cropped close), or
   `strands: false` (none anywhere).
 - **Any mesh.** `gs.models.fur(mesh, o)`: `length` (in the mesh's own units), `kind` (`'fur'` on end, `'hair'`
@@ -4368,7 +4527,8 @@ meshes too, and it takes the light and shadows as everything else does. A coat c
   `(i, x, y, z) => 0..1`; strands shorten toward where none grow and the coat thins out there, so it has
   no cliff at its edge), `tile` (how wide the strand picture is on the surface: fur has 32 strands across
   it), `lean` and `flow` (how far the strands lie over, and which way: down and back along -z unless told),
-  `uv: { centre, crown }` (hair streaming from the crown of a head), `thin`, `rough`, `root` and `tip` (how
+  `uv: { centre, crown }` (hair streaming from the crown of a head), `vary` (0..1: longer and shorter in
+  patches, as a real coat is; creatures use .7), `thin`, `rough`, `root` and `tip` (how
   dark the roots, how light the tips), `colour`, `seed`. The mesh's vertex colours colour the coat.
 - **The coat** (`creature.fur`, `person.hair`, what `fur()` returns): `length` (1 as made; set it any time:
   1.5 stands fur on end, .5 is a wet coat) and `lean` (a creature's `move()` lays its fur back as it runs),

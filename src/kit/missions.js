@@ -39,6 +39,7 @@ import { say, sounds, stopTalking } from './sound.js';
 let device = null;
 const buzzNow = () => { if (typeof window === 'undefined') return; (device ||= import('./device.js')).then(d => d.haptic('medium'), () => {}); };
 import { linksFor } from './links.js';
+import { StillLoading } from './lazy.js';
 
 export function zone(at, r = null) {
   const box = r == null && at.w != null;
@@ -389,62 +390,121 @@ export function unrows(data, keys) { return Array.isArray(data) ? data.map(r => 
  *   save = new WorldSave(api);
  *   save.keep('world', () => ({ hour: sky.time, rain: weather.kind, cash }), d => { sky.time = d.hour; ... });
  *   save.keep('cars', () => rows(garage, ['style', 'colour', 'x', 'z']), d => garage = unrows(d, [...]), { optional: true });
+ *   save.keep('crates', () => crates.map(c => [c.x, c.y, c.z]), d => ..., { local: true });   // 512 KB on this phone
  *   save.load();            // in make(), once everything is made: puts each part back
  *   update(dt) { save.update(dt); }   // saves when something changed, at most every `every` seconds
  *   save.now()              // straight away (after a job, on the pause menu)
+ *   save.slot(1, 'Before the tower'); save.restore(1); save.slots   // save slots, kept on this phone
  *
- * A gs.missions Jobs and Phone and a gs.sound Radio made in the same game are kept by themselves (jobs done,
- * money, a running job's checkpoint; texts; the station), unless you keep() them yourself or pass link: false.
- * Numbers are rounded to `places`; if it all comes to more than 8 KB, the optional parts are left out, last
- * kept first (save.dropped names them, and the console says so). save.size: bytes used; save.room: left.
+ * Kept by themselves (unless you keep() them yourself or pass link: false): a gs.missions Jobs and Phone, a
+ * gs.sound Radio, and a gs.rpg Quests, Growth, Reputation and Flags made in the same game. A quest moving on or a
+ * level gained saves a moment later by itself (soon()). Numbers are rounded to `places`; if it all comes to more
+ * than 8 KB, the optional parts are left out, last kept first (save.dropped names them, and the console says so).
+ * save.size: bytes used; save.room: left. Parts kept with local: true, and the slots, go to api.saveLocal (512 KB
+ * that stays on this phone): call load() in make() or reset(), where the app waits for it. save.played: seconds of
+ * play, kept with the save.
  */
+const KINDS = [['jobs', 'J'], ['phone', 'P', true], ['radio', 'R', true], ['quests', 'Q'], ['growth', 'G'], ['reputation', 'E'], ['flags', 'W']];
+const SOON = { quests: ['stage', 'end', 'fail'], growth: ['level', 'learn'], jobs: ['done'] };
 export class WorldSave {
-  constructor(api, { every = 8, places = 2, limit = LIMIT, link = true } = {}) {
-    this.api = api; this.every = every; this.places = places; this.limit = Math.min(LIMIT, limit);
+  constructor(api, { every = 8, places = 2, limit = LIMIT, link = true, slots = 3 } = {}) {
+    this.api = api; this.every = every; this.places = places; this.limit = Math.min(LIMIT, limit); this.most = slots;
     this.parts = []; this.t = 0; this.last = null; this.size = 0; this.dropped = []; this.loaded = false;
+    this.played = 0; this.due = null; this.heard = new WeakSet(); this.saves = []; this.lastLocal = null;
     this.links = linksFor(null, link);
   }
-  /** A part of the save: give() returns its data, take(data) puts it back. optional: may be left out when full. */
-  keep(name, give, take = null, { optional = false } = {}) {
+  /** A part of the save: give() returns its data, take(data) puts it back. optional: may be left out when full. local: kept on this phone (api.saveLocal), not in the 8 KB. */
+  keep(name, give, take = null, { optional = false, local = false } = {}) {
     if (give && typeof give === 'object' && typeof give.pack === 'function') { const o = give; give = () => o.pack(); take = d => o.unpack(d); }
-    this.parts = this.parts.filter(p => p.name !== name); this.parts.push({ name, give, take, optional }); return this;
+    this.parts = this.parts.filter(p => p.name !== name); this.parts.push({ name, give, take, optional, local }); return this;
   }
-  // what the game made that keeps itself: jobs, the phone, the radio
+  // what the game made that keeps itself: jobs, the phone, the radio, quests, growth, reputation, flags
   get all() {
     const out = [...this.parts], L = this.links;
-    if (L) for (const [kind, key] of [['jobs', 'J'], ['phone', 'P'], ['radio', 'R']]) {
+    if (L) for (const [kind, key, optional = false] of KINDS) {
       const o = L.one(kind); if (!o?.pack || out.some(p => p.name === key || p.obj === o)) continue;
-      out.unshift({ name: key, obj: o, give: () => o.pack(), take: d => o.unpack(d), optional: kind !== 'jobs' });
+      out.unshift({ name: key, obj: o, give: () => o.pack(), take: d => o.unpack(d), optional });
+      // a quest moving on or a level gained is worth saving now
+      if (SOON[kind] && typeof o.on === 'function' && !this.heard.has(o)) { this.heard.add(o); for (const ev of SOON[kind]) o.on(ev, () => this.soon()); }
     }
     return out;
   }
-  /** The save as it would be written now: { text, size, dropped }. */
+  /** Saves in a moment (several things changing at once make one save). */
+  soon(after = .5) { this.due = this.due == null ? after : Math.min(this.due, after); return this; }
+  gather(parts, local) {
+    const data = {};
+    for (const p of parts) {
+      if (!!p.local !== local) continue;
+      try { const d = p.give(); if (d !== undefined && !(p.obj && d && typeof d === 'object' && !Object.keys(d).length)) data[p.name] = compact(d, this.places); } catch (e) { console.warn(`[save] ${p.name}:`, e); }
+    }
+    return data;
+  }
+  /** The save as it would be written now: { text, data, size, dropped, fits, local }. */
   pack() {
-    const parts = this.all, data = {};
-    for (const p of parts) { try { const d = p.give(); if (d !== undefined && !(p.obj && d && typeof d === 'object' && !Object.keys(d).length)) data[p.name] = compact(d, this.places); } catch (e) { console.warn(`[save] ${p.name}:`, e); } }
-    let text = JSON.stringify(data); const dropped = [];
-    for (let i = parts.length - 1; text.length > this.limit && i >= 0; i--) if (parts[i].optional && parts[i].name in data) { delete data[parts[i].name]; dropped.push(parts[i].name); text = JSON.stringify(data); }
-    return { text, data, size: text.length, dropped, fits: text.length <= this.limit };
+    const parts = this.all, data = this.gather(parts, false);
+    let text = JSON.stringify(data); const dropped = [], room = this.limit - 24;   // (room for the time played)
+    for (let i = parts.length - 1; text.length > room && i >= 0; i--) if (parts[i].optional && parts[i].name in data) { delete data[parts[i].name]; dropped.push(parts[i].name); text = JSON.stringify(data); }
+    return { text, data, size: text.length, dropped, fits: text.length <= room, local: parts.some(p => p.local) ? this.gather(parts, true) : null };
   }
   get room() { return this.limit - this.size; }
-  /** Puts each part back from the save (call once everything is made). Returns true if there was a save. */
+  // the phone-only save: local parts (w) and the slots (s)
+  readLocal() { try { const d = this.api?.loadLocal?.(null); return d && typeof d === 'object' ? d : null; } catch (e) { if (e instanceof StillLoading) throw e; return null; } }   // StillLoading: the app makes the game again once the phone save is read
+  writeLocal(w) {
+    const doc = { w: w ?? undefined, s: this.saves.length ? this.saves : undefined }, text = JSON.stringify(doc);
+    if (text === this.lastLocal) return true; this.lastLocal = text;
+    try { return this.api?.saveLocal?.(doc) !== false; } catch { return false; }
+  }
+  put(parts, d, w) {
+    for (const p of parts) {
+      const from = p.local ? w : d;
+      if (from && p.name in from && p.take) try { p.take(from[p.name]); } catch (e) { console.warn(`[save] ${p.name}:`, e); }
+    }
+  }
+  /** Puts each part back from the save (call once everything is made, in make() or reset()). Returns true if there was a save. */
   load() {
     let d = null; try { d = this.api?.load?.(null); } catch { d = null; }
-    this.loaded = true;
+    const parts = this.all, wantsLocal = parts.some(p => p.local) || this.most > 0, L = wantsLocal ? this.readLocal() : null;
+    this.loaded = true; this.saves = Array.isArray(L?.s) ? L.s : [];
+    if (L) this.lastLocal = JSON.stringify(L);
     if (!d || typeof d !== 'object') { this.last = this.pack().text; return false; }
-    for (const p of this.all) if (p.name in d && p.take) try { p.take(d[p.name]); } catch (e) { console.warn(`[save] ${p.name}:`, e); }
-    this.last = JSON.stringify(d); this.size = this.last.length;
+    this.played = +d._t || 0;
+    const { _t, ...rest } = d;
+    this.put(parts, rest, L?.w);
+    this.last = JSON.stringify(rest); this.size = this.last.length;
     return true;
   }
   /** Saves now if anything changed (force: even if not). Returns false when it didn't fit. */
   now(force = false) {
-    const p = this.pack(); this.size = p.size; this.t = 0;
+    const p = this.pack(); this.size = p.size; this.t = 0; this.due = null;
     if (p.dropped.join() !== this.dropped.join() && p.dropped.length) console.warn(`[save] over ${this.limit} bytes: left out ${p.dropped.join(', ')}`);
     this.dropped = p.dropped;
-    if (!p.fits) { console.warn(`[save] ${p.size} bytes, the limit is ${this.limit}: not saved (mark big parts optional, or keep them with api.saveLocal)`); return false; }
+    if (!p.fits) { console.warn(`[save] ${p.size} bytes, the limit is ${this.limit}: not saved (mark big parts optional, or keep them with local: true)`); return false; }
+    if (p.local) this.writeLocal(p.local);
     if (!force && p.text === this.last) return true;
     this.last = p.text;
-    try { return this.api?.save?.(p.data) !== false; } catch { return false; }
+    try { return this.api?.save?.({ ...p.data, _t: Math.round(this.played) }) !== false; } catch { return false; }
   }
-  update(dt) { this.t += dt; if (this.t >= this.every) this.now(); return this; }
+  update(dt) {
+    this.t += dt; this.played += dt;
+    if (this.due != null && (this.due -= dt) <= 0) this.now();
+    else if (this.t >= this.every) this.now();
+    return this;
+  }
+  /** Saves the world as it is now into a slot on this phone (1..slots), with a label for the menu. */
+  slot(n, label = '') {
+    if (!(n >= 1 && n <= this.most)) throw new Error(`WorldSave: slot ${n} (1 to ${this.most})`);
+    const p = this.pack(); if (!p.fits) return false;
+    this.saves[n - 1] = { label, t: Math.round(this.played), at: Date.now(), d: p.data, w: p.local ?? undefined };
+    for (let i = 0; i < this.saves.length; i++) this.saves[i] ??= null;
+    return this.writeLocal(p.local);
+  }
+  /** Puts the world back as it was in a slot, and makes that the save. Returns false for an empty slot. */
+  restore(n) {
+    const s = this.saves[n - 1]; if (!s) return false;
+    this.put(this.all, s.d, s.w); this.played = s.t || 0; this.now(true); return true;
+  }
+  /** Empties a slot. */
+  clear(n) { if (this.saves[n - 1]) { this.saves[n - 1] = null; this.writeLocal(this.pack().local); } return this; }
+  /** For a save menu: [{ n, label, played, at } or null] for each slot. */
+  get slots() { return Array.from({ length: this.most }, (_, i) => { const s = this.saves[i]; return s ? { n: i + 1, label: s.label, played: s.t, at: s.at } : null; }); }
 }

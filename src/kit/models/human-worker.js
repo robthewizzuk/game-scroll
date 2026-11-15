@@ -8,6 +8,6 @@ self.onmessage = async e => {
     await thinReady;
     if (job.a?.face?.gnm) await gnmReady();   // (a GNM face: the whole skin's numbers, the first time one is sculpted)
     const p = sculpt(job);
-    self.postMessage({ id, p }, [p.P.buffer, p.N.buffer, p.slot.buffer, p.ao.buffer, p.SI.buffer, p.SW.buffer, ...p.I.map(i => i.buffer), ...(p.thin ? [p.thin.buffer] : []), ...(p.strips ? [p.strips.P, p.strips.N, p.strips.U, p.strips.at, p.strips.dim, p.strips.I, p.strips.edge.at, p.strips.edge.to, p.strips.edge.k].map(a => a.buffer) : [])]);
+    self.postMessage({ id, p }, [p.P.buffer, p.N.buffer, p.slot.buffer, p.ao.buffer, p.SI.buffer, p.SW.buffer, ...p.I.map(i => i.buffer), ...(p.thin ? [p.thin.buffer] : []), ...(p.strips ? [p.strips.P, p.strips.N, p.strips.U, p.strips.at, p.strips.dim, p.strips.I, p.strips.edge.at, p.strips.edge.to, p.strips.edge.k].map(a => a.buffer) : []), ...(p.strands ? [p.strands.P, p.strands.N, p.strands.T, p.strands.U, p.strands.at, p.strands.dim, p.strands.pig, p.strands.I].map(a => a.buffer) : [])]);
   } catch (err) { self.postMessage({ id, error: String(err && err.message || err) }); }
 };

@@ -68,7 +68,7 @@ Open the printed URL in a desktop browser or on your phone (same Wi-Fi). To jump
 game, open the browser console and run `__gs.only('my-game')`. Desktop keys: Space/Enter to start,
 arrows to steer, ↓ for the next game. Press `` ` `` (backquote) for the debug overlay: frame rate, slow
 motion, frame stepping and hitboxes. Save your file and the game reloads in place (hot reload), and
-`gs.tweak({ speed: 3 })` gives you sliders to tune numbers while you play. `npm run budget my-game`
+`gs.tweak('Feel', { speed: [3, 1, 6, 'how fast you run'] })` gives you sliders to tune numbers while you play (the templates keep their feel numbers in one such block of knobs; **Save to file** writes the sliders back, and `npm run knobs my-game` lists or changes them; [docs/feel-words.md](docs/feel-words.md) says which knob *floatier*, *snappier* or *fairer* moves). `npm run budget my-game`
 checks it's fast enough for a mid-range phone. For opponents that learn as people play, see
 [Tiny Brains](docs/maker-kit.md#tiny-brains). Boards, battles, made levels, drag and drop, idle maths,
 pass-and-play, rhythm, drawn shapes, vehicles, 3D text levels and weather are in
@@ -433,6 +433,15 @@ top score on a board with 20 or more players. If your game can legitimately scor
 
 Tests run against a build with every game inside (`--mode bundled`). Playwright with Chromium is
 needed for the browser tests: `npm i --no-save playwright && npx playwright install chromium`.
+
+One command runs them all and prints one short report, each problem with its line in your file and what to do about it:
+
+```bash
+npm run check my-game                     # every check below (about 30 s); -- --quick for the code checks alone (2 s), -- --full adds the speed budget
+npm run examples Feel.coin                # how real games use a part of gs (the shortest first), with its types and docs
+```
+
+Or one by one:
 
 ```bash
 npm run build:bundled                     # build the app with all games inside

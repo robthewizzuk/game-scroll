@@ -468,6 +468,12 @@ function world() {
   v.scene.add(land.object);
   land.wind = AIR;
   v.scene.add(horizon(land, { inner: 300, outer: 1300, segments: 144, rings: 20, lower: (x, z) => z > 0 && Math.abs(x) < 400 ? .55 : 0 }));   // far hills, lower to the south
+  // the valley's light, baked by the phone itself the first time it is played (under the loading screen) and kept: the sky as
+  // each spot sees it and the sun bounced off what is round it, in probes over the valley (people pick it up as they move),
+  // and the ground's own light map (the dark foot of a wall, under a boulder); the sun and its shadows stay live
+  // (the probes stand over where the missions are played, from the valley floor to over the roofs; the far grid has the rest)
+  let lo = 1e9, hi = -1e9; for (let x = -215; x <= 245; x += 5) for (let z = -200; z <= 190; z += 5) { const y = land.height(x, z); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+  v.bakeLight({ box: { min: [-215, lo - 1, -200], max: [245, hi + 22, 190] }, spacing: [10, 5, 10], most: 14000, maps: [land.mesh] });
 
   // the river and the lake: dark water with ripples that catch the sky
   const waterMat = (col, rep) => {

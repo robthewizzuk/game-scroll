@@ -15,13 +15,17 @@
 //   update(dt) { wind.update(dt); cloth.update(dt); }
 //
 // Everything is in metres. A piece's pins can ride a moving thing (flag.ride(boat)), and cloth.ball / cloth.capsule
-// are solid things it drapes over and is pushed aside by. With world: a gs.physics3d World3D, the bodies near the cloth
-// are such solids by themselves (a ball rolled into the washing, a kart through a banner, a crate under a sheet).
+// and cloth.box are solid things it drapes over and is pushed aside by. With world: a gs.physics3d World3D (the game's own
+// is found by itself), the bodies near the cloth are such solids by themselves (a ball rolled into the washing, a kart
+// through a banner, a crate under a sheet), and so is all that stands still in it: walls, buildings made solid, posts and
+// crates (boxes, balls and capsules), and the ground (a mesh, a grid of heights, a floor), so a cape stops at a wall and a
+// banner lies on a sloping roof rather than going through.
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, Matrix4, Mesh, MeshStandardMaterial, Vector3 } from 'three';
 import { webgpu } from './gpu.js';
 import { own } from './cleanup.js';
 import { timed } from './prof.js';
 import { linksFor } from './links.js';
+import { BODY } from './solid-body.js';
 
 const GRAV = -9.81, AIR = .6, SKIN = .12, GRIP = .6, MOVE = .01;
 // a direction turned by a quaternion { x, y, z, w }
@@ -33,18 +37,9 @@ const STEPS = 4;   // small steps a frame
 const LINK = { along: 0, shear: .5, bend: 1 };   // (cloth hardly stretches, but shears and folds easily: that's why a flag hangs in still air)
 export const PIECES_MAX = 64;   // pieces the graphics chip's wind table holds
 export const SOLIDS_MAX = 32;   // solid things it goes round there
+export const FLOOR_N = 16, FLOOR_G = 4, FLOOR_LIFT = .02;   // the ground under the cloth, as grids of heights this many a side, this many at most (the graphics chip reads the ground from them)
 const PAD = .02;   // (a body's rods stand this far proud of the clothes: the cloth's points keep off them, and so the sheet between them mostly does too)
-// a person's body as rods: [bone, a place on it, bone, a place on it, radius there, radius at the other end] (places in metres from the bone, as
-// the body stands; the radii are a clothed body's, so cloth lies on the clothes rather than in them): the trunk as two
-// side by side (it is wider than it is deep), the thighs, the shins, the upper arms and the forearms, and the seat across the tops of the legs
-// (cloth's points alone would slip up between them)
-const BODY = [
-  ['hips', [.07, .06, -.01], 'spine', [.075, .28, -.015], .11, .11], ['hips', [-.07, .06, -.01], 'spine', [-.075, .28, -.015], .11, .11],
-  ['legL', [0, -.04, 0], 'shinL', [0, .03, 0], .117, .078], ['legR', [0, -.04, 0], 'shinR', [0, .03, 0], .117, .078], ['legL', [-.01, .0, -.005], 'legR', [.01, .0, -.005], .122, .122],
-  ['shinL', [0, 0, 0], 'footL', [0, .03, 0], .074, .055], ['shinR', [0, 0, 0], 'footR', [0, .03, 0], .074, .055],
-  ['armL', [0, -.02, 0], 'foreL', [0, 0, 0], .058, .046], ['armR', [0, -.02, 0], 'foreR', [0, 0, 0], .058, .046],
-  ['foreL', [0, 0, 0], 'handL', [0, -.07, 0], .046, .036], ['foreR', [0, 0, 0], 'handR', [0, -.07, 0], .046, .036],
-];
+// a person's body as rods (solid-body.js: the same that gs.characters.Solid keeps out of walls)
 
 // a wind that is never quite steady: gusts, and a sideways wobble that runs downwind along the cloth (a flag's ripples run at about two
 // thirds of the wind's speed). u: how far downwind the point is, y its height, sp the wind's speed. Shared with the graphics chip's version.
@@ -81,7 +76,7 @@ export class Cloth {
    * default). fine: points across a metre (WebGPU 14, else 7). ground: a height (or (x, z) => height) the cloth lies on rather than going through.
    */
   constructor(view, { wind = null, fine = null, ground = null, rough = .85, steps = STEPS, world = null, link = true } = {}) {
-    this.view = view; this.wind = wind; this.ground = ground; this.t = 0; this.steps = steps; this.world = world; this.felt = new Map();
+    this.view = view; this.wind = wind; this.ground = ground; this.t = 0; this.still = new Map(); this.floor = null; this.steps = steps; this.world = world; this.felt = new Map();
     // (links.js: with no wind or world given, the game's Wind blows it and it goes round the bodies of the game's physics world; false: neither)
     this.links = linksFor(view, link); this.links?.join('cloth', this);
     this.big = !!webgpu() && typeof view?.envFor === 'function' && typeof webgpu().fx?.gpuCloth === 'function';
@@ -155,6 +150,15 @@ export class Cloth {
   sheet({ cols = 8, rows = 8, place, pins = [], ...o } = {}) { return this.add(new Piece(this, 'sheet', cols, rows, place, { ...o, pins })); }
   /** A solid ball the cloth goes round: { x, y, z, r }; move it with set(x, y, z). */
   ball({ x = 0, y = 0, z = 0, r = .3 } = {}) { const s = { a: [x, y, z], b: [x, y, z], pa: null, pb: null, r, set(x, y, z) { this.a[0] = this.b[0] = x; this.a[1] = this.b[1] = y; this.a[2] = this.b[2] = z; return this; }, remove: () => { this.solids = this.solids.filter(q => q !== s); } }; this.solids.push(s); return s; }
+  /**
+   * A solid box: at its middle, size [w, h, d] metres, turned by turn (radians about up) or q (a quaternion { x, y, z, w }): a wall, a crate,
+   * a table. set(at, q) moves it.
+   */
+  box({ at = [0, 0, 0], size = [1, 1, 1], turn = 0, q = null } = {}) {
+    const s = { box: true, a: at.slice(), b: at.slice(), pa: null, pb: null, half: size.map(v => v / 2), q: q ? { ...q } : { x: 0, y: Math.sin(turn / 2), z: 0, w: Math.cos(turn / 2) }, r: 0, rb: 0,
+      set(at, q) { for (let e = 0; e < 3; e++) this.a[e] = this.b[e] = at[e]; if (q) Object.assign(this.q, q); return this; }, remove: () => { this.solids = this.solids.filter(o => o !== s); } };
+    s.r = s.rb = Math.hypot(...s.half); this.solids.push(s); return s;
+  }
   /** A solid rod with round ends from a to b, radius r (rb at b, if it narrows: a leg, a post); set(a, b) moves it. */
   capsule({ a = [0, 0, 0], b = [0, 1, 0], r = .1, rb = r } = {}) { const s = { a: a.slice(), b: b.slice(), pa: null, pb: null, r, rb, set(a, b) { this.a[0] = a[0]; this.a[1] = a[1]; this.a[2] = a[2]; this.b[0] = b[0]; this.b[1] = b[1]; this.b[2] = b[2]; return this; }, remove: () => { this.solids = this.solids.filter(q => q !== s); } }; this.solids.push(s); return s; }
   /**
@@ -228,7 +232,7 @@ export class Cloth {
   }
   boneOf(on, name) { const b = on?.bones?.[name] || on?.rig?.parts?.[name]; if (!b) throw new Error(`gs.outdoors.Cloth: ${on?.name || 'that'} has no ${name} bone (a gs.models.human has)`); return b; }
   /** Takes every piece and solid away. */
-  clear() { this.pieces = []; this.solids = []; this.bodies = []; this.felt.clear(); this.dirty = true; return this; }
+  clear() { this.pieces = []; this.solids = []; this.bodies = []; this.felt.clear(); this.still.clear(); this.floor = null; this.dirty = true; return this; }
 
   // ---- the points and links of every piece, in one set (made again when pieces come or go)
   build() {
@@ -300,6 +304,7 @@ export class Cloth {
     for (const b of this.bodies) this.bodyNow(b);
     if (this.world === null && this.links) { const w = this.links.one('world'); if (w) this.world = w; }
     if (this.world) this.fromWorld();
+    this.floorNow();
     this.pinsNow(dt);
     this.winds();
     if (this.mode === 'gpu') { this.pending += dt; return this; }
@@ -361,7 +366,7 @@ export class Cloth {
       // (no faster than 25 metres a second a second from the wind: a light corner in a gale)
       const fa = Math.sqrt(F[k3] * F[k3] + F[k3 + 1] * F[k3 + 1] + F[k3 + 2] * F[k3 + 2]); if (fa > 25) { F[k3] *= 25 / fa; F[k3 + 1] *= 25 / fa; F[k3 + 2] *= 25 / fa; }
     }
-    const solids = this.solids, ns = solids.length, gr = this.ground, damp = Math.exp(-h * .6), A0 = this.A0;
+    const solids = this.solids, ns = solids.length, gr = this.ground, fl = this.floor?.world ? this.floor : null, damp = Math.exp(-h * .6), A0 = this.A0;
     const SO = this.SO = this.SO?.length >= ns * 14 ? this.SO : new Float32Array(Math.max(8, ns) * 14), near = this.nearSolids();   // (each solid now, and a step ago: its surface's going drags what it grips)
     for (let s = 0; s < S; s++) {
       // (pins and solid things go part of the way each small step, from where they were when it last stepped: a leg that swings 10 cm a frame
@@ -370,6 +375,7 @@ export class Cloth {
       const f0 = s / S;
       for (let q = 0; q < ns; q++) {
         const o = solids[q], pa = o.pa || o.a, pb = o.pb || o.b, q7 = q * 14;
+        if (o.box) { for (let e = 0; e < 3; e++) { SO[q7 + e] = o.a[e]; SO[q7 + 3 + e] = o.half[e]; } SO[q7 + 6] = -1; SO[q7 + 7] = o.q.x; SO[q7 + 8] = o.q.y; SO[q7 + 9] = o.q.z; SO[q7 + 10] = o.q.w; continue; }
         for (let e = 0; e < 3; e++) { SO[q7 + e] = pa[e] + (o.a[e] - pa[e]) * f; SO[q7 + 3 + e] = pb[e] + (o.b[e] - pb[e]) * f; SO[q7 + 7 + e] = pa[e] + (o.a[e] - pa[e]) * f0; SO[q7 + 10 + e] = pb[e] + (o.b[e] - pb[e]) * f0; }
         SO[q7 + 6] = o.r; SO[q7 + 13] = o.rb ?? o.r;
       }
@@ -391,8 +397,8 @@ export class Cloth {
         if (W[k] === 0) continue; const k3 = k * 3, to = TT[k];
         if (to >= 0) { const t3 = to * 3, dx = P[k3] - P[t3], dy = P[k3 + 1] - P[t3 + 1], dz = P[k3 + 2] - P[t3 + 2], l = Math.sqrt(dx * dx + dy * dy + dz * dz), r = TR[k]; if (l > r) { const s = r / l; P[k3] = P[t3] + dx * s; P[k3 + 1] = P[t3 + 1] + dy * s; P[k3 + 2] = P[t3 + 2] + dz * s; } }
         const nr = near[PI[k]];
-        for (let q = 0; q < nr.length; q++) push(P, Q, k3, SO, nr[q] * 14);
-        if (gr != null) { const g = typeof gr === 'function' ? gr(P[k3], P[k3 + 2]) : gr; if (P[k3 + 1] < g + .01) { P[k3 + 1] = g + .01; P[k3] -= (P[k3] - Q[k3]) * GRIP; P[k3 + 2] -= (P[k3 + 2] - Q[k3 + 2]) * GRIP; } }
+        for (let q = 0; q < nr.length; q++) { const o = nr[q] * 14; if (SO[o + 6] < 0) pushBox(P, Q, k3, SO, o); else push(P, Q, k3, SO, o); }
+        if (gr != null || fl) { const g = Math.max(gr == null ? -Infinity : typeof gr === 'function' ? gr(P[k3], P[k3 + 2]) : gr, fl ? floorAt(fl, P[k3], P[k3 + 2]) : -Infinity); if (P[k3 + 1] < g + .01) { P[k3 + 1] = g + .01; P[k3] -= (P[k3] - Q[k3]) * GRIP; P[k3 + 2] -= (P[k3 + 2] - Q[k3 + 2]) * GRIP; } }
         V[k3] = (P[k3] - Q[k3]) / h; V[k3 + 1] = (P[k3 + 1] - Q[k3 + 1]) / h; V[k3 + 2] = (P[k3 + 2] - Q[k3 + 2]) / h;
       }
     }
@@ -417,11 +423,12 @@ export class Cloth {
   }
   // the bodies of the physics world near the cloth, as solids it goes round (the nearest, as many as there is room for)
   fromWorld() {
-    const W = this.world, P = this.P, N = this.N; if (!W.world || !N) { for (const s of this.felt.values()) s.remove(); this.felt.clear(); return; }
+    const W = this.world, P = this.P, N = this.N; if (!W.world || !N) { for (const s of [...this.felt.values(), ...this.still.values()]) s.remove(); this.felt.clear(); this.still.clear(); return; }
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
     for (let k = 0; k < N; k++) { const x = P[k * 3], y = P[k * 3 + 1], z = P[k * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
     const c = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2 }, reach = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 1.5;
-    const room = SOLIDS_MAX - (this.solids.length - this.felt.size) - this.bodies.reduce((a, b) => a + b.solids.length, 0);
+    const room0 = SOLIDS_MAX - (this.solids.length - this.felt.size - this.still.size) - this.bodies.reduce((a, b) => a + b.solids.length, 0);
+    const room = room0 - this.stillNow(W, c, reach, Math.max(0, room0 - 4));
     const R = W.R, near = [];
     for (const t of W.near(c, reach)) {
       const b = t.body, col = t.collider; if (!b || !col || b.isFixed() || col.isSensor()) continue;
@@ -444,6 +451,73 @@ export class Cloth {
       keep.add(t);
     }
     for (const [t, s] of this.felt) if (!keep.has(t)) { s.remove(); this.felt.delete(t); }
+  }
+  // what stands still in the physics world near the cloth (walls, posts, crates, a level's boxes; a body made fixed) as solids it goes round, up
+  // to `room` of them, the nearest first: looked for again when the cloth has gone half a metre from where it last looked, or each second (a
+  // wall put up). A box as a box, a ball or a capsule as a rod; meshes and grids of heights are the ground under it (floorNow). Gives how many.
+  stillNow(W, c, reach, room) {
+    const k = this.lookedStill;
+    if (k && Math.hypot(c.x - k.x, c.y - k.y, c.z - k.z) < .5 && this.t - k.t < 1 && k.room === room) return this.still.size;
+    this.lookedStill = { x: c.x, y: c.y, z: c.z, t: this.t, room };
+    const R = W.R, ST = R.ShapeType, list = [];
+    for (const s of W.around({ x: c.x - reach, y: c.y - reach, z: c.z - reach }, { x: c.x + reach, y: c.y + reach, z: c.z + reach }, 0)) {
+      const col = s.c, b = col.parent(); if (!b?.isFixed()) continue;
+      const t = col.shapeType(); if (t !== ST.Cuboid && t !== ST.RoundCuboid && t !== ST.Ball && t !== ST.Capsule) continue;
+      const p = W.outer(col.translation()), e = t === ST.Cuboid || t === ST.RoundCuboid ? col.halfExtents() : null;
+      // (how far its surface is from the cloth's middle, roughly: the nearest first)
+      const far = Math.max(0, Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z) - (e ? Math.min(e.x, e.y, e.z) : col.radius()));
+      list.push([far, col, t, p, e]);
+    }
+    list.sort((a, b) => a[0] - b[0]);
+    const keep = new Set();
+    for (const [, col, t, p, e] of list.slice(0, room)) {
+      let s = this.still.get(col.handle); const q = col.rotation();
+      if (e) {
+        const rr = t === ST.RoundCuboid ? col.roundRadius() : 0, size = [(e.x + rr) * 2, (e.y + rr) * 2, (e.z + rr) * 2];
+        if (!s) { s = this.box({ at: [p.x, p.y, p.z], size, q }); s.still = true; this.still.set(col.handle, s); } else { s.set([p.x, p.y, p.z], q); s.half = size.map(v => v / 2); }
+      } else {
+        const r = col.radius(), h = t === ST.Capsule ? col.halfHeight() : 0, u = turn(q, [0, 1, 0]), a = [p.x - u[0] * h, p.y - u[1] * h, p.z - u[2] * h], b = [p.x + u[0] * h, p.y + u[1] * h, p.z + u[2] * h];
+        if (!s) { s = this.capsule({ a, b, r }); s.still = true; this.still.set(col.handle, s); } else { s.r = s.rb = r; s.set(a, b); }
+      }
+      keep.add(col.handle);
+    }
+    for (const [h, s] of this.still) if (!keep.has(h)) { s.remove(); this.still.delete(h); }
+    return this.still.size;
+  }
+  // the ground under the cloth as grids of heights, one round each piece (or each group of pieces close together; FLOOR_G at most), FLOOR_N
+  // a side with a metre and a half spare: the world's ground (meshes made solid, grids of heights, floors: the first under the piece's top), and on the
+  // graphics chip the ground given as a function too (it cannot call one). A grid each, so cloth spread over a town still reads the ground
+  // under each piece finely. Made again when a piece leaves its grid, and every two seconds while there is a world (a level that changed).
+  floorNow() {
+    const W = this.world?.world ? this.world : null, gr = this.ground, fn = typeof gr === 'function';
+    if (!W && !(fn && this.big)) { this.floor = null; return; }
+    const P = this.P, N = this.N, n = FLOOR_N; if (!N || !this.pieces.length) return;
+    // (each piece's bounds; pieces whose bounds come within a metre of each other share a grid; then the two that make the smallest
+    // shared one are put together until there are FLOOR_G)
+    let g = this.pieces.map(p => { let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, top = -Infinity; const e = p.base + p.cols * p.rows;
+      for (let k = p.base; k < e; k++) { const x = P[k * 3], y = P[k * 3 + 1], z = P[k * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; if (y > top) top = y; }
+      return { x0, z0, x1, z1, top }; }).filter(b => b.x1 >= b.x0);
+    const join = (a, b) => ({ x0: Math.min(a.x0, b.x0), z0: Math.min(a.z0, b.z0), x1: Math.max(a.x1, b.x1), z1: Math.max(a.z1, b.z1), top: Math.max(a.top, b.top) });
+    const size = b => Math.max(b.x1 - b.x0, b.z1 - b.z0);
+    for (let again = true; again;) { again = false;
+      for (let i = 0; i < g.length && !again; i++) for (let j = i + 1; j < g.length; j++) { const a = g[i], b = g[j]; if (a.x0 - 1 < b.x1 && b.x0 - 1 < a.x1 && a.z0 - 1 < b.z1 && b.z0 - 1 < a.z1) { g[i] = join(a, b); g.splice(j, 1); again = true; break; } } }
+    while (g.length > FLOOR_G) { let bi = 0, bj = 1, bs = Infinity; for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) { const s = size(join(g[i], g[j])); if (s < bs) { bs = s; bi = i; bj = j; } } g[bi] = join(g[bi], g[bj]); g.splice(bj, 1); }
+    // (still good: each group well inside a grid that is not much too big for it, and not two seconds old with a world)
+    const f = this.floor, inside = (b, q) => b.x0 > q.x0 + .5 && b.z0 > q.z0 + .5 && b.x1 < q.x0 + q.cell * (n - 1) - .5 && b.z1 < q.z0 + q.cell * (n - 1) - .5 && size(b) + 3 > q.cell * (n - 1) * .66;
+    if (f && (!W || this.t - f.t < 2) && g.every(b => f.grids.some(q => inside(b, q)))) return;
+    const h = new Float32Array(FLOOR_G * n * n).fill(-1e9), grids = [];
+    let R = null, ST = null, Ray = null, from = null, only = null;
+    if (W) { R = W.R; ST = R.ShapeType; Ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }); only = c => { const t = c.shapeType(); return !c.isSensor() && c.parent()?.isFixed() && (t === ST.TriMesh || t === ST.HeightField || t === ST.HalfSpace); }; }
+    g.forEach((b, q) => {
+      const span = size(b) + 3, cell = span / (n - 1), ox = (b.x0 + b.x1) / 2 - span / 2, oz = (b.z0 + b.z1) / 2 - span / 2, o = q * n * n;
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+        const x = ox + i * cell, z = oz + j * cell; let y = typeof gr === 'number' ? gr : fn ? gr(x, z) : -1e9;
+        if (W) { from = W.inner({ x, y: b.top + .05, z }); Ray.origin = from; const hit = W.world.castRay(Ray, 1e4, true, undefined, undefined, undefined, undefined, only); if (hit) y = Math.max(y, from.y - hit.timeOfImpact); }
+        h[o + j * n + i] = y;
+      }
+      grids.push({ x0: ox, z0: oz, cell, o });
+    });
+    this.floor = { grids, n, h, world: !!W, t: this.t, version: (f?.version || 0) + 1 };
   }
   // for each piece, the solid things that might reach it this frame (a ball round its points against each solid's reach, half a metre spare)
   nearSolids() {
@@ -501,6 +575,36 @@ function push(P, Q, k3, SO, o) {
     P[k3] -= (mx - mn * nx) * GRIP; P[k3 + 1] -= (my - mn * ny) * GRIP; P[k3 + 2] -= (mz - mn * nz) * GRIP;
   }
 }
+// a point out of a solid box (SO[o..]: its middle, half sizes, -1, its turn as a quaternion), out the face it came in by (where it was a small
+// step ago), and held by GRIP of its sliding along that face, as on a ball or a rod
+function pushBox(P, Q, k3, SO, o) {
+  const cx = SO[o], cy = SO[o + 1], cz = SO[o + 2], hx = SO[o + 3] + .01, hy = SO[o + 4] + .01, hz = SO[o + 5] + .01, qx = SO[o + 7], qy = SO[o + 8], qz = SO[o + 9], qw = SO[o + 10];
+  const l = rotQ(-qx, -qy, -qz, qw, P[k3] - cx, P[k3 + 1] - cy, P[k3 + 2] - cz); if (Math.abs(l[0]) >= hx || Math.abs(l[1]) >= hy || Math.abs(l[2]) >= hz) return;
+  const w = rotQ(-qx, -qy, -qz, qw, Q[k3] - cx, Q[k3 + 1] - cy, Q[k3 + 2] - cz), he = [hx, hy, hz];
+  let ax = -1, most = 0; for (let a = 0; a < 3; a++) { const out = Math.abs(w[a]) - he[a]; if (out > most) { most = out; ax = a; } }
+  let sg; if (ax < 0) { let least = Infinity; for (let a = 0; a < 3; a++) { const d = he[a] - Math.abs(l[a]); if (d < least) { least = d; ax = a; } } sg = l[ax] < 0 ? -1 : 1; } else sg = w[ax] < 0 ? -1 : 1;
+  l[ax] = sg * he[ax];
+  for (let a = 0; a < 3; a++) if (a !== ax) l[a] -= (l[a] - w[a]) * GRIP;
+  const g = rotQ(qx, qy, qz, qw, l[0], l[1], l[2]); P[k3] = cx + g[0]; P[k3 + 1] = cy + g[1]; P[k3 + 2] = cz + g[2];
+}
+// (x, y, z) turned by the quaternion (qx, qy, qz, qw)
+function rotQ(qx, qy, qz, qw, x, y, z) {
+  const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
+  return [x + qw * tx + qy * tz - qz * ty, y + qw * ty + qz * tx - qx * tz, z + qw * tz + qx * ty - qy * tx];
+}
+// the height of the floor grids (Cloth.floorNow) at x, z: the highest of the grids it is in, each between its four nearest heights (or the
+// nearest where one of those has no ground); none where it is in none. A little over it: between its heights a grid cuts under a rounded
+// ground, and the cloth's own triangles cut under its points
+function floorAt(f, x, z) {
+  const n = f.n, H = f.h; let y = -Infinity;
+  for (const q of f.grids) {
+    const u = (x - q.x0) / q.cell, v = (z - q.z0) / q.cell; if (u < 0 || v < 0 || u > n - 1 || v > n - 1) continue;
+    const i = Math.min(n - 2, Math.floor(u)), j = Math.min(n - 2, Math.floor(v)), a = u - i, b = v - j, o = q.o + j * n + i;
+    const h00 = H[o], h10 = H[o + 1], h01 = H[o + n], h11 = H[o + n + 1];
+    y = Math.max(y, Math.min(h00, h10, h01, h11) < -1e8 ? H[q.o + Math.round(v) * n + Math.round(u)] : (h00 * (1 - a) + h10 * a) * (1 - b) + (h01 * (1 - a) + h11 * a) * b);
+  }
+  return y + FLOOR_LIFT;
+}
 // how far along a rod from a to b a point is nearest (0..1)
 function segT(x, y, z, a, b) {
   const bx = b[0] - a[0], by = b[1] - a[1], bz = b[2] - a[2], bb = bx * bx + by * by + bz * bz;
@@ -512,6 +616,6 @@ function segDist(x, y, z, a, b) {
   const t = bb > 1e-12 ? Math.max(0, Math.min(1, (px * bx + py * by + pz * bz) / bb)) : 0;
   return Math.hypot(px - bx * t, py - by * t, pz - bz * t);
 }
-export const CLOTH = { STEPS, LINK, AIR, SKIN, GRIP, FL, BODY };
+export const CLOTH = { STEPS, LINK, AIR, SKIN, GRIP, FL, BODY, FLOOR_N, FLOOR_G, FLOOR_LIFT };
 // per-frame work, timed while the frame lab is open (prof.js)
 timed(Cloth.prototype, 'update', 'cloth');
