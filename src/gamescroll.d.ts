@@ -1106,7 +1106,8 @@ export interface FluidSolidOpts { x?: number; y?: number; z?: number; turn?: Loo
 /** A tap (fluid.pour): change any of these while it runs. */
 export interface FluidTap { x: number; y: number; z: number; dir: [number, number, number]; rate: number; speed: number; spread: number; r: number | null; on: boolean; remove(): void }
 export interface FluidDrain { x: number; y: number; z: number; r: number; readonly amount: number; remove(): void }
-export type FluidKind = 'water' | 'lava' | 'slime' | 'honey';
+/** Liquids, and grains that pile and keep their shape (sand), pack and keep prints (snow) or ooze and settle (mud). */
+export type FluidKind = 'water' | 'lava' | 'slime' | 'honey' | 'sand' | 'snow' | 'mud';
 export interface FluidT {
   /** 'gpu' when the fluid runs on the graphics chip (WebGPU), else 'cpu' (fewer, bigger drops). */
   readonly backend: 'gpu' | 'cpu';
