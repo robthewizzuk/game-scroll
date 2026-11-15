@@ -172,8 +172,8 @@ jobs:
           more=$(( ($(echo $all | wc -w) + 44) / 45 )); [ "$more" -gt 6 ] && more=6
           [ "$more" -gt "$SHARDS" ] && SHARDS=$more
           if [ -z "$(echo $all)" ]; then echo "No games to play."; echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"; exit 0; fi
-          # Deal the games out by how long each takes to play (scripts/pick-games.mjs --deal: the slowest, such as
-          # Long Shadow, get a job to themselves and the quick ones share), so the jobs end at about the same time.
+          # Deal the games out by how long each takes to play (scripts/pick-games.mjs --deal: Long Shadow and the swept
+          # Console games count for most, and the quick ones fill in round them), so the jobs end at about the same time.
           dealt=$(node scripts/pick-games.mjs --deal $SHARDS $all --why)
           json='{"include":['; sep=''; k=0
           while read -r ids; do

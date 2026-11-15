@@ -108,7 +108,7 @@ apps' web build, `licences`, `types-check`, `game-types`, the starter templates,
 the uniqueness check on the changed games (`unique.mjs --since`), and then smoke, streamed, fold, sweep, Tiny
 Brains, the AI playtester and budget on the changed games (plus a sample of engine-heavy games when shared code
 changes), dealt out over up to three machines by how long each game takes (`pick-games.mjs --deal`: Long Shadow
-gets one to itself). The slower checks run only when their parts change, each on a machine of its own:
+and the swept Console games count for most). The slower checks run only when their parts change, each on a machine of its own:
 `app-test.cjs -scenes` and `sound-test.cjs` ("app"), `app-test.cjs scenes` ("app-scenes"), `framegen-test.cjs
 --check`, `close-up.cjs` and the dust look ("framegen"), `gpu-loss.cjs` and `shader-replay.cjs` ("gpu-recovery"),
 `upscale-compare.cjs` in three WebGPU parts and the WebGL one ("sgsr"), `share-link.mjs`, the guards' mutation
