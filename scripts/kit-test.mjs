@@ -837,6 +837,45 @@ console.log('physics ok');
   assert.ok(m2 > 40, 'every mind in a wave holds to them too: ' + m2 + '/50');
   assert.ok(num.net.w.every(Number.isFinite) && one.net.w.every(Number.isFinite), 'numbers stay finite');
   console.log('brains 3: corrections fix the spots like their examples and leave the rest, lean then fix, newest word wins, trust, rules + limits, saved, reset ok');
+
+  // two kinds of spot for one move: flee when hurt with the player near, and flee when cornered (far right and high up)
+  const cornered = s => s[0] > .5 && s[1] > .5, eitherSpot = () => (rand() < .5 ? hurtSpot() : [.5 + rand() * .5, .5 + rand() * .5, rand() * 2 - 1, rand() * 2 - 1]);
+  const kinds = made('fix-kinds'); kinds.trust = 0;
+  for (let k = 0; k < 12; k++) kinds.correct(k % 2 ? hurtSpot() : [.5 + rand() * .5, .5 + rand() * .5, rand() * 2 - 1, rand() * 2 - 1], 'flee');
+  { let fixed = 0, n = 0, same = 0, m = 0;
+    for (let i = 0; i < 1500; i++) { const x = i % 3 ? spot() : eitherSpot(); kinds.act(x, 1 / 60); kinds.trust = 0; if (hurt(x) || cornered(x)) { n++; fixed += kinds.action === 'flee'; } else { m++; same += kinds.action === teacher(x); } }
+    assert.ok(kinds.fix.fits[3].length === 2, 'it finds the two kinds by itself');
+    assert.ok(fixed / n > .65 && same / m > .85, `two kinds of spot for one move: fixed ${(fixed / n).toFixed(2)}, the rest as taught ${(same / m).toFixed(2)}`); }
+  // "not this": on the ledge (far right) going right is wrong, and the right move isn't known
+  const ledge = s => s[0] > .6 && s[3] < 0, ledgeSpot = () => [.6 + rand() * .4, rand() * 2 - 1, rand() * 2 - 1, -rand()];
+  for (const lead of ['teacher', 'brain']) {
+    const nb = made('fix-not-' + lead); nb.trust = lead === 'teacher' ? 0 : 1;
+    for (let k = 0; k < 8; k++) nb.avoid(ledgeSpot(), 'right');
+    let off = 0, n = 0, same = 0, m = 0; const keep = nb.trust;
+    for (let i = 0; i < 1500; i++) { const x = i % 3 ? spot() : ledgeSpot(); nb.act(x, 1 / 60); nb.trust = keep; if (ledge(x)) { n++; off += nb.action === 'right'; } else { m++; same += nb.action === teacher(x); } }
+    assert.ok(off / n < .3 && same / m > .9, `${lead} leads, "not this": still goes right on the ledge ${(off / n).toFixed(2)}, the rest as taught ${(same / m).toFixed(2)}`);
+  }
+  // avoid() alone is about what it just did; a "do" on the same spot takes the "not" back; recalled says what shaped a move
+  const pet = made('fix-pet'); pet.trust = 0;
+  pet.act([.8, 0, 0, -.5], 1 / 60); assert.equal(pet.action, 'right'); assert.equal(pet.recalled, null, 'nothing recalled before any correction');
+  pet.avoid(); assert.deepEqual(pet.corrections, [[[.8, 0, 0, -.5], 'right', false]], 'avoid() is about the move it just made');
+  pet.avoid([.82, .04, -.03, -.46], 'right');
+  pet.act([.8, 0, 0, -.5], 1 / 60); assert.notEqual(pet.action, 'right', 'two "not this" examples: it makes another move there');
+  assert.ok(pet.recalled && pet.recalled.action === 'right' && pet.recalled.not && pet.recalled.like > .3, 'recalled: told not to go right here');
+  pet.act([-.7, -.6, .5, .6], 1 / 60); assert.equal(pet.recalled, null, 'and nothing recalled somewhere else');
+  pet.correct([.8, 0, 0, -.5], 'right'); assert.ok(!pet.corrections.some(c => c[2] === false && c[0][0] === .8), 'a "do" on the same spot takes the "not" back');
+  // saved, and given by the maker as [see, action, false]
+  const ns2 = new Map(), napi2 = { brains: { load: k => ns2.get(k) ?? null, save: (k, v) => { ns2.set(k, v); return true; } } };
+  const g1 = new Brain(napi2, { ...opts('fix-nots'), corrections: [[[.9, .9, .9, .9], 'jump', false]] });
+  g1.avoid([.1, .2, .3, .4], 'left').correct([-.5, -.5, -.5, -.5], 'flee'); g1.persist();
+  const g2 = new Brain(napi2, { ...opts('fix-nots'), corrections: [[[.9, .9, .9, .9], 'jump', false]] });
+  assert.deepEqual(g2.corrections.map(c => c[1] + (c[2] === false ? '!' : '')).sort(), ['flee', 'jump!', 'left!'], 'both kinds are saved and come back');
+  // each mind in a wave corrects the spot it last decided on itself
+  const pack = new Brain(opts('fix-pack')), wv = new Wave(pack), ma = wv.mind(), mb = wv.mind();
+  ma.act([.5, .5, .5, .5], 1 / 60); mb.act([-.5, -.5, -.5, -.5], 1 / 60);
+  ma.correct('jump'); mb.avoid('left');
+  assert.deepEqual(pack.corrections, [[[.5, .5, .5, .5], 'jump'], [[-.5, -.5, -.5, -.5], 'left', false]], 'a mind\'s correction is about its own last spot');
+  console.log('brains 4: two kinds of spot for one move, "not this", recalled, saved, minds ok');
 }
 
 // ---- round 6 game kits
