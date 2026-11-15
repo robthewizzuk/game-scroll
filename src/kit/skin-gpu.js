@@ -176,7 +176,7 @@ class SkinPool {
     if (this.full.has(o)) return null;
     const rest = this.restOf(o.geometry), e = rest && new Entry(o, rest, this.frame);
     if (!e || !this.place(e)) { this.full.add(o); this.fullN++; this.info.left = this.fullN; return null; }
-    this.meshes.set(o, e); SKIN_POOLED.add(o); this.marked(o); return e;
+    this.meshes.set(o, e); SKIN_POOLED.add(o); return e;
   }
   // room came back (a mesh left, a geometry was freed): the ones left out may ask again
   roomAgain() { if (this.fullN) { this.full = new WeakSet(); this.fullN = 0; this.info.left = 0; } }
@@ -186,14 +186,12 @@ class SkinPool {
    */
   take(o) {
     if (!this.on || !o.isSkinnedMesh) return false;
-    if (this.meshes.has(o)) return true;
+    { const e = this.meshes.get(o); if (e) { e.used = this.frame; return true; } }   // (still wanted: not let go as unseen, keyed()'s note)
     if (!skinFits(o)) return false;
     if (!this.keyed) this.keyed = keyed(this.r);
     return !!this.join(o);
   }
-  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); SKIN_POOLED.delete(o); if (e.out >= 0) { this.outSpans.give(e.out, e.n * 2); this.roomAgain(); } e.out = -1; this.marked(o); }
-  // a mesh came into the pool or left it: its materials are marked changed, so three compares its shaders' key again
-  marked(o) { const m = o.material; for (const x of Array.isArray(m) ? m : [m]) if (x) x.needsUpdate = true; }
+  drop(o) { const e = this.meshes.get(o); if (!e) return; this.meshes.delete(o); SKIN_POOLED.delete(o); if (e.out >= 0) { this.outSpans.give(e.out, e.n * 2); this.roomAgain(); } e.out = -1; }
   // a mesh's two halves, emptied (all its points at its middle: nothing drawn) until it is first posed
   place(e) {
     let at = this.outSpans.take(e.n * 2);
@@ -336,7 +334,7 @@ class SkinPool {
   set(on) {
     on = !!on; if (on === this.on) return;
     this.on = on;
-    if (!on) { for (const o of [...this.meshes.keys()]) this.drop(o); this.shown = null; }   // (each marked: three makes their own shaders again)
+    if (!on) { for (const o of [...this.meshes.keys()]) this.drop(o); this.shown = null; }   // (three makes their own shaders again: keyed())
   }
   has(o) { return this.on && this.meshes.has(o.userData?.gsPoseOf || o); }
 }
@@ -345,21 +343,33 @@ class SkinPool {
 // shaders, and shares them between meshes, by a key made of its material, its geometry's lists and its number of bones,
 // which are the same either way. So whether a mesh is in its renderer's pool goes into that key (three's RenderObject is
 // not exported: its prototype is reached through the first one made after this). A material whose meshes come into the
-// pool or leave it is marked changed, and three then compares the key again and makes the shaders that fit.
+// pool or leave it has its own render objects looked at again (needsUpdate below: one that was made for the other way is
+// made again), and three then compares the key and makes the shaders that fit.
+// Not by marking its materials changed, as this did first: a person's materials are shared by every person of the kind
+// and by their cluster detail twins, and three makes a material's shadow nodes (the colour and mask of what casts a
+// shadow) again whenever its version moves, new nodes with new ids, so the shadow shader of every mesh with that material
+// had a new key and was written out again. The pool lets go of a mesh unposed for a few seconds (a level of detail not
+// shown, taken ahead by lod-fade), and that came round every four seconds: Long Shadow on the Fold, 2026-11-15, wrote
+// out a dozen people's shadow shaders at once each time, 50 to 130 ms on the rig, freezes up to 1.3 s on the phone.
 let keyedProto = null;
+const pooled = ro => !!POOLS.get(ro.renderer)?.has(ro.object);
 function keyed(r) {
   const O = r._objects; if (!O) return false; if (O.gsSkinKey) return true; O.gsSkinKey = true;
   const patch = ro => {
     if (keyedProto) return;
     keyedProto = Object.getPrototypeOf(ro);
     const base = keyedProto.getCacheKey;
-    keyedProto.getCacheKey = function () { const k = base.call(this); return POOLS.get(this.renderer)?.has(this.object) ? 'skin:' + k : k; };   // (three's key is a sum of hashes past 2^53: a string, not k + a little)
+    keyedProto.getCacheKey = function () { const k = base.call(this); return pooled(this) ? 'skin:' + k : k; };   // (three's key is a sum of hashes past 2^53: a string, not k + a little)
+    // (three asks this of every render object each time it is drawn: only a mesh on bones can be in the pool or out)
+    const need = Object.getOwnPropertyDescriptor(keyedProto, 'needsUpdate');
+    Object.defineProperty(keyedProto, 'needsUpdate', { configurable: true, get() { return need.get.call(this) || (this.object.isSkinnedMesh === true && !!this.gsPk !== pooled(this)); } });
   };
   const first = O._renderObjects?.values().next().value; if (first) patch(first);
   const make = O.createRenderObject;
   O.createRenderObject = function (...a) {
     const ro = make.apply(this, a);
     if (!keyedProto) { patch(ro); ro.initialCacheKey = ro.getCacheKey(); }   // (made before the key knew of the pool)
+    ro.gsPk = pooled(ro);   // (made for the pool or not: those made before this have no gsPk, and nothing was in the pool then)
     return ro;
   };
   return true;
