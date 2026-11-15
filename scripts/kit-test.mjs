@@ -6685,6 +6685,61 @@ console.log('physics ok');
       assert.ok(mount.done && bk.who('rider') === rider && rider.rig.state === 'ride' && wp(rider.rig.parts.hips).distanceTo(wp(bk.points.rider)) < .16, 'on a bike: astride it, on the saddle');   // (hands go on the bars where the person has touch(): a sculpted one)
       assert.throws(() => car.enter(skeleton(), { seat: 'boot' }), /no seat 'boot'/);
     }
+    // a crash: health that runs down hit by hit, smoke, then fire, then a blast; tyres that burst; doors and bumpers loose, then off
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D();
+      const scene = new THREE.Scene(), car = vehicle('car', { style: 'saloon' }), wp = o => o.getWorldPosition(new THREE.Vector3()); scene.add(car); car.updateMatrixWorld(true);
+      const seen = []; for (const ev of ['smoke', 'fire', 'blow', 'burst', 'off']) car.on(ev, () => seen.push(ev));
+      assert.ok(car.health === 1 && car.engine === 1 && !car.wrecked && car.tyres.length === 4 && car.parts.bumperF && car.parts.bumperR, 'a car starts whole: health, its engine, four tyres, bumpers of its own');
+      car.hit(new THREE.Vector3(.95, .6, .3), { power: .8 }); assert.ok(car.health < .9 && car.health > .8 && car.door('doorR').part.rotation.y === 0, 'a knock takes some health: ' + car.health.toFixed(2));
+      // a tyre right where a sharp hit lands bursts; the wheel sits lower and smaller
+      const w0 = wp(car.wheels[1]); car.hit(w0.clone().add(new THREE.Vector3(.1, 0, 0)), { power: .6 });
+      assert.ok(car.tyres[1].flat && !car.tyres[0].flat && car.wheels[1].children[0].scale.y < .9 && seen.includes('burst'), 'a shot at its tyre: flat');
+      // a door hit hard hangs loose and swings; hit again it comes off and falls to the road
+      const door = car.parts.doorR, dc = new THREE.Vector3(); door.children[0].geometry.computeBoundingSphere(); door.children[0].localToWorld(dc.copy(door.children[0].geometry.boundingSphere.center));
+      car.hit(dc, { power: 1 }); let swung = 0; for (let i = 0; i < 60; i++) { car.update(1 / 60); swung = Math.max(swung, Math.abs(door.rotation.y)); }
+      assert.ok(swung > .1 && door.parent !== scene && car.door('doorR').gone !== true, 'hit hard: the door hangs loose and swings open: ' + swung.toFixed(2));
+      car.hit(dc, { power: 1 }); for (let i = 0; i < 120; i++) car.update(1 / 60);
+      assert.ok(door.parent === scene && car.door('doorR').gone && seen.includes('off') && wp(door).y < .4, 'hit again: off, lying in the road at ' + wp(door).y.toFixed(2));
+      car.open('all'); for (let i = 0; i < 30; i++) car.update(1 / 60); assert.ok(door.parent === scene, 'a door that came off is not opened');
+      // more hits: smoke, black smoke, then fire, which blows it up when its fuse runs out
+      assert.ok(car.health > .4 && car.health < .55 && seen.includes('smoke') && !car.burning, 'four hard knocks: smoking, ' + car.health.toFixed(2)); car.harm(.1); assert.ok(car.health <= .55 && seen.includes('smoke') && car.engine < 1 && !car.burning, 'smoking: ' + car.health.toFixed(2) + ', its engine ' + car.engine.toFixed(2));
+      car.harm(.4); assert.ok(car.burning && seen.includes('fire'), 'on fire');
+      car.putOut(); assert.ok(!car.burning && car.health > .12, 'putOut(): it smokes on');
+      car.harm(.2); let t = 0; while (!car.wrecked && t < 12) { car.update(1 / 30); t += 1 / 30; }
+      assert.ok(car.wrecked && seen.includes('blow') && t > 4 && car.engine === 0 && car.health === 0, 'and blows up when the fire has burnt ' + t.toFixed(1) + ' s');
+      const glass = []; car.traverse(m => { if (m.isMesh && m.name === 'glass') glass.push(m); }); const paint = car.shell.children.find(m => m.name === 'paint');
+      assert.ok(glass.every(m => !m.visible) && paint.material.color.getHex() < 0x303030 && car.tyres.every(q => q.flat), 'a burnt-out shell: its glass gone, its paint black, its tyres flat');
+      car.mend(); assert.ok(car.health === 1 && !car.wrecked && door.parent !== scene && !car.door('doorR').gone && glass.every(m => m.visible) && car.tyres.every(q => !q.flat) && paint.material.color.getHex() > 0x303030, 'mend(): as new, its door back on');
+      // on gs.physics3d: a flat tyre sits low and grips less; a wreck has no pull; a part that comes off is a body that lands
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const pc = vehicle('car', { style: 'hatch' }), hold = new THREE.Scene(); hold.add(pc);
+      const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1.2, z: 0 } })); for (let i = 0; i < 60; i++) pw.step(1 / 60);
+      assert.ok(drv.top > 30 && drv.top < 60 && drv.steerFade > 0, 'chassis(): a car\'s top speed and how its steering fades: ' + drv.top);
+      const tilt = () => { pc.updateMatrixWorld(true); return new THREE.Vector3(1, 0, 0).applyQuaternion(pc.quaternion).y; }, before = tilt();
+      pc.burst(1); for (let i = 0; i < 60; i++) pw.step(1 / 60); assert.ok(tilt() < before - .01, 'a flat front right tyre: it sits lower on that side: ' + tilt().toFixed(3));
+      pc.mend(); for (let i = 0; i < 60; i++) pw.step(1 / 60); pc.blow(); for (let i = 0; i < 120; i++) { drv.drive(1, 0); pw.step(1 / 60); pc.update(1 / 60); }
+      assert.ok(Math.abs(drv.speed) < 2, 'a wreck does not drive: ' + drv.speed.toFixed(2));
+      pw.free();
+      // the handbrake: the back steps out in a turn
+      const hw = new World3D({ gravity: -9.81 }); hw.floor(0); const hc = vehicle('car', { style: 'saloon' }), h2 = new THREE.Scene(); h2.add(hc); const hd = hw.vehicle(hc, hc.chassis({ at: { x: 0, y: 1.2, z: 0 } }));
+      for (let i = 0; i < 150; i++) { hd.drive(1, 0); hw.step(1 / 60); } let spinWith = 0; for (let i = 0; i < 40; i++) { hd.drive(0, 1, false, true); hw.step(1 / 60); spinWith = Math.max(spinWith, Math.abs(hd.chassis.body.angvel().y)); }
+      assert.ok(spinWith > 1, 'handbrake in a turn: it slides round, ' + spinWith.toFixed(2) + ' rad/s'); hw.free();
+    }
+    // street props a car knocks over: a lamp post leaves the still body and falls; the car carries on; mend() stands it up again
+    {
+      const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'); await loadPhysics3D(); const { Props } = await import('../src/kit/props.js');
+      const pw = new World3D({ gravity: -9.81 }); pw.floor(0); const scene = new THREE.Scene(), pr = new Props(scene);
+      pr.kind('lamp', new THREE.CylinderGeometry(.08, .1, 5, 8).translate(0, 2.5, 0), new THREE.MeshStandardMaterial()); pr.add('lamp', 0, 0, -10); pr.add('lamp', 3, 0, -10);
+      pr.solid(pw, 'lamp', { shape: 'trunk', r: .1, knock: 6, density: .8 });
+      const pc = vehicle('car', { style: 'saloon' }); scene.add(pc); const drv = pw.vehicle(pc, pc.chassis({ at: { x: 0, y: 1, z: 0 } }));
+      let top = 0; for (let i = 0; i < 240; i++) { drv.drive(1, 0); pw.step(1 / 60); top = Math.max(top, drv.speed); if (pc.position.z < -13) break; }
+      const m = new THREE.Matrix4(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); const up = new THREE.Vector3(0, 1, 0).transformDirection(m);
+      assert.ok(pr.kinds.get('lamp').solid.knocked.has(0) && !pr.kinds.get('lamp').solid.knocked.has(1) && pc.position.z < -11 && drv.speed > top * .5, 'a car through a lamp post at ' + top.toFixed(1) + ' m/s knocks it over and carries on at ' + drv.speed.toFixed(1));
+      for (let i = 0; i < 90; i++) pw.step(1 / 60); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m);
+      assert.ok(up.y < .8, 'the post goes over: ' + up.y.toFixed(2));
+      pr.mend(); pr.kinds.get('lamp').mesh.getMatrixAt(0, m); up.set(0, 1, 0).transformDirection(m); assert.ok(up.y > .99 && !pr.kinds.get('lamp').solid.knocked.size && pr.kinds.get('lamp').solid.body.colliders.has(0), 'mend(): stood up and solid again');
+      pw.free();
+    }
     // a tank: tracks run with the distance (each side its own), the turret turns, the gun lifts within its stops
     const tk = vehicle('tank'), links = tk.shell.children.find(m => m.name === 'tracks'), m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4(); links.getMatrixAt(0, m0);
     tk.roll(.07, 0); links.getMatrixAt(0, m1); const moved = Math.hypot(m1.elements[13] - m0.elements[13], m1.elements[14] - m0.elements[14]); links.getMatrixAt(links.count / 2, m1); links.getMatrixAt(links.count / 2, m0);
@@ -7419,6 +7474,41 @@ console.log('physics ok');
   assert.equal(pickSize(...FOLD, 1.3e6, 1, 2, 12, { upscale: 5, scene: 5 }), 'lvl', 'the final picture at its last step: the 3D');
   assert.equal(pickSize(...PHONE, .5e6, 0, 0, null, null), 'out', 'where the chip doesn\'t say: the final picture while it is over one and a half times the 3D\'s size');
   assert.equal(pickSize(...PHONE, 1.3e6, 0, 0, null, null), 'lvl', 'and the 3D where it is not');
+  // drawn only as big as the picture's detail needs (detail-size.js): the power law's sums, the size it picks, and
+  // how it moves (down slowly in tenths, up at once, never under its least)
+  {
+    const D = await import('../src/kit/detail-size.js'), { DS } = D, keep = { ...DS };
+    const close = (a, b, e, m) => assert.ok(Math.abs(a - b) < e, `${m}: ${a} vs ${b}`);
+    // an octave ratio of .5: each octave above the drawn one holds half the one below
+    close(D.missing(.01, .02, 1, 1), .01 * .5 / Math.log(2), 1e-9, 'drawn at half size, the octave just above it as the power law sums it (between e1 s and e1)');
+    close(D.missing(.01, .02, 30, 30), .01 / Math.log(2), 1e-6, 'drawn far smaller, all the octaves above: e1 / ln(1 / s)');
+    assert.equal(D.missing(.01, .02, 1, 0), 0, 'drawn at the final size, nothing is missed');
+    assert.ok(D.lossDb(.004, .01, .5, 1) < D.lossDb(.004, .01, .5, .5), 'drawn smaller than when measured, more is lost');
+    for (const [e1, e2, r] of [[2e-4, 6e-4, .85], [1e-3, 1.5e-3, .7], [5e-5, 4e-4, .6]]) {
+      const k = D.sizeFor(e1, e2, r, 36), n = Math.log2(1 / r);
+      if (k < 1) close(D.lossDb(e1, e2, n, Math.log2(1 / k)), 36, .01, 'the size picked misses just the target');
+    }
+    assert.ok(D.sizeFor(.02, .021, .5, 36) > .95, 'a picture full of detail at every octave: about the final size');
+    assert.ok(D.sizeFor(1e-6, 1e-4, .85, 36) < .3, 'a picture with almost none: far smaller');
+    assert.equal(D.sizeFor(0, 0, .8), .8, 'a flat picture (nothing measured): as drawn');
+    assert.equal(D.sizeFor(1e-3, 1e-3 / 1.19, .85, 36), 1, 'a pattern at the pixel\'s own size (the village\'s bricks: the finest octave holding more than the one below): the full size, the power law doesn\'t hold');
+    // the meter's bytes: 16-bit logs of e1 and e2, two bytes each
+    const enc = e => { const c = Math.min(1, Math.max(0, (Math.log2(Math.max(e, 2 ** -32)) + 32) / 32)) * 255; return [Math.floor(c), Math.round((c % 1) * 255)]; };
+    { const px = new Uint8Array(8); px.set([...enc(1e-3), ...enc(4e-3), ...enc(3e-3), ...enc(2e-3)]); const [a, b] = D.fromPixels(px);
+      close(a / 2e-3, 1, .01, 'e1 back as the mean over the blocks'); close(b / 3e-3, 1, .01, 'e2 back'); }
+    assert.deepEqual(D.fromPixels(new Uint8Array(4)), [0, 0], 'a flat block reads as none');
+    // moving: from the quality steps' full size, a picture with little detail is drawn smaller a step at a time
+    Object.assign(DS, { on: true, k: 1, use: 1, least: .6 });
+    const flat = [1e-5, 1e-3], seen = [];
+    for (let i = 0; i < 30; i++) seen.push(D.measured(...flat, .8 * DS.use, .8));
+    assert.ok(seen[0] === 1 && seen.every((v, i) => !i || v <= seen[i - 1]), 'down, never at once');
+    assert.ok(seen.every(v => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9), 'in tenths, so the pictures behind are made again now and then');
+    assert.equal(seen.at(-1), .6, 'and never under the least share');
+    assert.equal(D.measured(.02, .021, .8 * .6, .8), 1, 'detail back: up at once');
+    DS.on = false; assert.equal(D.measured(...flat, .8, .8), 1, 'off: the quality steps\' size');
+    D.resetSize(); Object.assign(DS, keep);
+  }
+  console.log('gs.hd picture-led size ok');
   // the steps themselves (hd3d.js stepsRun): Rob's Fold run again, low at the first resolution step, the chip 11.6 ms a frame
   // in the middle and 22 at its worst, the upscaler 5.9 of it
   const { stepsRun } = await import('../src/kit/hd3d.js');

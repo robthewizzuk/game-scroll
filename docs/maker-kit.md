@@ -4230,9 +4230,39 @@ update(dt) {
 - **In the city,** the cars drawn whole have drivers (the crowd's people at the wheel), and
   `city.cars.take(c)` takes a traffic car out of the traffic as one of these, with its driver in it, ready to
   `pull`.
+- **Crashes.** A car, a lorry, a bus and a motorbike take crashes by themselves: every `hit()` (and so every
+  `World3D.vehicle` crash) takes some of its `health` (1 new, 0 done for; a hard knock takes about a sixth of a
+  car's, a lorry or a bus takes half that). Under .55 its engine smokes, under .3 the smoke goes black, under
+  .12 it is on fire, and a few seconds later it blows up: a fireball, its paint charred, its glass blown out,
+  most doors and bumpers thrown off, its tyres burnt flat. The blast is felt round it as an Explosives blast is
+  (the world's bodies, people who react, smoke, buildings that come apart, and other vehicles, which may catch
+  fire in turn). A sharp hit on a tyre bursts it (`car.tyres[i].flat`); a hard hit on a door or bumper knocks it
+  loose (a door hangs and swings, a bumper droops) and the next takes it off, to lie in the road as a body of its
+  own in the game's World3D.
+  ```js
+  car.on('blow', e => { player.hp -= 60 * e.hurt(player.position); });   // the game's own damage
+  car.on('fire', () => sounds.whoosh());                                  // also 'smoke', 'burst', 'off'
+  car.hit(shot.point, { power: .6 });       // a shot: a dent, a window, a tyre if it was there
+  car.harm(.3); car.putOut(); car.blow();   // the game's own rules: a fire, a hose, a bomb
+  car.burst(2); car.loosen('doorL'); car.detach('bumperR');
+  car.mend();                               // as new, its doors and bumpers back on
+  ```
+  `World3D.vehicle` reads it back: a flat tyre sits low and grips less, a smoking engine pulls less
+  (`car.engine`), a wreck (`car.wrecked`) not at all.
+- **How each drives.** `chassis()` gives each its weight and feel for `World3D.vehicle`: `density` (a bus
+  shoves a car aside), `power`, `top` (the speed its pull fades to), `steerFade` (the speed its wheels turn
+  half as far, so it takes a fast bend wide), `brakes`, `grip`. A sports car is quick and light, a van and an
+  ambulance heavier, a lorry and a bus heavy and slow to turn. What you pass wins. `drive(throttle, steer,
+  brake, handbrake)`: the handbrake locks the back wheels so it slides round; with nothing pressed it slows
+  and then stands still (no creeping).
+- **Street props that go over.** `city.solid(world)` makes lamp posts, signals, signs, benches, hydrants and
+  bins that a car going fast enough knocks over (they fall as bodies of their own; the car carries on, a
+  little slower); trees, bollards and poles stop it. `city.props.mend()` stands them up again. Your own
+  `gs.props`: `props.solid(world, 'post', { shape: 'trunk', knock: 6 })` (m/s), `props.knock(name, id)`, `props.mend()`.
 - Not there: bonnets and boots do not open, lorries, buses and helicopters have no doors that open (people
-  walk in by their door point), there are no simpler shapes for far away made by themselves, and a train has
-  no physics of its own.
+  walk in by their door point), only doors and bumpers come off (wheels, bonnets and boots stay on), a fire does
+  not spread to what is round it but a blast's heat can, there are no simpler shapes for far away made by
+  themselves, and a train has no physics of its own.
 
 ## Fur and hair
 
