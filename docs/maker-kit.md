@@ -78,6 +78,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Hang from ledges, shimmy, climb, swing on ropes | `gs.climb` | [Action and adventure kits](#action-and-adventure-kits) |
 | Run, aim, hang and climb poses on a 3D figure | `gs.poses` | [Action and adventure kits](#action-and-adventure-kits) |
 | Mission scripts, objectives, checkpoints | `gs.missions` | [Action and adventure kits](#action-and-adventure-kits) |
+| Jobs around an open world, a phone that rings with them, retry mid-city, the world saved in 8 KB | `gs.missions` `Jobs`, `Phone`, `WorldSave` | [Action and adventure kits](#action-and-adventure-kits) |
 | Cutscenes, quick-time prompts | `gs.cutscene`, `gs.prompts` | [Action and adventure kits](#action-and-adventure-kits) |
 | Break walls into pieces, slice things in two | `gs.destruction` (three-pinata) | [Action and adventure kits](#action-and-adventure-kits) |
 | Buildings that come apart: shoot a hole, blow out a corner, and what it held up comes down | `gs.destruction.Structure` | [Buildings that come apart](#buildings-that-come-apart) |
@@ -106,6 +107,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Lines that change every time (a shopkeeper, a riddle) | `gs.phoneai` (the phone's built-in AI) | [Hearing, doodles and the phone's AI](#hearing-doodles-and-the-phones-ai) |
 | The same jumps and timings at 30, 60 and 120 fps; exact replays | `tick: 60`, `gs.tick` | [Fixed game tick](#fixed-game-tick) |
 | An original tune for your game without writing notes | `gs.sound.compose({ mood, seed })` | [Music composer](#music-composer) |
+| A car radio: stations, made-up DJs, adverts, news | `gs.sound.Radio` | [Car radio](#car-radio) |
 | Music under every round in one line; a band, synths or an orchestra instead of beeps | `music: 'chase'` in the definition, `music({ set: 'band' })`, `gs.sound.instrument()` | [Sound](#sound) |
 | Smooth lines in a drawing game; ink that stays under the fingertip | `touch: 'fine'`, `api.ahead()` | [Finer touch](#finer-touch) |
 | Save something big (a built world, drawings, recorded runs) | `api.saveLocal()` / `loadLocal()` | [Save slots](#a-bigger-save-that-stays-on-the-phone) |
@@ -2485,6 +2487,59 @@ m.say('Go!', { who: 'Ivo' }); yield m.wait(2); ... m.complete(); })`. `zone()` m
 `any()` wait for several things, `restart()` returns to the last checkpoint after a loss (skipping
 the lines already heard), and `save()`/`load()` keep it between sessions.
 
+**Open-world missions** (`gs.missions`, for a city game): three more pieces on top of `Mission`.
+
+`Jobs` is the list of jobs in the world, each a mission with a place to start it:
+
+```js
+const { Jobs, Phone, WorldSave, zone } = gs.missions;
+jobs = new Jobs([
+  { id: 'pies', name: 'Hot Pies', at: shop, from: 'Nonna Ruth', pay: 150, icon: 'pizza',
+    call: { from: 'Nonna Ruth', say: ['The pies are getting cold!', 'Come to the shop.'] },
+    script: function* (m, job) {
+      m.objective('Take the pies to the docks', { at: docks, kind: 'drop' }); m.timer(90);
+      yield m.until(() => zone(docks, 6).has(me));
+      m.checkpoint('docks', { at: docks });                        // a retry starts here, mid-city
+      m.leash(() => inVan, 10, 'You left the van');
+      m.objective('Back to the shop', { at: shop }); yield m.until(() => zone(shop, 4).has(me));
+    } },
+  { id: 'race', needs: ['pies'], at: { x: -20, z: 5 }, script: ... },
+]);
+update(dt) { jobs.update(dt, me); }   // me: { x, z }
+```
+
+- `jobs.offer` is the open job whose marker the player stands on: show "Start" and call `jobs.start(id)`
+  (`start: 'enter'` starts it by walking on). `jobs.mission` is the running Mission.
+- `jobs.markers`, each frame: `[{ at: { x, y, z }, kind, text, icon, pinned, job }]`: the open jobs' start points
+  while roaming, the mission's objectives during one (an objective's `at` can be a moving thing, or a function).
+  Pass them to your map and GPS (`pinned` is where the GPS should go).
+- A fail sets `jobs.failed`: `jobs.retry()` goes back to the last checkpoint and `jobs.mission.respawn` is where
+  to put the player; `jobs.quit()` drops it (the marker stays, to try again). `m.abandon()` is the player giving up.
+- `m.timer(seconds)` fails the mission when it runs out (`m.clock.left` to show); `m.leash(test, seconds)` fails
+  it after that long out of the area or out of the car (`m.away` to show a warning).
+- Done jobs pay into `jobs.money`, unlock the jobs that `needs` them, and fire `on('done')`.
+
+`Phone` is the player's phone: `phone.ring({ from, say: [lines], voice, job })` rings (with a buzz), and once
+answered (`phone.answer()`, or `decline()`) the caller's lines are spoken on a phone line and shown as
+`phone.call.line`; `skip()` moves on. A call with a `job` pins it as the waypoint. Jobs made in the same game ring
+the phone with each job's `call` by themselves when it opens; the car radio waits while it rings.
+`phone.text(from, text)` puts a message in `phone.inbox`; `phone.missed` has the calls nobody answered.
+
+`WorldSave` keeps the world's state in the 8 KB that `api.save()` follows the player with:
+
+```js
+save = new WorldSave(api);
+save.keep('world', () => ({ hour: sky.time, cash, rain: weather.kind }), d => { sky.time = d.hour; cash = d.cash; });
+save.keep('cars', () => rows(garage, ['style', 'colour', 'x', 'z']), d => garage = unrows(d, ['style', 'colour', 'x', 'z']), { optional: true });
+save.load();                       // in make(), after everything is made
+update(dt) { save.update(dt); }    // saves when something changed, every few seconds; save.now() straight away
+```
+
+The Jobs (done, money, a running job's checkpoint), Phone (texts) and Radio (the station) of the same game are kept
+by themselves. Numbers are rounded to two places and `rows()` writes a list of records without repeating the names;
+if it all comes to more than 8 KB, the `optional` parts are left out (`save.dropped`), and `save.size` / `save.room`
+say how much is used. A built world (every crate where you left it) is bigger: keep that with `api.saveLocal`.
+
 **Cutscenes** (`gs.cutscene`): `Cutscene([{ at, cam: [points], look, time }, { at, say, who }, { at, do }])`
 moves the camera along smooth paths, shows lines and letterbox bars, runs actions on cue and can be
 skipped. Put your camera at `scene.shot` each frame. Camera shakes follow Reduce motion.
@@ -2996,6 +3051,48 @@ definition instead (see [Sound](#sound)): the app does all of this for you.
 It returns music()'s parts with `layers: { arp, drums2, lead2 }`, so `intensity()` and `follow()` build
 it up. `info` has the key, mode and chords, plus `win` and `lose` jingles for `notes()` in the same key.
 Music theory (scales and modes) comes from Tonal (MIT).
+
+## Car radio
+
+`gs.sound.Radio` is a car radio for a driving or open-city game: stations of original songs written by
+`compose()`, each with a made-up DJ who talks between songs through `say()`, station idents, silly made-up
+adverts, and the news your game feeds it. Every station keeps its own clock, so a station you left is further
+on when you come back, half way through a song. Five stations come with it (all made up: Kerbside 88 for pop,
+Owl Hours for slow songs, Redline 104 for fast ones, Gilded 97's orchestra and Honk 101's chip tunes), each with
+its own DJ, voice and catch phrases; the songs have made-up titles and artists from the seed.
+
+```js
+const { Radio } = gs.sound;
+make() { radio = new Radio(); }                   // made once: the stations carry on from round to round
+update(dt) { radio.update(dt); }                  // nothing plays until it's on
+// get in the car: radio.on()     the dial: radio.next(), radio.prev(), radio.tune('Owl Hours')
+// get out:  radio.listen({ inside: false, distance: 3 })      back in: radio.listen({ inside: true })
+// a chase starts: radio.news('a police chase is heading over the harbour bridge', { urgent: true })
+draw: radio.now   // { on, station, freq, dj, kind: 'song' | 'talk', song: { title, artist }, line, left }
+```
+
+- **Songs** have a shape: an intro without the tune, then the layers (`compose()`'s arpeggio, busier drums and
+  harmony) come and go, and the tune drops out at the end. Each station plays in its own instrument set.
+- **Breaks**: the DJ names the song that just played and the next one, sometimes says the weather (a `gs.sky`
+  Weather made in the same game is found by itself) and the time of day (from a Sky), reads an advert or a bit of
+  local news, over a soft bed of the next song's chords. A break lasts as long as the DJ takes.
+- **News** (`radio.news(text)`): every station reads it at its next break; `urgent: true` breaks in now, over
+  the song, with two pips. This is how a wanted level, a robbery or a crash gets on the radio.
+- **The car body**: inside, it sounds like car speakers; `listen({ inside: .6 })` is a door open; outside it's
+  muffled through the body and quieter, fades as you walk away, the DJ can't be made out past 8 m and it's silent
+  past 30 m.
+- **The phone**: a `gs.missions` Phone made in the same game holds the radio down while it rings and while you
+  talk (`radio.hold(true)` does it by hand: a cutscene).
+- **The phone's own AI** writes fresher DJ lines on phones that have one: `new Radio({ ai: new PhoneAI({ persona:
+  'a radio DJ', words: 24 }) })` (`gs.phoneai`). It's asked only for the station on air, a song ahead; every line
+  has a written one, and play never waits for it.
+- **Your own stations**: `new Radio({ stations: [{ name, freq, mood, set, voices, tagline, talk, dj: { name, voice:
+  'woman' | 'man', take, pitch, rate, persona, sign: ['catch phrase'] } }] })`. `seed` changes every song.
+  `gs.sound.STATIONS` and `ADVERTS` are the ones that come with it.
+
+It plays on the music channel, so the player's Sound settings rule it (with music off, the DJs are quiet too),
+and music stops with the round as usual. Don't also put `music:` in the definition of a game with a radio.
+`radio.pack()` / `unpack()` keep the station (a `WorldSave` does it by itself).
 
 ## Puzzles and opponents
 

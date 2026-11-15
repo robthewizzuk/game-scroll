@@ -6,7 +6,7 @@
 //   const { sfx, sounds } = gs.sound, { haptic } = gs.device, { clamp, rnd } = gs.util;
 //
 // What's on it (docs/maker-kit.md has the full guide):
-//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say)
+//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say), a car radio (Radio: stations of original songs and made-up DJs)
 //   gs.device    haptics (and rich haptic patterns), tilt, shake, mic (level, pitch, claps, blowing), camera, compass, steps, air pressure, room light, proximity
 //   gs.util      clamp, rnd, pix, hash, fmt, disc, flickTracker
 //   gs.math      seeded random, daily seed, smooth noise, vectors, overlap tests, Grid, Timers
@@ -80,7 +80,8 @@
 //   gs.combat    guns (spread, recoil, reloads, falloff), flying shots, throw arcs, health and armour, explosives
 //   gs.tactics   cover spots, squads that suppress, flank and call out, allies that lead
 //   gs.climb     ledges, hanging, shimmying, climbing up, leaps, ropes   gs.poses  a posable 3D figure and pose blending
-//   gs.missions  mission scripts: objectives, waits, checkpoints        gs.cutscene  camera paths, lines, letterbox, skip
+//   gs.missions  mission scripts: objectives, waits, checkpoints; open-world Jobs, a Phone that rings with them, WorldSave (8 KB)
+//   gs.cutscene  camera paths, lines, letterbox, skip
 //   gs.prompts   quick-time taps, swipes, holds and mashing              gs.destruction  shatter and slice meshes; Structure: buildings that come apart
 //   gs.stealth   light meter, takedowns, bodies, noisy floors, disguises
 //   gs.gadgets   grappling hook, zip line, wire / lock / code puzzles   gs.campaign  chapters, stars, collectibles, unlocks
@@ -165,6 +166,7 @@ import * as bones from './kit/bones.js';
 import { tick } from './kit/tick.js';
 import * as composer from './kit/compose.js';
 import * as foley from './kit/foley.js';
+import * as radio from './kit/radio.js';
 import * as solve from './kit/solve.js';
 import * as phoneSensors from './kit/sensors.js';
 import * as real from './kit/real.js';
@@ -277,7 +279,7 @@ export function offers(names) {
 }
 
 const core = {
-  sound: pick('sound', sound, sfx, composer, foley),
+  sound: pick('sound', sound, sfx, composer, foley, radio),
   device: pick('device', device, phoneSensors),
   util: pick('util', util),
   math: pick('math', math),
