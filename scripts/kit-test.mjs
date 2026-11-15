@@ -942,6 +942,93 @@ console.log('physics ok');
   console.log(`brains 5: a dial follows the player (weak ${(weak.rate * 100).toFixed(0)}% at ${weak.skill.toFixed(2)}, middling ${(mid.rate * 100).toFixed(0)}% at ${mid.skill.toFixed(2)}, strong ${(strong.rate * 100).toFixed(0)}% at ${strong.skill.toFixed(2)}), saved, kits take it ok`);
 }
 
+// ---- brains 7: a coach for things that decide by rules (gs.brains.Coach; Team, Squad, Choose and Tree take one)
+{
+  const { Coach } = await import('../src/kit/brains.js');
+  const { Team, Pitch } = await import('../src/kit/sports.js');
+  const { Squad, CoverMap } = await import('../src/kit/tactics.js');
+  const { Tree, Choose } = await import('../src/kit/bt.js');
+  let sd = 7; const R = () => { sd = (sd * 1664525 + 1013904223) >>> 0; return sd / 4294967296; }, rnd = (a, b) => a + (b - a) * R();
+  // a keeper's rules: dive when the ball is near and fast, else stay. The lesson: near, slow and alone -> rush
+  const rules = s => (s[0] > .7 && s[1] > .5 ? 'dive' : 'stay'), spot = () => [R(), R(), R() < .5 ? 1 : 0];
+  const lesson = s => s[0] > .72 && s[1] < .28 && s[2] === 1, nearIt = s => s[0] > .55 && s[1] < .45 && s[2] === 1;
+  const taught = n => {
+    let inOk = 0, IN = 0, same = 0, OUT = 0;
+    for (let t = 0; t < 6; t++) {
+      const c = new Coach({ name: `k${n}-${t}`, inputs: 3, actions: ['stay', 'dive', 'rush'], save: false });
+      for (let i = 0; i < 200; i++) { const s = spot(); assert.equal(c.pick(s, rules(s)), rules(s), 'with nothing taught it is the rules'); }
+      for (let i = 0; i < n; i++) c.correct([rnd(.74, 1), rnd(0, .26), 1], 'rush');
+      for (let i = 0; i < 500; i++) { const s = spot(), a = c.pick(s, rules(s)); if (lesson(s)) { IN++; if (a === 'rush') inOk++; } else if (!nearIt(s)) { OUT++; if (a === rules(s)) same++; } }
+    }
+    return { inside: inOk / IN, outside: same / OUT };
+  };
+  const one = taught(1), four = taught(4);
+  assert.ok(one.inside > .9 && one.outside > .9 && four.inside > .97 && four.outside > .93, `a coach changes the lesson's spots and leaves the rest: ${JSON.stringify([one, four])}`);
+  const c = new Coach({ name: 'not', inputs: 3, actions: ['stay', 'dive', 'rush'], save: false });
+  assert.equal(new Coach({ name: 'bare', save: false }).pick([1, 2], 'x'), 'x', 'a coach no kit has shaped yet passes the rules through');
+  for (let i = 0; i < 200; i++) { const s = spot(); c.pick(s, rules(s)); }
+  for (let i = 0; i < 4; i++) c.avoid([rnd(.75, 1), rnd(.6, 1), 1], 'dive');
+  let n = 0, rush = 0; for (let i = 0; i < 1500; i++) { const s = spot(); if (!(s[0] > .78 && s[1] > .63 && s[2] === 1)) continue; n++; if (c.pick(s, ['dive', 'rush', 'stay']) === 'rush') rush++; }
+  assert.ok(rush / n > .95 && c.recalled && c.recalled.not && c.recalled.action === 'dive', `"not this" goes to the rules' next best: ${rush}/${n} ${JSON.stringify(c.recalled)}`);
+  assert.equal(c.pick([.9, .9, 1], ['dive', 'stay']), 'stay', 'and never to a move that is not in the list');
+  assert.ok(c.lean([.9, .9, 1])[1] < -3 && c.lean([.1, .1, 0]) === null && c.heed === 2 && c.corrections.length === 4, 'lean, heed and corrections say what it holds');
+  const mem = new Map(), api = { brains: { load: k => mem.get(k) ?? null, save: (k, t) => (mem.set(k, t), true) } };
+  const a = new Coach(api, { name: 'kept', inputs: 3, actions: ['stay', 'dive', 'rush'] }); a.pick([.9, .1, 1], 'stay'); a.correct('rush'); a.correct([.8, .2, 1], 'rush');
+  const b = new Coach(api, { name: 'kept' }); assert.equal(b.pick([.85, .15, 1], 'stay'), 'stay', 'unshaped: the rules'); b.shape(3, ['stay', 'dive', 'rush']);
+  assert.ok(b.corrections.length === 2 && b.pick([.85, .15, 1], 'stay') === 'rush' && mem.get('kept').length < 120, 'saved with the game\'s brains and read back once a kit shapes it');
+  b.uncorrect('nonsense'); assert.equal(b.corrections.length, 2); b.uncorrect(); assert.equal(new Coach(api, { name: 'kept', inputs: 3, actions: ['stay', 'dive', 'rush'] }).corrections.length, 0, 'uncorrect() forgets');
+
+  // a team: out wide near the goal its rules shoot; told "pass" there three times, it passes from out wide and still shoots from the middle
+  const P = new Pitch({ w: 300, h: 500 }), mk = coach => { const t = new Team(P, 0, { formation: '2-2', rnd: () => .5, coach }); t.players[1].x = 150; t.players[1].y = 95; t.players[2].x = 60; t.players[2].y = 300; t.players[3].x = 240; t.players[3].y = 300; return t; };
+  const foes = [{ x: 150, y: 6 }, { x: 150, y: 260 }], doAt = (t, x, y) => { const p = t.players[0]; p.x = x; p.y = y; return t.think({ ball: { x, y, vx: 0, vy: 0, owner: p }, foes }, 1).get(p); };
+  const plain = mk(null), team = mk(true);
+  for (let i = 0; i < 150; i++) { const x = rnd(20, 280), y = rnd(30, 470), u = doAt(plain, x, y), v = doAt(team, x, y); assert.ok(u.do === v.do && u.x === v.x && u.y === v.y, `a coached team with nothing taught plays as before: ${u.do} ${v.do}`); }
+  for (const [x, y] of [[40, 70], [55, 95], [45, 85]]) { assert.equal(doAt(plain, x, y).do, 'shoot', 'its rules shoot from out wide'); doAt(team, x, y); team.coach.correct('pass'); }
+  let wide = 0, mid = 0, far = 0; for (let i = 0; i < 40; i++) { if (doAt(team, rnd(30, 60), rnd(65, 110)).do === 'pass') wide++; if (doAt(team, rnd(130, 170), rnd(100, 125)).do === 'shoot') mid++; const x = rnd(20, 280), y = rnd(250, 470); if (doAt(team, x, y).do === doAt(plain, x, y).do) far++; }
+  assert.ok(wide >= 36 && mid >= 36 && far >= 36 && team.coach.recalled === null, `a team told "pass" out wide passes there, and plays its own game elsewhere: ${wide} ${mid} ${far}`);
+  team.coach.uncorrect(); for (const [x, y] of [[150, 110], [140, 120], [160, 105]]) { doAt(team, x, y); team.coach.avoid('shoot'); }
+  assert.ok(doAt(team, 150, 112).do !== 'shoot' && doAt(team, 150, 30).do === 'shoot', '"not a shot from there" and he passes or runs on; close in he still shoots');
+
+  // a squad: the man at the back who can't see the target is told to go round; then he does, in spots like it
+  const sees = (m, t) => Math.abs(m.x - t.x) < 6, men = () => [{ x: 2, y: 8 }, { x: 4, y: 9 }, { x: 14, y: 16 }], tgt = { x: 3, y: 0 };
+  const run = (sq, ms, far) => { ms[2].x = far.x; ms[2].y = far.y; sq.nextThink = 0; sq.lastFlank = sq.t; sq.update(.01, tgt); return ms[2].order.role; };
+  const m0 = men(), m1 = men(), s0 = new Squad(m0, { sees, think: .1, rng: () => .5, cover: false }), s1 = new Squad(m1, { sees, think: .1, rng: () => .5, cover: false, coach: true });
+  for (let i = 0; i < 60; i++) { const f = { x: rnd(0, 20), y: rnd(4, 20) }; run(s0, m0, f); run(s1, m1, f); assert.deepEqual(m1.map(m => m.order.role), m0.map(m => m.order.role), 'a coached squad with nothing taught gives the orders it always did'); }
+  for (const f of [{ x: 14, y: 16 }, { x: 15, y: 15 }, { x: 13, y: 17 }]) { assert.equal(run(s0, m0, f), 'advance', 'its rules send him forward'); run(s1, m1, f); s1.correct(m1[2], 'flank'); }
+  assert.ok(run(s1, m1, { x: 14.5, y: 16.5 }) === 'flank' && s1.recalled(m1[2]).action === 'flank' && m1[0].order.role !== 'flank', `told to go round, he does (${m1[2].order.role}), and the others are as they were`);
+  s1.coach.uncorrect(); for (const f of [{ x: 14, y: 16 }, { x: 15, y: 15 }, { x: 13, y: 17 }]) { run(s1, m1, f); s1.avoid(m1[2], 'advance'); }
+  assert.ok(run(s1, m1, { x: 14.2, y: 16.2 }) !== 'advance' && s1.recalled(m1[2]).not && run(s1, m1, { x: 3, y: 9 }) === run(s0, m0, { x: 3, y: 9 }), `"not what he was told, there" and he is given the next role (${m1[2].order.role})`);
+  // "not that cover"
+  const lv = ['..........', '..#....#..', '..........', '..........', '..........'], cm = new CoverMap(10, 5, (cc, r) => lv[r]?.[cc] === '#');
+  const from = { x: 2.5, y: 3.5 }, threat = { x: 2.5, y: -6 }, first = cm.find(from, threat, { band: [0, 99] });
+  cm.avoid(first); const second = cm.find(from, threat, { band: [0, 99] }); cm.forgive();
+  assert.ok(first && second && second !== first && cm.find(from, threat, { band: [0, 99] }) === first, 'cover.avoid(spot): the next man takes other cover; forgive() takes it back');
+
+  // a pet's wants: it sleeps when tired; told to eat when it is tired AND starving, it does, and still sleeps when only tired
+  const s = { food: .5, tired: .5, near: 0 }, want = new Choose({ eat: [() => 1 - s.food, Choose.quad], sleep: () => s.tired, play: () => s.near * .5 }, { stick: 0, coach: true });
+  const wants = (food, tired) => { s.food = food; s.tired = tired; return want.pick(); };
+  for (let i = 0; i < 100; i++) wants(R(), R());
+  for (const [f, t] of [[.1, .9], [.15, .85], [.05, .95]]) { wants(f, t); assert.ok(want.scores.sleep > want.scores.eat, 'its own scores say sleep'); want.coach.correct('eat'); }
+  let eats = 0, sleeps = 0; for (let i = 0; i < 30; i++) { if (wants(rnd(.05, .15), rnd(.85, .95)) === 'eat') eats++; if (wants(rnd(.6, .9), rnd(.7, .95)) === 'sleep') sleeps++; }
+  assert.ok(eats >= 28 && sleeps >= 28, `a coached Choose: ${eats} ${sleeps}`);
+
+  // a tree: "not Chase when weak" and it walks instead; told "Flee when cornered", the Told branch takes it
+  const me = { hp: 10, sees: true, cornered: 0, log: [] };
+  const tree = new Tree(`root { selector {
+      sequence { condition [Told, "Flee"] action [Flee] }
+      sequence { condition [Sees] action [Chase] }
+      action [Walk]
+  } }`, { Sees: () => me.sees, Flee: () => { me.log.push('flee'); return Tree.ok; }, Chase: () => { me.log.push('chase'); return Tree.ok; }, Walk: () => { me.log.push('walk'); return Tree.ok; } },
+  { coach: true, see: () => [me.hp / 10, me.cornered] });
+  const does = (hp, cornered) => { me.hp = hp; me.cornered = cornered; me.log.length = 0; tree.update(.1); return me.log[me.log.length - 1]; };
+  for (let i = 0; i < 100; i++) assert.equal(does(rnd(0, 10), R() < .3 ? 1 : 0), 'chase', 'a coached tree with nothing taught runs as written');
+  for (const hp of [1, 2, 1.5]) { does(hp, 0); tree.avoid('Chase'); }
+  assert.ok(does(1.2, 0) === 'walk' && tree.told.not && does(8, 0) === 'chase', 'an action told "not here" fails there, and the tree goes on to its next branch');
+  for (const hp of [6, 7, 8]) { me.hp = hp; me.cornered = 1; tree.correct('Flee'); }
+  assert.ok(does(7.5, 1) === 'flee' && does(7.5, 0) === 'chase', `Told is true in moments like the ones it was told about: ${me.log}`);
+  console.log(`brains 7: a coach for rules: one example ${(one.inside * 100).toFixed(0)}% in the lesson's spots and ${(one.outside * 100).toFixed(0)}% unchanged elsewhere, four ${(four.inside * 100).toFixed(0)}% and ${(four.outside * 100).toFixed(0)}%; "not this", saved; a team, a squad, cover, a Choose and a tree take it ok`);
+}
+
 // ---- round 6 game kits
 {
   const { Board } = await import('../src/kit/board.js');
