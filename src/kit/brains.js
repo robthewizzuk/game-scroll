@@ -565,7 +565,7 @@ class Memory {
  *               and brain.avoid() add more while the game runs)
  *   memory      remember which move made things exciting in which kind of spot, learned at once from
  *               feel(), and lean on it (false). true, or { margin: how much better a move must have gone
- *               before it counts, in typical feel()s (.33), curious: share of decisions it tries a move it
+ *               before it counts, in typical feel()s (.2), curious: share of decisions it tries a move it
  *               has never made in a spot like this (0), erase: forget a choice's moves when they keep
  *               being wrong (true) }. For games that call feel() often (most decisions); brain.remembered
  *               says when it changed a move. It also keeps the trust per kind of disagreement with the teacher.
