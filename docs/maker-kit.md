@@ -3,6 +3,8 @@
 Ready-made tools for making games feel good, so you can spend your time on the idea and not on
 plumbing. Everything here is built into the app, made in code (no image or sound files), and works
 in every style. The `npm run new` templates use all of it, so they are the quickest way to see it.
+For one part at a time, each has a short page in [docs/kits/](kits/README.md) (its types, these examples and the
+shortest real games that use it), sized for AI tools to read only what they need.
 
 Games use all of it through one import, `gs`:
 

@@ -723,13 +723,96 @@ export interface IconsPart {
   remembered(): number;
 }
 
+/** Options for every shape a 2D Physics makes. */
+export interface PhysicsShapeOptions {
+  /** 0..1 (default .1). */ bounce?: number; /** 0..1 (default .4). */ friction?: number; /** Heavier per area (default 1). */ density?: number;
+  /** Never moves. */ fixed?: boolean; /** Moves only where you place() it: platforms, paddles. */ moving?: boolean;
+  /** Reports hits but doesn't push: pickups, goal zones. */ sensor?: boolean; /** Fast things that mustn't pass through walls. */ bullet?: boolean;
+  /** Stays upright: players. */ noSpin?: boolean; angle?: number; spin?: number; vx?: number; vy?: number; drag?: number; spinDrag?: number;
+  /** Gravity multiplier: 0 floats. */ gravity?: number; /** 1-14: things in the same group never hit each other. */ group?: number; tag?: string;
+  /** The simple World: mass in kg (else density by size). */ mass?: number;
+}
+/** One body in a 2D Physics world, in game units (pixels, y down); angles in radians, clockwise on screen. */
+export interface PhysicsThing {
+  x: number; y: number; angle: number; vx: number; vy: number; spin: number;
+  /** Smoothed between ticks (games with tick: 60): draw at these. */ readonly sx: number; readonly sy: number; readonly sangle: number;
+  readonly speed: number; readonly fixed: boolean; readonly sleeping: boolean; readonly mass: number;
+  bounce: number; friction: number; sensor: boolean; tag: string | undefined;
+  readonly kind: 'circle' | 'box' | 'poly' | 'line' | 'tiles'; readonly dead: boolean;
+  /** circle radius; box width and height; poly and line points. */ r?: number; w?: number; h?: number; points?: number[][]; loop?: boolean;
+  /** [left, top, right, bottom] in game units. */ readonly bounds: [number, number, number, number];
+  /** Moves it straight to (x, y), optionally turned to angle. */ place(x: number, y: number, angle?: number): this;
+  /** An instant kick in game units per second: push(0, -400) is a jump. At (px, py) it also spins. */ push(ix: number, iy: number, px?: number, py?: number): this;
+  /** A steady push for this frame (call it every update): thrusters, wind, magnets. Same units as gravity. */ force(fx: number, fy: number): this;
+  /** Spins it up by amount radians a second. */ twist(amount: number): this;
+  /** Is the point inside it? */ contains(px: number, py: number): boolean;
+  /** The things it is touching now. */ touching(): PhysicsThing[];
+  /** Standing on something (for "can jump")? */ onGround(gap?: number): boolean;
+  remove(): void;
+  /** A tiles() thing: remake it after changing tiles. */ rebuild?(): void;
+  /** Rapier's own body and collider, for anything the kit leaves out. */ body: Loose; collider: Loose;
+  [yours: string]: Loose;
+}
+/** A joint between two things (null = the world). */
+export interface PhysicsJoint { readonly kind: string; readonly a: PhysicsThing | null; readonly b: PhysicsThing | null; readonly dead: boolean; joint: Loose; remove(): void;
+  /** Hinges and wheels: the motor's speed (radians a second) and strength. */ motor?(speed: number, strength?: number): void }
+/** A 2D world (Rapier): make it in make() or reset(), call step(dt) once an update. Everything in game units. */
+export interface PhysicsWorld {
+  /** Everything in it, walls too. */ readonly things: PhysicsThing[]; readonly joints: PhysicsJoint[];
+  /** Game units per metre (default 30). */ readonly scale: number; gravity: { x: number; y: number }; readonly time: number;
+  circle(x: number, y: number, r: number, o?: PhysicsShapeOptions): PhysicsThing;
+  /** x, y is its centre. */ box(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing;
+  /** A convex shape from points [[x, y], ...] relative to (x, y). */ poly(x: number, y: number, points: number[][], o?: PhysicsShapeOptions): PhysicsThing;
+  /** A fixed line or ground through points [[x, y], ...] (game positions): hills, slopes, ramps. */ line(points: number[][], o?: PhysicsShapeOptions & { loop?: boolean }): PhysicsThing;
+  /** Solid walls round a rectangle (tag 'wall'). */ walls(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing;
+  remove(thing: PhysicsThing): void; clear(): void;
+  /** Free the engine's memory (the app does it when the card leaves the feed). */ free(): void;
+  /** Moves a box your code steers (a gs.movers Platformer or TopDown, a Car, any { x, y, w, h } or { x, y, r }) as far as the world lets it:
+   *  stops at walls and slides along them, walks up steps and slopes, keeps to the ground going down, shoves loose things. */
+  move(box: { x: number; y: number; w?: number; h?: number; r?: number; [k: string]: Loose }, dx: number, dy: number, o?: { step?: number | null; slope?: number; snap?: number | null; mass?: number; angle?: number | null; drop?: boolean }): TileHit & { hits: { thing: PhysicsThing; nx: number; ny: number; x: number; y: number }[] };
+  /** Takes a box moved with move() out of the world. */ unmove(box: Loose): this;
+  /** Makes a gs.tiles TileMap solid (walls, slopes, one-way ledges); call rebuild() on what it returns after changing tiles. */
+  tiles(map: TileMap, o?: { friction?: number; bounce?: number; tag?: string }): PhysicsThing;
+  /** The shapes near a box, for things that aren't bodies (points, particles) to stay out of with outOf(). */ near(x0: number, y0: number, x1: number, y1: number, pad?: number): Loose[];
+  /** Keeps a point of radius r out of the shapes from near(): null if clear. */ outOf(x: number, y: number, r: number, shapes: Loose[]): { x: number; y: number; nx: number; ny: number; depth: number; thing: PhysicsThing } | null;
+  /** A hinge (pin) at (x, y): doors, flippers, wheels, pendulums. min / max limit the swing. */ hinge(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { min?: number; max?: number; motor?: number; strength?: number }): PhysicsJoint;
+  /** stiffness: bounces a second (2-6), damping 0..1, length: rest length (default as placed). */ spring(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, o?: { stiffness?: number; damping?: number; length?: number }): PhysicsJoint;
+  /** The two points can't get further apart than length. */ leash(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, length?: number): PhysicsJoint;
+  /** Glues b to a at (x, y). */ weld(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number): PhysicsJoint;
+  /** Along (dx, dy) through (x, y): lifts, pistons, sliding doors. */ slider(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, dx: number, dy: number, o?: { min?: number; max?: number; motor?: number; strength?: number }): PhysicsJoint;
+  /** b spins on a hinge at (x, y) of a; later h.motor(speed). */ wheel(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { motor?: number; strength?: number }): PhysicsJoint;
+  /** A rope of small links from a (null = the world) to b (undefined = loose). Cut it by removing one joint. */
+  rope(a: PhysicsThing | null, x1: number, y1: number, b: PhysicsThing | null | undefined, x2: number, y2: number, o?: PhysicsShapeOptions & { links?: number; thick?: number }): { links: PhysicsThing[]; joints: PhysicsJoint[]; remove(): void };
+  /** A floppy person of 10 hinged parts, hips at (x, y); size: head-to-toe height; face 1 right, -1 left. */
+  ragdoll(x: number, y: number, o?: PhysicsShapeOptions & { size?: number; face?: number }): { parts: Record<'head' | 'chest' | 'armL' | 'foreL' | 'armR' | 'foreR' | 'legL' | 'shinL' | 'legR' | 'shinR', PhysicsThing>; list: PhysicsThing[]; joints: PhysicsJoint[]; push(vx: number, vy: number): void; remove(): void; draw(c: CanvasRenderingContext2D, colour?: string): void };
+  /** Drag with a finger: grab in down() (null if nothing's there), move in move(), release in up(). */
+  grab(x: number, y: number, o?: { strength?: number; filter?: (t: PhysicsThing) => boolean }): { thing: PhysicsThing; move(x: number, y: number): void; release(): void } | null;
+  /** The thing at a point, or null. */ at(x: number, y: number, filter?: (t: PhysicsThing) => boolean): PhysicsThing | null;
+  /** Every thing overlapping the box. */ inBox(x: number, y: number, w: number, h: number): PhysicsThing[];
+  /** The first thing a ray hits, or null. */ ray(x1: number, y1: number, x2: number, y2: number, filter?: (t: PhysicsThing) => boolean): { thing: PhysicsThing | null; x: number; y: number; nx: number; ny: number; distance: number } | null;
+  /** Throws everything near (x, y) outward. */ blast(x: number, y: number, radius: number, strength?: number): void;
+  /** fn(a, b, speed, x, y) when two things start touching; safe to remove things in it. */ onHit(fn: (a: PhysicsThing, b: PhysicsThing, speed: number, x: number, y: number) => void): this;
+  /** Moves the world on by dt seconds (once per update). */ step(dt: number): void;
+  /** The canvas path of a thing's shape, ready for c.fill() or c.stroke(). */ path(c: CanvasRenderingContext2D, t: PhysicsThing): void;
+  /** Outlines every thing and joint (from your game's debug(c)). */ debugDraw(c: CanvasRenderingContext2D, color?: string): void;
+  toWorld(v: number): number; toGame(m: number): number;
+  /** Rapier's own world and module. */ world: Loose; R: Loose;
+}
+/** gs.physics.World: a Physics with balls and upright boxes whose mass goes by their size. */
+export interface PhysicsSimpleWorld extends Omit<PhysicsWorld, 'onHit' | 'near'> {
+  /** The bodies in it (not its walls). */ readonly bodies: PhysicsThing[];
+  /** fn(a, b, speed) when two bodies meet with some speed (b null for a wall). */ onHit(fn: (a: PhysicsThing, b: PhysicsThing | null, speed: number) => void): this;
+  /** Bodies overlapping a circle; with four numbers or more, Physics' near(). */ near(x: number, y: number, r: number, ...rest: number[]): Loose[];
+}
+
 /** Rapier 2D (lazy: make it in make() or reset()). */
 export interface PhysicsPart {
-  Physics: new (o?: { gravity?: number; walls?: number[]; [k: string]: Loose }) => Loose;
-  /** What a Physics makes (for instanceof). Fields to read or set: x, y, vx, vy, angle, spin, bounce, friction, sensor, tag; to read: mass, fixed, sleeping, kind, bounds ([left, top, right, bottom]). */
-  Body: Loose;
+  /** gravity: downward pull in game units a second² (or { x, y }); scale: game units per metre (30); walls: [x, y, w, h] puts solid walls round it. */
+  Physics: new (o?: { gravity?: number | { x: number; y: number }; scale?: number; walls?: number[] | null; link?: boolean }) => PhysicsWorld;
+  /** What a Physics makes (for instanceof, not new). */
+  Body: Function;
   /** The simple world: a Physics (the same engine, every method) with a few names of its own: balls and upright boxes whose mass goes by their size in game units, `bodies`, `near(x, y, r)`, `onHit((a, b, speed) => ...)` with b null for a wall. */
-  World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => Loose;
+  World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => PhysicsSimpleWorld;
   loadPhysics(): Promise<Loose>; physicsReady(): boolean;
 }
 
@@ -1563,7 +1646,117 @@ export interface HdShadowFit { width: number; height: number; texel: number }
 export interface ArPart { ARView: new (...a: Loose[]) => Loose; FLOOR: Loose; arNote: Loose; markerArt: (seed?: number, size?: number) => HTMLCanvasElement; THREE: Loose }
 export interface BricksPart { BRICK: Loose; BRICK_KEYS: Loose; STUD: Loose; brick: Loose; brick3d: Loose; stud: Loose; stud3d: Loose }
 /** Rapier 3D (lazy). */
-export interface Physics3dPart { World3D: new (o?: Loose) => Loose; loadPhysics3D(): Promise<Loose>; physics3DReady(): boolean }
+/** Options for every body a World3D makes. */
+export interface Body3DOptions {
+  bounce?: number; friction?: number; density?: number; /** Never moves. */ fixed?: boolean; /** You place() it: lifts, doors. */ moving?: boolean;
+  /** Reports hits, doesn't push: pickups, goals. */ sensor?: boolean; /** Fast things. */ bullet?: boolean; noSpin?: boolean; drag?: number; spinDrag?: number;
+  /** Gravity multiplier. */ gravity?: number; vel?: XYZ | number[]; /** 1-14: same group never collide. */ group?: number;
+  /** Start position with no mesh. */ at?: XYZ; tag?: string; /** What it is made of, for gs.sound.Foley: 'wood', 'metal', 'stone'... (else read from its mesh). */ sound?: string;
+}
+/** One body in a World3D. Its mesh follows it. */
+export interface Body3D {
+  readonly pos: XYZ; readonly vel: XYZ; readonly spin: XYZ; readonly speed: number; readonly fixed: boolean; readonly sleeping: boolean; readonly mass: number;
+  readonly kind: string; readonly mesh: Loose; tag: string | undefined; readonly dead: boolean;
+  /** Moves it straight there (x, y, z or a point), turned by a quaternion. */ place(x: number | XYZ, y?: number, z?: number, quat?: { x: number; y: number; z: number; w: number }): this;
+  setVel(x: number | XYZ, y?: number, z?: number): this; setSpin(x: number | XYZ, y?: number, z?: number): this;
+  /** An instant change of speed in metres a second: push(0, 6, 0) is a hop. */ push(x: number | XYZ, y?: number, z?: number): this;
+  /** Spins it up (radians a second about each axis). */ twist(x: number, y: number, z: number): this;
+  /** What it is touching now. */ touching(): Body3D[];
+  remove(): void;
+  /** Rapier's own body and collider. */ body: Loose; collider: Loose;
+  [yours: string]: Loose;
+}
+/** A walking character (World3D.mover): walks into walls without going through, climbs steps and slopes, stays on the ground. */
+export interface Mover3D {
+  readonly pos: XYZ; /** Feet position. */ readonly feet: XYZ; readonly grounded: boolean; vx: number; vy: number; vz: number; readonly height: number; readonly radius: number;
+  /** Walks at (vx, vz) metres a second this frame (call every update). */ walk(vx: number, vz: number): this;
+  /** Jumps at speed metres a second (on the ground, unless force). */ jump(speed?: number, force?: boolean): this;
+  /** Moves it straight there, its feet. */ place(x: number | XYZ, y?: number, z?: number): this;
+  remove(): void;
+  [yours: string]: Loose;
+}
+/** Something your own code moves, solid in the world (World3D.rider): karts, boats, drones, lifts. */
+export interface Rider3D {
+  /** Its underside's middle. */ readonly pos: XYZ; readonly moved: number; readonly grounded: boolean;
+  /** What it ran into this move, normals out of the things. */ readonly hits: { thing: Body3D | Mover3D | Rider3D; normal: XYZ; point: XYZ }[];
+  /** The first hit facing sideways (a wall, a crate), or null. */ readonly wall: { thing: Body3D | Mover3D | Rider3D; normal: XYZ; point: XYZ } | null;
+  /** Moves it by (dx, dy, dz) metres as far as the world lets it, turned turn radians about y (or a quaternion). */ slide(dx: number, dy: number, dz: number, turn?: number | { x: number; y: number; z: number; w: number } | null, dt?: number): this;
+  /** slide() to a point (its underside). */ move(x: number, y: number, z: number, turn?: number | { x: number; y: number; z: number; w: number } | null, dt?: number): this;
+  /** Puts it straight there with nothing in between. */ place(x: number, y: number, z: number, turn?: number | null): this;
+  remove(): void;
+  [yours: string]: Loose;
+}
+/** A car with real suspension (World3D.vehicle). */
+export interface Vehicle3D {
+  readonly chassis: Body3D; power: number; brakes: number; maxSteer: number;
+  /** throttle -1..1, steer -1..1 (left -1), brake. Call every update. */ drive(throttle?: number, steer?: number, brake?: boolean): this;
+  /** Metres a second forward (negative backwards). */ readonly speed: number;
+  readonly grounded: boolean; /** On its roof or side. */ readonly upsideDown: boolean; /** A motorbike that went over. */ readonly fallen: boolean;
+  /** Back upright where it is, a little above the ground. */ rightUp(lift?: number): this;
+  remove(): void;
+  [yours: string]: Loose;
+}
+/** A jointed ragdoll (World3D.ragdoll). */
+export interface Ragdoll3D {
+  readonly parts: Body3D[];
+  /** Throws it (metres a second). */ push(x: number, y: number, z: number): this;
+  /** Hits one part (a name on a rigged person: 'head', 'armL'...). */ hit(part: string | Body3D, x: number, y: number, z: number, at?: XYZ): this;
+  /** A rigged person's part by name. */ part?(name: string): Body3D | undefined;
+  /** Muscles: joints pull towards a pose (the rig's angles from rest), strength 0 limp to 1 firm. */ drive?(pose: Record<string, number[]>, strength?: number): this;
+  relax?(): this; still?(): boolean;
+  /** Takes the physics away; the parts stay where they lie. */ remove(): void;
+  [k: string]: Loose;
+}
+export interface Joint3D { remove(): void; joint: Loose; [k: string]: Loose }
+export interface RayHit3D { thing: Body3D | Mover3D | Rider3D | null; point: XYZ; normal: XYZ; distance: number; /** A shapes() part of yours. */ part?: Loose; /** The mesh hit, worked out when asked. */ readonly mesh: Loose }
+/** A Rapier 3D world: make it in make() or reset(), step(dt) each update. Metres, y up. */
+export interface World3DT {
+  readonly bodies: Body3D[]; readonly movers: Mover3D[]; readonly riders: Rider3D[]; readonly vehicles: Vehicle3D[];
+  /** Where Rapier's own centre is (x and z): see centre(). */ readonly at: XYZ;
+  ball(mesh: Loose, r?: number, o?: Body3DOptions): Body3D;
+  /** A box of full size w × h × d. */ box(mesh: Loose, w?: number, h?: number, d?: number, o?: Body3DOptions): Body3D;
+  /** An upright capsule; height includes the round ends. */ capsule(mesh: Loose, radius?: number, height?: number, o?: Body3DOptions): Body3D;
+  /** A dynamic body shaped like the mesh's outline. */ hull(mesh: Loose, o?: Body3DOptions): Body3D;
+  /** A body of a plain shape: { box: [w, h, d] } | { ball: r } | { capsule: [r, h] } | { hull: points }, with off and turn. */
+  shape(mesh: Loose, spec: { box?: number[]; ball?: number; capsule?: number[]; hull?: number[] | XYZ[]; off?: XYZ; turn?: Loose }, o?: Body3DOptions): Body3D;
+  /** Many still shapes in one fixed body (lamp posts, tree trunks): each a shape() spec with at, turn and part. */
+  shapes(list?: Loose[], o?: Body3DOptions): Body3D & { add(shape: Loose): Loose; drop(part: Loose): void; set(part: Loose, at: XYZ, turn?: number | Loose): void };
+  /** Makes a mesh (and everything inside it) solid and fixed: the level. */ ground(mesh: Loose, o?: Body3DOptions): Body3D;
+  /** Solid ground from a grid of (cols + 1) × (rows + 1) heights. */ heights(o: { data: ArrayLike<number>; cols: number; rows: number; x?: number; z?: number; width: number; depth?: number }, o2?: Body3DOptions): Body3D;
+  /** A flat endless floor at height y. */ floor(y?: number, o?: Body3DOptions): Body3D;
+  /** A walking character: radius, height, step (tallest step), slope (degrees), at. */ mover(mesh: Loose, o?: { radius?: number; height?: number; step?: number; slope?: number; gravity?: number; at?: XYZ }): Mover3D;
+  /** Something your code moves, solid: one of box [w, h, l], ball r, capsule [r, h]. */
+  rider(o?: { box?: number[]; ball?: number; capsule?: number[]; round?: number; at?: XYZ; turn?: number; lift?: number; step?: number; slope?: number; snap?: number; mass?: number; push?: boolean; tag?: string; sound?: string }): Rider3D;
+  /** The height of the first solid thing under (x, z) at or below y + reach, or null. */ floorAt(x: number, y?: number, z?: number, reach?: number, not?: Body3D | Mover3D | Rider3D | null): number | null;
+  /** A car with suspension: chassis w, h, l, wheel meshes, power, grip, steer, at; bike: true for a motorbike. */
+  vehicle(mesh: Loose, o?: { w?: number; h?: number; l?: number; density?: number; wheels?: Loose[]; radius?: number; rest?: number; travel?: number; stiffness?: number; damping?: number; grip?: number; power?: number; brakes?: number; steer?: number; at?: XYZ; tag?: string; dents?: boolean; bike?: boolean; fall?: number }): Vehicle3D;
+  /** A hinge at p about axis (default y: a door); min/max (radians), motor. */ hinge(a: Body3D | null, b: Body3D | null, p: XYZ, axis?: XYZ, o?: { min?: number; max?: number; motor?: number; strength?: number }): Joint3D;
+  /** Ball and socket at p. */ pin(a: Body3D | null, b: Body3D | null, p: XYZ): Joint3D;
+  /** Glues b to a where they are now. */ weld(a: Body3D | null, b: Body3D | null): Joint3D;
+  spring(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, o?: { stiffness?: number; damping?: number; length?: number }): Joint3D;
+  leash(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, length?: number): Joint3D;
+  remove(thing: Body3D | Mover3D | Rider3D | Vehicle3D): void; clear(): void;
+  /** A character goes floppy: a gs.poses-rigged person (figure, person, gs.models.human) as one jointed body, or a Group with limbs. */
+  ragdoll(root: Loose, o?: { limbs?: Loose[]; push?: number[] | XYZ; [k: string]: Loose }): Ragdoll3D;
+  /** The first thing along a ray from `from` in direction dir, up to max metres. */ ray(from: XYZ, dir: XYZ, max?: number, filter?: Loose): RayHit3D | null;
+  /** The first thing a moving { ball } / { box } / { capsule } meets. */
+  sweep(shape: { ball?: number; box?: number[]; capsule?: number[] }, from: XYZ, move: XYZ, o?: { still?: boolean; not?: Loose; turn?: Loose }): { thing: Body3D | null; point: XYZ; normal: XYZ; distance: number; share: number; at: XYZ } | null;
+  /** The shapes in a box of the world, for outOf(). */ around(lo: XYZ, hi: XYZ, pad?: number): Loose[];
+  /** Keeps a point of radius r out of the shapes from around(): null if clear. */ outOf(p: XYZ, r: number, shapes: Loose[], from?: XYZ | null): { x: number; y: number; z: number; nx: number; ny: number; nz: number; depth: number; thing: Body3D } | null;
+  /** Every body within radius of a point. */ near(p: XYZ, radius: number): Body3D[];
+  /** Throws everything near p outward (metres a second at the centre). */ blast(p: XYZ, radius: number, strength?: number): void;
+  /** fn(a, b, speed, contact) when two things start touching; contact.at, contact.normal. */ onHit(fn: (a: Loose, b: Loose, speed: number, contact: { readonly at: XYZ | null; readonly normal: XYZ | null }) => void): this;
+  /** Keeps the bodies in Rapier about (x, z) (the world does it by itself from the view). */ centre(x: number, z: number): void;
+  inner(p: XYZ): XYZ; outer(p: XYZ): XYZ;
+  /** Moves the world on by dt seconds and puts the meshes where their bodies are. */ step(dt: number): void;
+  /** Free the engine's memory (the app does it when the card leaves the feed). */ free(): void;
+  /** Rapier's own world. */ world: Loose;
+}
+export interface Physics3dPart {
+  /** gravity: metres a second² (negative is down) or { x, y, z }; smooth: meshes drawn between ticks (tick: 60 games). */
+  World3D: new (o?: { gravity?: number | XYZ; smooth?: boolean; link?: boolean }) => World3DT;
+  loadPhysics3D(): Promise<Loose>; physics3DReady(): boolean;
+}
 /** A place in 3D for gs.fx3d: { x, y, z } (a three.js Vector3 fits). */
 export interface Fx3dPos { x?: number; y?: number; z?: number }
 /** A piece of text in the 3D world (a three.js Mesh: add it to a scene or a model). Change a field, then sync(). */
