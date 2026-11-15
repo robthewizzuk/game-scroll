@@ -68,7 +68,7 @@ Open the printed URL in a desktop browser or on your phone (same Wi-Fi). To jump
 game, open the browser console and run `__gs.only('my-game')`. Desktop keys: Space/Enter to start,
 arrows to steer, ↓ for the next game. Press `` ` `` (backquote) for the debug overlay: frame rate, slow
 motion, frame stepping and hitboxes. Save your file and the game reloads in place (hot reload), and
-`gs.tweak({ speed: 3 })` gives you sliders to tune numbers while you play. `npm run budget my-game`
+`gs.tweak('Feel', { speed: [3, 1, 6, 'how fast you run'] })` gives you sliders to tune numbers while you play (the templates keep their feel numbers in one such block of knobs; **Save to file** writes the sliders back, and `npm run knobs my-game` lists or changes them; [docs/feel-words.md](docs/feel-words.md) says which knob *floatier*, *snappier* or *fairer* moves). `npm run budget my-game`
 checks it's fast enough for a mid-range phone. For opponents that learn as people play, see
 [Tiny Brains](docs/maker-kit.md#tiny-brains). Boards, battles, made levels, drag and drop, idle maths,
 pass-and-play, rhythm, drawn shapes, vehicles, 3D text levels and weather are in

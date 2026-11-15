@@ -17,9 +17,19 @@ function make(api) {
   const feel = new Feel({ pixel: true }), ready = new Ready();
   let world, hook, held, score, fallen, t, settle;
   let best = api.load({ tallest: 0 }).tallest;   // this game's save slot: the tallest tower ever
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    gravity: [500, 200, 1000, 'how hard crates fall (lower is floatier)'],
+    hook: [40, 15, 90, 'how fast the hook swings at the start'],
+    faster: [3, 0, 8, 'how much faster it swings for each crate high'],
+    bounce: [.1, 0, .6, 'how bouncy crates are'],
+    grip: [.8, .1, 1.5, 'how much crates grip each other'],
+    lives: [3, 1, 6, 1, 'crates dropped off before the round ends'],
+  });
 
   function setup() {
-    world = new Physics({ gravity: 500, scale: 16 });   // Rapier: made in reset(), so the engine has loaded
+    world = new Physics({ gravity: K.gravity, scale: 16 });   // Rapier: made in reset(), so the engine has loaded
     world.box(W / 2, H - 8, 70, 16, { fixed: true, tag: 'base' });
     world.onHit((a, b, speed) => { if (speed > 90) feel.hit((a.x + b.x) / 2, Math.max(a.y, b.y) - 6, { power: Math.min(.6, speed / 400), color: C16[1] }); });
   }
@@ -35,12 +45,12 @@ function make(api) {
       if (!ready.update(dt)) return;              // the hook waits for the first tap
       t += dt;
       world.step(dt);                             // one physics step per tick
-      hook.was = hook.x; hook.x += hook.dir * (40 + score * 3) * dt;   // keep where it was: draw() shows the moment between
+      hook.was = hook.x; hook.x += hook.dir * (K.hook + score * K.faster) * dt;   // keep where it was: draw() shows the moment between
       if (hook.x < 20 || hook.x > W - 20) hook.dir *= -1;
       if (!held) { settle -= dt; if (settle <= 0) newCrate(); }
       for (const b of world.things) if (b.tag === 'crate' && b.y > H + 20) {
         world.remove(b); fallen++; feel.hurt();
-        if (fallen >= 3) { feel.lose(); api.over(); }
+        if (fallen >= K.lives) { feel.lose(); api.over(); }
       }
       // score: how many crates high the settled tower is
       const height = Math.round((H - 16 - towerTop()) / 12);
@@ -70,7 +80,7 @@ function make(api) {
     down() {
       if (ready.go()) return;                     // the first tap only starts the round
       if (!held) return;
-      const b = world.box(hook.x, 20 + held.h / 2, held.w, held.h, { tag: 'crate', bounce: .1, friction: .8 });
+      const b = world.box(hook.x, 20 + held.h / 2, held.w, held.h, { tag: 'crate', bounce: K.bounce, friction: K.grip });
       b.col = held.col; b.vx = hook.dir * 20; held = null; settle = .6;
       feel.click();
     },

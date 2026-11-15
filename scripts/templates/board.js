@@ -13,6 +13,13 @@ const NAMES = ['You', 'Pip'];
 
 function make(api) {
   let T, dice, pawns, mark, at, stars, turn, state;         // state: 'roll' (waiting for a tap) | 'busy' | 'done'
+  // Knobs: the numbers that set how it feels (docs/feel-words.md). Sliders in npm run dev (Save to file
+  // writes them back); node scripts/knobs.mjs __ID__ lists them. Read K.x where it's used.
+  const K = gs.tweak('Feel', {
+    hop: [.2, .08, .5, 'seconds for a pawn to hop one square'],
+    think: [.6, 0, 2, 'seconds the computer waits before its go'],
+    win: [3, 1, 6, 1, 'stars to win'],
+  });
 
   function setup() {
     T = new Table(api, { span: 9, room: 'study' });
@@ -34,14 +41,14 @@ function make(api) {
   async function takeTurn(who) {
     state = 'busy';
     const [n] = await dice.roll();                          // resolves when the die has settled
-    for (let i = 0; i < n; i++) { at[who] = (at[who] + 1) % N; await T.hop(pawns[who], place(who), { time: .2 }); }
+    for (let i = 0; i < n; i++) { at[who] = (at[who] + 1) % N; await T.hop(pawns[who], place(who), { time: K.hop }); }
     if (STARS.includes(at[who])) {
       stars[who]++; sounds.chime(); haptic('success'); await T.pop(pawns[who]);
       if (who === 0) api.score(stars[0]);
-      if (stars[who] >= 3) { state = 'done'; await T.wait(.8); T.stop(); if (who === 0) api.win(); return api.over(); }
+      if (stars[who] >= K.win) { state = 'done'; await T.wait(.8); T.stop(); if (who === 0) api.win(); return api.over(); }
     }
     turn = 1 - who; state = 'roll';
-    if (turn === 1) { await T.wait(.6); await takeTurn(1); }   // the computer's go
+    if (turn === 1) { await T.wait(K.think); await takeTurn(1); }   // the computer's go
   }
 
   return {

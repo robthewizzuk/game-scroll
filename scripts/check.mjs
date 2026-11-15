@@ -157,7 +157,11 @@ const [lint, types, uniq, build] = await Promise.all([
 }
 if (build) {
   const bad = build.code ? build.out.split('\n').filter(l => /error|Error|cannot|Could not|missing/i.test(l) && !/Deprecation|THREE_CJS/.test(l)).slice(0, 6) : [];
-  step('build', build.code ? 'fail' : 'pass', build.ms, bad.map(l => problem(undefined, l.trim(), "Imports: only import gs from '../gamescroll.js'; every part comes from gs.")));
+  // the streamed build builds every game: an error in another game's file isn't this one's
+  const other = bad.map(l => (l.match(/src\/games\/([\w-]+)\.js/) || [])[1]).find(g => g && g !== id);
+  const mine = bad.filter(l => !other || l.includes(REL) || !/src\/games\//.test(l));
+  if (build.code && other && !bad.some(l => l.includes(REL))) step('build', 'warn', build.ms, [problem(undefined, `another game doesn't build: ${bad.find(l => l.includes(other)).trim()}`, `Not this game's problem, but the build stops there: fix or move src/games/${other}.js.`)]);
+  else step('build', build.code ? 'fail' : 'pass', build.ms, mine.map(l => problem(undefined, l.replace(/^\s*\w*Error:\s*/, '').trim(), /doesn't|add |declare/.test(l) ? 'Do what the message says.' : "Imports: only import gs from '../gamescroll.js'; every part comes from gs.")));
 }
 
 // ---- the checks that play it
@@ -200,9 +204,13 @@ if (!QUICK) {
   }
 }
 
+// ---- the knobs (the numbers that set how it feels), so a change asked for in words has somewhere to go
+const { readKnobs } = await import('./lib/knobs.mjs');
+const knobs = readKnobs(SRC.join('\n')).map(({ at, ...k }) => k);
+
 // ---- the report
 const fails = steps.filter(s => s.status === 'fail'), warns = steps.filter(s => s.status === 'warn');
-const report = { id, style: ERA, ok: !fails.length, failed: fails.map(s => s.name), warnings: warns.map(s => s.name), steps,
+const report = { id, style: ERA, ok: !fails.length, failed: fails.map(s => s.name), warnings: warns.map(s => s.name), steps, knobs,
   advice: steps.find(s => s.name === 'lint')?.notes || [] };
 if (JSONOUT) { console.log(JSON.stringify(report, null, 2)); process.exit(fails.length ? 1 : 0); }
 
@@ -220,6 +228,8 @@ for (const s of steps) {
   }
   if (s.notes.length && s.name === 'unique') console.log('      ' + s.notes.join('; '));
 }
+console.log(knobs.length ? `\nknobs (node scripts/knobs.mjs ${id} changes them; docs/feel-words.md says which to move): ${knobs.map(k => `${k.folder}.${k.key}=${k.value}`).join(', ')}`
+  : `\nknobs: none yet (docs/feel-words.md: keep the numbers that set how it feels in one gs.tweak('Feel', {...}) block)`);
 if (report.advice.length) {
   console.log('\nadvice (kit hints, never failures):');
   for (const h of report.advice) console.log(`  ${REL}:${h.line}  ${h.advice}`);

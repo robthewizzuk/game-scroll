@@ -99,6 +99,8 @@ const HINTS = [
     why: 'an emoji is a different picture on every phone, and some phones don\'t have the newer ones. gs.icons draws 528 icons that look the same everywhere, in any colour: icon(c, \'heart\', x, y, 24, { color: \'#ff5470\' }) (docs/maker-kit.md, Icons)' },
   { file: true, unless: /\b(haptic|hapticPattern|buzz|rumble|Feel)\b/,
     why: 'no haptics. A light buzz on a score and a stronger one on a hit make a phone game feel better: gs.device.haptic(\'light\'), or feel.coin / feel.hit (gs.effects.Feel), which buzz for you' },
+  { file: true, unless: /\btweak\s*\(/,
+    why: 'no knobs. Keep the numbers that set how it feels (speeds, gravity, gaps between spawns, lives) in one block, const K = gs.tweak(\'Feel\', { speed: [110, 40, 240, \'how fast you slide\'] }), and read K.speed where it is used: then "slower" or "floatier" is one number, sliders tune it in npm run dev and Save to file writes it back (docs/feel-words.md)' },
   { file: true, unless: /\bmusic\b|\bstartMic\b|\bgs\s*\.\s*(hear|rhythm)\b/,
     why: 'no music. music: \'chase\' in the definition (or happy, calm, tense, spooky, heroic, sad, silly, puzzle) gives the rounds an original tune that follows the action, in one line' },
 ];
