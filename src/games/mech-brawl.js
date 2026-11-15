@@ -1,5 +1,7 @@
 import gs from '../gamescroll.js';
 const { Timers } = gs.math;
+const { Brain } = gs.brains;
+const SWINGS = ['L', 'R', 'S', 'quickL', 'quickR', 'hold'];
 const { sounds, noise, tone } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
@@ -10,6 +12,12 @@ const { Group, Mesh, InstancedMesh, Object3D, Vector3, CylinderGeometry, SphereG
 // side to throw that fist (left: quick jab, right: heavy hook). Watch the rival: when a fist glows
 // and pulls back, swipe to dodge or hold a thumb down to block. A dodged swing leaves the rival OPEN
 // for double damage. Knock them out to face a tougher one; armour plates fly off on big hits.
+// The rival's swings come from a Tiny Brains rival with a memory: its teacher is the old pattern (a jab
+// from either side, the odd SMASH), and for each swing it may instead throw a quick one or hold back,
+// from how you box (how often you block, dodge, how late you leave it, the health bars). It feels each
+// swing: a dodge at the last moment is the thrill, a block or a hit less so. Its memory keeps which
+// swing gave this player a close call, the win-rate rail keeps the bout fair (a slower wind-up while you
+// are losing), and its visor flashes gold when it throws one it remembered.
 let W = 300, H = 300;
 const RIVALS = [
   { name: 'RUSTBUCKET', col: '#c86a2a', hp: 100, wind: .8, rest: [1.4, 2.4], guard: .25 },
@@ -67,6 +75,27 @@ function make(api) {
   let v, me, foe, sunL, spots, sparks, smoke, debris, built;
   let myHp, foeHp, rival, ri, foeState, foeT, foeSide, open, myGuard, dodge, dodgeT, cool, score, t, msg, fingers, keys, hitFlash, koT, shake, roundT, flying;
   const tmp = new Vector3();
+  const VISOR_RED = new Color('#ff4040'), VISOR_GOLD = new Color('#ffd040');
+  // how this player boxes, kept across bouts: how often they block and dodge (-1 never .. 1 always) and how
+  // late they leave a dodge (-1 early .. 1 at the last moment)
+  const style = { block: 0, dodge: 0, late: 0 };
+  let swingKind = 'L', remembered = 0;
+  // see: 0..2 the habits above, 3 your health, 4 the rival's health
+  const see = () => [style.block, style.dodge, style.late, myHp / 50 - 1, foeHp / rival.hp * 2 - 1];
+  const brain = new Brain(api, {
+    name: 'mech-brawl-rival', inputs: 5, actions: SWINGS, memory: true,
+    // the teacher is the old pattern: a SMASH now and then (more in later rounds), else either fist
+    teacher: () => Math.random() < .22 + ri * .03 ? 'S' : Math.random() < .5 ? 'L' : 'R',
+    limits: { react: .1, perSecond: 10, minNoise: .06 },
+  });
+  // a swing is over: what the rival learns, and how this player boxes
+  function felt(how) {
+    const late = how === 'dodged' ? dodgeT / .45 * 2 - 1 : null;
+    brain.feel(how === 'dodged' ? (late > .3 ? 1 : .35) : how === 'blocked' ? .4 : how === 'hit' ? .1 : 0);
+    style.block += ((how === 'blocked' ? 1 : -1) - style.block) * .2;
+    style.dodge += ((how === 'dodged' ? 1 : -1) - style.dodge) * .2;
+    if (late != null) style.late += (late - style.late) * .3;
+  }
 
   function setup() {
     v = new HDView({ bg: '#05070c', fog: .02, env: .45, sky: '#8090c0', ground: '#201820', amb: .4, fov: 55 }).lampLights(20);
@@ -120,7 +149,7 @@ function make(api) {
     if (foeHp <= 0) ko();
   }
   function ko() {
-    koT = 3; foeHp = 0; const bonus = 500 + ri * 250; score += bonus; api.score(score);
+    koT = 3; foeHp = 0; brain.result(true); const bonus = 500 + ri * 250; score += bonus; api.score(score);
     msg = { txt: 'K.O.!', sub: `+${bonus}`, l: 2.6, col: '#ffd040' }; haptic('success'); sounds.win(); sounds.boom(.8);
     for (let i = 0; i < 3; i++) knockPlate(foe);
   }
@@ -130,16 +159,17 @@ function make(api) {
     later(() => {
       if (koT > 0 || !foe) return;
       const smash = foeSide === 'S';
-      if (dodgeT > 0) { open = 1.3; msg = { txt: 'DODGED · OPEN!', l: 1, col: '#40e8ff' }; haptic('light'); tone(900, { len: .1, wave: 'square', vol: .04, slide: 300 }); return; }
+      if (dodgeT > 0) { felt('dodged'); open = 1.3; msg = { txt: 'DODGED · OPEN!', l: 1, col: '#40e8ff' }; haptic('light'); tone(900, { len: .1, wave: 'square', vol: .04, slide: 300 }); return; }
       let dmg = smash ? 24 : 14;
+      felt(myGuard && !smash ? 'blocked' : 'hit');
       if (myGuard && !smash) { dmg = 4; tone(1500, { len: .05, wave: 'square', vol: .03 }); haptic('medium'); burst(tmp.set(0, 2.6, .9), 10, [2, 2, 2.6], 4); msg = { txt: 'BLOCKED', l: .6, col: '#cfe' }; }
       else { haptic('heavy'); sounds.hurt(.8); noise(.3, { vol: .12, from: 1600, to: 100 }); hitFlash = 1; shake = smash ? 1 : .7; if (Math.random() < .4) knockPlate(me); if (smash && myGuard) msg = { txt: "CAN'T BLOCK A SMASH, DODGE IT", l: 1.2, col: '#ff6a5a' }; }
       myHp -= dmg;
-      if (myHp <= 0) { myHp = 0; sounds.lose(); later(() => api.over(), 900); koT = 99; msg = { txt: 'DOWN!', l: 3, col: '#ff5050' }; }
+      if (myHp <= 0) { myHp = 0; brain.result(false); sounds.lose(); later(() => api.over(), 900); koT = 99; msg = { txt: 'DOWN!', l: 3, col: '#ff5050' }; }
     }, 140);
   }
   function update(dt) { timers.update(dt);
-    t += dt; roundT += dt; cool = Math.max(0, cool - dt); dodgeT = Math.max(0, dodgeT - dt); open = Math.max(0, open - dt); hitFlash = Math.max(0, hitFlash - dt * 2.5); shake = Math.max(0, shake - dt * 2);
+    t += dt; roundT += dt; remembered = Math.max(0, remembered - dt * 1.5); cool = Math.max(0, cool - dt); dodgeT = Math.max(0, dodgeT - dt); open = Math.max(0, open - dt); hitFlash = Math.max(0, hitFlash - dt * 2.5); shake = Math.max(0, shake - dt * 2);
     if (msg) { msg.l -= dt; if (msg.l <= 0) msg = null; }
     myGuard = Object.values(fingers).some(f => f.hold) || keys.has('ArrowDown');
     // KO'd rival topples, then a new one walks in
@@ -147,7 +177,14 @@ function make(api) {
     if (roundT < 1.5) { anim(dt); return; }
     // rival: rest (may guard) -> wind up a swing (glows) -> strike -> rest
     foeT -= dt;
-    if (foeState === 'rest' && foeT <= 0 && open <= 0) { foeState = 'wind'; foeSide = Math.random() < .22 + ri * .03 ? 'S' : Math.random() < .5 ? 'L' : 'R'; foeT = rival.wind * (foeSide === 'S' ? 1.25 : 1); tone(foeSide === 'S' ? 150 : 220, { len: .25, wave: 'sawtooth', vol: .03, slide: 120 }); }
+    if (foeState === 'rest' && foeT <= 0 && open <= 0) {
+      brain.act(see(), 1); swingKind = brain.action; remembered = brain.remembered ? 1 : 0;
+      // hold: it waits a beat longer before swinging (a breather, or a nerve test)
+      if (swingKind === 'hold') { foeT = rnd(.4, .8); felt('held'); anim(dt); return; }
+      foeState = 'wind'; foeSide = swingKind === 'S' ? 'S' : swingKind.endsWith('L') ? 'L' : 'R';
+      // a quick one winds up in under three quarters of the time; a low skill (you are losing) winds up slower
+      foeT = rival.wind * (foeSide === 'S' ? 1.25 : 1) * (swingKind.startsWith('quick') ? .72 : 1) * (1.15 - .3 * brain.skill);
+      tone(foeSide === 'S' ? 150 : 220, { len: .25, wave: 'sawtooth', vol: .03, slide: 120 }); }
     else if (foeState === 'wind' && foeT <= 0) { foeState = 'rest'; foeT = rnd(...rival.rest); foeAttack(); }
     anim(dt);
   }
@@ -163,6 +200,7 @@ function make(api) {
     for (const k of ['L', 'R']) { const a = fu.arms[k], on = winding && (foeSide === k || foeSide === 'S'); a.f.material = on ? looks().glowFist : fu.p; if (on) { a.arm.position.z = -.6; a.sh.rotation.x = foeSide === 'S' ? -1.2 : 0; } else a.sh.rotation.x *= .8; }
     fu.body.rotation.y = winding && foeSide !== 'S' ? (foeSide === 'L' ? .35 : -.35) : fu.body.rotation.y * .85;
     fu.visor.material.emissiveIntensity = open > 0 ? .3 : 3.2;
+    fu.visor.material.emissive.copy(remembered > 0 ? VISOR_GOLD : VISOR_RED);   // gold: a swing it remembered (a colour, so no new shader)
     // me: dodge sideways, guard up
     const mu = me.userData, dx = dodgeT > 0 ? dodge * Math.sin(dodgeT / .45 * Math.PI) * 1.3 : 0;
     me.position.x = dx; mu.body.rotation.z = -dx * .15;
@@ -207,13 +245,13 @@ function make(api) {
     resize(w, h) { W = w; H = h; },
     update, draw,
     fx(dt) { if (v) anim(dt); },
-    down(x, y, id = 0) { fingers[id] = { x0: x, y0: y, t0: performance.now(), hold: false, moved: 0, x }; },
+    down(x, y, id = 0) { fingers[id] = { x0: x, y0: y, t0: t, hold: false, moved: 0, x }; },
     move(x, y, p, id = 0) { const f = fingers[id]; if (!f || !p) return; f.moved = Math.max(f.moved, Math.hypot(x - f.x0, y - f.y0)); f.x = x; if (f.moved > 28 && !f.used) { f.used = true; f.hold = false; dodge = x > f.x0 ? 1 : -1; dodgeT = .45; tone(500, { len: .08, wave: 'triangle', vol: .03, slide: 200 }); haptic('tick'); } },
-    up(x, y, id = 0) { const f = fingers[id]; delete fingers[id]; if (!f || f.used) return; if (!f.hold && performance.now() - f.t0 < 260) punch(f.x0 < W / 2 ? 'L' : 'R'); },
+    up(x, y, id = 0) { const f = fingers[id]; delete fingers[id]; if (!f || f.used) return; if (!f.hold && t - f.t0 < .26) punch(f.x0 < W / 2 ? 'L' : 'R'); },
     key(k, d) { if (d) keys.add(k); else keys.delete(k); if (!d) return; if (k === 'z' || k === 'ArrowUp') punch('L'); if (k === 'x' || k === ' ') punch('R'); if (k === 'ArrowLeft' || k === 'ArrowRight') { dodge = k === 'ArrowRight' ? 1 : -1; dodgeT = .45; } },
   };
   // a finger held still turns into a block
-  const up0 = self.update; self.update = dt => { const n = performance.now(); for (const f of Object.values(fingers)) if (!f.used && f.moved < 12 && n - f.t0 > 220) f.hold = true; up0(dt); };
+  const up0 = self.update; self.update = dt => { for (const f of Object.values(fingers)) if (!f.used && f.moved < 12 && t - f.t0 > .22) f.hold = true; up0(dt); };
   return self;
 }
 

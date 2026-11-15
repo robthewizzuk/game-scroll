@@ -1,5 +1,24 @@
 # Game review
 
+## 2026-11-15: second pass (259 games)
+
+Every game was played by a bot that tries lazy tricks (tap the middle, mash one spot, hold still, circle a finger, swipe back and forth, swipe up) for up to three minutes of game time, photographed mid-play, and compared with its nearest games (`scripts/unique.mjs`). Games other threads were fixing at the time were left out (wrecking-ball, slide-ten, merge-ten, tank-duel, critter-quest, pocket-kart, sling-smash).
+
+**Rob's decision (2026-11-15): remove eight; keep and refresh fast-maths, rope-swing, tile-tap and sky-defense.**
+
+| Game | Why it was removed |
+|---|---|
+| Stop the Clock (`stop-clock`) | A timing test rather than a game. |
+| Pulse Count (`pulse-count`) | Count the buzzes: one-note, and Tally Count is the better counting game. |
+| Hide & Peek (`hide-peek`) | You can't see the screen while you play; without the sensor it is just hold and let go. |
+| Dungeon Door (`dungeon-door`) | Pick one of three doors: pure luck, and random picks reached the goal. |
+| Traffic Light (`traffic-light`) | Flipping the light every half second won without watching the queues. |
+| Balloon Rise (`balloon-rise`) | Holding one finger still above the balloon won. |
+| Balloon Pump (`balloon-pump`) | The same pump-until-it-bursts risk as Water Rocket, which adds flying. |
+| Shout Rocket (`shout-rocket`) | A near-twin of Whistle Bird (voice throttle through rings), and shouting at a phone is awkward in public. |
+
+Found on the way, to fix rather than remove: juggle-kick (mashing the middle wins), skate-ollie (swiping left and right wins), gap-drop (circling a finger wins), whistle-bird (green pipes and a small bird read as one famous game), and a space key on desktop that plays the right move for you in chef-orders, code-breaker, haptic-morse, gem-slide, lemonade-stand, bowling-swipe, frog-tongue, juggle-kick and blow-candles.
+
 ## 2026-11-11: whole-catalogue review (244 games)
 
 Every game file was checked again: the code or its design notes, a mid-play screenshot, the idle and random-tap bots (`npm run qa`), a 20-second no-touch run and the goal-reaching bot (`scripts/playtest.cjs`). These are Claude's judgement, not player data; Rob's in-app ratings (👎 Meh / ♥) overrule them.

@@ -20,7 +20,7 @@ Tags: 🕹 pocket/retro · 📱 casual · 🎯 needs a phone feature (with a tou
 - [x] Orbit Jump 📱 — launch from planet orbit to planet orbit
 - [x] Rope Swing 📱 — grapple hooks and swing over lava
 - [x] Tilt Maze 📱🎯 — roll a marble to the hole (tilt)
-- [x] Shout Rocket 📱🎯 — voice volume is the throttle through rings (mic)
+- [ ] ~~Shout Rocket 📱🎯 — voice volume is the throttle through rings (mic)~~ Removed: a near-twin of Whistle Bird, which steers by pitch and does more; shouting at a phone is awkward in public.
 - [x] Safe Cracker 📱🎯 — feel the haptic thump on the right number (haptics)
 
 ## Removed after review (2026-11-11)
@@ -85,7 +85,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [x] Snowball Roll — roll a growing snowball; bigger is slower but smashes obstacles
 - [x] Gold Digger — tunnel down through dirt, collect gems, don't get crushed by boulders
 - [x] Pinball Pocket — two flippers, one table, three balls
-- [x] Traffic Light — control a crossing's lights so cars and walkers never collide
+- [ ] ~~Traffic Light — control a crossing's lights so cars and walkers never collide~~ Removed: flipping the light every half second won without watching the queues.
 - [x] Number Merge Grid (built as Slide Ten) — slide tiles on a 4x4 grid; bumping tiles add up to at most 10, exactly 10 clears
 - [x] Frog Tongue — aim a sticky tongue at passing flies, chain combos
 - [x] Kite Flyer — keep a kite in the wind band by tugging the string
@@ -139,7 +139,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [x] Ping Pong Rally — swipe to return the ball, angle by swipe direction
 - [x] Trampoline Tricks — tap in the air to flip, land upright
 - [x] Gravity Runner — flip gravity between floor and ceiling to dodge spikes on both
-- [x] Balloon Rise — protect a rising balloon by pushing obstacles away
+- [ ] ~~Balloon Rise — protect a rising balloon by pushing obstacles away~~ Removed: holding one finger still above the balloon won.
 - [x] Hammer Strength — time the power meter for the carnival bell
 - [ ] Fruit Stacker — stack wobbling fruit as high as possible
 - [x] Cup Shuffle — follow the cup hiding the ball
@@ -181,7 +181,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [ ] Sun Seeker 🧭📍 — point your phone at today's real sun position
 - [x] Maraca Rhythm 📳 — shake in time with a beat
 - [x] Shake the Tree 📳 — shake to drop apples, stop before the bees come out
-- [x] Cookie Thief 📐✋ — grab cookies face up, lay the phone face down when the cook turns; haptic cues tell you when it is safe
+- [ ] ~~Cookie Thief 📐✋ — grab cookies face up, lay the phone face down when the cook turns; haptic cues tell you when it is safe~~ Removed (was Hide & Peek): you can't see the screen while you play, and without the sensor it is just hold and let go.
 - [x] Steady Hand 📐 — tilt to keep a marble centred on a tray while wind gusts push it
 - [ ] Light Seeker 📷 — find the brightest and darkest spots around you
 - [ ] Shape Spotter 📷 — find a real round, square and triangular object
@@ -189,7 +189,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [ ] Local Weather Run 📍 — a runner whose weather matches your real local weather
 - [x] Step Counter Dash 🚶 — take 20 real steps faster than last time
 - [x] Buzz Code ✋ — feel a short/long buzz pattern and pick the match from four
-- [x] Heartbeat Guess ✋ — count the haptic pulses with your eyes closed
+- [ ] ~~Heartbeat Guess ✋ — count the haptic pulses with your eyes closed~~ Removed (was Pulse Count): one-note; Tally Count is the better counting game.
 - [ ] Volume Keys Racer 🔊 — steer with the volume buttons (native only)
 - [ ] Dark Room 📷 — cover the camera to make the screen dark and find hidden glowing items
 - [ ] Hot and Cold 📍 — walk around; the phone says warmer or colder toward a hidden spot nearby
@@ -197,7 +197,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 
 ## Quick-reflex micro games 📱
 
-- [x] Stop the Clock — stop a stopwatch at exactly 3.00 seconds
+- [ ] ~~Stop the Clock — stop a stopwatch at exactly 3.00 seconds~~ Removed: a timing test rather than a game.
 - [ ] Bigger Number — two numbers flash, tap the bigger one, faster each round
 - [x] Colour Word Trap — tap the ink colour, not the word
 - [ ] Catch the Coin — tap the coin before it falls off screen
@@ -207,7 +207,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [x] Fast Maths — answer quick sums, true or false
 - [x] Line Trace — trace a shape within the margin
 - [x] Fly Swatter — swat flies, not bees
-- [x] Balloon Pump — hold to inflate, release before it pops, bigger = more points
+- [ ] ~~Balloon Pump — hold to inflate, release before it pops, bigger = more points~~ Removed: Water Rocket has the same pump-until-it-bursts risk and adds flying.
 - [ ] Rhythm Copy — tap back a rhythm you just heard
 - [ ] Ghost Click — tap shapes as they fade in, before they fade out
 
@@ -217,7 +217,7 @@ We use genres and mechanics only: every game has its own name, art, rules and le
 - [x] Lemonade Stand — set cups and price against the forecast, five days
 - [x] Ant Colony Path — draw a path for ants from nest to food
 - [ ] Garden Grow — water the right plants in time, avoid overwatering
-- [x] Dungeon Door — pick doors with risk/reward to get as deep as possible
+- [ ] ~~Dungeon Door — pick doors with risk/reward to get as deep as possible~~ Removed: pure luck; random picks reached the goal.
 - [x] Rock Paper Duel — beat CPU opponents whose habits you read from their history
 - [x] Higher or Lower — guess the next card, long shots pay more, cash out any time
 - [x] Auction Snipe — bid against bots in a 10-second auction
