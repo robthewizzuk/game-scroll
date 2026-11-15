@@ -4,6 +4,7 @@
 // tries and goes on from there with --resume.
 //   node scripts/tune.cjs --effect regen [--scenes yard,polished] [--jobs 3] [--rounds 30] [--hours 1.8] [--out .tune]
 //   node scripts/tune.cjs --effect regen --resume                go on with the last search (the state in --out)
+//   --name all3: another search of the same effect, with its own state (and --check --name all3 checks its best)
 //   node scripts/tune.cjs --effect regen --check [--scenes yard,polished,hall] [--settings '{"CONE_FULL":.2}' | --best]
 //       the settings in the file against the search's best (or those given), scene by scene, with pictures (--shots dir)
 // Effects: regen (Ray Regeneration's numbers, hd3d-gpu-trace.js regenSettings), ssr (three's screen-space reflections,
@@ -12,13 +13,14 @@
 // the search, to see that what was found holds in a scene it never saw).
 // A score is the sum over the scenes of the error against the truth (of 255, over the reflections) still, at a walk
 // and at a sprint, half of each's specks (grain), and four times any still flicker over 0.6 of 255. Lower is better.
+// A try worse than the settings as they are in any one scene pays twice that again, and is never the best.
 // Software WebGPU (SwiftShader) is slow and the numbers are the truth's to the frame, so tries are run --jobs at once,
 // each in its own browser, and the truth is worked out once a scene and kept in --out/refs.
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 
 const argv = process.argv.slice(2), arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; }, has = k => argv.includes(k);
-const EFFECT = arg('--effect', 'regen'), OUT = path.resolve(arg('--out', '.tune')), JOBS = +arg('--jobs', 3), HOURS = +arg('--hours', 1.8);
+const EFFECT = arg('--effect', 'regen'), NAME = arg('--name', EFFECT), OUT = path.resolve(arg('--out', '.tune')), JOBS = +arg('--jobs', 3), HOURS = +arg('--hours', 1.8);
 const W = +arg('--w', 300), H = +arg('--h', 400), POSES = +arg('--poses', 12), REFS = +arg('--refs', 48), PORT = +(process.env.PORT || 4390);
 
 // the numbers searched: [name, least, most, kind] (log: searched by its logarithm; int: whole numbers)
@@ -28,7 +30,7 @@ const SPACES = {
     ['STILL_KEEP', 8, 96, 'log int'], ['HIST_WIDE', .1, 1], ['HIST_FINE', 0, .4], ['USUAL', .02, .4, 'log'], ['KEEP_ROUGH', 40, 400, 'log int'],
     ['KEEP_SLIDE', .5, 4, 'log'], ['SLIDE_LEAST', 0, .4], ['FILL_KEEPS', .5, .98], ['HIST_TURN', .1, 1], ['HOLD_MOVING', .03, .6, 'log'],
   ],
-  ssr: [['maxDistance', 2, 20, 'log'], ['thickness', .01, .3, 'log'], ['intensity', .2, 1.2], ['screenEdgeFade', 0, .5], ['maxLuminance', 1, 30, 'log']],
+  ssr: [['maxDistance', 2, 30, 'log'], ['thickness', .01, .3, 'log'], ['intensity', .5, 1.5], ['replace', 0, 1], ['blur', .3, 3, 'log'], ['screenEdgeFade', 0, .5], ['maxLuminance', 1, 30, 'log']],
 };
 SPACES.fewer = SPACES.regen;
 const SPACE = SPACES[EFFECT];
@@ -144,7 +146,7 @@ const r3 = x => +x.toFixed(3);
 const brief = parts => Object.fromEntries(Object.entries(parts).map(([s, r]) => [s, { still: r3(r.still.error), walk: r3(r.walk.error), fast: r3(r.fast.error), specks: r3((r.still.specks + r.walk.specks + r.fast.specks) / 3), flicker: r3(r.still.flicker), score: r3(sceneScore(r)) }]));
 
 async function search() {
-  const scenes = arg('--scenes', 'yard,polished').split(','), stateFile = path.join(OUT, `${EFFECT}.json`), logFile = path.join(OUT, `${EFFECT}-tries.jsonl`);
+  const scenes = arg('--scenes', 'yard,polished').split(','), stateFile = path.join(OUT, `${NAME}.json`), logFile = path.join(OUT, `${NAME}-tries.jsonl`);
   fs.mkdirSync(OUT, { recursive: true });
   const ROUNDS = +arg('--rounds', 30), t0 = Date.now();
   let S = has('--resume') && fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : null;
@@ -171,9 +173,12 @@ async function search() {
       while (next < xs.length) {
         const i = next++, settings = settingsOf(xs[i]);
         let parts; try { parts = await w.score(EFFECT, settings); } catch (e) { console.log('  try failed:', String(e.message).slice(0, 200)); f[i] = S.base.score * 3; continue; }
-        const sc = total(parts); f[i] = sc + S.base.score * 4 * outside(xs[i]);
+        // (a try worse than as it is in any one scene pays twice that again: settings that trade one scene for another
+        // are what a search finds first, and they don't hold up in a scene it never saw)
+        const sc = total(parts), worse = Object.entries(parts).reduce((s, [k, r]) => s + Math.max(0, sceneScore(r) - S.base.parts[k].score), 0);
+        f[i] = sc + 2 * worse + S.base.score * 4 * outside(xs[i]);
         fs.appendFileSync(logFile, JSON.stringify({ round: cma.gen, settings, score: r3(sc), parts: brief(parts) }) + '\n');
-        if (sc < S.best.score && !outside(xs[i])) { S.best = { settings, score: sc, parts: brief(parts), round: cma.gen }; }
+        if (sc < S.best.score && !worse && !outside(xs[i])) { S.best = { settings, score: sc, parts: brief(parts), round: cma.gen }; }
       }
     }));
     const sorted = f.slice().sort((a, b) => a - b);
@@ -190,7 +195,7 @@ async function search() {
 }
 
 async function check() {
-  const scenes = arg('--scenes', 'yard,polished,hall').split(','), stateFile = path.join(OUT, `${EFFECT === 'fewer' ? 'regen' : EFFECT}.json`), shots = arg('--shots');
+  const scenes = arg('--scenes', 'yard,polished,hall').split(','), stateFile = path.join(OUT, `${arg('--name', EFFECT === 'fewer' ? 'regen' : EFFECT)}.json`), shots = arg('--shots');
   const given = arg('--settings') ? JSON.parse(arg('--settings')) : has('--mean') ? JSON.parse(fs.readFileSync(stateFile, 'utf8')).mean : JSON.parse(fs.readFileSync(stateFile, 'utf8')).best.settings;
   const w = new Worker(scenes); await w.open();
   const res = {};
