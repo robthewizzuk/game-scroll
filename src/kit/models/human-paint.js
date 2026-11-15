@@ -309,6 +309,11 @@ export function paintFace(o) {
         if (BD) { beardArea(BD, x, hy, .095 - 6 * x * x, B2); const kb = B2[0], km = B2[1]; if (kb + km > .01) put(BC, mn(.8, mx(kb ** 1.4 * mn(1, .4 + BD.beard) * .72, km ** 1.4 * .62) * (.6 + .4 * lumps(x * 2600, hy * 420, 3.3)) * ss(x1, x1 - .012, x))); }   // (fading out before the picture's edge: the skin's own colouring carries it on)
         const ln = linesAt(x, hy, f, rim); if (ln > 0) { const k = (G ? .2 : .1) * ln; r *= 1 - k * .9; g *= 1 - k; b *= 1 - k * .95; }
         const bl = lumps(x * 55 + ph, hy * 55, 1.1) * .022, bl2 = lumps(x * 140 + 4, hy * 140 + ph, 2.3) * .012; r *= 1 + bl + bl2; g *= 1 + bl * .6 + bl2; b *= 1 + bl * .3 + bl2 * .8;
+        // (mottled: small vessels show through the skin in patches a few millimetres across, reddest on the cheeks, the nose and the chin,
+        // faint on the forehead, as the scan and every photograph has it; a face one even pink read as made up. Less on darker skin. The
+        // picture is one half of the face for both: the larger patches, which would show the two halves alike, are in the points' colours, human.js)
+        const zr = .3 + mx(bump(hy, -.03, .03) * ss(.075, .045, x) * ss(.008, .028, x), bump(x, 0, .016) * bump(hy, -.035, .022), .8 * bump(hy, -.1, .022) * ss(.032, .005, x)), mo = lumps(x * 120 + ph, hy * 120, 7.3) * .65 + lumps(x * 330, hy * 330 + ph, 8.1) * .35;
+        const km = .085 * zr * ss(.05, .6, mo) * (1 - .6 * dark); if (km > 0) { r *= 1 + km * .45; g *= 1 - km * .6; b *= 1 - km * .5; }
         const ue = bump(hy, -.0135, .0055) * bump(x, .034, .011) * (.05 + .05 * ss(30, 70, f.age ?? 30)); if (ue > 0) { r *= 1 - ue * .8; g *= 1 - ue; b *= 1 - ue * .7; }
         if (frk > 0) {   // freckles: on the cheeks and over the nose most, a few on the forehead
           const zone = mx(bump(hy, -.022, .016) * ss(.07, .05, x), .5 * ss(.05, .025, hy) * ss(.035, .055, hy) * ss(.05, .03, x)), C = .0021, ci = Math.floor(x / C), cj = Math.floor(hy / C) + 400, h1 = hash(ci, cj, seed);
