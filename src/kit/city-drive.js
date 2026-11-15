@@ -25,6 +25,7 @@ const _q = { s: 0, k: 0, m: 0 }, _p = { x: 0, z: 0 }, _r = {};
 /** How far across the road a car may go on its own side (in lanes): from the middle to the kerb side of its outer lane. */
 export const sideLats = (T, e, c) => [Math.max(-.2, (c.wid / 2 + .25 - .2) / T.LANE - .5), e.lanes - 1 + Math.min(.35, Math.max(0, (e.width / 2 - .45 - c.wid / 2 - .2) / T.LANE - .5 - (e.lanes - 1)))];
 
+const NONE = Object.freeze([]);   // (an edge with no cars on it, without a new empty list each time)
 /** The cars of each edge that keep to their lanes (and aren't in a junction), for the moves below. */
 export function byEdge(T) {
   const by = T._by ||= new Map(); for (const a of by.values()) a.length = 0;
@@ -34,8 +35,8 @@ export function byEdge(T) {
 // is the stretch s0..s1 of an edge clear at lane coordinate k (cars of this edge, and those of the other side when k is under 0)?
 function clear(T, by, c, e, k, s0, s1) {
   const half = c.wid / 2 / T.LANE;
-  for (const o of by.get(e.id) || []) if (o !== c && Math.abs(o.lat - k) < half + o.wid / 2 / T.LANE + .1 && o.s + o.len / 2 > s0 && o.s - o.len / 2 < s1) return false;
-  if (k < .3) { const b = T.back(e); if (b) for (const o of by.get(b.id) || []) { const os = e.len - o.s, ol = -o.lat - MIRROR; if (Math.abs(ol - k) < half + o.wid / 2 / T.LANE + .1 && os + o.len / 2 > s0 && os - o.len / 2 - o.v * 3.5 < s1) return false; } }
+  for (const o of by.get(e.id) || NONE) if (o !== c && Math.abs(o.lat - k) < half + o.wid / 2 / T.LANE + .1 && o.s + o.len / 2 > s0 && o.s - o.len / 2 < s1) return false;
+  if (k < .3) { const b = T.back(e); if (b) for (const o of by.get(b.id) || NONE) { const os = e.len - o.s, ol = -o.lat - MIRROR; if (Math.abs(ol - k) < half + o.wid / 2 / T.LANE + .1 && os + o.len / 2 > s0 && os - o.len / 2 - o.v * 3.5 < s1) return false; } }
   return true;
 }
 const stuck = o => o.stuck > 2.5 && (o.why === 'stun' || o.why === 'hazard' || o.why === 'yield' || o.mode !== 'lane');
@@ -51,7 +52,7 @@ export function laneCar(T, c, dt, t, by) {
   c.think -= dt;
   // the car ahead in the lanes it covers; one that has stopped for good is something to get past instead
   let lead = null, gap = Infinity;
-  for (const o of by.get(e.id) || []) {
+  for (const o of by.get(e.id) || NONE) {
     if (o === c || o.s <= c.s || Math.abs(o.lat - c.lat) > half + o.wid / 2 / L + .05) continue;
     const g = o.s - c.s - (o.len + c.len) / 2; if (g < gap) { gap = g; lead = o; }
   }
@@ -61,7 +62,7 @@ export function laneCar(T, c, dt, t, by) {
   else if (c.ahead && (c.ahead.turn || c.ahead.edge !== e)) follow(Math.hypot(c.ahead.x - c.x, c.ahead.z - c.z) - (c.ahead.len + c.len) / 2 - 1, 'queue');
   // out past the middle: the cars coming the other way
   const back = T.back(e);
-  if (c.lat < .35 && back) for (const o of by.get(back.id) || []) {
+  if (c.lat < .35 && back) for (const o of by.get(back.id) || NONE) {
     const os = e.len - o.s, ol = -o.lat - MIRROR; if (os <= c.s || Math.abs(ol - c.lat) > half + o.wid / 2 / L) continue;
     follow(os - c.s - (o.len + c.len) / 2 - o.v * 1.2, 'oncoming');
     if (c.dodge && os - c.s < (o.v + c.v) * 2.2 + 8) { c.dodge = null; c.latTo = c.lane; }   // (a pass that won't make it in time: back in)
@@ -133,7 +134,7 @@ export function laneCar(T, c, dt, t, by) {
     if (want != null && want !== c.lane) to = c.lane + Math.sign(want - c.lane);
     else if (lead && gap < 30 && lead.v < c.vmax * .78 && c.vmax - lead.v > 2 && toStop > 40 && (c.laneT -= .5) <= 0) {
       for (const k of [c.lane - 1, c.lane + 1]) if (k >= 0 && k < e.lanes) {
-        let g2 = Infinity; for (const o of by.get(e.id) || []) if (o !== c && Math.abs(o.lat - k) < .6 && o.s > c.s) g2 = Math.min(g2, o.s - c.s);
+        let g2 = Infinity; for (const o of by.get(e.id) || NONE) if (o !== c && Math.abs(o.lat - k) < .6 && o.s > c.s) g2 = Math.min(g2, o.s - c.s);
         if (g2 > gap + 10) { to = k; break; }
       }
     }
