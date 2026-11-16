@@ -8,10 +8,10 @@ The phone's own AI for flavour lines only; play never depends on it.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PhoneaiPart`, line 5617), where every option and field is described.
+From `src/gamescroll.d.ts` (`PhoneaiPart`, line 5651), where every option and field is described.
 
-- `PhoneAI: new (o?: { persona?: string; words?: number; temperature?: number; timeout?: number }) => { available: boolean | null; last: string | null; ready(): Promise<b…` (:5618)
-- `tidy(text: string, words?: number): string | null` Tidies a model's answer, or null if it shouldn't be shown. (:5626)
+- `PhoneAI: new (o?: { persona?: string; words?: number; temperature?: number; timeout?: number }) => { available: boolean | null; last: string | null; ready(): Promise<b…` (:5652)
+- `tidy(text: string, words?: number): string | null` Tidies a model's answer, or null if it shouldn't be shown. (:5660)
 
 ## From the maker kit
 

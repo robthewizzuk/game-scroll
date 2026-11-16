@@ -32,6 +32,7 @@ export { looks, groundDetail, horizon } from './looks.js';
 export { Water } from './water.js';
 export { Sea } from './sea.js';
 export { Marks } from './marks.js';
+export { Ground } from './ground.js';
 export { Cloth } from './cloth.js';
 import { looks as LOOKS } from './looks.js';
 import { rockArrays, RockMap } from './land-rock.js';
