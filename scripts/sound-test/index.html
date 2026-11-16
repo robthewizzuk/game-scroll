@@ -168,7 +168,7 @@ try {
   if (part === 'level') {
     // sound that knows the level (new Ears({ level })): a sound behind a wall comes out quieter and duller,
     // a place rings with its own echo, and a sound that goes on is heard again as it moves
-    const SLOT = 4; offline(SLOT * 9);
+    const SLOT = 4; offline(SLOT * 10);
     const snd = await import('/src/kit/sound.js'), { audio } = await import('/src/sfx.js');
     const a = audio(), { Ears, mixer } = snd;
     // a wall a third of a metre thick across x = 5 (as wide and tall as the world), then a stone room 8 x 4 x 8 m
@@ -192,6 +192,7 @@ try {
         h.move(near); for (let i = 0; i < 3; i++) ears.place(ear); loopB = h.muffled;
         h.move(behind); ears.memo?.clear(); for (let i = 0; i < 3; i++) ears.place(ear); loopC = h.muffled; h.stop();
       },
+      () => { mixer.room('hall'); ears.tone(300, near, tap1); },                                  // 9 mixer.room() by name (echo for everything)
     ];
     const { ctx } = a, tap = ctx.createChannelMerger(4); a.out.connect(tap, 0, 2); tap.connect(ctx.destination);
     jobs.forEach((job, i) => { if (i === 0) job(); else ctx.suspend(i * SLOT).then(() => { try { job(); } catch (e) { out.push('FAIL threw: ' + e.message); } ctx.go(); }); });
@@ -216,6 +217,10 @@ try {
     const ringE = E(7) - dryE, ringLate = E(7, .9, 1.4);
     note(`a sound in that room: its echo carries ${dB(ringE / dryE)} dB of the sound's energy; from a quarter second after it ${dB(ringLate / dryE)} dB`);
     ok(ringE > dryE * .04 && ringE < dryE * .4 && ringLate > dryE * 1e-5, `and sounds ring in it by themselves (${dB(ringE / dryE)} dB of the sound's energy)`);
+    // mixer.room() rang some 35 dB under the sound (the browser's own levelling of a long tail), so it could not be heard
+    const hallE = E(9) - dryE, hallLate = E(9, 1.4, 2.4);
+    note(`mixer.room('hall'): its echo carries ${dB(hallE / dryE)} dB of the sound's energy; a second on ${dB(hallLate / dryE)} dB`);
+    ok(hallE > dryE * .04 && hallE < dryE * .4 && hallLate > dryE * 1e-5, `mixer.room('hall') rings after the sound as loud as a place does (${dB(hallE / dryE)} dB of its energy)`);
     ok(loopA > .5 && loopB < .05 && loopC > .5, `a sound that goes on is heard again as it moves: behind ${loopA.toFixed(2)}, in the open ${loopB.toFixed(2)}, behind again ${loopC.toFixed(2)}`);
   }
   if (part === 'cap') {

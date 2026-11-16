@@ -843,17 +843,13 @@ register('ears', { stop: () => { for (const h of [...loops]) h.stop(); const a =
 let playBus = 'sfx';
 const BUSES = ['sfx', 'music', 'voice'];
 let mix = null;
-function impulse(ctx, secs, decay) {
-  const n = Math.max(1, Math.floor(ctx.sampleRate * secs)), b = ctx.createBuffer(2, n, ctx.sampleRate);
-  for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** decay; }
-  return b;
-}
 function mixGraph() {
   const a = audio(); if (!a) return null;
   if (mix && mix.ctx === a.ctx) return mix;
   const ctx = a.ctx, input = ctx.createGain(), muffle = ctx.createBiquadFilter(), dry = ctx.createGain(),
     verb = ctx.createConvolver(), verbGain = ctx.createGain(), delay = ctx.createDelay(1.5), fb = ctx.createGain(), echoGain = ctx.createGain();
   muffle.type = 'lowpass'; muffle.frequency.value = 20000; muffle.Q.value = .7;
+  verb.normalize = false;
   input.connect(muffle); muffle.connect(dry); dry.connect(a.out);
   verbGain.gain.value = 0; muffle.connect(verb); verb.connect(verbGain); verbGain.connect(a.out);
   echoGain.gain.value = 0; fb.gain.value = 0; muffle.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(echoGain); echoGain.connect(a.out);
@@ -890,7 +886,14 @@ function placeGraph() {
 // first bounces off the nearest walls
 function placeImpulse(p, secs) {
   const key = Math.round(Math.log(secs) / Math.log(1.2)), have = p.irs.get(key); if (have) return have;
-  const ctx = p.ctx, T = Math.pow(1.2, key), n = Math.max(64, Math.floor(ctx.sampleRate * T)), b = ctx.createBuffer(2, n, ctx.sampleRate), k = Math.log(1000) / n;
+  const b = tailImpulse(p.ctx, Math.pow(1.2, key));
+  if (p.irs.size >= 6) p.irs.delete(p.irs.keys().next().value);
+  p.irs.set(key, b); return b;
+}
+// (mixer.room() rings with the same tail: it used one levelled by the browser, which left a hall's echo some 25 dB
+// under a voice, too quiet to hear, and a tail that died away too soon for its size)
+function tailImpulse(ctx, T) {
+  const n = Math.max(64, Math.floor(ctx.sampleRate * T)), b = ctx.createBuffer(2, n, ctx.sampleRate), k = Math.log(1000) / n;
   for (let ch = 0; ch < 2; ch++) {
     const d = b.getChannelData(ch); let lp = 0;
     for (let i = 0; i < n; i++) { const x = i / n, a = .12 + .5 * (1 - x) * (1 - x); lp += ((Math.random() * 2 - 1) - lp) * a; d[i] = lp * Math.exp(-k * i) * (i < 96 ? i / 96 : 1); }
@@ -900,15 +903,15 @@ function placeImpulse(p, secs) {
     // .35: the tail is duller than most sounds, and gives the low and middle of a sound more than its share
     let sum = 0; for (let i = 0; i < n; i++) sum += d[i] * d[i]; const s = sum > 0 ? Math.sqrt(.35 / sum) : 0; for (let i = 0; i < n; i++) d[i] *= s;
   }
-  if (p.irs.size >= 6) p.irs.delete(p.irs.keys().next().value);
-  p.irs.set(key, b); return b;
+  return b;
 }
+// reverb: how much echo next to the sound (as mixer.place's wet: a room about .25, a great hall .45); size: seconds it rings
 const ROOMS = {
   none: { reverb: 0, echo: 0 },
-  room: { reverb: .18, size: .5, echo: 0 },
-  hall: { reverb: .32, size: 1.8, echo: 0 },
-  cave: { reverb: .3, size: 2.6, echo: .25, delay: .32 },
-  pipe: { reverb: .12, size: .4, echo: .4, delay: .09 },
+  room: { reverb: .25, size: .7, echo: 0 },
+  hall: { reverb: .42, size: 2.6, echo: 0 },
+  cave: { reverb: .45, size: 3.2, echo: .2, delay: .3 },
+  pipe: { reverb: .2, size: .5, echo: .4, delay: .09 },
 };
 export const mixer = {
   /** A channel's volume, 0..1 (default 1), fading over `fade` seconds. */
@@ -925,7 +928,7 @@ export const mixer = {
     const m = mixGraph(); if (!m) return mixer;
     const o = typeof r === 'string' ? (ROOMS[r] || ROOMS.none) : { ...ROOMS.none, ...r }, t = m.ctx.currentTime;
     const key = (o.size || 1).toFixed(2);
-    if (o.reverb > 0 && m.roomKey !== key) { m.verb.buffer = impulse(m.ctx, Math.min(4, o.size || 1), 2.5); m.roomKey = key; }
+    if (o.reverb > 0 && m.roomKey !== key) { m.verb.buffer = tailImpulse(m.ctx, Math.max(.15, Math.min(4.5, o.size || 1))); m.roomKey = key; }
     m.verbGain.gain.setTargetAtTime(Math.max(0, Math.min(1, o.reverb || 0)), t, .05);
     m.delay.delayTime.setTargetAtTime(Math.max(.02, Math.min(1.4, o.delay || .25)), t, .05);
     m.fb.gain.setTargetAtTime(Math.min(.7, (o.echo || 0) * 1.4), t, .05);
