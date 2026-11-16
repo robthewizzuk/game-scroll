@@ -3094,9 +3094,11 @@ each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers
 `cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
 numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
 seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
-tactics and learns this player), officers on foot, searches, busted or escaped. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
+tactics and learns this player), officers on foot, searches, busted or escaped; `cars.take(car)` takes any car (moving,
+parked or police) with a 'carjack' event the police hear. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
 roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
-bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
+bridged, tunnels, a highway round it all with slip roads, and cars on all of them; police chase on across all of it and
+`switchTo(at)` jumps the player elsewhere. `new Gps(city)` finds the way: a route
 that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
 road. `new Interiors(city)` opens the city's front doors onto rooms: walk up to a shop, a diner, a bar, a home, a lobby
 or a warehouse and its room is made, the door swings open and you walk straight in (`room.spots` for a keeper, the counter and

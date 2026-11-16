@@ -8,29 +8,29 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PathsPart`, line 1575), where every option and field is described.
+From `src/gamescroll.d.ts` (`PathsPart`, line 1580), where every option and field is described.
 
-- `Path: typeof Path` (:1576)
-  - `constructor(points: (number[] | { x: number; y: number; z?: number })[], o?: { loop?: boolean; kind?: 'smooth' | 'line' | 'bezier'; tension?: number; detail?: number })` (:1569)
-  - `pts: { x: number; y: number; z: number }[]` (:1570)
-  - `readonly length: number` (:1570)
-  - `loop: boolean` (:1570)
-  - `at(d: number, out?: object): PathPoint` (:1571)
-  - `offset(d: number, side: number, out?: object): PathPoint` (:1571)
-  - `nearest(x: number, y: number, z?: number): { d: number; x: number; y: number; z: number; dist: number }` (:1572)
-  - `spaced(step: number): PathPoint[]` (:1573)
-  - `trace(c: Ctx, from?: number, to?: number): this` (:1573)
-  - `build(): this` (:1573)
-  - `points3(V: Loose, step?: number): Loose[]` (:1573)
-- `Follower: new (path: Path, o?: { speed?: number; end?: 'loop' | 'pingpong' | 'stop'; d?: number; side?: number }) => PathPoint & { speed: number; side: number; lap: nu…` Moves along a path at a steady speed: x, y, z, angle, d, lap, done. (:1578)
-  - `x: number` (:1567)
-  - `y: number` (:1567)
-  - `z: number` (:1567)
-  - `angle: number` (:1567)
-  - `dx: number` (:1567)
-  - `dy: number` (:1567)
-  - `dz: number` (:1567)
-  - `d: number` (:1567)
+- `Path: typeof Path` (:1581)
+  - `constructor(points: (number[] | { x: number; y: number; z?: number })[], o?: { loop?: boolean; kind?: 'smooth' | 'line' | 'bezier'; tension?: number; detail?: number })` (:1574)
+  - `pts: { x: number; y: number; z: number }[]` (:1575)
+  - `readonly length: number` (:1575)
+  - `loop: boolean` (:1575)
+  - `at(d: number, out?: object): PathPoint` (:1576)
+  - `offset(d: number, side: number, out?: object): PathPoint` (:1576)
+  - `nearest(x: number, y: number, z?: number): { d: number; x: number; y: number; z: number; dist: number }` (:1577)
+  - `spaced(step: number): PathPoint[]` (:1578)
+  - `trace(c: Ctx, from?: number, to?: number): this` (:1578)
+  - `build(): this` (:1578)
+  - `points3(V: Loose, step?: number): Loose[]` (:1578)
+- `Follower: new (path: Path, o?: { speed?: number; end?: 'loop' | 'pingpong' | 'stop'; d?: number; side?: number }) => PathPoint & { speed: number; side: number; lap: nu…` Moves along a path at a steady speed: x, y, z, angle, d, lap, done. (:1583)
+  - `x: number` (:1572)
+  - `y: number` (:1572)
+  - `z: number` (:1572)
+  - `angle: number` (:1572)
+  - `dx: number` (:1572)
+  - `dy: number` (:1572)
+  - `dz: number` (:1572)
+  - `d: number` (:1572)
 
 ## From the maker kit
 
@@ -63,9 +63,11 @@ each frame; `city.avoid(player)` makes cars brake and swerve for you. It answers
 `cars.crash(car, push)`, `people.scare`, `people.knock`, `city.events`, and gives the plan as plain
 numbers for your own map. `new gs.city.Wanted(city, api)` is the police and a wanted level: stars from crimes
 seen or phoned in, police cars that chase, ram, cut you off and set roadblocks (a Tiny Brain picks the
-tactics and learns this player), officers on foot, searches, busted or escaped. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
+tactics and learns this player), officers on foot, searches, busted or escaped; `cars.take(car)` takes any car (moving,
+parked or police) with a 'carjack' event the police hear. `new Metro(view, { seed, districts: 4 })` is one big city of districts side by side with
 roads between, each made over a few frames as the player comes near and let go behind, with hills round them, a river
-bridged, tunnels, a highway round it all with slip roads, and cars on all of them. `new Gps(city)` finds the way: a route
+bridged, tunnels, a highway round it all with slip roads, and cars on all of them; police chase on across all of it and
+`switchTo(at)` jumps the player elsewhere. `new Gps(city)` finds the way: a route
 that follows the player, the next turn, markers, a minimap that turns, a full map to tap for a waypoint, and the way drawn on the
 road. `new Interiors(city)` opens the city's front doors onto rooms: walk up to a shop, a diner, a bar, a home, a lobby
 or a warehouse and its room is made, the door swings open and you walk straight in (`room.spots` for a keeper, the counter and
@@ -90,4 +92,32 @@ From [Vehicles made in code](../maker-kit.md#vehicles-made-in-code):
 
 ## In real games
 
-No game uses `gs.paths` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.paths` lists them). The shortest:
+
+`src/games/eddy-runner.js` (Eddy Runner, Advance · Action, 762 lines):
+
+```js
+const { Streams } = gs.flow;
+const { Path } = gs.paths;
+// …
+  function rebuildStreams() {
+    riverPath = new Path(pts, { detail: 10 });
+// …
+      const b = boulders[i];
+      const nr = riverPath.nearest(b.x, b.y);
+// …
+      nextGateY -= gateStep;
+      const n = riverPath.nearest(W / 2, gy);
+// …
+      const side = slot * maxOffset * (0.85 + nextRand() * 0.15);
+      const gp = riverPath.offset(n.d, side);
+// …
+      const rockD = clamp(n.d + (nextRand() < 0.5 ? 24 : -26), 10, riverPath.length - 10);
+      const rp = riverPath.offset(rockD, rockSide);
+// …
+        const eddy = rad >= 7;
+        const ep = riverPath.offset(clamp(rockD + rad + 10, 8, riverPath.length - 8), rockSide);
+// …
+        const wD = clamp(n.d - 48 + nextRand() * 16, 12, riverPath.length - 12);
+        const wp = riverPath.offset(wD, wSide);
+```

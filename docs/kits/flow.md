@@ -8,30 +8,30 @@ Rivers with currents, waterfalls, whirlpools, lava and floods that fill hollows.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FlowPart`, line 3219), where every option and field is described.
+From `src/gamescroll.d.ts` (`FlowPart`, line 3224), where every option and field is described.
 
-- `Streams: new (o?: { space?: '2d' | '3d' }) => On<Loose> & { list: Loose[]; river(path: Loose, o?: FlowOptions): FlowStream; pool(at: { x: number; y?: number; z?: numbe…` Rivers, pools, whirlpools: current that carries things, waterfalls, lava and acid that hurt. (:3221)
-- `Flood: new (o?: { size?: number; cells?: number; x?: number; z?: number; y?: number | null; ground?: (x: number, z: number) => number; edges?: 'wall' | 'drain'; damp?:…` Shallow water that floods: spreads, runs downhill, fills hollows. (:3227)
-  - `N: number` (:3214)
-  - `size: number` (:3214)
-  - `l: number` (:3214)
-  - `D: Float32Array` (:3214)
-  - `B: Float32Array` (:3214)
-  - `edges: 'wall' | 'drain'` (:3214)
-  - `rate: number` (:3214)
-  - `ground(fn: (x: number, z: number) => number): FloodPart` (:3215)
-  - `pour(x: number, z: number, rate?: number, r?: number): { x: number; z: number; rate: number; r: number }` (:3215)
-  - `drain(x: number, z: number, rate?: number, r?: number): Loose` (:3215)
-  - `remove(src: Loose): FloodPart` (:3215)
-  - `rain(rate: number): FloodPart` (:3216)
-  - `add(x: number, z: number, volume: number, r?: number): FloodPart` (:3216)
-  - `depth(x: number, z: number): number` (:3216)
-  - `wet(x: number, z: number, deep?: number): boolean` (:3216)
-  - `level(x: number, z: number): number` (:3216)
-  - `current(x: number, z: number): { x: number; z: number; speed: number }` (:3217)
-  - `volume(): number` (:3217)
-  - `update(dt: number): FloodPart` (:3217)
-  - `step(h: number): void` (:3217)
+- `Streams: new (o?: { space?: '2d' | '3d' }) => On<Loose> & { list: Loose[]; river(path: Loose, o?: FlowOptions): FlowStream; pool(at: { x: number; y?: number; z?: numbe…` Rivers, pools, whirlpools: current that carries things, waterfalls, lava and acid that hurt. (:3226)
+- `Flood: new (o?: { size?: number; cells?: number; x?: number; z?: number; y?: number | null; ground?: (x: number, z: number) => number; edges?: 'wall' | 'drain'; damp?:…` Shallow water that floods: spreads, runs downhill, fills hollows. (:3232)
+  - `N: number` (:3219)
+  - `size: number` (:3219)
+  - `l: number` (:3219)
+  - `D: Float32Array` (:3219)
+  - `B: Float32Array` (:3219)
+  - `edges: 'wall' | 'drain'` (:3219)
+  - `rate: number` (:3219)
+  - `ground(fn: (x: number, z: number) => number): FloodPart` (:3220)
+  - `pour(x: number, z: number, rate?: number, r?: number): { x: number; z: number; rate: number; r: number }` (:3220)
+  - `drain(x: number, z: number, rate?: number, r?: number): Loose` (:3220)
+  - `remove(src: Loose): FloodPart` (:3220)
+  - `rain(rate: number): FloodPart` (:3221)
+  - `add(x: number, z: number, volume: number, r?: number): FloodPart` (:3221)
+  - `depth(x: number, z: number): number` (:3221)
+  - `wet(x: number, z: number, deep?: number): boolean` (:3221)
+  - `level(x: number, z: number): number` (:3221)
+  - `current(x: number, z: number): { x: number; z: number; speed: number }` (:3222)
+  - `volume(): number` (:3222)
+  - `update(dt: number): FloodPart` (:3222)
+  - `step(h: number): void` (:3222)
 
 ## From the maker kit
 
@@ -93,4 +93,24 @@ From [Water you can disturb](../maker-kit.md#water-you-can-disturb):
 
 ## In real games
 
-No game uses `gs.flow` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.flow` lists them). The shortest:
+
+`src/games/eddy-runner.js` (Eddy Runner, Advance · Action, 762 lines):
+
+```js
+const { Ready } = gs.rounds;
+const { Streams } = gs.flow;
+// …
+    riverPath = new Path(pts, { detail: 10 });
+    streams = new Streams({ space: '2d' });
+    river = streams.river(riverPath, { width: riverWidthAt(), speed: currentSpeedAt(), push: 1 });
+// …
+      river.rock(nr.d, b.side, b.r);
+      if (b.eddy) streams.pool({ x: b.ex, y: b.ey }, b.er, { push: 0.16 });
+// …
+      const w = whirls[i];
+      streams.whirl({ x: w.x, y: w.y }, w.r, w.spin, w.pull);
+// …
+    // Water current & whirlpools via gs.flow.Streams
+    const here = streams.carry(kayak, dt, { drag: K.drag });
+```

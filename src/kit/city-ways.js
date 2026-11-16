@@ -419,7 +419,7 @@ export class Ways {
   /* ---------- for Metro ---------- */
   /** Whether the harbour's own water now shows (so the land's sea hides). */
   seaShown(on) { for (const m of this.water) if (m.userData.sea) m.visible = on; }
-  update(dt, f, night, avoid) { this.traffic?.update(dt, f, night, avoid); }
+  update(dt, f, night, avoid, sirens) { this.traffic?.update(dt, f, night, avoid, sirens); }
   dispose() {
     this.traffic?.dispose();
     this.group.traverse(o => { if (o.isMesh) { this.m.paint?.remove(o); o.geometry.dispose(); } });
@@ -455,8 +455,8 @@ export class WayTraffic {
     const COL = ['#c8ccd2', '#20242a', '#8a1d1d', '#e9e6df', '#33507a', '#5f646b', '#7a6a4a', '#2e5a3c'];
     for (let i = 0; i < this.max; i++) {
       const r = this.pickRoad(), c = { r, back: this.R() < .5, k: this.R() * r.lanes | 0, u: this.R() * r.len, v: r.speed * .8, pace: .82 + this.R() * .3, mx: 0, mz: 0, my: 0,
-        x: 0, y: 0, z: 0, heading: 0, pitch: 0, colour: new Color(COL[this.R() * COL.length | 0]), style: 0, braking: false, odo: 0 };
-      if (this.fleet) c.style = this.fleet.pick(this.R);
+        x: 0, y: 0, z: 0, heading: 0, pitch: 0, colour: new Color(COL[this.R() * COL.length | 0]), style: 0, braking: false, odo: 0, id: 9000 + i, way: true, wid: 1.8, len: 4.3, yieldT: 0, pull: 0 };
+      if (this.fleet) { c.style = this.fleet.pick(this.R); const k = this.fleet.kits[c.style]; c.wid = k.width; c.len = k.length; }
       this.place(c); this.list.push(c);
     }
     this.fleet?.assign(this.list);
@@ -464,7 +464,7 @@ export class WayTraffic {
   }
   s(c) { return c.back ? c.r.len - c.u : c.u; }
   place(c) {
-    const r = c.r, s = this.s(c), p = this.w.at(r, s, this._p ||= {}), off = ((c.k + .5) * LANE + (r.median ? .9 : .2)) * this.side * (c.back ? -1 : 1);
+    const r = c.r, s = this.s(c), p = this.w.at(r, s, this._p ||= {}), off = ((c.k + .5) * LANE + (r.median ? .9 : .2) + c.pull * 1.5) * this.side * (c.back ? -1 : 1);   // (pull: over to the kerb for a siren)
     const dx = c.back ? -p.dx : p.dx, dz = c.back ? -p.dz : p.dz;
     c.x = p.x - p.dz * off + c.mx; c.z = p.z + p.dx * off + c.mz; c.y = p.y + .05 + c.my;
     c.heading = Math.atan2(dx, dz); c.pitch = Math.atan(p.grade * (c.back ? -1 : 1));
@@ -481,11 +481,15 @@ export class WayTraffic {
       const r = this.pickRoad(); if (r.ring) continue;
       const fromB = !r.ramp && this.R() < .5, e = fromB ? r.to : r.from;
       if (f && Math.hypot(e.x - f.x, e.z - f.z) < 170) continue;
-      c.r = r; c.back = fromB; c.u = 0; c.k = this.R() * r.lanes | 0; c.v = r.speed * .6; c.mx = c.mz = c.my = 0; this.place(c); return;
+      c.r = r; c.back = fromB; c.u = 0; c.k = this.R() * r.lanes | 0; c.v = r.speed * .6; c.mx = c.mz = c.my = 0; c.yieldT = c.pull = 0; this.place(c); return;
     }
     c.u = 0; c.mx = c.mz = c.my = 0; this.place(c);
   }
-  update(dt, f, night = 0, avoid = []) {
+  /**
+   * Once a frame: f (the player), avoid (what is in the road: they brake for it), sirens (police cars and the like with
+   * their sirens on: a car with one coming up behind it pulls over to the kerb side and stops until it has gone by).
+   */
+  update(dt, f, night = 0, avoid = [], sirens = []) {
     const W = this.w, ring = W.ring, groups = this._g ||= new Map(); groups.clear();
     for (const c of this.list) { const key = c.r.id + (c.back ? '<' : '>') + c.k; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(c); }
     for (const g of groups.values()) g.sort((a, b) => a.u - b.u);
@@ -496,7 +500,15 @@ export class WayTraffic {
       if (gap < Infinity) want = Math.min(want, Math.max(0, (gap - 8) * .9));
       // brake for the player (or anything a game asks) in its lane ahead
       const sh = Math.sin(c.heading), ch = Math.cos(c.heading);
-      for (const a of avoid) { const dx = a.x - c.x, dz = a.z - c.z, ahead = dx * sh + dz * ch, lat = Math.abs(dx * ch - dz * sh); if (ahead > 0 && ahead < 30 && lat < 1.6 + a.r) want = Math.min(want, Math.max(0, (ahead - 6) * .7)); }
+      for (const a of avoid) { if (a.y != null && Math.abs(a.y - c.y) > 4) continue; const dx = a.x - c.x, dz = a.z - c.z, ahead = dx * sh + dz * ch, lat = Math.abs(dx * ch - dz * sh); if (ahead > 0 && ahead < 30 && lat < 1.6 + a.r) want = Math.min(want, Math.max(0, (ahead - 6) * .7)); }
+      // a siren coming up behind (on this road, going its way): over to the kerb side, and stop there until it has passed
+      if (c.yieldT > 0) c.yieldT -= dt;
+      for (const q of sirens) {
+        const dx = q.x - c.x, dz = q.z - c.z; if (dx * dx + dz * dz > 2500 || Math.abs((q.y || 0) - c.y) > 4) continue;
+        const along = dx * sh + dz * ch; if (along < -2 && along > -48 && Math.cos(q.heading - c.heading) > .5) { if (c.yieldT <= 0) this.yields = (this.yields || 0) + 1; c.yieldT = 1.4; }
+      }
+      if (c.yieldT > 0) want = Math.min(want, c.pull > .85 ? 0 : 4);
+      c.pull += Math.max(-dt * .8, Math.min(dt * .8, (c.yieldT > 0 ? 1 : 0) - c.pull));
       c.braking = want < c.v - .5;
       c.v += Math.max(-9 * dt, Math.min(3.5 * dt, want - c.v));
       const before = this.s(c);
@@ -527,6 +539,8 @@ export class WayTraffic {
     this.head.material.color.setScalar(.25 + night * .75); this.tail.material.color.setRGB(.35 + night * .65, .05, .03);
     if (this.fleet) { this.fleet.focus = f; this.fleet.draw(this.list, night, dt); }
   }
+  /** Takes a car off the road (taken by the game, or crashed into the hands of the big city's own traffic): it comes back out of sight elsewhere, as a new car. */
+  takeOut(c, f) { this.respawn(c, f); c.v = c.r.speed * .6; c.colour.set(['#c8ccd2', '#20242a', '#8a1d1d', '#e9e6df', '#33507a', '#5f646b'][this.R() * 6 | 0]); c.id += 1000; return this; }
   /** Headlights of the cars drawn whole, for the lamps (as City's). */
   headlamps(night, out) { return this.fleet?.close.size ? this.fleet.headlamps(night, out) : (out.length = 0, out); }
   dispose() { this.fleet?.dispose(); for (const M of [this.head, this.tail, this.boxes]) if (M) { M.removeFromParent(); M.dispose(); M.geometry.dispose(); } }

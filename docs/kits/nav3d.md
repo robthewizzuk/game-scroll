@@ -8,11 +8,11 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Nav3dPart`, line 1848), where every option and field is described.
+From `src/gamescroll.d.ts` (`Nav3dPart`, line 1853), where every option and field is described.
 
-- `NavMesh3D: new (objects: Loose | Loose[], o?: { radius?: number; height?: number; climb?: number; slope?: number; cell?: number; maxEdge?: number }) => { path(a: Loose…` (:1849)
-- `loadNav3D(): Promise<Loose>` (:1854)
-- `nav3DReady(): boolean` (:1854)
+- `NavMesh3D: new (objects: Loose | Loose[], o?: { radius?: number; height?: number; climb?: number; slope?: number; cell?: number; maxEdge?: number }) => { path(a: Loose…` (:1854)
+- `loadNav3D(): Promise<Loose>` (:1859)
+- `nav3DReady(): boolean` (:1859)
 
 ## From the maker kit
 

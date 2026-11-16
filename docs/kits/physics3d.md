@@ -8,50 +8,50 @@ Rapier 3D physics: bodies, level collisions, walking characters, ragdolls, vehic
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Physics3dPart`, line 1760), where every option and field is described.
+From `src/gamescroll.d.ts` (`Physics3dPart`, line 1765), where every option and field is described.
 
-- `World3D: new (o?: { gravity?: number | XYZ; smooth?: boolean; link?: boolean }) => World3DT` gravity: metres a second² (negative is down) or { x, y, z }; smooth: meshes drawn between ticks (tick: 60 games). (:1762)
-  - `readonly bodies: Body3D[]` (:1719)
-  - `readonly movers: Mover3D[]` (:1719)
-  - `readonly riders: Rider3D[]` (:1719)
-  - `readonly vehicles: Vehicle3D[]` (:1719)
-  - `readonly at: XYZ` Where Rapier's own centre is (x and z): see centre(). (:1720)
-  - `ball(mesh: Loose, r?: number, o?: Body3DOptions): Body3D` (:1721)
-  - `box(mesh: Loose, w?: number, h?: number, d?: number, o?: Body3DOptions): Body3D` A box of full size w × h × d. (:1722)
-  - `capsule(mesh: Loose, radius?: number, height?: number, o?: Body3DOptions): Body3D` An upright capsule; height includes the round ends. (:1723)
-  - `hull(mesh: Loose, o?: Body3DOptions): Body3D` A dynamic body shaped like the mesh's outline. (:1724)
-  - `shape(mesh: Loose, spec: { box?: number[]; ball?: number; capsule?: number[]; hull?: number[] | XYZ[]; off?: XYZ; turn?: Loose }, o?: Body3DOptions): Body3D` A body of a plain shape: { box: [w, h, d] } | { ball: r } | { capsule: [r, h] } | { hull: points }, with off and turn. (:1726)
-  - `shapes(list?: Loose[], o?: Body3DOptions): Body3D & { add(shape: Loose): Loose; drop(part: Loose): void; set(part: Loose, at: XYZ, turn?: number | Loose): void }` Many still shapes in one fixed body (lamp posts, tree trunks): each a shape() spec with at, turn and part. (:1728)
-  - `ground(mesh: Loose, o?: Body3DOptions): Body3D` Makes a mesh (and everything inside it) solid and fixed: the level. (:1729)
-  - `heights(o: { data: ArrayLike<number>; cols: number; rows: number; x?: number; z?: number; width: number; depth?: number }, o2?: Body3DOptions): Body3D` Solid ground from a grid of (cols + 1) × (rows + 1) heights. (:1730)
-  - `floor(y?: number, o?: Body3DOptions): Body3D` A flat endless floor at height y. (:1731)
-  - `mover(mesh: Loose, o?: { radius?: number; height?: number; step?: number; slope?: number; gravity?: number; at?: XYZ }): Mover3D` A walking character: radius, height, step (tallest step), slope (degrees), at. (:1732)
-  - `rider(o?: { box?: number[]; ball?: number; capsule?: number[]; round?: number; at?: XYZ; turn?: number; lift?: number; step?: number; slope?: number; snap?: number; ma…` Something your code moves, solid: one of box [w, h, l], ball r, capsule [r, h]. (:1734)
-  - `floorAt(x: number, y?: number, z?: number, reach?: number, not?: Body3D | Mover3D | Rider3D | null): number | null` The height of the first solid thing under (x, z) at or below y + reach, or null. (:1735)
-  - `vehicle(mesh: Loose, o?: { w?: number; h?: number; l?: number; density?: number; wheels?: Loose[]; radius?: number; rest?: number; travel?: number; stiffness?: number;…` A car with suspension: chassis w, h, l, wheel meshes, power, grip, steer, at; bike: true for a motorbike. (:1737)
-  - `hinge(a: Body3D | null, b: Body3D | null, p: XYZ, axis?: XYZ, o?: { min?: number; max?: number; motor?: number; strength?: number }): Joint3D` A hinge at p about axis (default y: a door); min/max (radians), motor. (:1738)
-  - `pin(a: Body3D | null, b: Body3D | null, p: XYZ): Joint3D` Ball and socket at p. (:1739)
-  - `weld(a: Body3D | null, b: Body3D | null): Joint3D` Glues b to a where they are now. (:1740)
-  - `spring(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, o?: { stiffness?: number; damping?: number; length?: number }): Joint3D` (:1741)
-  - `leash(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, length?: number): Joint3D` (:1742)
-  - `remove(thing: Body3D | Mover3D | Rider3D | Vehicle3D): void` (:1743)
-  - `clear(): void` (:1743)
-  - `ragdoll(root: Loose, o?: { limbs?: Loose[]; push?: number[] | XYZ; [k: string]: Loose }): Ragdoll3D` A character goes floppy: a gs.poses-rigged person (figure, person, gs.models.human) as one jointed body, or a Group with limbs. (:1745)
-  - `ray(from: XYZ, dir: XYZ, max?: number, filter?: Loose): RayHit3D | null` The first thing along a ray from `from` in direction dir, up to max metres. (:1746)
-  - `sweep(shape: { ball?: number; box?: number[]; capsule?: number[] }, from: XYZ, move: XYZ, o?: { still?: boolean; not?: Loose; turn?: Loose }): { thing: Body3D | null; …` The first thing a moving { ball } / { box } / { capsule } meets. (:1748)
-  - `around(lo: XYZ, hi: XYZ, pad?: number): Loose[]` The shapes in a box of the world, for outOf(). (:1749)
-  - `outOf(p: XYZ, r: number, shapes: Loose[], from?: XYZ | null): { x: number; y: number; z: number; nx: number; ny: number; nz: number; depth: number; thing: Body3D } | null` Keeps a point of radius r out of the shapes from around(): null if clear. (:1750)
-  - `near(p: XYZ, radius: number): Body3D[]` Every body within radius of a point. (:1751)
-  - `blast(p: XYZ, radius: number, strength?: number): void` Throws everything near p outward (metres a second at the centre). (:1752)
-  - `onHit(fn: (a: Loose, b: Loose, speed: number, contact: { readonly at: XYZ | null; readonly normal: XYZ | null }) => void): this` fn(a, b, speed, contact) when two things start touching; contact.at, contact.normal. (:1753)
-  - `centre(x: number, z: number): void` Keeps the bodies in Rapier about (x, z) (the world does it by itself from the view). (:1754)
-  - `inner(p: XYZ): XYZ` (:1755)
-  - `outer(p: XYZ): XYZ` (:1755)
-  - `step(dt: number): void` Moves the world on by dt seconds and puts the meshes where their bodies are. (:1756)
-  - `free(): void` Free the engine's memory (the app does it when the card leaves the feed). (:1757)
-  - `world: Loose` Rapier's own world. (:1758)
-- `loadPhysics3D(): Promise<Loose>` (:1763)
-- `physics3DReady(): boolean` (:1763)
+- `World3D: new (o?: { gravity?: number | XYZ; smooth?: boolean; link?: boolean }) => World3DT` gravity: metres a second² (negative is down) or { x, y, z }; smooth: meshes drawn between ticks (tick: 60 games). (:1767)
+  - `readonly bodies: Body3D[]` (:1724)
+  - `readonly movers: Mover3D[]` (:1724)
+  - `readonly riders: Rider3D[]` (:1724)
+  - `readonly vehicles: Vehicle3D[]` (:1724)
+  - `readonly at: XYZ` Where Rapier's own centre is (x and z): see centre(). (:1725)
+  - `ball(mesh: Loose, r?: number, o?: Body3DOptions): Body3D` (:1726)
+  - `box(mesh: Loose, w?: number, h?: number, d?: number, o?: Body3DOptions): Body3D` A box of full size w × h × d. (:1727)
+  - `capsule(mesh: Loose, radius?: number, height?: number, o?: Body3DOptions): Body3D` An upright capsule; height includes the round ends. (:1728)
+  - `hull(mesh: Loose, o?: Body3DOptions): Body3D` A dynamic body shaped like the mesh's outline. (:1729)
+  - `shape(mesh: Loose, spec: { box?: number[]; ball?: number; capsule?: number[]; hull?: number[] | XYZ[]; off?: XYZ; turn?: Loose }, o?: Body3DOptions): Body3D` A body of a plain shape: { box: [w, h, d] } | { ball: r } | { capsule: [r, h] } | { hull: points }, with off and turn. (:1731)
+  - `shapes(list?: Loose[], o?: Body3DOptions): Body3D & { add(shape: Loose): Loose; drop(part: Loose): void; set(part: Loose, at: XYZ, turn?: number | Loose): void }` Many still shapes in one fixed body (lamp posts, tree trunks): each a shape() spec with at, turn and part. (:1733)
+  - `ground(mesh: Loose, o?: Body3DOptions): Body3D` Makes a mesh (and everything inside it) solid and fixed: the level. (:1734)
+  - `heights(o: { data: ArrayLike<number>; cols: number; rows: number; x?: number; z?: number; width: number; depth?: number }, o2?: Body3DOptions): Body3D` Solid ground from a grid of (cols + 1) × (rows + 1) heights. (:1735)
+  - `floor(y?: number, o?: Body3DOptions): Body3D` A flat endless floor at height y. (:1736)
+  - `mover(mesh: Loose, o?: { radius?: number; height?: number; step?: number; slope?: number; gravity?: number; at?: XYZ }): Mover3D` A walking character: radius, height, step (tallest step), slope (degrees), at. (:1737)
+  - `rider(o?: { box?: number[]; ball?: number; capsule?: number[]; round?: number; at?: XYZ; turn?: number; lift?: number; step?: number; slope?: number; snap?: number; ma…` Something your code moves, solid: one of box [w, h, l], ball r, capsule [r, h]. (:1739)
+  - `floorAt(x: number, y?: number, z?: number, reach?: number, not?: Body3D | Mover3D | Rider3D | null): number | null` The height of the first solid thing under (x, z) at or below y + reach, or null. (:1740)
+  - `vehicle(mesh: Loose, o?: { w?: number; h?: number; l?: number; density?: number; wheels?: Loose[]; radius?: number; rest?: number; travel?: number; stiffness?: number;…` A car with suspension: chassis w, h, l, wheel meshes, power, grip, steer, at; bike: true for a motorbike. (:1742)
+  - `hinge(a: Body3D | null, b: Body3D | null, p: XYZ, axis?: XYZ, o?: { min?: number; max?: number; motor?: number; strength?: number }): Joint3D` A hinge at p about axis (default y: a door); min/max (radians), motor. (:1743)
+  - `pin(a: Body3D | null, b: Body3D | null, p: XYZ): Joint3D` Ball and socket at p. (:1744)
+  - `weld(a: Body3D | null, b: Body3D | null): Joint3D` Glues b to a where they are now. (:1745)
+  - `spring(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, o?: { stiffness?: number; damping?: number; length?: number }): Joint3D` (:1746)
+  - `leash(a: Body3D | null, b: Body3D | null, pa: XYZ, pb: XYZ, length?: number): Joint3D` (:1747)
+  - `remove(thing: Body3D | Mover3D | Rider3D | Vehicle3D): void` (:1748)
+  - `clear(): void` (:1748)
+  - `ragdoll(root: Loose, o?: { limbs?: Loose[]; push?: number[] | XYZ; [k: string]: Loose }): Ragdoll3D` A character goes floppy: a gs.poses-rigged person (figure, person, gs.models.human) as one jointed body, or a Group with limbs. (:1750)
+  - `ray(from: XYZ, dir: XYZ, max?: number, filter?: Loose): RayHit3D | null` The first thing along a ray from `from` in direction dir, up to max metres. (:1751)
+  - `sweep(shape: { ball?: number; box?: number[]; capsule?: number[] }, from: XYZ, move: XYZ, o?: { still?: boolean; not?: Loose; turn?: Loose }): { thing: Body3D | null; …` The first thing a moving { ball } / { box } / { capsule } meets. (:1753)
+  - `around(lo: XYZ, hi: XYZ, pad?: number): Loose[]` The shapes in a box of the world, for outOf(). (:1754)
+  - `outOf(p: XYZ, r: number, shapes: Loose[], from?: XYZ | null): { x: number; y: number; z: number; nx: number; ny: number; nz: number; depth: number; thing: Body3D } | null` Keeps a point of radius r out of the shapes from around(): null if clear. (:1755)
+  - `near(p: XYZ, radius: number): Body3D[]` Every body within radius of a point. (:1756)
+  - `blast(p: XYZ, radius: number, strength?: number): void` Throws everything near p outward (metres a second at the centre). (:1757)
+  - `onHit(fn: (a: Loose, b: Loose, speed: number, contact: { readonly at: XYZ | null; readonly normal: XYZ | null }) => void): this` fn(a, b, speed, contact) when two things start touching; contact.at, contact.normal. (:1758)
+  - `centre(x: number, z: number): void` Keeps the bodies in Rapier about (x, z) (the world does it by itself from the view). (:1759)
+  - `inner(p: XYZ): XYZ` (:1760)
+  - `outer(p: XYZ): XYZ` (:1760)
+  - `step(dt: number): void` Moves the world on by dt seconds and puts the meshes where their bodies are. (:1761)
+  - `free(): void` Free the engine's memory (the app does it when the card leaves the feed). (:1762)
+  - `world: Loose` Rapier's own world. (:1763)
+- `loadPhysics3D(): Promise<Loose>` (:1768)
+- `physics3DReady(): boolean` (:1768)
 
 ## From the maker kit
 
@@ -166,7 +166,33 @@ More in docs/maker-kit.md: "Worlds, craft, soft things, cards and menus", "Big w
 
 ## In real games
 
-1 game uses it (`node scripts/examples.mjs gs.physics3d` lists them). The shortest:
+2 games use it (`node scripts/examples.mjs gs.physics3d` lists them). The shortest:
+
+`src/games/totem-drop.js` (Totem Drop, floor, 837 lines):
+
+```js
+const { ARView, arNote, FLOOR } = gs.ar;
+const { World3D } = gs.physics3d;
+// …
+    v = new ARView();
+    world = new World3D({ gravity: -9.8, smooth: true });
+    floorBody = world.floor(FLOOR, { friction: 0.9, bounce: 0.03, tag: 'floor', sound: 'stone' });
+// …
+    v.scene.add(plinthMesh);
+    plinthBody = world.box(plinthMesh, PLINTH_W, PLINTH_H, PLINTH_W, {
+// …
+    sparks = new Particles(v, { max: 140, additive: true });
+    world.onHit(handleHit);
+// …
+    if (p.body) {
+      world.remove(p.body);
+// …
+    _rayFrom.z = hz;
+    const hit = world.ray(_rayFrom, _rayDir, 6);
+// …
+    p.mesh.position.set(hx, hy, hz);
+    p.body = world.box(p.mesh, p.w, p.h, p.d, {
+```
 
 `src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 

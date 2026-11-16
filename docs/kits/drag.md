@@ -8,23 +8,23 @@ Drag and drop: pieces, slots, snapping, reordering lists.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DragPart`, line 3255), where every option and field is described.
+From `src/gamescroll.d.ts` (`DragPart`, line 3260), where every option and field is described.
 
-- `Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; ax…` (:3255)
-  - `pieces: DragThing[]` (:2842)
-  - `slots: DragThing[]` (:2842)
-  - `readonly busy: boolean` (:2842)
-  - `readonly order: DragThing[]` (:2842)
-  - `on(ev: 'pick' | 'over' | 'drop' | 'reject' | 'home' | 'reorder', fn: (...a: Loose[]) => void): Drag` (:2843)
-  - `piece<T extends DragThing>(p: T): T` (:2844)
-  - `slot<T extends DragThing>(s: T): T` (:2844)
-  - `remove(p: DragThing): void` (:2844)
-  - `at(x: number, y: number): DragThing | null` (:2844)
-  - `down(x: number, y: number, id?: number): DragThing | null` (:2845)
-  - `move(x: number, y: number, id?: number): void` (:2845)
-  - `up(x: number, y: number, id?: number): void` (:2845)
-  - `place(p: DragThing, s: DragThing | null): Drag` (:2846)
-  - `update(dt: number): Drag` (:2846)
+- `Drag: new (o?: { snap?: number; accept?: (piece: DragThing, slot: DragThing) => boolean; lift?: number; speed?: number; list?: { x: number; y: number; gap?: number; ax…` (:3260)
+  - `pieces: DragThing[]` (:2847)
+  - `slots: DragThing[]` (:2847)
+  - `readonly busy: boolean` (:2847)
+  - `readonly order: DragThing[]` (:2847)
+  - `on(ev: 'pick' | 'over' | 'drop' | 'reject' | 'home' | 'reorder', fn: (...a: Loose[]) => void): Drag` (:2848)
+  - `piece<T extends DragThing>(p: T): T` (:2849)
+  - `slot<T extends DragThing>(s: T): T` (:2849)
+  - `remove(p: DragThing): void` (:2849)
+  - `at(x: number, y: number): DragThing | null` (:2849)
+  - `down(x: number, y: number, id?: number): DragThing | null` (:2850)
+  - `move(x: number, y: number, id?: number): void` (:2850)
+  - `up(x: number, y: number, id?: number): void` (:2850)
+  - `place(p: DragThing, s: DragThing | null): Drag` (:2851)
+  - `update(dt: number): Drag` (:2851)
 
 ## From the maker kit
 

@@ -8,55 +8,55 @@ Rapier 2D physics: shapes that tumble, joints, ropes, ragdolls, grabbing, walkin
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PhysicsPart`, line 814), where every option and field is described.
+From `src/gamescroll.d.ts` (`PhysicsPart`, line 817), where every option and field is described.
 
-- `Physics: new (o?: { gravity?: number | { x: number; y: number }; scale?: number; walls?: number[] | null; link?: boolean }) => PhysicsWorld` gravity: downward pull in game units a second² (or { x, y }); scale: game units per metre (30); walls: [x, y, w, h] puts solid walls round it. (:816)
-  - `readonly things: PhysicsThing[]` Everything in it, walls too. (:766)
-  - `readonly joints: PhysicsJoint[]` (:766)
-  - `readonly scale: number` Game units per metre (default 30). (:767)
-  - `gravity: { x: number; y: number }` (:767)
-  - `readonly time: number` (:767)
-  - `circle(x: number, y: number, r: number, o?: PhysicsShapeOptions): PhysicsThing` (:768)
-  - `box(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing` x, y is its centre. (:769)
-  - `poly(x: number, y: number, points: number[][], o?: PhysicsShapeOptions): PhysicsThing` A convex shape from points [[x, y], ...] relative to (x, y). (:770)
-  - `line(points: number[][], o?: PhysicsShapeOptions & { loop?: boolean }): PhysicsThing` A fixed line or ground through points [[x, y], ...] (game positions): hills, slopes, ramps. (:771)
-  - `walls(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing` Solid walls round a rectangle (tag 'wall'). (:772)
-  - `remove(thing: PhysicsThing): void` (:773)
-  - `clear(): void` (:773)
-  - `free(): void` Free the engine's memory (the app does it when the card leaves the feed). (:774)
-  - `move(box: { x: number; y: number; w?: number; h?: number; r?: number; [k: string]: Loose }, dx: number, dy: number, o?: { step?: number | null; slope?: number; snap?: …` Moves a box your code steers (a gs.movers Platformer or TopDown, a Car, any { x, y, w, h } or { x, y, r }) as far as the world lets it: stops at walls and slides along them, walks up steps and slopes, keeps to the… (:777)
-  - `unmove(box: Loose): this` Takes a box moved with move() out of the world. (:778)
-  - `tiles(map: TileMap, o?: { friction?: number; bounce?: number; tag?: string }): PhysicsThing` Makes a gs.tiles TileMap solid (walls, slopes, one-way ledges); call rebuild() on what it returns after changing tiles. (:780)
-  - `near(x0: number, y0: number, x1: number, y1: number, pad?: number): Loose[]` The shapes near a box, for things that aren't bodies (points, particles) to stay out of with outOf(). (:781)
-  - `outOf(x: number, y: number, r: number, shapes: Loose[]): { x: number; y: number; nx: number; ny: number; depth: number; thing: PhysicsThing } | null` Keeps a point of radius r out of the shapes from near(): null if clear. (:782)
-  - `hinge(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { min?: number; max?: number; motor?: number; strength?: number }): PhysicsJoint` A hinge (pin) at (x, y): doors, flippers, wheels, pendulums. (:783)
-  - `spring(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, o?: { stiffness?: number; damping?: number; length?: number }): …` stiffness: bounces a second (2-6), damping 0..1, length: rest length (default as placed). (:784)
-  - `leash(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, length?: number): PhysicsJoint` The two points can't get further apart than length. (:785)
-  - `weld(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number): PhysicsJoint` Glues b to a at (x, y). (:786)
-  - `slider(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, dx: number, dy: number, o?: { min?: number; max?: number; motor?: number; strength?: numbe…` Along (dx, dy) through (x, y): lifts, pistons, sliding doors. (:787)
-  - `wheel(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { motor?: number; strength?: number }): PhysicsJoint` b spins on a hinge at (x, y) of a; later h.motor(speed). (:788)
-  - `rope(a: PhysicsThing | null, x1: number, y1: number, b: PhysicsThing | null | undefined, x2: number, y2: number, o?: PhysicsShapeOptions & { links?: number; thick?: nu…` A rope of small links from a (null = the world) to b (undefined = loose). (:790)
-  - `ragdoll(x: number, y: number, o?: PhysicsShapeOptions & { size?: number; face?: number }): { parts: Record<'head' | 'chest' | 'armL' | 'foreL' | 'armR' | 'foreR' | 'le…` A floppy person of 10 hinged parts, hips at (x, y); size: head-to-toe height; face 1 right, -1 left. (:792)
-  - `grab(x: number, y: number, o?: { strength?: number; filter?: (t: PhysicsThing) => boolean }): { thing: PhysicsThing; move(x: number, y: number): void; release(): void …` Drag with a finger: grab in down() (null if nothing's there), move in move(), release in up(). (:794)
-  - `at(x: number, y: number, filter?: (t: PhysicsThing) => boolean): PhysicsThing | null` The thing at a point, or null. (:795)
-  - `inBox(x: number, y: number, w: number, h: number): PhysicsThing[]` Every thing overlapping the box. (:796)
-  - `ray(x1: number, y1: number, x2: number, y2: number, filter?: (t: PhysicsThing) => boolean): { thing: PhysicsThing | null; x: number; y: number; nx: number; ny: number;…` The first thing a ray hits, or null. (:797)
-  - `blast(x: number, y: number, radius: number, strength?: number): void` Throws everything near (x, y) outward. (:798)
-  - `onHit(fn: (a: PhysicsThing, b: PhysicsThing, speed: number, x: number, y: number) => void): this` fn(a, b, speed, x, y) when two things start touching; safe to remove things in it. (:799)
-  - `step(dt: number): void` Moves the world on by dt seconds (once per update). (:800)
-  - `path(c: CanvasRenderingContext2D, t: PhysicsThing): void` The canvas path of a thing's shape, ready for c.fill() or c.stroke(). (:801)
-  - `debugDraw(c: CanvasRenderingContext2D, color?: string): void` Outlines every thing and joint (from your game's debug(c)). (:802)
-  - `toWorld(v: number): number` (:803)
-  - `toGame(m: number): number` (:803)
-  - `world: Loose` Rapier's own world and module. (:804)
-  - `R: Loose` (:804)
-- `Body: Function` What a Physics makes (for instanceof, not new). (:818)
-- `World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => PhysicsSimpleW…` The simple world: a Physics (the same engine, every method) with a few names of its own: balls and upright boxes whose mass goes by their size in game units, `bodies`, `near(x, y, r)`, `onHit((a, b, speed) => ...)`… (:820)
-  - `readonly bodies: PhysicsThing[]` The bodies in it (not its walls). (:808)
-  - `onHit(fn: (a: PhysicsThing, b: PhysicsThing | null, speed: number) => void): this` fn(a, b, speed) when two bodies meet with some speed (b null for a wall). (:809)
-  - `near(x: number, y: number, r: number, ...rest: number[]): Loose[]` Bodies overlapping a circle; with four numbers or more, Physics' near(). (:810)
-- `loadPhysics(): Promise<Loose>` (:821)
-- `physicsReady(): boolean` (:821)
+- `Physics: new (o?: { gravity?: number | { x: number; y: number }; scale?: number; walls?: number[] | null; link?: boolean }) => PhysicsWorld` gravity: downward pull in game units a second² (or { x, y }); scale: game units per metre (30); walls: [x, y, w, h] puts solid walls round it. (:819)
+  - `readonly things: PhysicsThing[]` Everything in it, walls too. (:769)
+  - `readonly joints: PhysicsJoint[]` (:769)
+  - `readonly scale: number` Game units per metre (default 30). (:770)
+  - `gravity: { x: number; y: number }` (:770)
+  - `readonly time: number` (:770)
+  - `circle(x: number, y: number, r: number, o?: PhysicsShapeOptions): PhysicsThing` (:771)
+  - `box(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing` x, y is its centre. (:772)
+  - `poly(x: number, y: number, points: number[][], o?: PhysicsShapeOptions): PhysicsThing` A convex shape from points [[x, y], ...] relative to (x, y). (:773)
+  - `line(points: number[][], o?: PhysicsShapeOptions & { loop?: boolean }): PhysicsThing` A fixed line or ground through points [[x, y], ...] (game positions): hills, slopes, ramps. (:774)
+  - `walls(x: number, y: number, w: number, h: number, o?: PhysicsShapeOptions): PhysicsThing` Solid walls round a rectangle (tag 'wall'). (:775)
+  - `remove(thing: PhysicsThing): void` (:776)
+  - `clear(): void` (:776)
+  - `free(): void` Free the engine's memory (the app does it when the card leaves the feed). (:777)
+  - `move(box: { x: number; y: number; w?: number; h?: number; r?: number; [k: string]: Loose }, dx: number, dy: number, o?: { step?: number | null; slope?: number; snap?: …` Moves a box your code steers (a gs.movers Platformer or TopDown, a Car, any { x, y, w, h } or { x, y, r }) as far as the world lets it: stops at walls and slides along them, walks up steps and slopes, keeps to the… (:780)
+  - `unmove(box: Loose): this` Takes a box moved with move() out of the world. (:781)
+  - `tiles(map: TileMap, o?: { friction?: number; bounce?: number; tag?: string }): PhysicsThing` Makes a gs.tiles TileMap solid (walls, slopes, one-way ledges); call rebuild() on what it returns after changing tiles. (:783)
+  - `near(x0: number, y0: number, x1: number, y1: number, pad?: number): Loose[]` The shapes near a box, for things that aren't bodies (points, particles) to stay out of with outOf(). (:784)
+  - `outOf(x: number, y: number, r: number, shapes: Loose[]): { x: number; y: number; nx: number; ny: number; depth: number; thing: PhysicsThing } | null` Keeps a point of radius r out of the shapes from near(): null if clear. (:785)
+  - `hinge(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { min?: number; max?: number; motor?: number; strength?: number }): PhysicsJoint` A hinge (pin) at (x, y): doors, flippers, wheels, pendulums. (:786)
+  - `spring(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, o?: { stiffness?: number; damping?: number; length?: number }): …` stiffness: bounces a second (2-6), damping 0..1, length: rest length (default as placed). (:787)
+  - `leash(a: PhysicsThing | null, b: PhysicsThing | null, ax: number, ay: number, bx: number, by: number, length?: number): PhysicsJoint` The two points can't get further apart than length. (:788)
+  - `weld(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number): PhysicsJoint` Glues b to a at (x, y). (:789)
+  - `slider(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, dx: number, dy: number, o?: { min?: number; max?: number; motor?: number; strength?: numbe…` Along (dx, dy) through (x, y): lifts, pistons, sliding doors. (:790)
+  - `wheel(a: PhysicsThing | null, b: PhysicsThing | null, x: number, y: number, o?: { motor?: number; strength?: number }): PhysicsJoint` b spins on a hinge at (x, y) of a; later h.motor(speed). (:791)
+  - `rope(a: PhysicsThing | null, x1: number, y1: number, b: PhysicsThing | null | undefined, x2: number, y2: number, o?: PhysicsShapeOptions & { links?: number; thick?: nu…` A rope of small links from a (null = the world) to b (undefined = loose). (:793)
+  - `ragdoll(x: number, y: number, o?: PhysicsShapeOptions & { size?: number; face?: number }): { parts: Record<'head' | 'chest' | 'armL' | 'foreL' | 'armR' | 'foreR' | 'le…` A floppy person of 10 hinged parts, hips at (x, y); size: head-to-toe height; face 1 right, -1 left. (:795)
+  - `grab(x: number, y: number, o?: { strength?: number; filter?: (t: PhysicsThing) => boolean }): { thing: PhysicsThing; move(x: number, y: number): void; release(): void …` Drag with a finger: grab in down() (null if nothing's there), move in move(), release in up(). (:797)
+  - `at(x: number, y: number, filter?: (t: PhysicsThing) => boolean): PhysicsThing | null` The thing at a point, or null. (:798)
+  - `inBox(x: number, y: number, w: number, h: number): PhysicsThing[]` Every thing overlapping the box. (:799)
+  - `ray(x1: number, y1: number, x2: number, y2: number, filter?: (t: PhysicsThing) => boolean): { thing: PhysicsThing | null; x: number; y: number; nx: number; ny: number;…` The first thing a ray hits, or null. (:800)
+  - `blast(x: number, y: number, radius: number, strength?: number): void` Throws everything near (x, y) outward. (:801)
+  - `onHit(fn: (a: PhysicsThing, b: PhysicsThing, speed: number, x: number, y: number) => void): this` fn(a, b, speed, x, y) when two things start touching; safe to remove things in it. (:802)
+  - `step(dt: number): void` Moves the world on by dt seconds (once per update). (:803)
+  - `path(c: CanvasRenderingContext2D, t: PhysicsThing): void` The canvas path of a thing's shape, ready for c.fill() or c.stroke(). (:804)
+  - `debugDraw(c: CanvasRenderingContext2D, color?: string): void` Outlines every thing and joint (from your game's debug(c)). (:805)
+  - `toWorld(v: number): number` (:806)
+  - `toGame(m: number): number` (:806)
+  - `world: Loose` Rapier's own world and module. (:807)
+  - `R: Loose` (:807)
+- `Body: Function` What a Physics makes (for instanceof, not new). (:821)
+- `World: new (o?: { gravity?: number | { x: number; y: number }; walls?: number[] | null; wallBounce?: number; wallFriction?: number; link?: boolean }) => PhysicsSimpleW…` The simple world: a Physics (the same engine, every method) with a few names of its own: balls and upright boxes whose mass goes by their size in game units, `bodies`, `near(x, y, r)`, `onHit((a, b, speed) => ...)`… (:823)
+  - `readonly bodies: PhysicsThing[]` The bodies in it (not its walls). (:811)
+  - `onHit(fn: (a: PhysicsThing, b: PhysicsThing | null, speed: number) => void): this` fn(a, b, speed) when two bodies meet with some speed (b null for a wall). (:812)
+  - `near(x: number, y: number, r: number, ...rest: number[]): Loose[]` Bodies overlapping a circle; with four numbers or more, Physics' near(). (:813)
+- `loadPhysics(): Promise<Loose>` (:824)
+- `physicsReady(): boolean` (:824)
 
 ## From the maker kit
 
@@ -151,7 +151,7 @@ is the same on every phone.
 
 ## In real games
 
-7 games use it (`node scripts/examples.mjs gs.physics` lists them). The shortest:
+8 games use it (`node scripts/examples.mjs gs.physics` lists them). The shortest:
 
 `src/games/pin-pull.js` (Pin Pull, Casual · Puzzle, 115 lines):
 
@@ -179,10 +179,10 @@ const { Physics } = gs.physics;
       for (const q of best.parts) phys.remove(q.body);
 ```
 
-`src/games/path-doodle.js` (Path Doodle, rock, 131 lines):
+`src/games/path-doodle.js` (Path Doodle, rock, 133 lines):
 
 ```js
-import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Physics } = gs.physics;
 // …
       const x = nextX, k = Math.random();

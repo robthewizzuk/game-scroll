@@ -8,45 +8,45 @@ Particles, shake, pop-ups, flash, hit-stop and tweens by hand; Timeline for sequ
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`JuicePart`, line 492), where every option and field is described.
+From `src/gamescroll.d.ts` (`JuicePart`, line 495), where every option and field is described.
 
-- `Juice: typeof Juice` (:493)
-  - `constructor(o?: { pixel?: boolean; max?: number; font?: string; size?: number; color?: string })` (:476)
-  - `burst(x: number, y: number, o?: BurstOpts): this` (:477)
-  - `emit(x: number, y: number, vx: number, vy: number, o?: BurstOpts): this` (:478)
-  - `shake(amount: number): this` (:479)
-  - `pop(x: number, y: number, text: string, o?: { color?: string; size?: number; font?: string; life?: number; rise?: number }): this` A line of text that pops up and rises: font is a CSS family (the Juice's own by default), life seconds (.9), rise how far it rises (30). (:481)
-  - `tween(obj: object, props: object, dur: number, ease?: (t: number) => number, delay?: number): Loose` (:482)
-  - `flash(color?: string, a?: number, dur?: number): this` (:483)
-  - `freeze(sec?: number): this` Hit-stop: freeze the action for a moment. (:485)
-  - `readonly frozen: boolean` (:486)
-  - `update(dt: number): void` (:487)
-  - `begin(c: Ctx): void` (:488)
-  - `end(c: Ctx, W?: number, H?: number): void` (:489)
-  - `clear(): void` (:490)
-- `Particles: Loose` (:494)
-- `Popups: Loose` (:494)
-- `Shake: Loose` (:494)
-- `Tweens: Loose` (:494)
-- `ease: Record<string, (t: number) => number>` (:495)
-- `lerp(a: number, b: number, t: number): number` (:496)
-- `approach(cur: number, target: number, rate: number, dt: number): number` Smoothly approach target (frame-rate independent). (:498)
-- `pulse(t: number, period?: number): number` (:499)
-- `Timeline: new (o?: { loop?: boolean | number; alternate?: boolean; ease?: string | ((t: number) => number); duration?: number }) => Timeline` Steps in order, together and staggered (anime.js, lazy: make it in make() or reset()). (:501)
-  - `to(targets: object | object[], params: { duration?: number; delay?: number | Loose; ease?: string | ((t: number) => number); [k: string]: Loose }, position?: number | …` (:506)
-  - `call(fn: () => void, position?: number | string): this` (:507)
-  - `label(name: string, position?: number | string): this` (:508)
-  - `update(dt: number): this` (:509)
-  - `play(): this` (:509)
-  - `pause(): this` (:509)
-  - `seek(t: number): this` (:509)
-  - `restart(): this` (:509)
-  - `readonly duration: number` (:510)
-  - `readonly done: boolean` (:510)
-  - `time: number` (:510)
-  - `speed: number` (:510)
-  - `playing: boolean` (:510)
-- `stagger(each: number, o?: { from?: 'first' | 'center' | 'last' | number; start?: number; [k: string]: Loose }): Loose` A delay that grows along a list of targets: stagger(.1). (:503)
+- `Juice: typeof Juice` (:496)
+  - `constructor(o?: { pixel?: boolean; max?: number; font?: string; size?: number; color?: string })` (:479)
+  - `burst(x: number, y: number, o?: BurstOpts): this` (:480)
+  - `emit(x: number, y: number, vx: number, vy: number, o?: BurstOpts): this` (:481)
+  - `shake(amount: number): this` (:482)
+  - `pop(x: number, y: number, text: string, o?: { color?: string; size?: number; font?: string; life?: number; rise?: number }): this` A line of text that pops up and rises: font is a CSS family (the Juice's own by default), life seconds (.9), rise how far it rises (30). (:484)
+  - `tween(obj: object, props: object, dur: number, ease?: (t: number) => number, delay?: number): Loose` (:485)
+  - `flash(color?: string, a?: number, dur?: number): this` (:486)
+  - `freeze(sec?: number): this` Hit-stop: freeze the action for a moment. (:488)
+  - `readonly frozen: boolean` (:489)
+  - `update(dt: number): void` (:490)
+  - `begin(c: Ctx): void` (:491)
+  - `end(c: Ctx, W?: number, H?: number): void` (:492)
+  - `clear(): void` (:493)
+- `Particles: Loose` (:497)
+- `Popups: Loose` (:497)
+- `Shake: Loose` (:497)
+- `Tweens: Loose` (:497)
+- `ease: Record<string, (t: number) => number>` (:498)
+- `lerp(a: number, b: number, t: number): number` (:499)
+- `approach(cur: number, target: number, rate: number, dt: number): number` Smoothly approach target (frame-rate independent). (:501)
+- `pulse(t: number, period?: number): number` (:502)
+- `Timeline: new (o?: { loop?: boolean | number; alternate?: boolean; ease?: string | ((t: number) => number); duration?: number }) => Timeline` Steps in order, together and staggered (anime.js, lazy: make it in make() or reset()). (:504)
+  - `to(targets: object | object[], params: { duration?: number; delay?: number | Loose; ease?: string | ((t: number) => number); [k: string]: Loose }, position?: number | …` (:509)
+  - `call(fn: () => void, position?: number | string): this` (:510)
+  - `label(name: string, position?: number | string): this` (:511)
+  - `update(dt: number): this` (:512)
+  - `play(): this` (:512)
+  - `pause(): this` (:512)
+  - `seek(t: number): this` (:512)
+  - `restart(): this` (:512)
+  - `readonly duration: number` (:513)
+  - `readonly done: boolean` (:513)
+  - `time: number` (:513)
+  - `speed: number` (:513)
+  - `playing: boolean` (:513)
+- `stagger(each: number, o?: { from?: 'first' | 'center' | 'last' | number; start?: number; [k: string]: Loose }): Loose` A delay that grows along a list of targets: stagger(.1). (:506)
 
 ## From the maker kit
 
@@ -91,7 +91,7 @@ then `tl.update(dt)`; `done`, `seek()`, `pause()`, `speed`, `loop: true`. For a 
 
 ## In real games
 
-35 games use it (`node scripts/examples.mjs gs.juice` lists them). The shortest:
+40 games use it (`node scripts/examples.mjs gs.juice` lists them). The shortest:
 
 `src/games/bomb-maze.js` (Bomb Maze, Pocket · Action, 73 lines):
 

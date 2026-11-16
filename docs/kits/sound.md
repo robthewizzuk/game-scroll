@@ -31,10 +31,10 @@ From `src/gamescroll.d.ts` (`SoundPart`, line 161), where every option and field
 - `music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Recor…` Background music from patterns; start it in update(), not reset(). (:219)
 - `Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; /** What stands in th…` 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones). (:229)
 - `Foley: FoleyClass` The sounds a world makes by itself, with nothing more to call than update() each frame: things that knock into each other in a gs.physics3d World3D sound of what they are made of (a body's `sound` option, else read… (:253)
-  - `new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; splashes?: boolean; breaks?: boolean; link?: boolean; ground?: ((x: number, z: nu…` ears, world, marks, weather, land: left out, each is the one the game made (found again when the game makes a new one, as a World3D each round); false: none. (:350)
-  - `readonly materials: FoleyMaterial[]` (:351)
-  - `readonly engines: FoleyEngine[]` (:352)
-  - `materialOf(obj: Loose): FoleyMaterial | null` What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. (:354)
+  - `new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; splashes?: boolean; breaks?: boolean; link?: boolean; ground?: ((x: number, z: nu…` ears, world, marks, weather, land: left out, each is the one the game made (found again when the game makes a new one, as a World3D each round); false: none. (:353)
+  - `readonly materials: FoleyMaterial[]` (:354)
+  - `readonly engines: FoleyEngine[]` (:355)
+  - `materialOf(obj: Loose): FoleyMaterial | null` What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. (:357)
 - `acoustics: { caster(level: SoundLevel | null, o?: { flat?: boolean }): SoundCast | null; blocked(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, sou…` The sums behind sound that knows the level, for your own sounds and subtitles (no audio): caster(level) makes one question of any level (cast(from, dir, max) => metres to the first solid thing, or Infinity),… (:259)
 - `zzfx(...params: number[]): void` ZzFX sound from its numbers (zzfx.micro). (:266)
 - `zsound(...params: number[]): () => void` (:267)
@@ -47,11 +47,11 @@ From `src/gamescroll.d.ts` (`SoundPart`, line 161), where every option and field
 - `KITS: Record<KitName, Loose>` (:279)
 - `delay(): number` Seconds between a sound being played and the player hearing it (the phone's output, Bluetooth included where it says). (:281)
 - `mixer: { volume(name: string, v: number, fade?: number): Loose; duck(name?: string, to?: number, hold?: number, back?: number): Loose; room(r?: 'none' | 'room' | 'hall…` Channels ('sfx', 'music', 'voice' or your own), ducking, room echo and muffle. (:283)
-- `say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; s…` Speaks a line with the phone's own voices (text to speech). (:306)
-- `voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>` The voices this phone has to cast from (joke voices left out). (:308)
-- `stopTalking(): void` (:309)
-- `talking(): boolean` (:310)
-- `shaped(): boolean | null` Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. (:312)
+- `say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; s…` Speaks a line with the phone's own voices (text to speech). (:309)
+- `voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>` The voices this phone has to cast from (joke voices left out). (:311)
+- `stopTalking(): void` (:312)
+- `talking(): boolean` (:313)
+- `shaped(): boolean | null` Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. (:315)
 
 ## From the maker kit
 
@@ -162,7 +162,7 @@ More in docs/maker-kit.md: "Game kits", "Action and adventure kits", "Feel, soun
 
 ## In real games
 
-242 games use it (`node scripts/examples.mjs gs.sound` lists them). The shortest:
+248 games use it (`node scripts/examples.mjs gs.sound` lists them). The shortest:
 
 `src/games/colour-flood.js` (Colour Flood, Pocket · Puzzle, 47 lines):
 

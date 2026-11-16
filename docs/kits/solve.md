@@ -8,19 +8,19 @@ Logic puzzles with one answer (make, solve, grade, hint) and turn-based opponent
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SolvePart`, line 1001), where every option and field is described.
+From `src/gamescroll.d.ts` (`SolvePart`, line 1004), where every option and field is described.
 
-- `Puzzle: new () => PuzzleSolver` (:1002)
-  - `cell(id: string | number, values: Loose[]): this` (:990)
-  - `allDiff(ids: (string | number)[]): this` (:991)
-  - `sum(ids: (string | number)[], total: number): this` (:992)
-  - `rule(ids: (string | number)[], ok: (values: Loose[]) => boolean): this` (:993)
-  - `solve(o?: { known?: Record<string, Loose> | null; limit?: number; rng?: number | string | (() => number) | null }): { solution: Record<string, Loose> | null; count: nu…` (:994)
-  - `unique(known?: Record<string, Loose>): boolean` (:995)
-  - `grade(known?: Record<string, Loose>): { level: 'easy' | 'medium' | 'hard' | 'expert' | 'none'; guesses: number; open: number }` (:996)
-  - `carve(solution: Record<string, Loose>, o?: { rng?: number | string | (() => number); grade?: 'easy' | 'medium' | 'hard' | 'expert'; keep?: number }): Record<string, Lo…` (:997)
-  - `hint(clues: Record<string, Loose>, moves?: Record<string, Loose>): { id: string | number | null; value: Loose; why: 'only' | 'last' | 'sum' | 'rule' | 'guess' | 'wrong…` (:998)
-- `Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => { best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); …` (:1003)
+- `Puzzle: new () => PuzzleSolver` (:1005)
+  - `cell(id: string | number, values: Loose[]): this` (:993)
+  - `allDiff(ids: (string | number)[]): this` (:994)
+  - `sum(ids: (string | number)[], total: number): this` (:995)
+  - `rule(ids: (string | number)[], ok: (values: Loose[]) => boolean): this` (:996)
+  - `solve(o?: { known?: Record<string, Loose> | null; limit?: number; rng?: number | string | (() => number) | null }): { solution: Record<string, Loose> | null; count: nu…` (:997)
+  - `unique(known?: Record<string, Loose>): boolean` (:998)
+  - `grade(known?: Record<string, Loose>): { level: 'easy' | 'medium' | 'hard' | 'expert' | 'none'; guesses: number; open: number }` (:999)
+  - `carve(solution: Record<string, Loose>, o?: { rng?: number | string | (() => number); grade?: 'easy' | 'medium' | 'hard' | 'expert'; keep?: number }): Record<string, Lo…` (:1000)
+  - `hint(clues: Record<string, Loose>, moves?: Record<string, Loose>): { id: string | number | null; value: Loose; why: 'only' | 'last' | 'sum' | 'rule' | 'guess' | 'wrong…` (:1001)
+- `Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => { best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); …` (:1006)
 
 ## From the maker kit
 
@@ -50,7 +50,7 @@ Board games get this in one line: `await table.think(search, state, { time, skil
 
 ## In real games
 
-3 games use it (`node scripts/examples.mjs gs.solve` lists them). The shortest:
+5 games use it (`node scripts/examples.mjs gs.solve` lists them). The shortest:
 
 `src/games/tower-four.js` (Tower Four, Board · Strategy, 153 lines):
 

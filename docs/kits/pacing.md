@@ -8,12 +8,12 @@ Spawners, waves, a director that eases off, difficulty ramps.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PacingPart`, line 959), where every option and field is described.
+From `src/gamescroll.d.ts` (`PacingPart`, line 962), where every option and field is described.
 
-- `ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number` (:960)
-- `Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; co…` (:961)
-- `Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state…` (:962)
-- `Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who us…` (:963)
+- `ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number` (:963)
+- `Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; co…` (:964)
+- `Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state…` (:965)
+- `Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who us…` (:966)
 
 ## From the maker kit
 
@@ -37,4 +37,23 @@ director.hurt(1); director.scored(1); director.update(dt); gap = director.pick(1
 
 ## In real games
 
-No game uses `gs.pacing` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.pacing` lists them). The shortest:
+
+`src/games/log-driver.js` (Log Driver, Console · Action, 774 lines):
+
+```js
+const { Ready } = gs.rounds;
+const { Spawner, ramp } = gs.pacing;
+// …
+
+  const spawner = new Spawner({
+// …
+    touch.jumpQueued = false;
+    spawner.reset();
+// …
+
+      const riverSpeed = ramp(t, K.speed, K.speed * 1.72, K.ramp);
+// …
+
+      spawner.update(dt, () => spawnWaveAt(Z_SPAWN, false));
+```

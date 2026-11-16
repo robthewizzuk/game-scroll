@@ -4866,7 +4866,8 @@ export interface CityPerson { id: number; x: number; z: number; heading: number;
   /** A full person while near the camera (Next Gen): body (a gs.models human), react (gs.characters Reactions); else null. */
   full: { body: Loose; react: Loose } | null }
 /** Something that happened in a gs.city City this frame (city.events). */
-export interface CityEvent { kind: 'crash' | 'wreck' | 'knock' | 'call' | 'bang' | 'shots' | 'block' | string; at?: { x: number; z: number }; car?: CityCar; person?: CityPerson; by?: Loose; power?: number; about?: Loose; [k: string]: Loose }
+/** carjack: a car taken (cars.take; parked, police, by who); gs.city Wanted hears it as 'theft' (a police car: 'cop'). */
+export interface CityEvent { kind: 'crash' | 'wreck' | 'knock' | 'call' | 'bang' | 'shots' | 'block' | 'carjack' | string; at?: { x: number; z: number }; car?: CityCar; person?: CityPerson; by?: Loose; power?: number; about?: Loose; [k: string]: Loose }
 /** gs.city's police (Wanted): a unit is one police car and its officers. */
 export interface WantedUnit { car: CityCar; tactic: 'chase' | 'ram' | 'cutoff' | 'block' | 'hang'; officers: Loose[]; roadblock?: boolean; blocked?: boolean }
 /** gs.models: things made in code for Next Gen scenes (no image or model files). */
@@ -5127,16 +5128,17 @@ export interface CityPart {
   /** Where a big city's districts go, as plain numbers (no view). */
   metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number } };
   /**
-   * The police and the wanted level for a City: crimes seen by police (counted at once) or by people in the street
+   * The police and the wanted level for a City or a Metro (the chase goes on across districts, causeways and the highway): crimes seen by police (counted at once) or by people in the street
    * (phoned in a few seconds later, if nobody stops them), stars 0..5, police cars that come with sirens and chase,
    * ram (3 stars), cut you off and park roadblocks across the road ahead (4 stars) where it guesses you will turn,
    * officers on foot, a search when they lose sight of you, and busted or escaped. The tactics are a Tiny Brain
    * (gs.brains Brain + Wave: each police car an experiment) taught by rules at first, that learns what makes a chase
    * exciting for this player and holds their escape rate near half; a Predict learns which way they turn.
+   * A car taken (a 'carjack' event, from cars.take) is a crime by itself: theft, or cop for a police car.
    * Options: max stars (5), cars (most police cars at once), officers (people on foot; Next Gen), brains (false:
    * the rules alone), sight (metres a police car sees by day, 70).
    */
-  Wanted: (new (city: CityWorld, api?: Loose | null, o?: { max?: number; cars?: number | null; officers?: boolean; brains?: boolean; sight?: number }) => {
+  Wanted: (new (city: CityWorld | CityMetro, api?: Loose | null, o?: { max?: number; cars?: number | null; officers?: boolean; brains?: boolean; sight?: number }) => {
     stars: number; heat: number; seen: boolean; /** Seconds the police still know where you are after losing sight (a radio call). */ know: number;
     /** Where they search while you are out of sight ({ x, z, r }), else null. */ search: { x: number; z: number; r: number } | null;
     /** Seconds until you are clear, out of sight. */ left: number; /** 0..1: how close to being caught (stopped near police). */ busting: number;
@@ -5151,7 +5153,7 @@ export interface CityPart {
     /** Once a frame after city.update(): the player, and their World3D body so the crashes and knocks it causes count by themselves. */
     update(dt: number, player: { x: number; z: number; heading: number; v: number; car?: boolean; body?: Loose }): Loose;
     /** Can a police car or officer see this point? */ policeSee(p: { x: number; z?: number; y?: number }, r?: number | null): boolean;
-    /** The road out of the player's next junction they are likely to take, d metres along it. */ ahead(d?: number): { x: number; z: number; heading: number; edge: Loose; turn: 'left' | 'straight' | 'right'; node: Loose } | null;
+    /** The road out of the player's next junction they are likely to take, d metres along it (on a Metro's roads between, d metres on along the road: road, s). */ ahead(d?: number): { x: number; z: number; y?: number; heading: number; edge?: Loose; road?: CityRoad; s?: number; turn: 'left' | 'straight' | 'right'; node?: Loose } | null;
   }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown> };
   /** How bad each crime is, in heat (stars at 1, 4, 9, 16 and 26 heat). */
   CRIMES: Record<string, number>;
@@ -5202,14 +5204,38 @@ export interface CityMetro {
   /** Lamp spots lit by day and by night in every district (gs.city Interiors sets them). */ indoor: { x: number; y: number; z: number; col?: string; i?: number; reach?: number }[] | null;
   /** The made districts. */ readonly cities: CityWorld[]; /** The made district the player is in, or null on the roads between. */ readonly city: CityWorld | null;
   /** The district being made a step at a time, or null. */ making: CityDistrict | null;
-  /** The traffic and people of every made district. */ cars: CityWorld['cars']; people: CityWorld['people'];
+  /**
+   * Every car of the city, as a City's cars: each made district's traffic, the cars on the roads between (the connectors, slip roads
+   * and highway: they pull over for sirens, crash into World3D bodies after solid(world), and come back further on), and the big city's
+   * own cars (add({ police }) or keep, chase, crash): those drive on across districts, causeways and the highway and are not lost when
+   * the district they were in is let go. A car keeps its object when it moves between them. owner(car) says whose it is.
+   */
+  cars: Omit<CityWorld['cars'], 'take' | 'near'> & {
+    near(p: { x: number; z?: number; y?: number }, r: number, o?: { parked?: boolean; police?: boolean; moving?: boolean }): CityCar[];
+    /** Any car: a district's moving or parked one, a car on the roads between, a police car. A 'carjack' event, which Wanted hears. */
+    take(car: CityCar, o?: { driver?: boolean; by?: Loose }): VehicleT | null;
+    /** Whose a car is: a district's traffic, the big city's own (roam), 'ways' (the roads between), or null. */ owner(car: CityCar): Loose | 'ways' | null;
+    /** The big city's own cars (police, chases, crashes on the roads between). */ roam: CityWorld['cars'];
+    /** Police cars with sirens on, last frame: the traffic of every district and the roads between pull over for them. */ readonly sirens: CityCar[];
+  };
+  /** Every made district's people, as a City's (near and witness nearest first across districts). */ people: CityWorld['people'];
+  /** What happened last frame in every made district and on the roads between (crashes, wrecks, carjacks, calls...). */ events: CityEvent[];
+  /** Adds something that happened: to the made district at e.at, else to the big city's own, for everything that reads events next frame. */ event(e: CityEvent): CityMetro;
+  /** What hears the city's sounds: the district's Ears, or the big city's own on the roads between. */ readonly ears: Loose | null;
+  /** The plan (a district's) a road edge belongs to, or null. */ planOf(edge: Loose): Loose | null;
+  /**
+   * The player somewhere else at once (a second lead, a taxi ride, a cutscene): the districts far from there are let go first
+   * (a half made one too), then the ones there are made now (under a fade or loading screen), and with reset (true) the traffic and people
+   * start afresh. The shaders of every district were built when the Metro was made, so none are built in play.
+   */
+  switchTo(at: { x: number; z?: number; y?: number }, o?: { reset?: boolean }): CityMetro;
   update(dt: number, focus?: { x: number; z?: number; y?: number }): CityMetro; reset(focus?: { x: number; z: number }): CityMetro;
   /** Makes now every district the player at `at` wants (from reset(), under the loading screen). */ prepare(at?: { x: number; z?: number; y?: number }): CityMetro;
   districtAt(x: number, z: number, margin?: number): CityDistrict | null;
   /** A driving route across districts and the roads between: as City.route(), plus its legs in order. */
   route(a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; legs: ({ district: CityDistrict; from: Loose; to: Loose } | { road: CityRoad; from: number; to: number })[] } | null;
-  /** The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district). */
-  road(x: number, z: number): Loose;
+  /** The nearest point in a lane: as City.road(), plus district, or road (between districts) with back (driving from its second district); heading (radians) picks the side going that way. */
+  road(x: number, z: number, heading?: number | null): Loose;
   /** A point s metres along a road between districts, a slip road or the highway { x, y, z, dx, dz, kind, grade }, and the middle of its lane k (back: driving from its second end). */
   along(r: CityRoad, s: number, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; kind: number; grade: number }; lanePos(r: CityRoad, k: number, s: number, back?: boolean, out?: Loose): { x: number; y: number; z: number; dx: number; dz: number; grade: number };
   /** The ground at x, z: in a district as City.ground(); between them the road or the land, under height y when given (under a bridge, the land; in a tunnel, the road). */
@@ -5217,6 +5243,7 @@ export interface CityMetro {
   /** The height of the road at x, z (on a bridge its deck, in a tunnel its floor), else the land: for things drawn on the road. */ roadY(x: number, z: number): number;
   avoid(p: { x: number; z?: number; y?: number }, r?: number): CityMetro; buildingAt(x: number, z: number): CityBuilding | null;
   collide(p: { x: number; z?: number; y?: number }, r?: number, y?: number): CityBuilding | Loose | null; ray(from: P3, dir: P3, far?: number): { point: P3; normal: P3; dist: number; building: CityBuilding } | null;
+  /** A spot in a made district (in: its name), or for 'street' also a lane of the roads between ({ x, y, z, heading, road, lane, s, back }). */
   spot(kind?: 'door' | 'rooftop' | 'corner' | 'street' | 'pavement' | 'park', o?: { in?: string; near?: { x: number; z?: number; y?: number } | null; min?: number; max?: number; rnd?: () => number }): CitySpot | null;
   occluders(near?: { x: number; z?: number; y?: number } | null, r?: number): { x0: number; x1: number; z0: number; z1: number; y0: number; y1: number }[]; walls(): Loose[];
   /** Solid in a World3D: the ground, and each made district as City.solid() (one made later is made solid as it is made). */ solid(world: Loose, o?: { furniture?: boolean; parked?: boolean; cars?: number; people?: number; within?: number }): CityMetro;
@@ -5263,7 +5290,10 @@ export interface CityWorld {
   /** 0 day .. 1 night: windows, shop signs, street lamps and car lights. Follows sky.night when made with { sky }. */
   night: number;
   /** The traffic: cars that keep to their lanes, change lanes, overtake, swerve round what is in the way, pull over for sirens, and crash. */
-  cars: { list: CityCar[]; near(p: { x: number; z?: number; y?: number }, r: number): CityCar[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar;
+  cars: { list: CityCar[];
+    /** Cars within r, nearest first: o.parked adds the kerbside parked cars ({ parked: true }), police: false leaves police cars out, moving: false only parked ones. */
+    near(p: { x: number; z?: number; y?: number }, r: number, o?: { parked?: boolean; police?: boolean; moving?: boolean }): CityCar[];
+    /** Whether a car is this traffic's (one taken, removed or handed to another district is not). */ has(car: CityCar): boolean; hit(p: { x: number; z?: number; y?: number }, r?: number): CityCar | null; bump(car: CityCar, seconds?: number): CityCar;
     /** Counts since the city was made: laneChanges, swerves, overtakes, yields, crashes, wrecks, dodges. */ stats: Record<'laneChanges' | 'swerves' | 'overtakes' | 'yields' | 'crashes' | 'wrecks' | 'dodges', number>;
     /** A car of the game's own (a police car, a getaway car) in the nearest lane to x, z (or edge, lane, s); keep: never sent elsewhere when far. Null when there is no room. */
     add(o?: { x?: number; z?: number; edge?: Loose; lane?: number; s?: number; style?: number; colour?: string; police?: boolean; keep?: boolean }): CityCar | null;
@@ -5277,8 +5307,10 @@ export interface CityWorld {
     /** The point s metres along edge e, k lanes across from the middle (fractional, or under 0 for the other side's). */ lanePos(e: Loose, k: number, s: number, out?: Loose): { x: number; z: number };
     /** Where x, z is on edge e: s along, k lanes across, m metres from the middle. */ across(e: Loose, x: number, z: number, out?: Loose): { s: number; k: number; m: number };
     ends(e: Loose): [number, number]; back(e: Loose): Loose | null;
-    /** A traffic car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people at the wheel (driver: false for none), ready for car.pull('driver', player). It is the game's from then on; null if it isn't in the traffic. */
-    take(car: CityCar, o?: { driver?: boolean }): VehicleT | null };
+    /** A car taken: a moving one out of the traffic (one of the city's people at the wheel, driver: false for none, ready for car.pull('driver', player); a police car with its light bar and no driver), or a parked one from cars.near(p, r, { parked: true }) (no driver). A gs.models vehicle where it was, in its style and colour; it is the game's from then on. Adds a 'carjack' event (by: who took it), which Wanted hears. Null if it isn't this traffic's. */
+    take(car: CityCar, o?: { driver?: boolean; by?: Loose }): VehicleT | null };
+  /** The parked cars along the kerbs within r of x, z ({ parked: true }), nearest first. */ parkedNear(x: number, z: number, r: number): CityCar[];
+  /** A parked car taken off the kerb (out of the props, its body dropped): a gs.models vehicle where it stood, and a 'carjack' event. cars.take() calls it for a parked car. */ unpark(car: CityCar, o?: { by?: Loose }): VehicleT | null;
   /** The people in the street: walking, waiting and crossing, sitting on benches, on the phone, chatting, looking in windows, going in at doors; they jump out of the way, gather to look at a crash and phone the police; near the camera on Next Gen they are full people who stagger and fall when hit. */
   people: { list: CityPerson[]; near(p: { x: number; z?: number; y?: number }, r: number): CityPerson[]; hit(p: { x: number; z?: number; y?: number }, r?: number): CityPerson | null;
     scare(p: { x: number; z?: number; y?: number }, r?: number, t?: number): unknown;

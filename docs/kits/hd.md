@@ -18,29 +18,29 @@ A light switched on or off changes every lit shader (the lamps keep their lights
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HdPart`, line 1618), where every option and field is described.
+From `src/gamescroll.d.ts` (`HdPart`, line 1623), where every option and field is described.
 
-- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1618)
-- `HDView: new (...a: Loose[]) => Loose` (:1618)
-- `HD: Loose` (:1618)
-- `TIERS: Loose` (:1618)
-- `hasHD(): boolean` (:1618)
-- `pbr: Loose` (:1618)
-- `rbox: Loose` (:1618)
-- `surface: Loose` (:1618)
-- `speckle: Loose` (:1618)
-- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1618)
-- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1618)
-- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1618)
-- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1618)
-- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1618)
-- `Particles: Loose` (:1618)
-- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1620)
-- `sun: Loose` (:1629)
-- `spot: Loose` (:1629)
-- `THREE: Loose` (:1629)
-- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1631)
-- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1633)
+- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1623)
+- `HDView: new (...a: Loose[]) => Loose` (:1623)
+- `HD: Loose` (:1623)
+- `TIERS: Loose` (:1623)
+- `hasHD(): boolean` (:1623)
+- `pbr: Loose` (:1623)
+- `rbox: Loose` (:1623)
+- `surface: Loose` (:1623)
+- `speckle: Loose` (:1623)
+- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1623)
+- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1623)
+- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1623)
+- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1623)
+- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1623)
+- `Particles: Loose` (:1623)
+- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1625)
+- `sun: Loose` (:1634)
+- `spot: Loose` (:1634)
+- `THREE: Loose` (:1634)
+- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1636)
+- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1638)
 
 ## From the maker kit
 
@@ -64,7 +64,7 @@ past whatever blocks the sky (not on the lowest tier).
 
 ## In real games
 
-35 games use it (`node scripts/examples.mjs gs.hd` lists them). The shortest:
+38 games use it (`node scripts/examples.mjs gs.hd` lists them). The shortest:
 
 `src/games/ghost-torch.js` (Ghost Torch, AR · Spooky, 119 lines):
 
@@ -84,7 +84,7 @@ const { Particles, pbr, THREE } = gs.hd;
     const eyeMat = new THREE.MeshBasicMaterial({ color: '#101020', transparent: true, opacity: .1 });
 ```
 
-`src/games/echo-drums.js` (Echo Drums, AR · Memory, 128 lines):
+`src/games/echo-drums.js` (Echo Drums, AR · Memory, 130 lines):
 
 ```js
 const { Gestures } = gs.controls;
