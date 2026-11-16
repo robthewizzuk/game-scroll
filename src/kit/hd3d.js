@@ -3676,7 +3676,7 @@ export class HDView {
     // shaders and textures are ready (drawing would stall the feed while they compile) and the feed is
     // still (a whole frame plus its copy, and the playing card's frame drawn again, landed mid-swipe)
     if (off) {
-      if (!waiting.has(c)) { waiting.add(c); (this.ready ? Promise.resolve() : this.prepare()).then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(this, c); }); }
+      if (speed.feedPics !== false && !waiting.has(c)) { waiting.add(c); (this.ready ? Promise.resolve() : this.prepare()).then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(this, c); }); }
       c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore();
       return;
     }
@@ -4274,13 +4274,18 @@ onGpuLoss(e => {
   // (lost while reflections were ray traced: the tracing is what the driver would not take, trace-guard.js)
   if (traceLostChip()) { HD.info.traceOff = traceOff(); console.warn('3D: the graphics chip was lost while reflections were ray traced; they come from the screen from now on'); }
 });
+// The app, in the frame a round's last picture was drawn (src/covers.js keeps it as the card's picture in the feed):
+// the canvas that holds the 3D of 2D canvas c's card, readable until the frame is shown, or null if it isn't on c.
+// (Tests copy each frame into c itself, HD.direct off: then c.)
+speed.cardShot = c => !HD.direct ? c : host && host.canvas === c && c.isConnected ? (gpuFor(host.view)?.r ?? R)?.domElement || null : null;
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
     const old = host; host = null;
     // (the card it leaves has just gone off screen: a lighter picture, until it's played again, made once
     // the feed is still: drawn here, a whole frame of it plus its copy landed in the middle of the swipe)
-    if (old.canvas.isConnected && !bakes.some(b => b[1] === old.ctx)) bakes.push([old.view, old.ctx]);
+    // (not where the app keeps the feed free of 3D work, speed.feedPics false: it shows the card's saved picture instead, src/main.js)
+    if (speed.feedPics !== false && old.canvas.isConnected && !bakes.some(b => b[1] === old.ctx)) bakes.push([old.view, old.ctx]);
     old.canvas.classList.remove('hd-host');
   }
   // a view that moved between WebGL and WebGPU: take the other renderer's canvas off this card
