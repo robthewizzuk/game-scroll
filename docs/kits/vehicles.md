@@ -8,43 +8,43 @@ Arcade cars and karts that drift and boost, laps, a ready-made rival driver.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`VehiclesPart`, line 3356), where every option and field is described.
+From `src/gamescroll.d.ts` (`VehiclesPart`, line 3361), where every option and field is described.
 
-- `Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; /** A 2D Physics to drive in, solid. Left out: the one the game made before the car; false: none. …` world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). (:3358)
-  - `x: number` (:3321)
-  - `y: number` (:3321)
-  - `angle: number` (:3321)
-  - `vx: number` (:3321)
-  - `vy: number` (:3321)
-  - `crash: { thing: Loose; nx: number; ny: number; speed: number } | null` In a physics world: what it ran into this frame (a wall, a car; not the cones it shoves), else null. (:3323)
-  - `thing?: Loose` (:3323)
-  - `update(dt: number, input?: DriveInput): Car` (:3324)
-  - `bump(nx?: number, ny?: number, o?: { keep?: number }): Car` (:3324)
-  - `point(forward: number, right?: number): XY` (:3324)
-- `Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; /** A World3D to drive in, solid. Left out: the one…` world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. (:3360)
-  - `x: number` (:3327)
-  - `y: number` (:3327)
-  - `z: number` (:3327)
-  - `heading: number` (:3327)
-  - `vx: number` (:3327)
-  - `vy: number` (:3327)
-  - `vz: number` (:3327)
-  - `onGround: boolean` (:3327)
-  - `lean: number` (:3327)
-  - `pitch: number` (:3327)
-  - `airTime: number` (:3327)
-  - `landed: boolean` (:3327)
-  - `fell: boolean` (:3327)
-  - `impact?: number` (:3327)
-  - `crash: { thing: Loose; normal: P3; point: P3; speed: number } | null` In a World3D: what it ran into this frame ({ thing, normal, point, speed }) or null; rider: its body there (a World3D rider). (:3329)
-  - `rider?: Loose` (:3329)
-  - `hop(): Kart` (:3330)
-  - `update(dt: number, input?: DriveInput, ground?: ((x: number, z: number) => number | null) | null): Kart` (:3330)
-  - `bump(nx?: number, nz?: number, o?: { keep?: number }): Kart` (:3330)
-  - `place(obj: Loose): Kart` (:3330)
-  - `moveTo(x: number, y: number, z: number, heading?: number): Kart` Puts it straight at x, y, z (its underside), turned to heading, with nothing in between. (:3332)
-- `Driver: { new (api: GameApi | null, o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver; new (o?: { name?: string; skill…` A ready-made rival driver. (:3366)
-- `Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => { points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loo…` (:3367)
+- `Car: new (o?: WheelsOpts & { x?: number; y?: number; angle?: number; /** A 2D Physics to drive in, solid. Left out: the one the game made before the car; false: none. …` world: a gs.physics Physics with no gravity (top-down) to drive in, solid; size: [length, width]; mass (kg: how hard it shoves). (:3363)
+  - `x: number` (:3326)
+  - `y: number` (:3326)
+  - `angle: number` (:3326)
+  - `vx: number` (:3326)
+  - `vy: number` (:3326)
+  - `crash: { thing: Loose; nx: number; ny: number; speed: number } | null` In a physics world: what it ran into this frame (a wall, a car; not the cones it shoves), else null. (:3328)
+  - `thing?: Loose` (:3328)
+  - `update(dt: number, input?: DriveInput): Car` (:3329)
+  - `bump(nx?: number, ny?: number, o?: { keep?: number }): Car` (:3329)
+  - `point(forward: number, right?: number): XY` (:3329)
+- `Kart: new (o?: WheelsOpts & { x?: number; y?: number; z?: number; heading?: number; gravity?: number; hop?: number; /** A World3D to drive in, solid. Left out: the one…` world: a gs.physics3d World3D to drive in, solid; size: [width, height, length] (metres); clear: the gap under it (kerbs and ramp lips lower pass under); fall: the y it counts as fallen out. (:3365)
+  - `x: number` (:3332)
+  - `y: number` (:3332)
+  - `z: number` (:3332)
+  - `heading: number` (:3332)
+  - `vx: number` (:3332)
+  - `vy: number` (:3332)
+  - `vz: number` (:3332)
+  - `onGround: boolean` (:3332)
+  - `lean: number` (:3332)
+  - `pitch: number` (:3332)
+  - `airTime: number` (:3332)
+  - `landed: boolean` (:3332)
+  - `fell: boolean` (:3332)
+  - `impact?: number` (:3332)
+  - `crash: { thing: Loose; normal: P3; point: P3; speed: number } | null` In a World3D: what it ran into this frame ({ thing, normal, point, speed }) or null; rider: its body there (a World3D rider). (:3334)
+  - `rider?: Loose` (:3334)
+  - `hop(): Kart` (:3335)
+  - `update(dt: number, input?: DriveInput, ground?: ((x: number, z: number) => number | null) | null): Kart` (:3335)
+  - `bump(nx?: number, nz?: number, o?: { keep?: number }): Kart` (:3335)
+  - `place(obj: Loose): Kart` (:3335)
+  - `moveTo(x: number, y: number, z: number, heading?: number): Kart` Puts it straight at x, y, z (its underside), turned to heading, with nothing in between. (:3337)
+- `Driver: { new (api: GameApi | null, o?: { name?: string; skill?: Skill; learn?: boolean; save?: boolean; rng?: () => number }): Driver; new (o?: { name?: string; skill…` A ready-made rival driver. (:3371)
+- `Laps: new (points: Pt[], o?: { radius?: number; laps?: number }) => { points: Pt[]; laps: number; racers: Loose[]; join<T>(r: T): T; update<T>(r: T): T; places<T = Loo…` (:3372)
 
 ## From the maker kit
 
@@ -139,7 +139,7 @@ update(dt) {
 
 1 game uses it (`node scripts/examples.mjs gs.vehicles` lists them). The shortest:
 
-`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 186 lines):
+`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 199 lines):
 
 ```js
 const { Sky } = gs.sky;

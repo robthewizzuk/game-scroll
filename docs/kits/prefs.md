@@ -10,25 +10,32 @@ The player's Reduce motion setting (read only), to scale your own big effects.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PrefsPart`, line 1430), where every option and field is described.
+From `src/gamescroll.d.ts` (`PrefsPart`, line 1435), where every option and field is described.
 
-- `readonly reduceMotion: boolean` (:1430)
-- `readonly motion: number` 1 normally, smaller with Reduce motion: scale your own shakes and flashes by it. (:1430)
+- `readonly reduceMotion: boolean` (:1435)
+- `readonly motion: number` 1 normally, smaller with Reduce motion: scale your own shakes and flashes by it. (:1435)
 
 ## In real games
 
-3 games use it (`node scripts/examples.mjs gs.prefs` lists them). The shortest:
+2 games use it (`node scripts/examples.mjs gs.prefs` lists them). The shortest:
 
-`src/games/kit-hunt.js` (Kit Hunt, Bricks · Phone, 159 lines):
+`src/games/kit-hunt.js` (Kit Hunt, Bricks · Phone, 160 lines):
 
 ```js
     draw(c) {
       const sx = shake ? Math.round(rnd(-2, 2) * gs.prefs.motion) : 0;
 ```
 
-`src/games/critter-quest.js` (Critter Quest, Color · RPG, 211 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
-      const me = lead(), sx = shake > 0 ? Math.round(Math.sin(t * 80) * 2) : 0, L = layout();
-      c.fillStyle = flash > 0 && !gs.prefs.reduceMotion && (t * 10 | 0) % 2 ? '#f8f8f0' : '#f0e8c8'; c.fillRect(0, 0, W, H);   // no strobe with Reduc
+    // bullet cam for good long shots (worked out ahead from where things are heading)
+    if (!gs.prefs.reduceMotion) {
+// …
+    // goes with it, the first time one is asked for, and that used to be the flyover's first frame, which drew without what was still being made)
+    const first = !camWas.blurred && gs.prefs.motion > 0; camWas.blurred = true;
+    v.motionBlur = blur && gs.prefs.motion > 0 ? (MBLUR.amount = .5 * gs.prefs.motion, MBLUR) : first ? (MBLUR.amount = 0, MBLUR) : null;
+// …
+    c.fillStyle = '#050505'; c.beginPath(); c.rect(0, 0, W, H); c.arc(cx, cy, R, 0, TAU, true); c.fill('evenodd');
+    const g = c.createRadialGradient(cx, cy, R * (.7 - beat * .08 * gs.prefs.motion), cx, cy, R); g.addColorStop(0, '#0000'); g.addColorStop(1, '#000d
 ```

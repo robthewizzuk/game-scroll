@@ -8,10 +8,10 @@ The phone's own AI for flavour lines only; play never depends on it.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PhoneaiPart`, line 5491), where every option and field is described.
+From `src/gamescroll.d.ts` (`PhoneaiPart`, line 5496), where every option and field is described.
 
-- `PhoneAI: new (o?: { persona?: string; words?: number; temperature?: number; timeout?: number }) => { available: boolean | null; last: string | null; ready(): Promise<b…` (:5492)
-- `tidy(text: string, words?: number): string | null` Tidies a model's answer, or null if it shouldn't be shown. (:5500)
+- `PhoneAI: new (o?: { persona?: string; words?: number; temperature?: number; timeout?: number }) => { available: boolean | null; last: string | null; ready(): Promise<b…` (:5497)
+- `tidy(text: string, words?: number): string | null` Tidies a model's answer, or null if it shouldn't be shown. (:5505)
 
 ## From the maker kit
 
@@ -38,7 +38,7 @@ From [Car radio](../maker-kit.md#car-radio):
 
 1 game uses it (`node scripts/examples.mjs gs.phoneai` lists them). The shortest:
 
-`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 186 lines):
+`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 199 lines):
 
 ```js
 const { icon } = gs.icons;

@@ -4,6 +4,7 @@ const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Ready } = gs.rounds;
 const { HDView, Particles, pbr, rbox, surface, speckle, sun, THREE } = gs.hd;
+const { approach } = gs.juice;
 const {
   Group, Mesh, InstancedMesh, Object3D, SphereGeometry, CylinderGeometry, CapsuleGeometry, IcosahedronGeometry, PlaneGeometry, CircleGeometry,
   TorusGeometry, MeshBasicMaterial, PointLight, CanvasTexture, Color, DoubleSide, AdditiveBlending, SRGBColorSpace, Vector3,
@@ -320,7 +321,7 @@ function make(api) {
       if (!ready.update(dt)) return;
       if (msg) { msg.l -= dt; if (msg.l <= 0) msg = null; }
       if (dead) { dead += dt; if (dead > 2) api.over(); return; }
-      if (cleared) { cleared += dt; p.y -= 40 * dt; p.walk += 40 * dt * .12; dr.x += (p.x + 10 - dr.x) * Math.min(1, dt * 5); dr.y += (p.y + 3 - dr.y) * Math.min(1, dt * 5); if (cleared > 2) { stage++; build(); } return; }
+      if (cleared) { cleared += dt; p.y -= 40 * dt; p.walk += 40 * dt * .12; dr.x = approach(dr.x, p.x + 10, 5, dt); dr.y = approach(dr.y, p.y + 3, 5, dt); if (cleared > 2) { stage++; build(); } return; }
       hurtT += dt; for (let i = 0; i < 4; i++) cd[i] = Math.max(0, cd[i] - dt);
       if (dome && (dome.l -= dt) <= 0) dome = null;
       if (decoy && (decoy.l -= dt) <= 0) decoy = null;
@@ -331,7 +332,7 @@ function make(api) {
         if ((dash.l -= dt) <= 0) dash = null;
       } else if (stick && stick.m > .05) { const sp = 66 * stick.m; p.x += Math.cos(stick.a) * sp * dt; p.y += Math.sin(stick.a) * sp * dt; p.walk += sp * dt * .12; if (!aimF) p.face = stick.a; }
       push(p, 6); p.y = clamp(p.y, 20, L - 10);
-      cam += (p.y - cam) * Math.min(1, dt * 5);
+      cam = approach(cam, p.y, 5, dt);
       // the drone: beside the ranger, over the dome it is holding up, or out ahead as the decoy
       const rest = decoy || dome || { x: p.x - Math.cos(p.face) * 3 - Math.sin(p.face) * 10, y: p.y - Math.sin(p.face) * 3 + Math.cos(p.face) * 10 }, kd = Math.min(1, dt * (decoy ? 9 : 5));
       dr.x += (rest.x - dr.x) * kd; dr.y += (rest.y - dr.y) * kd; dr.h += ((decoy ? 1.5 : dome ? 3.4 : 1.9) - dr.h) * kd;

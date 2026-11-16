@@ -57,7 +57,8 @@ import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChang
 import { desktop } from './desktop.js';
 import { WEB, appOnly, getAppHTML, webHint } from './web.js';
 import { update } from './update.js';
-import { onGpuLoss, gpuMending, glStats, webgpu as webgpuNow } from './kit/gpu.js';
+import { onGpuLoss, gpuMending, glStats, webgpu as webgpuNow, gpuWait, GPU_AT_PLAY } from './kit/gpu.js';
+import { covers } from './covers.js';
 import { PIPES, primePipes, releasePipes, playingPipes, pipeStats, pipeNotes, savePipes, forgetPipes } from './kit/pipes.js';
 // (the Mac and Windows app has a mouse wheel and arrow keys, not a thumb)
 const NEXT_CUE=desktop?'Scroll or press ↓ for the next game':'Swipe up for the next game';
@@ -113,6 +114,10 @@ const SLICED=new Set(['nextgen','ar','board']);
 // milliseconds of building every frame, and the 3D cards loading below kept at it all through a swipe past them.
 // (Play is pressed on a still feed, and the card you're looking at goes on loading as soon as you let go.)
 function whenStill(fn){const go=()=>{if(settling())setTimeout(go,100);else fn()};go()}
+// ...except a card being made under its own loading screen: a thumb resting on the screen there is no swipe
+const passWhen=(s,fn)=>s.starting?fn():whenStill(fn);
+// the milliseconds of each frame the making of a game may take under its loading screen (the bar's sheen moves on its own)
+const WAKE_SHARE=40;
 const KEPT=new WeakMap();   // definition -> make() of the copy that finished loading
 const BUSY=new WeakMap();   // definition -> the promise of work a card of it left with the workers, while it is out
 let copies=0;
@@ -121,13 +126,16 @@ const freshCopy=def=>{try{return(STREAM?remote.fresh(def.id):FRESH[def.id]?.(++c
 // slice false: a game swapped in mid-round by hot reload is made in one go, so the round it was in can be put back
 function bootGame(s,slice=true){
   s.failed=null;resetTicks(s);
+  // a 3D game is made once the shared WebGPU renderer is (made on the first Play: GPU_AT_PLAY), so its kits pick the right one
+  const dev=usesHD(s.def)?gpuWait():null;
+  if(dev){const turn=s.turn=(s.turn||0)+1;s.loading=true;s.what='Graphics';s.game=stubGame(s,'Loading…',s.what);dev.then(()=>{if(s.dropped||s.turn!==turn||s.asleep)return;s.what='';bootGame(s,slice);s.dirty=true;renderOverlay(s)});return}
   s.passes=(s.passes||0)+1;
   const turn=s.turn=(s.turn||0)+1,kept=KEPT.get(s.def);   // (turn: a pass that was asked for before this one is out of date)
   if(slice&&!kept&&SLICED.has(s.def.era)){
     const f=freshCopy(s.def);
     if(f&&f.then){
       s.loading=true;s.game=stubGame(s,'Loading…',s.what||'');
-      f.then(d=>d,()=>null).then(d=>whenStill(()=>{if(s.dropped||s.turn!==turn)return;const ok=!!(d&&typeof d.make==='function');makeGame(s,ok?d.make:s.def.make,ok,slice);s.dirty=true;renderOverlay(s)}));
+      f.then(d=>d,()=>null).then(d=>passWhen(s,()=>{if(s.dropped||s.turn!==turn)return;const ok=!!(d&&typeof d.make==='function');makeGame(s,ok?d.make:s.def.make,ok,slice);s.dirty=true;renderOverlay(s)}));
       return;
     }
     if(f&&typeof f.make==='function'){makeGame(s,f.make,true,slice);return}
@@ -138,7 +146,8 @@ function bootGame(s,slice=true){
 // kit's builders may stop it; otherwise it runs to the end (work can still be left with the workers).
 function makeGame(s,make,fresh,slice){
   // (a game being played leaves a loading neighbour a smaller share of each frame)
-  if(slice)slices.begin(s,active&&active!==s&&(active.state==='playing'||active.starting)?3:6,!fresh);else slices.forget(s);
+  // (a game being made under its own loading screen takes most of each frame: nothing else is moving, and the wait is the player's)
+  if(slice)slices.begin(s,s.starting?WAKE_SHARE:active&&active!==s&&(active.state==='playing'||active.starting)?3:6,!fresh);else slices.forget(s);
   try{
     // (a game made again after "Loading…" is a new game: tell it the size its card already has, as fit() told the first)
     ownedBy(s,()=>{s.game=make(s.api);s.game.reset();if(s.w&&(s.w!==s.def.w||s.h!==s.def.h)&&s.game.resize)s.game.resize(s.w,s.h)});
@@ -147,6 +156,7 @@ function makeGame(s,make,fresh,slice){
     // (another card of this game may have left work with the workers that this one shares: wait for that too)
     const also=BUSY.get(s.def);
     if(more||also){const all=more&&also?Promise.all([more,also]):more||also;BUSY.set(s.def,all);all.then(()=>{if(BUSY.get(s.def)===all)BUSY.delete(s.def)});more=all}
+    if(s.waking)s.justMade=!!s.starting;
     if(more)holdGame(s,more);else{s.loading=false;loadDone(s)}
   }catch(e){
     slices.end(s,false);
@@ -155,7 +165,7 @@ function makeGame(s,make,fresh,slice){
       s.loading=true;s.what=e.what||'';s.game=stubGame(s,'Loading…',s.what);
       const turn=s.turn;
       const next=()=>{if(s.dropped||s.turn!==turn)return;bootGame(s,slice);s.dirty=true;renderOverlay(s)};
-      e.kitLoading.then(()=>slice&&SLICED.has(s.def.era)?whenStill(next):next(),err=>{if(s.dropped||s.turn!==turn)return;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
+      e.kitLoading.then(()=>slice&&SLICED.has(s.def.era)?passWhen(s,next):next(),err=>{if(s.dropped||s.turn!==turn)return;console.warn('kit failed to load',err);broken(s,'Couldn’t load this game. Check the connection and try again.')});
       return;
     }
     s.passes=0;slices.forget(s);gameFault(s,e);
@@ -171,7 +181,7 @@ function holdGame(s,more){
   more.then(()=>{if(s.dropped||s.game!==stub)return;s.game=g;s.loading=false;loadDone(s);s.dirty=true;renderOverlay(s)});
 }
 function gameFault(s,e){console.error(s.def.id,e);perf.error(e,s.def.id);broken(s,'This game hit a problem.')}
-function broken(s,why){dropReady(s);if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
+function broken(s,why){s.waking=false;dropReady(s);if(isFull(s))leaveFull();if(s.state==='playing')try{gameOver(s)}catch(_){}try{s.game?.dispose?.()}catch(_){}release(s);s.loading=true;s.failed=why;s.game=stubGame(s,'Tap to try again');s.dirty=true;if(s.state!=='ready'){s.state='ready';s.el.classList.remove('playing','over');feed.classList.remove('locked')}renderOverlay(s)}
 // A new round: false (and the card shows the problem) if the game threw.
 function resetGame(s){resetTicks(s);try{ownedBy(s,()=>s.game.reset());return true}catch(e){if(e&&e.kitLoading){resetLater(s,e);return false}gameFault(s,e);return false}}
 // reset() asked for a lazy part or a sculpt that isn't in yet (a mission's people, when the next round is another
@@ -224,7 +234,7 @@ function makeSlide(def){
     ahead:id=>aheadOf(s,id),                            // where a finger that's down is heading by the next refresh ([x, y] in game units), or null
   };
   if(guest)Object.assign(s.api,guest(s.api));
-  bootGame(s);
+  if(sleeps(def))sleep(s);else bootGame(s);
   // like
   const likeBtn=el.querySelector('.like'),liked=rating(def.id)>0||(rating(def.id)===0&&store.get('gs_like_'+def.id,false));
   // Shared counts come from the hearts backend; dev/test builds without it keep the old local number.
@@ -271,6 +281,67 @@ function makeSlide(def){
   return s;
 }
 
+/* ---------- Next Gen, AR and Board cards sleep in the feed until Play ---------- */
+// Rob (2026-11-15): nothing of these games happens in the feed until Play, other than their files downloading and
+// being kept. Their cards used to make the whole game as they were added below (its 3D world, its textures, the
+// graphics chip's renderer), build its shaders and draw a picture of it once the feed was still, and prime the
+// pipelines its rounds had made: all work done on the phone while it was being scrolled. Now such a card is a
+// picture: the game as it looked at the end of its last round on this phone (src/covers.js), or a cover drawn here
+// for a game never played. Play wakes it (wake): the loading screen goes up, the 3D renderer is made if this is the
+// first 3D game since the app started, the game is made (taking most of each frame: WAKE_SHARE), the shaders its
+// rounds built before are made alongside (src/kit/pipes.js, all at once), and getReady carries on as it did. A card
+// that has been played stays made, so Play again is quick; while it isn't the card being played it shows its
+// picture too (showsPic), and a round left behind is reset by the next Play, not in the feed.
+let wakeAll=false;   // tests: __gs.only(id) makes its cards' games at once, as every card was made before (only(id, one, true): asleep)
+const sleeps=d=>usesHD(d)&&!wakeAll;
+GPU_AT_PLAY.on=true;speed.feedPics=false;   // (the 3D kit makes no device, and no feed pictures, before a Play: src/kit/gpu.js, hd3d.js)
+function sleep(s){
+  s.asleep=true;s.waking=false;s.loading=false;s.what='';s.passes=0;s.game={reset(){},update(){},draw(){}};s.dirty=true;
+  // (the saved picture is read in the background; a card not on screen is painted with it at once: one small drawImage)
+  if(s.pic===undefined){s.pic=null;covers.get(s.def.id).then(p=>{if(p&&!s.dropped&&!s.pic){s.pic=p;s.dirty=true;if(s!==active&&!s.unready&&showsPic(s))drawPic(s)}})}
+}
+function wake(s,slice=true){
+  if(!s.asleep)return;
+  s.asleep=false;s.waking=true;
+  if(s===active){if(usesHD(s.def)||s.def.era==='console')primePipes(s,s.def.id);soundtrack.ready(s.def)}
+  bootGame(s,slice);
+}
+// Play was given up while the game was still being made (swiped away, the card dropped): it goes back to sleep, and
+// what was made of it so far is let go, so nothing of it carries on in the feed
+function backToSleep(s){
+  if(!s.waking||!s.loading||s.failed)return;
+  s.turn=(s.turn||0)+1;slices.forget(s);try{s.game?.dispose?.()}catch(_){}release(s);releasePipes(s);sleep(s);
+}
+// what a card of these games shows: its picture, unless it is the card on screen with a round on or getting ready
+const showsPic=s=>usesHD(s.def)&&!s.failed&&(s.asleep||s!==active||s.state==='ready'&&!s.starting);
+function drawPic(s){
+  const c=s.ctx,w=s.w||s.def.w,h=s.h||s.def.h,p=s.pic;
+  c.save();
+  if(p){const k=Math.max(w/p.width,h/p.height);c.imageSmoothingEnabled=true;c.drawImage(p,(w-p.width*k)/2,(h-p.height*k)/2,p.width*k,p.height*k)}
+  else{
+    // never played on this phone: a cover in the game's own colours, a floor running off into the distance, and its initial
+    const n=hash(s.def.id),hu=n%360,hu2=(hu+40+(n>>9)%80)%360,g=c.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,`hsl(${hu2} 45% 16%)`);g.addColorStop(.58,`hsl(${hu} 55% 24%)`);g.addColorStop(1,`hsl(${hu} 40% 8%)`);
+    c.fillStyle=g;c.fillRect(0,0,w,h);
+    const hz=h*.58,glow=c.createRadialGradient(w/2,hz,0,w/2,hz,w*.7);glow.addColorStop(0,`hsla(${hu2} 90% 70% / .35)`);glow.addColorStop(1,`hsla(${hu2} 90% 70% / 0)`);
+    c.fillStyle=glow;c.fillRect(0,0,w,h);
+    c.strokeStyle=`hsla(${hu2} 80% 75% / .18)`;c.lineWidth=Math.max(.5,w/360);c.beginPath();
+    for(let i=-8;i<=8;i++){c.moveTo(w/2+i*w*.02,hz);c.lineTo(w/2+i*w*.22,h)}
+    for(let i=1;i<7;i++){const y=hz+(h-hz)*Math.pow(i/6,1.8);c.moveTo(0,y);c.lineTo(w,y)}
+    c.stroke();
+    c.fillStyle=`hsla(${hu2} 80% 85% / .08)`;c.font=`800 ${Math.round(Math.min(w,h)*.55)}px Rubik, sans-serif`;c.textAlign='center';c.textBaseline='middle';
+    c.fillText((s.def.title||'?').trim().charAt(0).toUpperCase(),w/2,hz*.62);
+  }
+  c.restore();
+}
+
+// The round is over: its card's picture in the feed is this frame, read from the 3D canvas in the frame it was drawn in
+// (src/covers.js). A small copy, once a round, with the game-over screen coming up: never in play.
+function takePic(s){
+  s.picDue=false;if(s.state!=='over'||!usesHD(s.def))return;
+  let src=null;try{src=speed.cardShot?.(s.canvas)}catch(_){}
+  const pic=src&&covers.take(s.def.id,src,s.w||s.def.w,s.h||s.def.h);if(pic)s.pic=pic;
+}
 /* ---------- how-to-play sheet: tapping the caption opens the full description ---------- */
 let infoDlg=null;
 // who made the game: def.creator (plain text, set by contributors), otherwise Rob
@@ -407,10 +478,12 @@ function startGame(s,now=false){
   if(active!==s)return;
   if(s.failed){bootGame(s);s.dirty=true;renderOverlay(s);return}   // the card's "Try again"
   if(s.starting)return;   // (pressed again while it gets ready)
+  if(now&&s.asleep)wake(s,false);   // (tests: the game is made now, in one go)
   if(now&&s.loading)return;
   if(!now&&(s.loading||usesHD(s.def))){getReady(s);return}
   const items=prepRound(s);if(!items)return;
   beginRound(s,items);
+  if(now&&usesHD(s.def)){const rate=tickRate(s.def);try{runTicks(s,rate,rate?1/rate:1/60,h=>s.game.update(h))}catch(e){console.error(s.def.id,e);perf.error(e,s.def.id)}paint(s)}   // (a 3D round is one frame old before its first touch, as after its loading screen: a game that builds its world in its first update() or draw() is ready for it)
   sfx(660,.08,'square',.04,300);
 }
 // A new round, up to and including the game's reset(): gives the boosts used on this run, or null if the game threw.
@@ -424,13 +497,17 @@ function prepRound(s){
   s.won=false;s.paid=0;s.trophies=[];
   if(!guest)roundStarted(s.def.id);   // before reset(): a location game may ask where the player is there (a guest gets the stand-in place)
   const t0=performance.now();
-  s.stale=false;if(!resetGame(s)){roundEnded(s.def.id);return null}
+  // (a game made a moment ago for this Play has just been reset by its making: unless reset() reads the shop or the
+  // place, which it is only given from here, the round starts from that, without a second reset() under the loading screen)
+  const fresh=s.justMade&&!s.def.shop&&!s.def.location;s.justMade=false;
+  s.stale=false;if(!fresh&&!resetGame(s)){roundEnded(s.def.id);return null}
   s.resetMs=performance.now()-t0;   // (a long one: the loading screen goes up before it the next time)
   s.score=0;badge(s,0);
   return ready;
 }
 // ...and the round itself: from here the game is updated and takes touches.
 function beginRound(s,ready){
+  s.waking=false;
   for(const it of ready)if(it.kind!=='unlock')progress.use(s.def.id,it);
   if(!guest){progress.played(s.def.id);playstats.started(s.def.id)}perf.started(s.def.id);s.state='playing';s.newBest=false;s.startAt=Date.now();
   s.el.classList.add('playing');s.el.classList.remove('over');feed.classList.add('locked');s.startPerf=performance.now();renderOverlay(s);
@@ -464,7 +541,10 @@ const GATE={show:150,hold:320,most:15000,soft:4000,slowReset:60};
 const WARMS=store.get('gs_warms',{});
 const noteWarm=(id,ms)=>{WARMS[id]=Math.round(ms);const k=Object.keys(WARMS);if(k.length>400)delete WARMS[k[0]];store.set('gs_warms',WARMS)};
 function getReady(s){
-  const st=s.starting={at:performance.now(),phase:'load',was:!!s.loading,first:!s.warmed,shown:0,cover:null,coverAt:0,items:null,t:0,last:0,frames:0,steady:new Steady(),what:'',f:0};
+  const st=s.starting={at:performance.now(),phase:'load',was:false,first:!s.warmed,shown:0,cover:null,coverAt:0,items:null,t:0,last:0,frames:0,steady:new Steady(),what:'',f:0};
+  if(s.asleep)wake(s);   // a card in the feed is only a picture: its game is made now, under the loading screen (sleep())
+  if(s.starting!==st)return;   // (the game threw as it was made: its card says so)
+  st.was=!!s.loading;
   // where the wait will be seen, the cover goes up now: a game not made yet, a card's first round, a long reset()
   if(st.was||(usesHD(s.def)&&(st.first||s.resetMs>GATE.slowReset)))coverUp(s);
   sfx(660,.08,'square',.04,300);
@@ -521,10 +601,11 @@ function firstStep(s,dt){
 function dropReady(s){
   const st=s.starting;if(!st)return;s.starting=null;
   coverDown(st,false);
+  if(s.waking&&s.loading){backToSleep(s);if(!s.dropped)renderOverlay(s);return}   // (given up while its game was being made)
   if(!st.items)return;
   roundEnded(s.def.id);s.run=null;   // (reset() has run: the game sits at the start of a round, as a waiting card does)
   // ...unless its first step has run too: what that started is stopped, and the game is reset once the feed is still
-  if(st.stepped){if(s===active)soundtrack.stop();stopKits();if(!s.dropped){s.stale=true;whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped&&!s.failed&&!s.starting){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}})}}
+  if(st.stepped){if(s===active)soundtrack.stop();stopKits();if(!s.dropped&&!usesHD(s.def)){s.stale=true;whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped&&!s.failed&&!s.starting){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}})}}
   if(!s.failed&&!s.dropped)renderOverlay(s);
 }
 // The loading screen: its own layer over the card's screen (like the pause screen), solid, so nothing of the
@@ -570,6 +651,7 @@ function awardTrophies(s){
 function gameOver(s){
   if(s.state!=='playing'){if(s.starting&&s.starting.stepping)s.starting.ended=true;return}
   clearPause(s);if(isFull(s))leaveFull();
+  if(usesHD(s.def))s.picDue=true;   // (the card's picture in the feed, from the round's last frame: takePic)
   s.state='over';s.overAt=Date.now();s.funAt=s.overAt;s.funSent=false;soundtrack.stop();stopKits();roundEnded(s.def.id);if(!guest){logRound(s.def.id,s.overAt-s.startAt);playstats.round(s.def.id,s.overAt-s.startAt)}perf.ended();s.el.classList.remove('playing');s.el.classList.add('over');feed.classList.remove('locked');
   if(!guest&&progress.score(s.def.id,s.score))s.newBest=true;
   if(!guest){awardTrophies(s);services.reportRun(s.def)}
@@ -580,7 +662,8 @@ function gameOver(s){
 // later: the card is being swiped away, so its game resets (which can rebuild a whole 3D level) once
 // the swipe has settled, not in the frame the swipe starts (Play resets it anyway if it comes first)
 function resetSlide(s,later=false){dropReady(s);if(isFull(s))leaveFull();if(s===active)soundtrack.stop();stopKits();clearPause(s);roundEnded(s.def.id);if(s.state==='playing'){if(!guest){logRound(s.def.id,Date.now()-s.startAt);playstats.round(s.def.id,Date.now()-s.startAt)}perf.ended()}s.state='ready';s.run=null;s.el.classList.remove('playing','over');s.score=0;badge(s,0);
-  if(later){s.stale=true;renderOverlay(s);whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}});return}
+  // (a Next Gen, AR or Board card shows its picture until it is played again, and that Play resets it: not in the feed)
+  if(later||usesHD(s.def)){s.stale=true;renderOverlay(s);if(usesHD(s.def))return;whenCalm(()=>{if(s.stale&&s.state==='ready'&&!s.dropped){s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}});return}
   s.stale=false;if(resetGame(s))renderOverlay(s);s.dirty=true}
 function goPrev(s){
   const i=slides.indexOf(s);if(i<=0)return;
@@ -747,6 +830,7 @@ function present(s,plain){
   if(lcd&&lcd.grid&&n>=3){o.fillStyle=gridOf(o,n,lcd);o.fillRect(0,0,w*n,h*n)}
 }
 function paint(s){
+  if(showsPic(s)){drawPic(s);return}   // (a Next Gen, AR or Board card in the feed: its picture, see sleep())
   // a game that throws while drawing shows its problem card instead (painting new cards for the feed
   // must never stop at one broken game)
   const off=s!==active;speed.offscreen=off;try{s.game.draw(s.ctx,beforeDraw(s,tickRate(s.def)))}catch(e){speed.offscreen=false;gameFault(s,e);try{s.game.draw(s.ctx,1)}catch(_){}if(s.off)present(s);return}finally{speed.offscreen=false}
@@ -799,6 +883,7 @@ function calmTick(){
 speed.busy=()=>!calm();speed.playing=()=>!!active&&active.state==='playing';
 // the shaders a card's rounds made before are made again while the feed is still, or once Play is pressed (src/kit/pipes.js)
 PIPES.free=()=>calm()||!!active&&(!!active.starting||active.state==='playing');
+PIPES.rush=()=>!!active&&!!active.starting;   // (Play was pressed: the loading screen is up, nothing to keep smooth)
 function topUpLater(wait=QUIET){
   clearTimeout(topT);if(guest)return;
   const ahead=()=>slides.length-1-(active?slides.indexOf(active):0);
@@ -922,9 +1007,9 @@ function setActive(s){
   if(prev&&prev.state==='playing')resetSlide(prev,true);
   else if(prev&&prev.state!=='ready')whenCalm(()=>{if(prev!==active&&prev.state!=='ready'&&!prev.dropped)resetSlide(prev)});
   // what its rounds made in play before is made again, in the background, while it is on screen (src/kit/pipes.js)
-  if(prev)releasePipes(prev);if(usesHD(s.def)||s.def.era==='console')primePipes(s,s.def.id);
+  if(prev)releasePipes(prev);if(!s.asleep&&(usesHD(s.def)||s.def.era==='console'))primePipes(s,s.def.id);   // (a sleeping card's are made on Play: wake)
   finishCard(s);feed.classList.remove('locked');active=s;speed.game=s.def;s.dirty=true;if(STREAM)remote.touch(s.def.id);if(!guest)playstats.shown(s.def.id);perf.shown(s.def.id);showTweaks(s);
-  whenCalm(()=>{if(s===active)soundtrack.ready(s.def)});   // a soundtrack with instruments: have them in before Play
+  if(!s.asleep)whenCalm(()=>{if(s===active)soundtrack.ready(s.def)});   // a soundtrack with instruments: have them in before Play (a sleeping card: on Play)
   // the last card (playNow, a short feed): top up now, else when the swipe has settled
   // (only a feed with nothing below at all builds now, in the middle of the swipe)
   if(!slides[slides.indexOf(s)+1])topUp();else topUpLater(slides.indexOf(s)>=slides.length-2?0:QUIET);schedulePrune();
@@ -1058,7 +1143,8 @@ function frame(now){
   // the screen's rate for the game being played (src/kit/screenrate.js; the phone decides between rounds)
   screenWish(s&&s.state==='playing'&&!s.paused?s.def:null);
   // the pipelines a round makes in play are noted for its game, and made ahead the next time (src/kit/pipes.js)
-  playingPipes(s&&s.state==='playing'&&!s.paused?s:null);
+  // (and those it builds getting ready under the loading screen: made ahead, all at once, the next time the app starts)
+  playingPipes(s&&(s.state==='playing'&&!s.paused||!!s.starting)?s:null,!!s&&!!s.starting);
   // the screen stays on while a round is in play, so tilt, voice and camera games don't dim and lock (src/kit/awake.js)
   keepAwake(stay||!!s&&s.state==='playing'&&!s.paused,stay?now:s?Math.max(lastGameInput,s.startPerf||0):0,now);
   // Frame rate per game and phone (src/kit/speed.js): on a 120 Hz screen a 60 fps game skips every
@@ -1096,7 +1182,7 @@ function frame(now){
       // 3D frame each refresh, on the same graphics chip that's moving the feed)
       // (a round getting ready is drawn with a thumb resting on the screen too, just not while the feed moves)
       const hold=usesHD(s.def)&&(warm?performance.now()-scrollAt<150:s.state==='ready'&&s.dirty&&(s.starting?settling():!calm())||s.state==='over'&&performance.now()-scrollAt<150);
-      const painted=!hold&&(s.state!=='ready'||s.dirty||(DBG&&DBG.on));if(painted){paint(s);s.dirty=false}
+      const painted=!hold&&(s.state!=='ready'||s.dirty||(DBG&&DBG.on));if(painted){paint(s);s.dirty=false;if(s.picDue)takePic(s)}
       if(DBG&&DBG.on){DBG.after(s,timed?t1-t0:0,performance.now()-t1,now);if(s.off&&DBG.boxes&&s.game.debug)present(s,true)}
       if(LAB)LAB.tick(now,s,painted?'frame':'idle',timed?t1-t0:0,performance.now()-t1);
       // frame timing for the anonymous stutter reports (src/perf.js)
@@ -1177,7 +1263,7 @@ logo.onclick=()=>openPanel(GAMES,best);
 const mineBtn=document.createElement('button');mineBtn.className='iconbtn';mineBtn.id='mine';mineBtn.setAttribute('aria-label','My games: hearted and Meh');mineBtn.textContent='♥';
 const muteBtn=document.getElementById('mute');muteBtn.before(mineBtn);
 const setBtn=document.createElement('button');setBtn.className='iconbtn';setBtn.id='settings';setBtn.setAttribute('aria-label','Settings');setBtn.textContent='⚙';
-muteBtn.after(setBtn);setBtn.onclick=()=>openSettings({stream:STREAM,cached:()=>remote.cacheInfo(),clear:()=>remote.clearCache(),arTest:WEB?null:()=>playNow('ar-lab')});
+muteBtn.after(setBtn);setBtn.onclick=()=>openSettings({stream:STREAM,cached:()=>remote.cacheInfo(),clear:()=>Promise.all([remote.clearCache(),covers.clear()]),arTest:WEB?null:()=>playNow('ar-lab')});
 mineBtn.onclick=()=>openMyGames({games:GAMES,best,play:playNow,changed:(id,r)=>{hearts.set(id,r>0);slides.forEach(x=>{if(x.def.id===id)x.setLike(r>0)});rerank()},qa:()=>openPanel(GAMES,best)});
 // 🔊 opens the Sound & haptics sheet (sound on/off, volume, music, vibration on/off and strength)
 muteBtn.setAttribute('aria-label','Sound and haptics');
@@ -1243,4 +1329,4 @@ if(STREAM)setInterval(()=>{if(document.visibilityState==='visible')remote.refres
 // Its prompts wait for a round to end; the catalogue can name the oldest version that may carry on.
 update.init({busy:()=>!!active&&active.state==='playing',min:()=>+remote.app()?.android?.min||0});
 
-if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},heat:()=>import('./kit/heat.js'),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one){filter='id:'+id;solo=!!one;rebuild()},knobs:id=>knobList(id),shaders:()=>[...(glStats.r?.info?.programs||[])].map(p=>(p.name?p.name+' ':'')+(p.type||'?')),gl3d:()=>{const d=active?.def,hd=['nextgen','ar','board'].includes(d?.era)?window.__hd?.info:null,r=glStats.r?.info,G=webgpuNow?.()?.r?.info;return{calls:(hd?hd.calls:glStats.frame?.calls??r?.render?.calls)||0,tris:(hd?hd.tris:glStats.frame?.tris??r?.render?.triangles)||0,programs:(glStats.programs||0)+(G?.memory?.programs||0),textures:(r?.memory?.textures||0)+(G?.memory?.textures||0),geometries:(r?.memory?.geometries||0)+(G?.memory?.geometries||0),backend:hd?.backend||'webgl'}},setKnobs:(id,v)=>setKnobs(id,v),shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};
+if(TEST)window.__gs={GAMES,remote,update,progress,playstats,perf,awake,soundtrack,slices,jobs:jobStats,fresh:FRESH,passes:PASSES,kits:{fonts:fontlib,pixel:pixelKit},gs:()=>import('./gamescroll.js'),why:id=>{const g=GAMES.find(x=>x.id===id);return g&&explain(g,GAMES,live)},api:s=>s.api,get size(){return active&&[active.w,active.h]},get active(){return active},start:()=>startGame(active,true),play:()=>startGame(active),left:s=>dropReady(s),gate:GATE,waits:kitsWaiting,steer:steerState,pipes:{stats:pipeStats,notes:pipeNotes,save:savePipes,forget:forgetPipes},brains:()=>liveBrains(active).map(brainStats),feed:()=>feedBrain.stats(),debug:v=>DBG?DBG.toggle(v):'debug overlay is only in dev builds',lab:v=>frameLab(v),memory:l=>{if(l!==undefined)forceMemory(l);return{...memory}},heat:()=>import('./kit/heat.js'),tour:o=>import('./tour.js').then(m=>m.runTour(tourDriver,o)),tourKit:()=>import('./tour.js'),desk:()=>({desktop,gpu:speed.gpu,klass:phoneClass(),hz:screenHz(),auto2d:autoFps({}),auto3d:autoFps({era:'nextgen'})}),only(id,one,asleep){filter='id:'+id;solo=!!one;wakeAll=!asleep;rebuild()},pics:covers,gpuMade:()=>!!webgpuNow(),knobs:id=>knobList(id),shaders:()=>[...(glStats.r?.info?.programs||[])].map(p=>(p.name?p.name+' ':'')+(p.type||'?')),gl3d:()=>{const d=active?.def,hd=['nextgen','ar','board'].includes(d?.era)?window.__hd?.info:null,r=glStats.r?.info,G=webgpuNow?.()?.r?.info;return{calls:(hd?hd.calls:glStats.frame?.calls??r?.render?.calls)||0,tris:(hd?hd.tris:glStats.frame?.tris??r?.render?.triangles)||0,programs:(glStats.programs||0)+(G?.memory?.programs||0),textures:(r?.memory?.textures||0)+(G?.memory?.textures||0),geometries:(r?.memory?.geometries||0)+(G?.memory?.geometries||0),backend:hd?.backend||'webgl'}},setKnobs:(id,v)=>setKnobs(id,v),shared:id=>openShared(id),playtest:(id,o)=>import('./playtest.js').then(m=>m.playtest(GAMES.find(g=>g.id===id),active.api,o))};

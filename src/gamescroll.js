@@ -245,8 +245,8 @@ function readOnly(o) {
 // if a part isn't in yet, reading it throws StillLoading and the app shows "Loading…".
 const GROUPS = {
   '3d': { parts: ['toon', 'hd', 'ar', 'bricks', 'physics3d', 'fx3d', 'camera', 'nav3d', 'characters', 'level3d', 'sky', 'poses', 'destruction', 'props', 'outdoors', 'city', 'models', 'voxels', 'fluid', 'gas', 'tabletop', 'regions', 'dungeon', 'mounts', 'THREE'],
-    // (with WebGPU picked in Settings, its renderer gets ready alongside: src/kit/gpu.js)
-    load: () => Promise.all([import('./gs-3d.js').then(m => Promise.all([m.props.simplifyReady, m.models.ready()]).then(() => m)), import('./kit/gpu.js').then(g => g.prepareGPU())]).then(([m]) => ({ toon: pick('toon', m.toon), hd: pick('hd', m.hd), ar: pick('ar', m.ar), bricks: pick('bricks', m.bricks),
+    // (WebGPU's renderer gets ready alongside, or, in the app, only its code: the device is made, and the saved bakes read, on the first Play: src/kit/gpu.js GPU_AT_PLAY)
+    load: () => import('./kit/gpu.js').then(g => Promise.all([import('./gs-3d.js').then(m => Promise.all([m.props.simplifyReady, g.GPU_AT_PLAY.on ? g.onFirstPlay(m.models.ready) : m.models.ready()]).then(() => m)), g.GPU_AT_PLAY.on ? g.loadGPUCode() : g.prepareGPU()])).then(([m]) => ({ toon: pick('toon', m.toon), hd: pick('hd', m.hd), ar: pick('ar', m.ar), bricks: pick('bricks', m.bricks),
       physics3d: pick('physics3d', m.physics3d), fx3d: pick('fx3d', m.fx3d), camera: pick('camera', m.camera), nav3d: pick('nav3d', m.nav3d),
       characters: pick('characters', m.characters, m.reactions), level3d: pick('level3d', m.level3d), sky: pick('sky', m.sky),
       poses: pick('poses', m.poses), destruction: pick('destruction', m.destruction, m.structure), props: pick('props', m.props), outdoors: pick('outdoors', m.outdoors), city: pick('city', m.city, m.town3d), models: pick('models', m.models), voxels: pick('voxels', m.voxels), fluid: pick('fluid', m.fluid), gas: pick('gas', m.gas), tabletop: pick('tabletop', m.tabletop), regions: pick('regions', m.regions), dungeon: pick('dungeon', m.dungeon), mounts: pick('mounts', m.mounts), THREE: m.THREE })) },

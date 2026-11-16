@@ -20,6 +20,7 @@ const { Particles, pbr, rbox, THREE } = gs.hd;
 const { ARView, arNote, FLOOR } = gs.ar;
 const { Group, Mesh, SphereGeometry, BoxGeometry, ConeGeometry, CylinderGeometry, TorusGeometry, DodecahedronGeometry, OctahedronGeometry,
   ShapeGeometry, ExtrudeGeometry, Shape, Path, MeshBasicMaterial, CanvasTexture, SRGBColorSpace, BackSide, DoubleSide, AdditiveBlending, Vector3, Color } = THREE;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 300, H = 460;
 // doorway opening (m): width, height of the straight sides (a round arch sits on top)
@@ -336,7 +337,7 @@ function make(api) {
       critters = []; held = []; sel = 0; score = 0; lives = LIVES; t = 0; spawnT = 1.2; combo = 0; comboT = 0;
       swapT = 26; swapping = null; goldT = 30; bonus = null; stars = []; note = null; hurt = 0; firstThrow = true;
       // shuffle which world is behind which doorway
-      const order = [0, 1, 2, 3].sort(() => Math.random() - .5);
+      const order = shuffle([0, 1, 2, 3]);
       doors.forEach((d, i) => { setWorld(d, order[i]); d.open = 0; d.opening = false; d.g.visible = false; d.g.position.copy(d.home); d.g.scale.y = .01; });
       openDoor(doors[0]); openDoor(doors[1]);
       gold.g.visible = false; gold.state = null; gold.open = 0; gold.g.position.copy(gold.home);
@@ -364,7 +365,7 @@ function make(api) {
       // worlds swap doorways once three are open: the doorways flicker first
       const open = doors.filter(opened);
       if (open.length >= 3) {
-        if (!swapping) { swapT -= dt; if (swapT <= 0) { const s = open.sort(() => Math.random() - .5).slice(0, 2); swapping = { ds: s, t: 1.6 }; sfx(200, .4, 'sawtooth', .03, 300); haptic('warning'); } }
+        if (!swapping) { swapT -= dt; if (swapT <= 0) { const s = shuffle(open).slice(0, 2); swapping = { ds: s, t: 1.6 }; sfx(200, .4, 'sawtooth', .03, 300); haptic('warning'); } }
         else if ((swapping.t -= dt) <= 0) {
           const [a, b] = swapping.ds, wa = a.world; setWorld(a, b.world); setWorld(b, wa); swapping = null; swapT = rnd(16, 22);
           say('TWO WORLDS SWAPPED DOORS!', '#ffffff'); sfx(330, .2, 'triangle', .05, -150); haptic('medium');

@@ -8,10 +8,10 @@ Enemy senses: sight cones, hearing, memory, moods from calm to searching; Noises
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SensesPart`, line 972), where every option and field is described.
+From `src/gamescroll.d.ts` (`SensesPart`, line 977), where every option and field is described.
 
-- `Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number; link?: b…` (:973)
-- `Noises: new (o?: { link?: boolean }) => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: num…` (:980)
+- `Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number; link?: b…` (:978)
+- `Noises: new (o?: { link?: boolean }) => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: num…` (:985)
 
 ## From the maker kit
 
@@ -51,14 +51,14 @@ found and raise the alarm unless you hide them, `Floors` make gravel loud and ca
 
 1 game uses it (`node scripts/examples.mjs gs.senses` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Brain, Wave, Imagine, Nemesis } = gs.brains;
 const { Senses, Noises } = gs.senses;
 // …
   const MARR = 'COL. MARR · GREY ORDER';
-  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensT = 0, lensAcc = 0
+  let noises = new Noises(), guard = null, metMarr = false, marrSays = [], built = false, mistT = 0, mistK = 1, lensDrops = [], lensGrad = null, lensT
 // …
     // the crack carries a long way across the valley: whoever hears it turns towards the hills (gs.senses)
     noises.make(eye.x, eye.z, b.masked ? (heard ? 220 : 50) : 520);

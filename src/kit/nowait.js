@@ -40,8 +40,11 @@ export const NOWAIT_STATS = { texts: 0, pipes: 0, built: 0, failed: 0, dropped: 
  */
 export function noWait(r) {
   if (!r || r.gsNoWait || typeof r._renderObjectDirect !== 'function' || !r._nodes || !r._pipelines) return;
-  const Q = r.gsNoWait = { on: 0, list: [], has: new Set(), sink: null, sync: false, env: new WeakMap(), frame: 0, counted: new Set(), running: false, inflight: 0, done: 0,
-    begin() { this.on++; }, end() { this.on = Math.max(0, this.on - 1); },
+  const Q = r.gsNoWait = { on: 0, quiet: 0, list: [], has: new Set(), sink: null, sync: false, env: new WeakMap(), frame: 0, counted: new Set(), running: false, inflight: 0, done: 0,
+    // (quiet: what is put off draws into no shadow map, so the maps needn't be drawn again once it is built: the contact
+    // shadows' pass, and the shadow shaders made ahead on a stand-in, hd3d.js shadowAhead. done counts the rest: hd3d.js
+    // draws the maps again when it moves, as each one built had been left out of them)
+    begin(quiet = false) { this.on++; if (quiet) this.quiet++; }, end(quiet = false) { this.on = Math.max(0, this.on - 1); if (quiet) this.quiet = Math.max(0, this.quiet - 1); },
     /** things put off and not drawable yet (their text or pipeline still on its way) */
     get pending() { return this.list.length + this.inflight + (this.running ? 1 : 0); } };
   const direct = r._renderObjectDirect, N = r._nodes, P = r._pipelines;
@@ -69,8 +72,13 @@ export function noWait(r) {
     // Per camera and per frame of the view, not per render: three draws the shadow maps inside the scene's render, and
     // the kit draws the same camera more than once a frame)
     let ek = null; try { ek = N.getCacheKey(scene, lightsNode); } catch (_) { /* (no key: taken as unchanged) */ }
+    // (a key this camera has drawn with before is no change. And a shadow map is never drawn as three does for it: a sun's
+    // shadow camera draws a part of its map and the whole of it with two keys in turn (hd3d-gpu.js splitShadowNode), and
+    // taken as new lights, every shadow shader new since was written in the frame, Floor Golf's 23 to 29 ms frames on the
+    // build machine (2026-11-15); a caster left out of a map for a few frames is drawn into it again once built (done))
     const e = Q.env.get(camera);
-    if (!e) Q.env.set(camera, { k: ek, at: -1 }); else if (ek !== null && e.k !== ek) { e.k = ek; e.at = Q.frame; }
+    if (!e) Q.env.set(camera, { k: ek, at: -1, seen: new Set([ek]) });
+    else if (ek !== null && e.k !== ek) { e.k = ek; if (!e.seen.has(ek)) { if (e.seen.size > 7) e.seen.clear(); e.seen.add(ek); if (!scene.name?.startsWith?.('Shadow Map')) e.at = Q.frame; } }
     if (e && e.at === Q.frame) { NOWAIT_STATS.env++; return asIs(this, arguments); }
     const ro = this._objects.get(object, material, scene, camera, lightsNode, this._currentRenderContext, clippingContext, passId);
     if (ro._nodeBuilderState || N.get(ro).nodeBuilderState !== undefined || N.nodeBuilderCache.has(N.getForRenderCacheKey(ro))) {
@@ -89,7 +97,7 @@ export function noWait(r) {
     // the shader's text is not written yet: queued, as three's compileAsync queues a thing, and left out of this frame
     bundle();
     Q.has.add(ro); NOWAIT_STATS.texts++; name(ro, 'text');
-    Q.list.push(watch({ ro, object, top: top(object), material, side: material.side, scene, camera, lightsNode, group, clippingContext, passId, renderContext: this._currentRenderContext,
+    Q.list.push(watch({ ro, quiet: Q.quiet > 0, object, top: top(object), material, side: material.side, scene, camera, lightsNode, group, clippingContext, passId, renderContext: this._currentRenderContext,
       state: { useFrameBufferTarget: true, renderTarget: this.getRenderTarget(), mrt: this.getMRT(), renderContext: this._currentRenderContext }, frame: take(this, lightsNode) }));
     drain(r);
   };
@@ -171,8 +179,8 @@ function drain(r) {
         if (e !== LOST) { NOWAIT_STATS.failed++; console.warn('3D: a shader put off from a frame failed to build', e); }
       } finally { if (r._precompilationState) finish(r); Q.has.delete(it.ro); it.unwatch(); NOWAIT_STATS.programs += Math.max(0, r.info.memory.programs - p0); }
       if (ok) NOWAIT_STATS.built++;
-      if (!promises.length) Q.done++;
-      for (const p of promises) { const end = () => { pipes.delete(q); Q.done++; }, q = p.then(end, end); pipes.add(q); }
+      if (!promises.length && !it.quiet) Q.done++;
+      for (const p of promises) { const end = () => { pipes.delete(q); if (!it.quiet) Q.done++; }, q = p.then(end, end); pipes.add(q); }
       // (a few pipelines at once at most, as compileAsync does)
       while (pipes.size >= 8) await Promise.race(pipes);
     }

@@ -8,14 +8,14 @@ A word dictionary, word comparison, letter bags, scoring.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`WordsPart`, line 5399), where every option and field is described.
+From `src/gamescroll.d.ts` (`WordsPart`, line 5404), where every option and field is described.
 
-- `Words: new () => { readonly size: number; has(w: string): boolean; safe(w: string): boolean; of(len: number): string[]; random(o?: { length?: number | null; min?: numb…` The dictionary (loads on first use: make it in make() or reset()). (:5401)
-- `compare(guess: string, answer: string): ('hit' | 'near' | 'miss')[]` (:5408)
-- `LETTERS: Record<string, number>` (:5409)
-- `VALUES: Record<string, number>` (:5409)
-- `score(word: string, o?: { values?: Record<string, number>; mult?: number }): number` (:5410)
-- `Bag: new (o?: { size?: number; blanks?: number; seed?: number | string | null; letters?: Record<string, number> }) => { tiles: string[]; readonly left: number; shuffle…` (:5411)
+- `Words: new () => { readonly size: number; has(w: string): boolean; safe(w: string): boolean; of(len: number): string[]; random(o?: { length?: number | null; min?: numb…` The dictionary (loads on first use: make it in make() or reset()). (:5406)
+- `compare(guess: string, answer: string): ('hit' | 'near' | 'miss')[]` (:5413)
+- `LETTERS: Record<string, number>` (:5414)
+- `VALUES: Record<string, number>` (:5414)
+- `score(word: string, o?: { values?: Record<string, number>; mult?: number }): number` (:5415)
+- `Bag: new (o?: { size?: number; blanks?: number; seed?: number | string | null; letters?: Record<string, number> }) => { tiles: string[]; readonly left: number; shuffle…` (:5416)
 
 ## From the maker kit
 
@@ -40,7 +40,7 @@ players type, and `Bag` for letter tiles with `score()`.
 
 2 games use it (`node scripts/examples.mjs gs.words` lists them). The shortest:
 
-`src/games/word-wheel.js` (Word Wheel, Casual · Words, 104 lines):
+`src/games/word-wheel.js` (Word Wheel, Casual · Words, 105 lines):
 
 ```js
 const { Feel } = gs.effects;
@@ -52,7 +52,7 @@ const { Words } = gs.words;
     let w = null;
     for (let k = 0; k < 40 && !w; k++) { const c = words.random({ length: 6 }); if (c && words.safe(c) && words.from(c, { min: 3, common: true }).leng
 // …
-        letters = w.split('').sort(() => Math.random() - .5);
+        letters = shuffle(w.split(''));
     all = words.from(w.toLowerCase(), { min: 3, common: true }).filter(x => words.safe(x)).map(x => x.toUpperCase());
 // …
       if (found.includes(w)) { msg = 'Already got it'; ml = 1; sfx(300, .08, 'square', .03); return; }

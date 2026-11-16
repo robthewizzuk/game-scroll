@@ -119,14 +119,16 @@ Optional definition fields: `tick: 60` (fixed tick), `music: 'chase'` (a soundtr
 `touch: 'fine'` (`move()` gets every reading of the finger, several a frame: drawing and tracing games), `lcd: true` (pixel styles: an old handheld screen's grid and ghosting), `maxW` / `maxH` (fluid size), `reward`, `shop`.
 Optional game methods: `snapshot()` / `restore(data)` (keep a round across hot reload), `fx(dt)` (effects behind the game-over screen), `resize(w, h)`
 (fluid games with `maxW`, `maxH`), `debug(c)`, `pause()`, `resume()`.
-Next Gen and AR: frame generation makes the in-between frames on fast screens by itself; `frameGen: 'ahead'`
+Next Gen and AR: on a phone a 3D game aims for 60; where it can't hold 60 (and on low, warm or power-saving phones) the app
+draws 30 and frame generation (GSFG) makes the other 30, by itself; `frameGen: 'ahead'`
 (no added delay) or `frameGen: false` in the definition, `view.cut()` after a camera jump, and
 `view.aimNow(cam => ...)` for a game turning its own camera from touch (gs.camera rigs already do).
 
 The app draws the start and game-over screens and the score. The game only draws play.
-On a Next Gen, AR or Board game, Play first shows a loading screen: the app runs `reset()`, draws the round's
-first frames and runs its first `update()` under it, and starts the round once the shaders for all of that are
-built. So make what a round needs in `reset()` or its first `update()`, not a few frames in.
+On a Next Gen, AR or Board game, the card in the feed is only a picture (the game's last round on this phone, or a
+cover): its `make()` runs after Play. Play shows a loading screen: the app makes the game, runs `reset()`, draws the
+round's first frames and runs its first `update()` under it, and starts the round once the shaders for all of that are
+built. So make what a round needs in `make()`, `reset()` or its first `update()`, not a few frames in.
 
 ## Styles
 
@@ -269,7 +271,7 @@ part). A new part or method of `gs`: its types in `src/gamescroll.d.ts`, what to
 
 **Lazy parts** (physics, physics3d, nav3d, fx3d, vision, Tone, `sound.instrument`, `api.loadLocal`, `tabletop.Chess`, `Table.dice()`, `story.Story`, `look2d.Screen`, `look2d.Batch`, `words.Words`, `trivia.Quiz`, `ui.UI`, `juice.Timeline`, `hear.Sounds`, `doodle.Doodle`, `fonts.use`): create them in `make()` or `reset()`, never
 later. The app shows "Loading…" and remakes the game once the library is in.
-A big 3D game is also made a little each frame while its card loads (the kit's builders stop the pass, each pass on a fresh copy of the game's file, and heavy number work goes to background workers), so `make()` and `reset()` may run several times
+A big 3D game is also made a little each frame under its loading screen after Play (the kit's builders stop the pass, each pass on a fresh copy of the game's file, and heavy number work goes to background workers), so `make()` and `reset()` may run several times
 before the first round: build the world there, and keep once-only things (a save, a sound) out of them.
 The 3D parts (`toon`, `hd`, `ar`, `bricks`, `physics3d`, `fx3d`, `camera`, `nav3d`, `characters`, `level3d`, `sky`, `poses`, `destruction`, `props`, `outdoors`, `city`, `models`, `voxels`, `fluid`, `gas`, `tabletop`, `regions`, `dungeon`, `mounts`, `THREE`)
 and `ai`, plus the action kits (`combat`, `tactics`, `climb`, `missions`, `cutscene`, `prompts`, `stealth`, `gadgets`, `campaign`, `arena`, `magic`, `companions`) and play kits (`craft`, `soft`, `cards`, `dice`, `words`, `trivia`, `ui`) and smarts (`hear`, `doodle`, `phoneai`) and looks (`sketch`, `icons`), also load on first use, so the app opens fast. The app loads the ones a game uses before it

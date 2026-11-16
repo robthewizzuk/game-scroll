@@ -8,27 +8,27 @@ Drawn shapes: smoothed finger lines, a shape recogniser, lines into physics.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`StrokesPart`, line 3303), where every option and field is described.
+From `src/gamescroll.d.ts` (`StrokesPart`, line 3308), where every option and field is described.
 
-- `SHAPES: readonly string[]` (:3304)
-- `Stroke: new (o?: { smooth?: number; gap?: number }) => Stroke` (:3305)
-  - `points: Pt[]` (:3298)
-  - `length: number` (:3298)
-  - `readonly first: Pt` (:3298)
-  - `readonly last: Pt` (:3298)
-  - `readonly closed: boolean` (:3298)
-  - `readonly turns: number` (:3298)
-  - `readonly bounds: { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3299)
-  - `add(x: number, y: number): Stroke` (:3300)
-  - `simplify(tolerance?: number): Pt[]` (:3300)
-  - `resample(n?: number): Pt[]` (:3300)
-  - `draw(c: Ctx, o?: { width?: number; color?: string; cap?: CanvasLineCap }): void` (:3301)
-- `Shapes: new (names?: readonly string[], o?: { n?: number; sure?: number }) => { add(name: string, points: Pt[]): Loose; match(points: Pt[], o?: { min?: number }): { na…` (:3306)
-- `toPhysics(phys: Loose, points: Pt[], o?: { thick?: number; fixed?: boolean; [k: string]: Loose }): Loose` (:3309)
-- `pathLength(p: Pt[]): number` (:3310)
-- `bounds(p: Pt[]): { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3310)
-- `resample(p: Pt[], n?: number): Pt[]` (:3310)
-- `simplify(p: Pt[], tol?: number): Pt[]` (:3310)
+- `SHAPES: readonly string[]` (:3309)
+- `Stroke: new (o?: { smooth?: number; gap?: number }) => Stroke` (:3310)
+  - `points: Pt[]` (:3303)
+  - `length: number` (:3303)
+  - `readonly first: Pt` (:3303)
+  - `readonly last: Pt` (:3303)
+  - `readonly closed: boolean` (:3303)
+  - `readonly turns: number` (:3303)
+  - `readonly bounds: { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3304)
+  - `add(x: number, y: number): Stroke` (:3305)
+  - `simplify(tolerance?: number): Pt[]` (:3305)
+  - `resample(n?: number): Pt[]` (:3305)
+  - `draw(c: Ctx, o?: { width?: number; color?: string; cap?: CanvasLineCap }): void` (:3306)
+- `Shapes: new (names?: readonly string[], o?: { n?: number; sure?: number }) => { add(name: string, points: Pt[]): Loose; match(points: Pt[], o?: { min?: number }): { na…` (:3311)
+- `toPhysics(phys: Loose, points: Pt[], o?: { thick?: number; fixed?: boolean; [k: string]: Loose }): Loose` (:3314)
+- `pathLength(p: Pt[]): number` (:3315)
+- `bounds(p: Pt[]): { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3315)
+- `resample(p: Pt[], n?: number): Pt[]` (:3315)
+- `simplify(p: Pt[], tol?: number): Pt[]` (:3315)
 
 ## From the maker kit
 
@@ -58,7 +58,7 @@ five. The model is about 440 KB and is only fetched by a game that uses it. For 
 
 ## In real games
 
-1 game uses it (`node scripts/examples.mjs gs.strokes` lists them). The shortest:
+2 games use it (`node scripts/examples.mjs gs.strokes` lists them). The shortest:
 
 `src/games/ink-ward.js` (Ink Ward, spike, 166 lines):
 
@@ -68,4 +68,32 @@ const { Stroke } = gs.strokes;
 // …
     },
     down(x, y) { ready.go(); if (ended) return; erasing = lineNear(x, y); stroke = new Stroke().add(x, y); },
+```
+
+`src/games/spell-school.js` (Spell School, Advance · Magic, 420 lines):
+
+```js
+const { text } = gs.pixel;
+const { resample, simplify, pathLength, bounds, Shapes } = gs.strokes;
+// …
+const IDEAL = { '-': [[0, .5], [1, .5]], '|': [[.5, 0], [.5, 1]], V: [[0, 0], [.5, 1], [1, 0]], '^': [[0, 1], [.5, 0], [1, 1]], O: ring(24) };
+const CLOSED = new Shapes(['circle', 'heart', 'star', 'triangle', 'square']);
+// …
+  if (pts.length < 3) return null;
+  const raw = pts.map(p => [p.x, p.y]), len = pathLength(raw);
+// …
+  if (len < 12) return null;
+  const p = resample(raw, 48), b = bounds(p), size = Math.max(b.w, b.h);
+// …
+    let e = 0; for (const q of p) { let m = Infinity; for (let i = 1; i < T.length; i++) m = Math.min(m, segDist(q, T[i - 1], T[i])); e += m; }
+    const ts = resample(T, 24); let f = 0; for (const q of ts) { let m = Infinity; for (const s of p) m = Math.min(m, Math.hypot(q[0] - s[0], q[1] - s
+// …
+  const runsAt = tol => {
+    const q = simplify(p, Math.max(1.5, size * tol)), segs = [];
+// …
+  // STAR: five points drawn in one line goes twice round its middle, with hard corners
+  if (closed && sweep > 1.5 && sweep < 2.6 && sharp >= 4) { const m = CLOSED.rank(p); if (m[0].name === 'star') return out('S', 1); }
+// …
+  if (closed && sweep > .72 && sweep < 1.6 && Math.min(b.w, b.h) > size * .4) {
+    const m = CLOSED.rank(p), top = m[0];
 ```

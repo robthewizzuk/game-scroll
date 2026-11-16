@@ -4,26 +4,26 @@ const { haptic } = gs.device;
 const { clamp } = gs.util;
 const { Feel } = gs.effects;
 const { icon } = gs.icons;
-const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
+const { Deck } = gs.cards;
 
 // Guess if the next card is higher or lower. Each right guess grows the pot, more for riskier calls.
 // Cash out any time to bank it; a wrong guess loses the pot. Same value is a free push. Five runs.
-const W = 360, H = 640, RUNS = 5, SUITS = ['spades', 'hearts', 'diamonds', 'clubs'], RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const W = 360, H = 640, RUNS = 5, SUITS = { s: 'spades', h: 'hearts', d: 'diamonds', c: 'clubs' }, RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
-  let deck, cur, prev, pot, bank, run, t, msg, flip, streak;
-  function draw1() { if (!deck.length) newDeck(); return deck.pop(); }
-  function newDeck() { deck = []; for (let s = 0; s < 4; s++) for (let r = 0; r < 13; r++) deck.push({ r, s }); deck = shuffle(deck); }
+  const deck = new Deck();   // 52 cards, ace low
+  let cur, prev, pot, bank, run, t, msg, flip, streak;
+  function draw1() { if (deck.empty) deck.reset(); return deck.top(); }
   function newRun() { cur = draw1(); prev = null; pot = 0; streak = 0; }
   function odds(up) { // chance of being right, given what's left in the deck
-    let win = 0, n = 0; for (const c of deck) { if (c.r === cur.r) continue; n++; if (up ? c.r > cur.r : c.r < cur.r) win++; }
+    let win = 0, n = 0; for (const c of deck.cards) { if (c.rank === cur.rank) continue; n++; if (up ? c.rank > cur.rank : c.rank < cur.rank) win++; }
     return n ? win / n : .5;
   }
   function guess(up) {
     if (flip > 0) return; const p = Math.max(.08, odds(up)); prev = cur; cur = draw1(); flip = .35;
-    if (cur.r === prev.r) { msg = { txt: 'PUSH', l: .9, c: '#ffffff' }; haptic('light'); sfx(400, .06, 'triangle', .04); return; }
-    const right = up ? cur.r > prev.r : cur.r < prev.r;
+    if (cur.rank === prev.rank) { msg = { txt: 'PUSH', l: .9, c: '#ffffff' }; haptic('light'); sfx(400, .06, 'triangle', .04); return; }
+    const right = up ? cur.rank > prev.rank : cur.rank < prev.rank;
     if (right) { const gain = Math.max(1, Math.round((1 / p - 1) * 6)); pot += gain; streak++; msg = { txt: `+${gain}`, l: .9, c: '#7dff9a' }; feel.juice.burst(230, 290, { n: 6 + Math.min(20, gain * 2), speed: 180, life: .5, size: 3.5, color: ['#7dff9a', '#ffffff'] }); haptic(p < .35 ? 'success' : 'light'); sfx(500 + streak * 60, .1, 'triangle', .05, 200); }
     else { msg = { txt: pot ? `LOST ${pot}` : 'WRONG', l: 1.2, c: '#ff6b6b' }; pot = 0; feel.juice.shake(7).flash('#ff4040', .2); haptic('error'); sfx(140, .3, 'triangle', .06, -40); endRun(); }
   }
@@ -33,7 +33,7 @@ function make(api) {
   function endRun() { run++; if (run >= RUNS) { flip = 1.4; lastRun = true; } else { flip = 1.1; next = true; } }
   let next = false, lastRun = false;
   return {
-    reset() { newDeck(); bank = 0; run = 0; t = 0; msg = null; flip = 0; next = false; lastRun = false; feel.clear(); newRun(); },
+    reset() { deck.reset(); bank = 0; run = 0; t = 0; msg = null; flip = 0; next = false; lastRun = false; feel.clear(); newRun(); },
     fx(dt) { feel.update(dt); },
     update(dt) {
       feel.update(dt); t += dt; if (msg) msg.l -= dt;
@@ -45,9 +45,9 @@ function make(api) {
       const card = (x, y, cd, s = 1, alpha = 1) => {
         c.globalAlpha = alpha; c.save(); c.translate(x, y); c.scale(s, 1);
         c.fillStyle = '#fafafa'; c.beginPath(); c.roundRect(-60, -85, 120, 170, 12); c.fill();
-        const red = cd.s === 1 || cd.s === 2; c.fillStyle = red ? '#d32f2f' : '#222';
-        c.font = '800 44px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText(RANKS[cd.r], 0, 10); icon(c, SUITS[cd.s], 0, 45, 30, { color: c.fillStyle });
-        c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText(RANKS[cd.r], -52, -62); icon(c, SUITS[cd.s], -52 + c.measureText(RANKS[cd.r]).width + 8, -68, 13, { color: c.fillStyle });
+        const red = cd.red; c.fillStyle = red ? '#d32f2f' : '#222';
+        c.font = '800 44px Rubik, sans-serif'; c.textAlign = 'center'; c.fillText(RANKS[cd.rank - 1], 0, 10); icon(c, SUITS[cd.suit], 0, 45, 30, { color: c.fillStyle });
+        c.font = '700 16px Rubik, sans-serif'; c.textAlign = 'left'; c.fillText(RANKS[cd.rank - 1], -52, -62); icon(c, SUITS[cd.suit], -52 + c.measureText(RANKS[cd.rank - 1]).width + 8, -68, 13, { color: c.fillStyle });
         c.restore(); c.globalAlpha = 1;
       };
       if (prev) card(95, 290, prev, .8, .45);

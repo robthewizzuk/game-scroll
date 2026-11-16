@@ -68,9 +68,10 @@ Open the printed URL in a desktop browser or on your phone (same Wi-Fi). To jump
 game, open the browser console and run `__gs.only('my-game')`. Desktop keys: Space/Enter to start,
 arrows to steer, ↓ for the next game. Press `` ` `` (backquote) for the debug overlay: frame rate, slow
 motion, frame stepping and hitboxes. Save your file and the game reloads in place (hot reload), and
-`gs.tweak('Feel', { speed: [3, 1, 6, 'how fast you run'] })` gives you sliders to tune numbers while you play (the templates keep their feel numbers in one such block of knobs; **Save to file** writes the sliders back, and `npm run knobs my-game` lists or changes them; [docs/feel-words.md](docs/feel-words.md) says which knob *floatier*, *snappier* or *fairer* moves). `npm run budget my-game`
-checks it's fast enough for a mid-range phone. For opponents that learn as people play, see
-[Tiny Brains](docs/maker-kit.md#tiny-brains). Boards, battles, made levels, drag and drop, idle maths,
+`gs.tweak('Feel', { speed: [3, 1, 6, 'how fast you run'] })` gives you sliders to tune numbers while you play (the templates keep their feel numbers in one such block of knobs; **Save to file** writes the sliders back, and `npm run knobs my-game` lists or changes them; [docs/feel-words.md](docs/feel-words.md) says which knob *floatier*, *snappier* or *fairer* moves). `npm run speed my-game`
+checks it's fast enough for low, mid and top phones (it is also the last part of `npm run check`). For opponents that learn as people play, see
+[Tiny Brains](docs/kits/brains.md): guard rails, corrections, a memory of which moves made rounds exciting, a win-rate dial, and ready-made
+opponents in `gs.battle`, `gs.fight` and `gs.vehicles`. Every part of `gs` has a short page in [docs/kits/](docs/kits/README.md) (`npm run kit <name>` prints one). Boards, battles, made levels, drag and drop, idle maths,
 pass-and-play, rhythm, drawn shapes, vehicles, 3D text levels and weather are in
 [Game kits](docs/maker-kit.md#game-kits). Guns, cover and squads, climbing, poses, missions,
 cutscenes, quick-time prompts, breaking things, stealth, gadgets, ball games with cars, campaigns,
@@ -298,8 +299,10 @@ above 1 bloom), particles for every impact, and camera life (bob, recoil, shake)
 Phones must stay smooth: the kit lowers the render resolution and then the quality tier by itself
 when frames get slow, but keep draw calls low (merge level geometry, `InstancedMesh` for repeated
 props, hide what's beyond the fog). Read [`docs/nextgen-3d.md`](docs/nextgen-3d.md) for the full
-kit, the quality tiers and performance rules. Like Console games, they share one WebGL renderer;
-never create your own. Run `npm run sweep` on Next Gen games too. These appear under
+kit, the quality tiers and performance rules. Like Console games, they share one renderer (WebGPU where the phone has it, WebGL elsewhere);
+never create your own. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60 the app
+draws 30 and frame generation (GSFG) makes the other 30, and low or warm phones always do. You set none of this,
+but keep frames light: the speed report in `npm run check` measures it against phone budgets. Run `npm run sweep` on Next Gen games too. These appear under
 **Next Gen · Console**.
 
 ### AR · 3D
@@ -398,12 +401,16 @@ any other app code. The full guide is [docs/maker-kit.md](docs/maker-kit.md). Th
 - `gs.util`: `clamp`, `rnd`, `pix`, `disc`, `flickTracker`, `hash`, `fmt` (no raw storage: use `api.save`).
 - `gs.palettes`: `PAL`, `SHELL`, `C16`.
 - `gs.gfx` (2D shading helpers), `gs.toon` (Classic Console 3D), `gs.hd` (Next Gen Console HD 3D), `gs.ar` (AR · 3D: camera + gyro), `gs.tabletop` (Board games: a table in 3D or AR, dice, pieces, chess), `gs.bricks` (toy bricks), `gs.THREE`.
+- Game kits: `gs.brains` (Tiny Brains), `gs.board`, `gs.battle`, `gs.cards`, `gs.dice`, `gs.words`, `gs.trivia`, `gs.rhythm`, `gs.idle`, `gs.party`, `gs.gen`, `gs.items`, `gs.stats`, `gs.drag`, `gs.ui`.
+- Stories and fantasy: `gs.rpg` (levels, skill trees, reputation, quests), `gs.town`, `gs.dungeon`, `gs.magic`, `gs.monsters`, `gs.companions`, `gs.mounts`, `gs.campaign`.
+- Action: `gs.combat` (guns, bows, explosives), `gs.fight` (3D melee with swords and shields), `gs.tactics`, `gs.climb` (ledges, ropes, swimming), `gs.missions` (jobs, phone calls, world saves), `gs.cutscene`, `gs.prompts`, `gs.stealth`, `gs.gadgets`.
+- 3D worlds: `gs.city` (a streamed city with rooms, traffic, police and a GPS), `gs.vehicles`, `gs.craft`, `gs.outdoors`, `gs.sky`, `gs.models` (people, creatures, a character creator), `gs.poses`, `gs.props`, `gs.regions`, `gs.voxels`, `gs.fluid` (liquid, sand, snow, mud), `gs.gas`, `gs.destruction`, `gs.level3d`.
 
-All of the new kits are explained, with examples, in [`docs/maker-kit.md`](docs/maker-kit.md).
+Each part has a short page in [docs/kits/](docs/kits/README.md), and all of them are explained, with examples, in [`docs/maker-kit.md`](docs/maker-kit.md).
 
 Sensors return `null` or do nothing on desktop, in the browser, or when the player says no to a
 permission, so **every sensor game needs a touch fallback** (for example drag instead of tilt, tap
-instead of shouting). Call `want('motion')` inside `make()` for tilt, shake or compass games so iOS can
+instead of blowing). Call `want('motion')` inside `make()` for tilt, shake or compass games so iOS can
 ask for permission on the next tap. Stop the mic or camera when the round ends.
 
 ## Credits, shop items and trophies

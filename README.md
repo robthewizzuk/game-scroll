@@ -48,7 +48,12 @@ Every push to `main` also builds the web version (`npm run build:web`) and publi
 
 ## Adding a game
 
-Anyone can add a game with a pull request: see **[CONTRIBUTING.md](CONTRIBUTING.md)** for the rules, the game API, the five styles (Phone, Dot matrix, Color, Advance, Console 3D) with screenshots, palettes, fluid sizes and how to test.
+Anyone can add a game with a pull request: see **[CONTRIBUTING.md](CONTRIBUTING.md)** for the rules, the game API, the eight styles (Phone, Dot matrix, Color, Advance, Classic Console, Next Gen, AR · 3D and Board) with screenshots, palettes, fluid sizes and how to test. The friendly version is https://game-scroll.com/make/.
+
+- `npm run new my-game --style pocket` starts a game from a template that already plays (any style).
+- `npm run check my-game` runs every check in one report, each problem with its line and a fix, ending with the speed report against real phones ([docs/testing.md](docs/testing.md)).
+- Every part of the engine (`gs`) has a short page in [docs/kits/](docs/kits/README.md); [docs/maker-kit.md](docs/maker-kit.md) is the long reference.
+- AI tools (Claude Code, Codex, Gemini CLI, Copilot, Cursor) read [AGENTS.md](AGENTS.md), and the repo's own MCP server lets them look up kits, run the checks and play the game to see a change: [docs/ai-makers.md](docs/ai-makers.md).
 
 Every file in `src/games/` is one game and is picked up by the feed automatically. A game exports:
 
@@ -60,7 +65,9 @@ export default {
   w: 360, h: 640,        // logical canvas size (pocket games use 160x160)
   hint: 'One sentence on how to play.',
   goal: 30,              // score that counts as a win and pays credits (required)
-  make(api) {            // api.score(n), api.over()
+  tick: 60,              // optional: update(1/60) a whole number of times a frame, the same game on every phone
+  music: 'happy',        // optional: a soundtrack in one line (happy, calm, tense, spooky, chase...)
+  make(api) {            // api.score(n), api.over(), api.win(), api.save(data), api.load(fallback)
     return { reset() {}, update(dt) {}, draw(ctx) {}, down(x, y) {}, move(x, y, pressed) {}, up(x, y) {}, key(k, isDown) {}, fx(dt) {} };
   },
 };
@@ -98,9 +105,13 @@ Winning any game pays credits, which some games let you spend on items. Trophies
 
 The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and iPhone Duo screen sizes). On wide screens, like the unfolded iPhone Duo or a tablet, the caption and buttons move to a side column. Android is configured not to restart on fold (`configChanges` and `resizeableActivity` in `AndroidManifest.xml`), and iOS allows every orientation. `npm run fold` simulates folding and unfolding during a game.
 
+## 3D on phones
+
+3D games share one renderer: WebGPU where the phone has it, WebGL elsewhere. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60, the quality steps take it to 30 drawn and 30 made by frame generation (GSFG), and back to 60 when the frames show room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. Settings says which and why. On Next Gen, AR and Board games, Play shows a loading screen while the round's first frames and shaders are built. More in [docs/nextgen-3d.md](docs/nextgen-3d.md).
+
 ## Testing
 
-`npm run smoke` builds the app and plays every game with random input on a phone-sized screen, failing if any game throws. Pass ids to test only some: `node scripts/smoke.cjs worm bricks`. Needs Playwright (`npm i -D playwright && npx playwright install chromium`).
+`npm run check <id>` runs every check on one game in one report (see [Adding a game](#adding-a-game)). `npm run smoke` builds the app and plays every game with random input on a phone-sized screen, failing if any game throws. Pass ids to test only some: `node scripts/smoke.cjs worm bricks`. Needs Playwright (`npm i -D playwright && npx playwright install chromium`). Which check fits which change, the engine test scenes and the phone test tour: [docs/testing.md](docs/testing.md).
 
 ## QA: finding and removing weak games
 
@@ -115,7 +126,7 @@ The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and i
 
 ## Roadmap
 
-Launch target is **1000 unique games** (distinct mechanics, not reskins), built in batches of about eight. There are 142 so far. Games can be fluid: set `maxW`/`maxH` (and optional `step`) and implement `resize(w, h)` to receive the extra space on tall or unfolded screens. The idea list lives in `docs/game-ideas.md`, with built games ticked.
+Launch target is **1000 unique games** (distinct mechanics, not reskins). There are 251 in the feed so far, after weak ones were taken out in play-test reviews ([docs/qa/review.md](docs/qa/review.md)). Games can be fluid: set `maxW`/`maxH` (and optional `step`) and implement `resize(w, h)` to receive the extra space on tall or unfolded screens. The idea list lives in `docs/game-ideas.md`, with built games ticked.
 
 ## License
 

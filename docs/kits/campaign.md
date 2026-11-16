@@ -8,9 +8,9 @@ A campaign of levels with progress.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CampaignPart`, line 3788), where every option and field is described.
+From `src/gamescroll.d.ts` (`CampaignPart`, line 3793), where every option and field is described.
 
-- `Campaign: new (chapters: { id: string; name?: string; needs?: { stars?: number; done?: string }; missions: CampaignMission[]; [k: string]: Loose }[], o?: { extras?: Re…` (:3789)
+- `Campaign: new (chapters: { id: string; name?: string; needs?: { stars?: number; done?: string }; missions: CampaignMission[]; [k: string]: Loose }[], o?: { extras?: Re…` (:3794)
 
 ## From the maker kit
 
@@ -24,7 +24,7 @@ scores, collectibles and extras that unlock at a star count, saved compactly wit
 
 1 game uses it (`node scripts/examples.mjs gs.campaign` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Zipline } = gs.gadgets;

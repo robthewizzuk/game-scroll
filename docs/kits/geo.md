@@ -8,13 +8,13 @@ Location maths: distances and bearings between places.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`GeoPart`, line 883), where every option and field is described.
+From `src/gamescroll.d.ts` (`GeoPart`, line 888), where every option and field is described.
 
-- `distance(a: LatLon, b: LatLon): number` (:883)
-- `bearing(a: LatLon, b: LatLon): number` (:883)
-- `offset(p: LatLon, east: number, north: number): LatLon` (:883)
-- `toLocal(origin: LatLon, p: LatLon): XY` (:883)
-- `cellId(p: LatLon, metres?: number): string` (:883)
+- `distance(a: LatLon, b: LatLon): number` (:888)
+- `bearing(a: LatLon, b: LatLon): number` (:888)
+- `offset(p: LatLon, east: number, north: number): LatLon` (:888)
+- `toLocal(origin: LatLon, p: LatLon): XY` (:888)
+- `cellId(p: LatLon, metres?: number): string` (:888)
 
 ## From the maker kit
 

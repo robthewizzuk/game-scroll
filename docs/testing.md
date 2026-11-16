@@ -566,8 +566,10 @@ drawing) are not in them: `perf-bench.cjs` and `shader-hold.cjs` measure those.
 
 ## Play on a 3D game: the loading screen before a round
 
-Play on a Next Gen, AR or Board game does not start the round at once. The app puts a loading screen
-over the card, runs the game's `reset()`, draws the round's first frames under the cover (`draw()`
+A Next Gen, AR or Board card in the feed is a picture until Play (`sleep()` in `src/main.js`; the picture
+is the last round's final frame, kept by `src/covers.js`): nothing of the game is made, drawn or built
+in the feed, and the 3D device is made on the first Play. Play does not start the round at once. The app
+puts a loading screen over the card, makes the game (taking most of each frame), runs the game's `reset()`, draws the round's first frames under the cover (`draw()`
 with no `update()`), runs the round's first `update()` there too, once, and starts the round when the
 3D kit has nothing left on its way (shaders being built, things hidden until theirs are; for up to 4 s
 also cluster detail, shaders built ahead and, on WebGPU, textures still being packed for the chip) and a few
@@ -575,8 +577,9 @@ frames in a row came on time (`getReady` in `src/main.js`; `src/kit/getready.js`
 the kits share). A card that has been through it once is quick the next time, so "Play again" usually
 shows no loading screen at all. A 2D game still starts the instant Play is pressed.
 
-In tests, `__gs.start()` starts the round this instant, as it always has, so every existing script
-times what it timed before. `__gs.play()` is the real tap: it goes through the loading screen.
+In tests, `__gs.only(id)` makes its cards' games at once, as every card was made before, and
+`__gs.start()` starts the round this instant, as it always has, so every existing script times what it
+timed before; `__gs.only(id, one, true)` leaves the card asleep, as a player meets it. `__gs.play()` is the real tap: it goes through the loading screen.
 `__gs.active.starting` is set while a card gets ready (`phase`: `load`, `warm`, `hold`),
 `__gs.active.readyMs` is how long the last one took, and `__gs.waits()` is what the kits are still
 waiting for (`{ hard, soft, what }`).
@@ -584,6 +587,8 @@ waiting for (`{ hard, soft, what }`).
 ```bash
 npm run build:bundled
 node scripts/app-test.cjs ready                  # the rules: cover up at once, one reset, one hidden update, nothing hidden at the start
+node scripts/app-test.cjs asleep                 # the card is a picture until Play, the round's last frame is its next picture
+node scripts/round-start.cjs --asleep            # as a player meets it: the game made on Play, so "ready" includes making it
 node scripts/round-start.cjs                     # every Next Gen, AR and Board game: Play to the round, and its first frames
 node scripts/round-start.cjs parcel-dash --now   # the old way, to compare: the round starts on the tap
 node scripts/round-start.cjs --webgpu --jobs 3   # the WebGPU path, in software

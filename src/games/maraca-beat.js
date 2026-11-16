@@ -2,6 +2,7 @@
 // a bead reaches the line (or tap, if you'd rather not shake). Hits fill the party meter; misses drain
 // it. The tune speeds up as the party gets going. Let the meter empty and the band packs up.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Feel } = gs.effects;
 const { C16 } = gs.palettes;
 const { text } = gs.pixel;
@@ -12,13 +13,14 @@ let W = 160, H = 176;
 const K = C16;
 
 function make(api) {
+  const ready = new Ready();   // the first shake or tap starts the round and does nothing else
   const feel = new Feel({ pixel: true });
-  let beads, songT, nextBeat, bpm, energy, score, combo, t, shakes, lastHit, judge, jl, started, beatN, sway;
+  let beads, songT, nextBeat, bpm, energy, score, combo, t, shakes, lastHit, judge, jl, beatN, sway;
   const LINE = () => 40, SPEED = 70;
   const unShake = onShake(() => hit('shake'));
 
   function hit(how) {
-    if (!started) { started = true; return; }
+    if (ready.go()) return;
     // the nearest bead to the line
     let best = null, bd = 1e9;
     for (const b of beads) if (!b.done) { const d = Math.abs(b.at - songT); if (d < bd) { bd = d; best = b; } }
@@ -32,12 +34,12 @@ function make(api) {
   }
 
   return {
-    reset() { beads = []; songT = 0; nextBeat = 2; bpm = 96; energy = 60; score = 0; combo = 0; t = 0; shakes = 0; lastHit = 0; judge = ''; jl = 0; started = false; beatN = 0; sway = 0; feel.clear(); },
+    reset() { beads = []; songT = 0; nextBeat = 2; bpm = 96; energy = 60; score = 0; combo = 0; t = 0; shakes = 0; lastHit = 0; judge = ''; jl = 0; ready.reset(); beatN = 0; sway = 0; feel.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
       t += dt; jl = Math.max(0, jl - dt); sway = Math.max(0, sway - dt * 5);
-      if (!started) return;
+      if (!ready.playing) return;
       songT += dt;
       const beat = 60 / bpm;
       // write the chart a few seconds ahead: mostly on the beat, some off-beats, some rests
@@ -77,7 +79,7 @@ function make(api) {
       text(c, `${score}`, 4, 3, { color: K[0] });
       if (combo > 2) text(c, `x${combo}`, W - 4, 3, { align: 'right', color: K[0] });
       if (jl > 0) text(c, judge, W / 2, LINE() + 30, { align: 'center', color: judge === 'MISS' || judge === 'EARLY' ? K[2] : K[0] });
-      if (!started) { text(c, 'SHAKE OR TAP', W / 2, 90, { font: 'big', align: 'center', color: K[0] }); text(c, 'AS BEADS HIT THE LINE', W / 2, 106, { align: 'center', color: K[0] }); text(c, 'TAP TO START', W / 2, 124, { align: 'center', color: K[12] }); }
+      if (!ready.playing) { text(c, 'SHAKE OR TAP', W / 2, 90, { font: 'big', align: 'center', color: K[0] }); text(c, 'AS BEADS HIT THE LINE', W / 2, 106, { align: 'center', color: K[0] }); text(c, 'TAP TO START', W / 2, 124, { align: 'center', color: K[12] }); }
     },
     down() { hit('tap'); },
     key(k, d) { if (d && (k === ' ' || k === 'Enter')) hit('tap'); },
