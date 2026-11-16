@@ -57,6 +57,8 @@ function make(api) {
     v = new HDView({ bg: '#0d121c', fog: .022, env: .35, sky: '#5a6a8a', ground: '#141820', amb: .55, fov: 68 }).lampLights(30);
     v.exposure = 1; v.bloom = .7;
     sunL = sun('#a8b8e0', 1.2, 24, [.3, 1, -.4]); v.scene.add(sunL, sunL.target); v.onTier(T => sunL.setTier(T));
+    // a storm at night: everything soaked and shining, haze glowing round the lamps, lens flare and grain (the game's own moon and colours kept)
+    v.look('night rain', { sun: false, bg: '#0d121c', sky: '#5a6a8a', ground: '#141820', amb: .55, env: .35, exposure: 1, bloom: .7, glare: .3, air: { haze: .01, colour: '#0e121c', sunColour: '#1c2436', mist: 0, clouds: 0, wet: .45 }, eye: { amount: .3, min: .85, max: 1.2, speed: .7 }, flare: { strength: .3, threshold: .55, dirt: .45, tint: [1, .85, .7] }, film: { halation: .3, grain: 1.6, fringe: .02 } });
     const water = new Mesh(new PlaneGeometry(600, 900), looks().water); water.rotation.x = -Math.PI / 2; water.position.set(0, -14, 300); v.scene.add(water);
     hero = makeHero(); hero.scale.setScalar(1.3); v.scene.add(hero);
     ropeMesh = new Mesh(new CylinderGeometry(.035, .035, 1, 6), looks().rope); ropeMesh.visible = false; v.scene.add(ropeMesh);

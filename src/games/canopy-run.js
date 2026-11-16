@@ -186,6 +186,8 @@ function make(api) {
     const { m, G } = looks();
     v = new HDView({ bg: '#33503e', fog: .022, env: .25, sky: '#b8d8f0', ground: '#2a3418', amb: .35, fov: 46 });
     v.exposure = .95; v.bloom = .6;
+    // sun through the canopy: light beams in the humid air between the trunks (high and ultra), and a film finish
+    v.beams = { density: .03, strength: .8, glow: .6 }; v.film = { halation: .3, grain: 1.3, fringe: .015 };
     sunL = sun('#ffe4b0', 4.6, 14, [-.55, 1, .5]); v.scene.add(sunL, sunL.target); v.onTier(T => sunL.setTier(T));
     const gr = P(G.plane, m.ground, { sx: 200, sy: 200, rx: -Math.PI / 2, cast: false }); v.scene.add(gr); v.ground = gr;
     add = new Particles(v, { max: 360, additive: true }); smoke = new Particles(v, { max: 140, additive: false }); dust = new Particles(v, { max: 120, additive: true });

@@ -301,6 +301,8 @@ let v, light, lamp, walls, lows, bases, floorM, voidM, doorPool, painting, playe
 function setup() {
   v = new HDView({ bg: '#0d1115', fog: 0, env: .3, sky: '#eef6ff', ground: '#3a4148', amb: .22, fov: 40 });
   v.exposure = .9;
+  // an office drama on film: soft halation round the ceiling light, fine grain
+  v.film = { halation: .25, grain: 1.1, fringe: .01 };
   v.cam.near = .3; v.cam.far = 80; v.cam.updateProjectionMatrix();
   light = spot('#fffaf2', 14, 34, .62); light.position.set(0, 13, 4); light.target.position.set(0, 0, -.3); v.scene.add(light, light.target);
   v.onTier(T => light.setTier(T));

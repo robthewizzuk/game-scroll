@@ -121,6 +121,8 @@ function make(api) {
     const { m, G } = looks();
     v = new HDView({ bg: '#05060c', fog: .012, env: .45, sky: '#6080c0', ground: '#201018', amb: .3, fov: 70 }).lampLights(26);
     v.exposure = 1.0; v.bloom = .55;
+    // racing through light: anamorphic streaks off the tube's lamps, a touch of grain
+    v.film = { halation: .3, grain: 1.2, fringe: .02, streaks: .4, streakLength: .25 };
     head = spot('#e8f0ff', 60, 60, .45); v.scene.add(head, head.target); v.onTier(T => head.setTier(T));
     add = new Particles(v, { max: 500, additive: true }); smoke = new Particles(v, { max: 160, additive: false });
   }

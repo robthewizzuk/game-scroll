@@ -83,6 +83,8 @@ function make(api) {
     v = new HDView({ bg: '#e8a878', fog: .0045, env: .4, sky: '#ffd8b0', ground: '#6a3a24', amb: .55, fov: 70 });
     v.exposure = 1; v.bloom = .5; v.cam.far = 400; v.cam.updateProjectionMatrix();
     sunL = sun('#ffe0b0', 3.4, 40, [.6, .55, -.3]); v.scene.add(sunL, sunL.target); v.onTier(T => sunL.setTier(T));
+    // late-afternoon desert: gold on the walls, warm haze down the canyon, film grain and a flare when you fly into the sun (the game's own sun and colours kept)
+    v.look('golden hour', { sun: false, bg: '#e8a878', sky: '#ffd8b0', ground: '#6a3a24', amb: .5, exposure: .9, bloom: .45, glare: .3, eye: null, film: { halation: .15, grain: 1.1, fringe: .012 }, flare: { strength: .25, threshold: .6, dirt: .25, tint: [1, .88, .7] }, air: { haze: .0034, colour: '#d99c74', sunColour: '#ffd0a0', clouds: 0, mist: 0 } });   // (the jet's glowing wings stay readable: less glare, halation and flare than the preset)
     const m = looks();
     for (const s of [-1, 1]) { const w = new Mesh(wallGeo(s), m.wall); w.receiveShadow = true; w.castShadow = true; w.frustumCulled = false; v.scene.add(w); }
     const f = new Mesh(floorGeo(), m.floor); f.receiveShadow = true; f.frustumCulled = false; v.scene.add(f);

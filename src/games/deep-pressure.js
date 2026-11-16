@@ -80,7 +80,10 @@ function make(api) {
   function setup() {
     v = new HDView({ bg: '#010409', fog: .055, env: .15, sky: '#1a4058', ground: '#000000', amb: .22, fov: 70 }).lampLights(10);
     v.exposure = 1.1; v.bloom = .8;
+    // a sub's camera: heavy grain in the black, halation round the lamp and the sonar glow, the beam through the murky water (high and ultra)
+    v.film = { halation: .45, grain: 1.7, grainSize: 1.4, fringe: .025, halationTint: [.3, .7, 1] };
     lamp = spot('#fff4d8', 90, 26, .42); v.scene.add(lamp, lamp.target); v.onTier(T => lamp.setTier(T));
+    v.beams = { light: lamp, density: .06, strength: .55, far: 26, glow: .6 };
     sub = makeSub(); v.scene.add(sub); lurker = makeLurker(); v.scene.add(lurker);
     bubbles = new Particles(v, { max: 200, additive: false }); snow = new Particles(v, { max: 400, additive: false }); spark = new Particles(v, { max: 200, additive: true });
   }

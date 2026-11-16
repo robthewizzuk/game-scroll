@@ -81,6 +81,8 @@ function make(api) {
   function setup() {
     v = new HDView({ bg: '#07060f', fog: .016, env: .5, sky: '#4a3a8a', ground: '#120a1a', amb: .55, fov: 66 }).lampLights(24);
     v.exposure = 1.05; v.bloom = .85;
+    // rain at night: black wet road that holds the neon, haze round the signs, flare, grain and the eye adapting (its own purple sky kept)
+    v.look('night rain', { bg: '#07060f', sky: '#4a3a8a', ground: '#120a1a', amb: .55, env: .5, exposure: 1, bloom: .7, glare: .3, air: { haze: .008, colour: '#0c0a16', sunColour: '#1a1530', mist: 0, clouds: 0, wet: .35 }, eye: { amount: .3, min: .85, max: 1.2, speed: .7 }, flare: { strength: .3, threshold: .55, dirt: .4, tint: [1, .85, .7] }, film: { halation: .3, grain: 1.6, fringe: .02 } });
     head = spot('#fff4e0', 70, 45, .55); v.scene.add(head, head.target); v.onTier(T => head.setTier(T));
     smoke = new Particles(v, { max: 260, additive: false }); spark = new Particles(v, { max: 300, additive: true }); rain = new Particles(v, { max: 400, additive: true });
   }
