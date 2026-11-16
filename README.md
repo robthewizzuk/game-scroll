@@ -28,14 +28,21 @@ Every push to `main` builds a debug APK (`.github/workflows/android-apk.yml`) an
 
 There is no paid Apple Developer account yet, so the `iOS IPA (unsigned)` workflow (`.github/workflows/ios-ipa.yml`) builds an unsigned `.ipa` that testers sideload with Sideloadly and a free Apple ID (reinstall every 7 days). Run it by hand from the Actions tab; it publishes to the "Latest iOS build" release. Install steps: [docs/ios-sideload.md](docs/ios-sideload.md).
 
-### Mac and Windows app
+### Mac, Windows and Linux app
 
 The same app runs on Mac and Windows (`desktop/`, Electron, which carries the Chromium engine the Android app runs in, so WebGPU and the engine's tuning behave the same). Every push to `main` builds it (`.github/workflows/desktop.yml`) and publishes the "Latest Mac and Windows builds" release, with download links that never change:
 [Mac (Apple silicon)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-arm64.dmg) ·
 [Mac (Intel)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg) ·
 [Windows](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe) ·
-[Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe).
-They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md). (The web version on GitHub Pages was taken down when the desktop app came in.)
+[Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe) ·
+[Linux and SteamOS](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-linux-x64.AppImage).
+They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md).
+
+On a games handheld running SteamOS (ROG Ally, Steam Deck, Legion Go), add the AppImage to Steam as a non-Steam game: it opens full screen in Game Mode, plays as a phone does (60, or 30 with GSFG making the other 30) and is used with the handheld's own controls. Steps: [docs/desktop.md, SteamOS](docs/desktop.md#steamos-rog-ally-steam-deck-and-steam).
+
+### Web version on GitHub Pages
+
+Every push to `main` also builds the web version (`npm run build:web`) and publishes it to https://robthewizzuk.github.io/game-scroll/ (`.github/workflows/web-pages.yml`), for trying Game Scroll without installing it. It is the same app, with the heavy parts left to the apps (`src/web.js`): Next Gen and AR games are left out of the feed and never downloaded in the browser, but stay in the feed menu, where picking them says to get the app, with download links; board games play on their table in 3D, without the AR chip. Shared links' "Play in your browser" opens it (not for Next Gen and AR games). One-time setup: Settings > Pages > Source: **GitHub Actions**. Check it with `npm run web-test`.
 
 ## Website and store listings
 
@@ -103,7 +110,7 @@ The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and i
 
 ## 3D on phones
 
-3D games share one renderer: WebGPU where the phone has it, WebGL elsewhere. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60, the quality steps take it to 30 drawn and 30 made by frame generation (GSFG), and back to 60 when the frames show room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. Settings says which and why. On Next Gen, AR and Board games, Play shows a loading screen while the round's first frames and shaders are built. More in [docs/nextgen-3d.md](docs/nextgen-3d.md).
+3D games share one renderer: WebGPU where the phone has it, WebGL elsewhere. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60, the quality steps take it to 30 drawn and 30 made by frame generation (GSFG), and back to 60 when the frames show room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. Settings says which and why. In the feed, a Next Gen, AR or Board card is only a picture (its last round on that phone, or a cover); the game is made after Play, under a loading screen that also builds the round's first frames and shaders. More in [docs/nextgen-3d.md](docs/nextgen-3d.md).
 
 ## Testing
 
@@ -123,6 +130,10 @@ The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and i
 ## Roadmap
 
 Launch target is **1000 unique games** (distinct mechanics, not reskins). There are 251 in the feed so far, after weak ones were taken out in play-test reviews ([docs/qa/review.md](docs/qa/review.md)). Games can be fluid: set `maxW`/`maxH` (and optional `step`) and implement `resize(w, h)` to receive the extra space on tall or unfolded screens. The idea list lives in `docs/game-ideas.md`, with built games ticked.
+
+## Security
+
+Please report security problems privately, through GitHub's private vulnerability reporting: see [SECURITY.md](SECURITY.md) for how, what is supported and what is in scope.
 
 ## License
 

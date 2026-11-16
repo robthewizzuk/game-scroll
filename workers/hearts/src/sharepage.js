@@ -13,7 +13,8 @@ export const shareGame = entry => entry && entry.id ? { ...(entry.meta || {}), i
 
 /**
  * Build the page. game: { id, title, hint, tag } (see shareGame) or null when unknown.
- * webUrl: where to play in a browser, or '' to leave that button out (there is none since the test site went).
+ * webUrl: where to play in a browser (the web version), or '' to leave that button out. Next Gen and AR
+ *     games never get it: they play only in the apps.
  * id: a well-formed game id to keep in the links when the catalogue couldn't be read, so the game
  *     can't be named here. The app then works out whether it exists.
  */
@@ -23,7 +24,9 @@ export function sharePage(game, { webUrl = '', id = '' } = {}) {
   const title = game ? `${game.title} · Game Scroll` : 'Game Scroll';
   const desc = game ? `${game.hint || ''}`.slice(0, 200) : 'Scroll a feed of quick mini games.';
   const appUrl = gid ? `gamescroll://game/${gid}` : 'gamescroll://';
-  const web = webUrl ? (gid ? `${webUrl}?g=${encodeURIComponent(gid)}` : webUrl) : '';
+  // (Next Gen and AR games play only in the apps: the web version leaves them out, src/web.js)
+  const appOnly = !!game && (game.era === 'nextgen' || game.era === 'ar');
+  const web = webUrl && !appOnly ? (gid ? `${webUrl}?g=${encodeURIComponent(gid)}` : webUrl) : '';
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
