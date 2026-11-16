@@ -29,7 +29,7 @@ function make(api) {
         if (hold && Math.random() < .5) dust.push({ x: x - 4, y: y, vx: -20, vy: -10, l: .3 });
       }
       if (air) {
-        vy += G * dt; x += vx * dt; y += vy * dt; av += ((hold ? -4.5 : 3.5) - ang * 2 - av * .8) * dt; av = clamp(av, -3, 3); ang += av * dt;
+        vy += G * dt; x += vx * dt; y += vy * dt; av += ((hold ? -4.5 : 3.5) - av * .8) * dt; av = clamp(av, -3, 3); ang += av * dt;
         if (y >= ground(x)) {
           const s = slope(x), diff = Math.atan2(Math.sin(ang - s), Math.cos(ang - s));
           if (Math.abs(diff) > .95) { haptic('error'); sfx(120, .5, 'sawtooth', .05, -60); air = false; feel.juice.shake(6).burst(BX, y - 4, { n: 12, speed: 55, life: .5, size: 2, color: [R[0], R[1]], gravity: 120 }); return api.over(); }

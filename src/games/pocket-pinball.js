@@ -8,6 +8,8 @@ const { Ready } = gs.rounds;
 
 // One-table pinball: tap and hold the left or right half of the screen to flip. Hit bumpers and lanes. Three balls.
 const R = PAL.ice, W = 160, H = 160, BR = 3, G = 160;
+// Bumpers only tick over: the points are in the top lanes, which take aimed flips (flailing scores little)
+const BUMP = 25, LANE = 100, ALL = 600;
 const LP = { x: 50, y: 140 }, RP = { x: 110, y: 140 }, FL = 24;
 
 function make(api) {
@@ -38,8 +40,8 @@ function make(api) {
         for (const [a, b] of segs) collideSeg({ x: a[0], y: a[1] }, { x: b[0], y: b[1] });
         if (collideSeg(LP, tipL(), u => ({ x: -Math.sin(la) * lav * FL * u, y: Math.cos(la) * lav * FL * u })) && lav < -1) sfx(300, .03, 'square', .02);
         if (collideSeg(RP, tipR(), u => ({ x: -Math.sin(ra) * rav * FL * u, y: Math.cos(ra) * rav * FL * u }))) {}
-        for (const bm of bumpers) { const dx = ball.x - bm.x, dy = ball.y - bm.y, d = Math.hypot(dx, dy); if (d < bm.r + BR) { const nx = dx / d, ny = dy / d; ball.x = bm.x + nx * (bm.r + BR); ball.y = bm.y + ny * (bm.r + BR); const sp = Math.max(110, Math.hypot(ball.vx, ball.vy)); ball.vx = nx * sp; ball.vy = ny * sp; bm.hit = .2; score += 100; api.score(score); haptic('light'); sfx(700 + bm.r * 30, .05, 'square', .04); feel.juice.burst(ball.x, ball.y, { n: 5, speed: 45, life: .3, size: 2, color: [R[0], R[1]] }); } }
-        if (ball.y < 14 && ball.vy < 0) { const i = clamp((ball.x - 44) / 18 | 0, 0, 3); if (!lights[i]) { lights[i] = 1; score += 50; api.score(score); sfx(1000, .05, 'square', .03); if (lights.every(v => v)) { lights = [0, 0, 0, 0]; score += 1000; api.score(score); haptic('success'); sfx(1200, .3, 'square', .05, 300); feel.juice.pop(80, 30, '+1000', { color: R[0], size: 8 }); } } }
+        for (const bm of bumpers) { const dx = ball.x - bm.x, dy = ball.y - bm.y, d = Math.hypot(dx, dy); if (d < bm.r + BR) { const nx = dx / d, ny = dy / d; ball.x = bm.x + nx * (bm.r + BR); ball.y = bm.y + ny * (bm.r + BR); const sp = Math.max(110, Math.hypot(ball.vx, ball.vy)); ball.vx = nx * sp; ball.vy = ny * sp; bm.hit = .2; score += BUMP; api.score(score); haptic('light'); sfx(700 + bm.r * 30, .05, 'square', .04); feel.juice.burst(ball.x, ball.y, { n: 5, speed: 45, life: .3, size: 2, color: [R[0], R[1]] }); } }
+        if (ball.y < 14 && ball.vy < 0) { const i = clamp((ball.x - 44) / 18 | 0, 0, 3); if (!lights[i]) { lights[i] = 1; score += LANE; api.score(score); sfx(1000, .05, 'square', .03); if (lights.every(v => v)) { lights = [0, 0, 0, 0]; score += ALL; api.score(score); haptic('success'); sfx(1200, .3, 'square', .05, 300); feel.juice.pop(80, 30, `+${ALL}`, { color: R[0], size: 8 }); } } }
         const sp = Math.hypot(ball.vx, ball.vy); if (sp > 320) { ball.vx *= 320 / sp; ball.vy *= 320 / sp; }
       }
       for (const bm of bumpers) bm.hit = Math.max(0, bm.hit - dt);
@@ -68,6 +70,6 @@ function make(api) {
 
 export default {
   id: 'pocket-pinball', title: 'Pocket Pinball', tag: 'Pocket · Pinball', retro: true, w: W, h: H, pal: 'ice', goal: 1500,
-  hint: 'Hold the left or right side to flip. Light all four top lanes for a big bonus. You get three balls.',
+  hint: 'Hold the left or right side to flip. Bumpers tick over, but the points are in the four top lanes: aim flips to light them all for a big bonus. Three balls.',
   make,
 };

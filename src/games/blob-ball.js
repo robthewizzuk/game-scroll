@@ -27,6 +27,8 @@ function make(api) {
     coyote: [0.12, 0.04, 0.24, 'seconds after leaving ground a jump still counts'],
     buffer: [0.14, 0.04, 0.24, 'seconds before landing a jump input stays queued'],
     power: [1.12, 0.8, 1.5, 'header punch multiplier off your blob'],
+    tire: [0.88, 0.5, 1, 'how high a jump straight off a landing goes, of the last one (jelly needs to settle)'],
+    settle: [0.32, 0.1, 0.8, 'seconds on the ground before your blob jumps full height again'],
   });
 
   // Pre-allocated AI input buffer to avoid per-frame allocations
@@ -52,7 +54,7 @@ function make(api) {
 
   let me, ai, ball, sc, match, goals, t, phase, pt, msg, clock, golden;
   let finger, tapStart, flickJump, moveDir, keyDir;
-  let coyoteT, jumpBuf, heldJump, hitCd, rally, calmT;
+  let coyoteT, jumpBuf, heldJump, hitCd, rally, calmT, restT, spring;
   let prevMeX, prevMeY, prevAiX, prevAiY, prevBallX, prevBallY;
   const floor = () => H - 14;
 
@@ -67,7 +69,7 @@ function make(api) {
     ai = { x: W * 0.75, y: floor(), vx: 0, vy: 0, sx: 1, sy: 1, wasAir: false };
     ball = { x: W / 2 + (towards || 0) * 10, y: H * 0.34, vx: (towards || 0) * 24, vy: 0 };
     phase = 'ready'; pt = 0; hitCd = 0; rally = 0; calmT = 0;
-    coyoteT = 0; jumpBuf = 0; heldJump = false;
+    coyoteT = 0; jumpBuf = 0; heldJump = false; restT = 1; spring = 1;
     syncPrev();
   }
 
@@ -85,7 +87,10 @@ function make(api) {
   }
 
   function doJump(s, isMe) {
-    s.vy = -K.jump;
+    // your blob's jelly needs a moment on the ground: a jump straight off a landing goes lower than the last
+    // (so bouncing on the spot all match leaves high balls sailing over you)
+    if (isMe) { spring = restT < K.settle ? Math.max(0.6, spring * K.tire) : 1; restT = 0; }
+    s.vy = -K.jump * (isMe ? spring : 1);
     s.sx = 0.78; s.sy = 1.28;
     if (isMe) {
       coyoteT = 0;
@@ -114,6 +119,7 @@ function make(api) {
 
     const wasGround = s.y >= floor() - 0.5;
     if (isMe) {
+      if (wasGround) restT += dt;
       if (wasGround) coyoteT = K.coyote;
       else coyoteT = Math.max(0, coyoteT - dt);
       if (jumpBuf > 0) jumpBuf = Math.max(0, jumpBuf - dt);
