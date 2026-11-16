@@ -122,8 +122,9 @@ const tests = {
     if (/\bAR\b|own room/.test(c.text)) bad.push(`its card mentions AR ("${c.text.slice(0, 160)}")`);
     const made = await v.p.waitForFunction(() => !__gs.active.loading, null, { timeout: 120000 }).then(() => true, () => { bad.push('still loading after two minutes'); return false; });
     if (made) {
-      await v.p.evaluate(() => __gs.start());   // (skips the loading screen)
-      await v.p.waitForFunction(() => __gs.active.state === 'playing', null, { timeout: 60000 }).catch(() => bad.push('Play did not start it'));
+      // Play, as a player taps it: a board card makes its game only then, under the loading screen
+      await v.p.evaluate(() => __gs.active.el.querySelector('.overlay button.play').click());
+      await v.p.waitForFunction(() => __gs.active.state === 'playing', null, { timeout: 180000 }).catch(() => bad.push('Play did not start it'));
       await sleep(4000);
       const drawn = await v.p.evaluate(() => [...window.__drawn]);
       if (drawn.includes('AR')) bad.push('the AR chip is drawn in its round');
