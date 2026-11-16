@@ -1,20 +1,24 @@
 // The built-in voice, off the main thread (src/kit/talk.js): downloads the voice file once (kept in the browser's cache
-// storage), checks its SHA-256, and writes lines to sound with Pocket TTS 7M (pocket-tts.js).
+// storage), checks its SHA-256, and writes lines to sound with Pocket TTS 7M (pocket-tts.js). On a computer, the sound
+// is made by the 100M model's bigger decoder (a file of its own, the same way), which hasn't the small one's whine;
+// where that file can't be had, or with the small one, the whine's fixed tones are filtered out instead.
 // Where the computer has the cores, two or three of these share each line as a production line: the lead turns text
 // into latents and runs the first layers of Mimi's decoder, each next stage runs more of it, a frame behind, and the
 // last makes the sound and answers the page. Alone, the lead does it all.
 // A line comes back a piece at a time (the model's parts: the first sentence on its own), so it can start playing
 // while the rest is written, and a finished line said the same way is kept (cache storage) for the next launch.
-//   lead:  { type: 'load', url, sha, port? }    -> { type: 'ready', simd, cores } | { type: 'failed', why }
+//   lead:  { type: 'load', url, sha, decoder?: { url, sha }, port?, cores }
+//                                               -> { type: 'ready', simd, cores, big } | { type: 'failed', why }
 //          { type: 'say', id, text, voice, lang, tempo, lively, seed, ahead }   seed null: a fresh take, not kept;
 //                                               ahead: written ahead of time, after the lines wanted now
 //          { type: 'stop', id }                 ends that line early
 //          { type: 'soon', id }                 a line written ahead is wanted now
-//   stage: { type: 'stage', from: port, to: port | null, lo, hi, convs }   then works from what comes down the port
+//   stage: { type: 'stage', from: port, to: port | null, i }   (the i-th after the lead) then works from what comes
+//          down the port: first the weights it needs and where the decoder is cut (pocket-tts.js cutsFor)
 //   to the page, from whichever writes the sound: { type: 'piece', id, pcm: Float32Array (24 kHz) | null, text, last, speed }
 import { unpack } from './talk-pack.js';
-import { makeFlow, makeMimi, seeded } from './pocket-tts.js';
-import { stretch } from './voice-fx.js';
+import { makeFlow, makeMimi, seeded, withDecoder, cutsFor, MIMI_SMALL } from './pocket-tts.js';
+import { stretch, notch } from './voice-fx.js';
 import { spoken } from './say-words.js';
 
 let loading = null, flow = null, first = null, next = null;   // next: the port to the next stage, once it is ready
@@ -90,10 +94,12 @@ const piece = (id, pcm, text, last, speed = 0) => pcm
 
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
-  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false;
+  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, whine = null;
   const flush = last => {
     if (!frames.length && !last) return;
-    const pcm = stretch(join(frames), 24000, tempo), copy = key ? pcm.slice() : null;
+    const raw = join(frames);
+    if (whine) notch(raw, 24000, whine);
+    const pcm = stretch(raw, 24000, tempo), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much
@@ -101,7 +107,7 @@ function writer() {
     frames = [];
   };
   return {
-    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; },
+    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; whine = m.whine || null; },
     frame(m, pcm, partText) {
       if (m.id !== id || broken) return;
       if (m.first && frames.length) flush(false);
@@ -127,7 +133,7 @@ async function speak(m) {
     if (have?.length) { have.forEach((p, i) => piece(id, p.pcm, p.text, i === have.length - 1, 99)); return; }
   }
   const opts = { lively: m.lively || 0, quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
-  const head = { id, tempo: m.tempo || 1, key, t0: Date.now() };
+  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), whine: first.cfg.whine || null };
   const l = flow.line(words, m.voice, opts), out = next || null, w = out ? null : writer();
   if (out) out.postMessage({ type: 'line', ...head }); else w.line(head);
   let S = null, lat, t0 = performance.now();
@@ -150,17 +156,18 @@ async function drain() {
   finally { running = false; }
 }
 
-/** A stage after the lead: more of the decoder's layers (and the sound, if it is the last), from the rows that come in. */
-function beStage({ from, to, lo, hi, convs }) {
+/** A stage after the lead: more of the decoder (and the sound, if it is the last), from what comes in. */
+function beStage({ from, to, i }) {
   let mimi = null, S = null, at = -1;
-  const w = convs ? writer() : null;
+  const w = to ? null : writer();
   from.onmessage = async e => {
     const m = e.data || {};
-    if (m.type === 'bytes') {
+    if (m.type === 'bytes') {   // the weights it needs (the whole voice file, or only the computers' decoder) and the cuts
       try {
-        mimi = makeMimi(unpack(m.bytes), { lo, hi, convs });
+        const pack = unpack(m.bytes);
+        mimi = makeMimi(pack, { lo: m.cuts[i + 1], hi: m.cuts[i + 2] });
         if (to) {   // the stage after this one gets its copy first
-          const up = await new Promise(res => { to.onmessage = ev => res(ev.data?.type === 'ready'); to.postMessage({ type: 'bytes', bytes: m.bytes }, [m.bytes]); });
+          const up = await new Promise(res => { to.onmessage = ev => res(ev.data?.type === 'ready'); to.postMessage({ type: 'bytes', bytes: m.bytes, cuts: m.cuts }, [m.bytes]); });
           to.onmessage = null;
           if (!up) throw new Error('the next stage failed');
         }
@@ -185,19 +192,27 @@ function beStage({ from, to, lo, hi, convs }) {
   };
 }
 
-/** The lead's half of the start: the voice file, then the next stage (if there is one) gets its copy. */
+/**
+ * The lead's half of the start: the voice file and (on a computer) the bigger decoder's, then the stages after it (if
+ * any) get their copies and where to cut. No decoder file (offline the first time, a bad download): the small one.
+ */
 async function load(m) {
-  fileUrl = m.url;
-  const bytes = await bytesOf(m.url, m.sha), pack = unpack(bytes);
+  const bytes = await bytesOf(m.url, m.sha);
+  let dec = null;
+  if (m.decoder) try { dec = await bytesOf(m.decoder.url, m.decoder.sha); } catch { dec = null; }
+  fileUrl = dec ? `${m.url} ${m.decoder.url}` : m.url;   // (lines kept from one decoder aren't the other's)
+  const pack = withDecoder(unpack(bytes), dec && unpack(dec)), cfg = pack.mimi || MIMI_SMALL, big = !!dec;
   flow = makeFlow(pack);
   if (m.port) {
-    const port = m.port;
-    const up = await new Promise(res => { port.onmessage = e => res(e.data?.type === 'ready'); port.postMessage({ type: 'bytes', bytes: bytes.slice(0) }); });
-    port.onmessage = null;
-    if (up) { first = makeMimi(pack, { hi: m.hi, convs: false }); next = port; return { simd: flow.simd, cores: m.cores }; }
+    const port = m.port, cuts = cutsFor(cfg, m.cores || 2), send = dec ? dec.slice(0) : bytes.slice(0);
+    if (cuts.length === (m.cores || 2)) {
+      const up = await new Promise(res => { port.onmessage = e => res(e.data?.type === 'ready'); port.postMessage({ type: 'bytes', bytes: send, cuts }, [send]); });
+      port.onmessage = null;
+      if (up) { first = makeMimi(pack, { hi: cuts[1] }); next = port; return { simd: flow.simd, cores: m.cores, big }; }
+    }
   }
   first = makeMimi(pack);
-  return { simd: flow.simd, cores: 1 };
+  return { simd: flow.simd, cores: 1, big };
 }
 
 onmessage = e => {

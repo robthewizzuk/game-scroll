@@ -9,7 +9,7 @@ import { mkdirSync, copyFileSync, existsSync, writeFileSync, statSync } from 'no
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ML_VERSION, ML_FILES } from '../src/kit/vision-files.js';
-import { writeTo as writeVoice } from './talk-pack.mjs';
+import { writeTo as writeVoice, writeDecoder } from './talk-pack.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(process.argv[2] || join(ROOT, 'ml-cache')), out = join(root, ML_VERSION);
@@ -21,5 +21,7 @@ for (const f of ML_FILES) {
   const r = await fetch(f.url); if (!r.ok) throw new Error(`${f.url}: ${r.status}`);
   writeFileSync(dest, Buffer.from(await r.arrayBuffer())); console.log('downloaded', f.name);
 }
-// the voice: its own versioned folder beside them (ml/<TALK_VERSION>/), checked against its SHA-256
+// the voice: its own versioned folder beside them (ml/<TALK_VERSION>/), checked against its SHA-256, and the computers'
+// decoder the same way (ml/<TALK_DECODER.version>/)
 await writeVoice(root);
+await writeDecoder(root);

@@ -23,10 +23,11 @@ function quantise(a, rows) {
 
 /**
  * Writes the file: tensors { name: Float32Array with .shape }, pieces, scores, voices [{ name, kind, hz, lang, credit,
- * pos, k: [8 layers of Float32Array], v }], about (shown in credits). Small tensors stay 32-bit.
+ * pos, k: [8 layers of Float32Array], v }], about (shown in credits); mimi: the shape of the decoder where it is not
+ * the 7M's own (a file of only Kyutai's 100M decoder: pocket-tts.js MIMI_BIG). Small tensors stay 32-bit.
  */
-export function pack({ tensors, pieces, scores, voices, about }) {
-  const blobs = [], header = { about, tensors: {}, pieces, scores, voices: [] };
+export function pack({ tensors, pieces = [], scores = [], voices = [], about, mimi }) {
+  const blobs = [], header = { about, tensors: {}, pieces, scores, voices: [], ...(mimi ? { mimi } : {}) };
   let at = 0;
   const add = view => { const b = new Uint8Array(view.buffer, view.byteOffset, view.byteLength); const o = at; blobs.push([o, b]); at = align(at + b.length); return o; };
   for (const name of Object.keys(tensors).sort()) {
@@ -49,7 +50,7 @@ export function pack({ tensors, pieces, scores, voices, about }) {
   return out;
 }
 
-/** Reads the file: { get(name) -> Float32Array, pieces, scores, voices: { name: { pos, k, v } }, cast: [{ name, kind, hz, lang, credit }], about }. */
+/** Reads the file: { get(name) -> Float32Array, pieces, scores, voices: { name: { pos, k, v } }, cast: [{ name, kind, hz, lang, credit }], about, mimi }. */
 export function unpack(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   if (new TextDecoder().decode(u8.subarray(0, 8)) !== MAGIC) throw new Error('voice: not a voice file');
@@ -81,5 +82,5 @@ export function unpack(bytes) {
       get v() { void this.k; return vv; },
     };
   }
-  return { get, pieces: header.pieces, scores: header.scores, voices, cast: header.voices.map(({ name, kind, hz, lang, credit }) => ({ name, kind, hz, lang, credit })), about: header.about };
+  return { get, pieces: header.pieces, scores: header.scores, voices, cast: header.voices.map(({ name, kind, hz, lang, credit }) => ({ name, kind, hz, lang, credit })), about: header.about, mimi: header.mimi || null };
 }

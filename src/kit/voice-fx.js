@@ -275,20 +275,58 @@ export async function shape(samples, rate, { size = 1, fx = null, outRate = 4800
   if (x.length < rate * .03) throw new Error('no speech in it');
   const s = fx || {}, k = num(size, .5, 2, 1), body = x.length / rate * k, lead = s.squelch && open ? LEAD : 0, total = lead + body + tailOf(s, close, hold);
   const c = new Off(1, Math.ceil(total * outRate), outRate);
-  let buf;
-  try { buf = c.createBuffer(1, x.length, rate); buf.getChannelData(0).set(x); }
-  catch {   // a rate this browser won't take as it is: stretch it to the output's own
-    const n = Math.max(1, Math.floor(x.length * outRate / rate)), y = new Float32Array(n), step = rate / outRate;
-    for (let i = 0; i < n; i++) { const p = i * step, j = Math.floor(p), f = p - j; y[i] = x[j] + ((x[j + 1] ?? x[j]) - x[j]) * f; }
-    buf = c.createBuffer(1, n, outRate); buf.getChannelData(0).set(y);
-  }
+  // to the output's rate (and slowed by size) here, with a proper filter: a browser's own change of rate (a buffer
+  // at 24 kHz in a 48 kHz context, or a playbackRate) is a straight line between samples, which dulls the top of a
+  // voice and mirrors it above 12 kHz as a metallic ring
+  const y = resample(x, outRate * k / rate), buf = c.createBuffer(1, y.length, outRate); buf.getChannelData(0).set(y);
   const src = c.createBufferSource(), pre = c.createGain(), lv = loudness(x, rate);
-  src.buffer = buf; src.playbackRate.value = 1 / k; pre.gain.value = lv.rms > 0 ? IN / lv.rms : 1;
+  src.buffer = buf; pre.gain.value = lv.rms > 0 ? IN / lv.rms : 1;
   src.connect(pre); build(c, s, pre, c.destination, { lead, body, open, close, hold }); src.start(lead);
   const out = await finish(c), heard = loudness(out.getChannelData(0), outRate);
   let gain = heard.rms > 0 ? LEVEL / heard.rms : 1;
   if (heard.peak * gain > PEAK) gain = PEAK / heard.peak;
   return { buffer: out, gain, lead, seconds: lead + body, total, cut: a / rate };
+}
+
+/**
+ * Samples at another rate (ratio: new rate over old), through a windowed-sinc filter (Kaiser, 16 zero crossings
+ * each side, cut a little under the lower rate's Nyquist): nothing mirrored, the top end kept. A table of the
+ * filter at 512 phases, read with a straight line between them.
+ */
+const PH = 512, ZC = 16, KTAB = (() => {
+  const bessel = x => { let s = 1, t = 1; for (let k = 1; k < 30; k++) { t *= (x / (2 * k)) ** 2; s += t; } return s; }, beta = 8.6, n = ZC * PH, w = new Float32Array(n + 2);
+  for (let i = 0; i <= n; i++) { const x = i / PH, r = x / ZC; w[i] = (x ? Math.sin(Math.PI * x) / (Math.PI * x) : 1) * bessel(beta * Math.sqrt(Math.max(0, 1 - r * r))) / bessel(beta); }
+  return w;
+})();
+export function resample(x, ratio) {
+  if (Math.abs(ratio - 1) < 1e-6) return x;
+  const n = Math.max(1, Math.round(x.length * ratio)), y = new Float32Array(n), cut = Math.min(1, ratio) * .94, reach = ZC / cut, step = 1 / ratio;
+  for (let i = 0; i < n; i++) {
+    const p = i * step, c0 = Math.ceil(p - reach), c1 = Math.floor(p + reach);
+    let acc = 0;
+    for (let j = Math.max(0, c0), e = Math.min(x.length - 1, c1); j <= e; j++) {
+      const t = Math.abs(p - j) * cut * PH, k = t | 0;
+      if (k >= ZC * PH) continue;
+      acc += x[j] * (KTAB[k] + (KTAB[k + 1] - KTAB[k]) * (t - k));
+    }
+    y[i] = acc * cut;
+  }
+  return y;
+}
+
+/**
+ * Takes steady tones out of x in place: a narrow notch (about 12 Hz wide) at each frequency in Hz, the rest left as it
+ * was. For the whine the built-in voice's small decoder puts at the same pitches in every line (pocket-tts.js MIMI_SMALL).
+ */
+export function notch(x, rate, freqs, width = 12) {
+  for (const f of freqs) {
+    if (!(f > 0 && f < rate / 2)) continue;
+    const w = 2 * Math.PI * f / rate, al = Math.sin(w) * width / (2 * f), cs = Math.cos(w), a0 = 1 + al;
+    const b0 = 1 / a0, b1 = -2 * cs / a0, a1 = b1, a2 = (1 - al) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) { const v = x[i], y = b0 * v + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v; y2 = y1; y1 = y; x[i] = y; }
+  }
+  return x;
 }
 
 /**

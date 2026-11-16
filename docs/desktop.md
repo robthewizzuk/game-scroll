@@ -199,7 +199,20 @@ rest is written; `gs.sound.prepare()` writes a line ahead (a cutscene does its a
 numbers, money, times and dates as words first (`src/kit/say-words.js`), says a line the same way each time, and keeps
 the last 400 lines it wrote (cache storage) so they start at once after the next launch. Word marks for lip sync come
 from the sound's pauses (`voice-fx.js` `marksFrom`: about twice as close to a speech recogniser's timings as a guess by
-word length). Every line plays through the mixer, as a shaped line does on the phones. Until the file is in, for
+word length). Every line plays through the mixer, as a shaped line does on the phones, resampled to the sound card's
+rate by the app's own filter (`voice-fx.js` `resample`; the browser's own conversion mirrored the voice's top above
+12 kHz as a metallic ring).
+
+**Without the twang.** The 7M's own small decoder (latents to sound) adds a steady whine at 3.6 kHz, fainter tones
+beside it and a faint 200 Hz buzz to every voice: the "robotic twang". The 18M model has the same decoder and the same
+whine; the decoder Kyutai's 100M model speaks through hears the 7M's latents just as well (the same voice and pitch,
+the words still right, its whine 11 dB lower). So on a computer with 4 threads or more the app downloads that decoder
+too (`TALK_DECODER` in `talk-files.js`: 10.4 MB of 8-bit numbers, only its part of Kyutai's file fetched by
+`talk-pack.mjs`) and makes the sound with it: about 3.5 times the work, cut across the workers by `pocket-tts.js`
+`cutsFor` (two: the text half and its two layers | the steps to sound; three: also inside those steps), in Chromium on
+a slow server about 5 to 7 times faster than it plays, the first sentence in about 0.4 s. Where that file can't be had,
+on a computer too slow for it (two lines in a row; then the small one), and on the phones, the small decoder speaks
+with its fixed tones filtered out (`voice-fx.js` `notch`). Until the file is in, for
 languages other than English, on a phone saving data, and on a device too slow to write lines faster than they play
 (two in a row), the device's own voices speak: on Linux Chromium only lists speech-dispatcher's voices with
 `--enable-speech-dispatcher`, which `desktop/main.cjs` turns on (SteamOS has espeak-ng; of its ~100 variants a

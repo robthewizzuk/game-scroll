@@ -50,4 +50,15 @@ export const TALK_VOICES = [
   { name: 'daan', kind: 'man', hz: 88, lang: 'en-NL', credit: 'CML-TTS dataset, Dutch, speaker 11290 (CC BY 4.0)' },
 ];
 
+// The computers' decoder (latents to sound): the one Kyutai's 100M model speaks through, from the same revision. It hears the
+// 7M's latents just as well, and doesn't add the steady 3.6 kHz whine and 200 Hz buzz the 7M's small one does (the
+// "robotic twang"), for about 3.5 times the work. Its own file of 8-bit numbers (only the decoder), its own folder.
+export const TALK_DECODER = {
+  version: 'mimi-100m-1',
+  file: 'mimi-100m.gsv',
+  sha256: '89633ec055c390f9342f60dfde400ac0e391aa586876b1713a3e7d45abc75d70',
+  dir: 'languages/english_2026-10',
+  about: 'Mimi decoder of Pocket TTS 100M by Kyutai (CC BY 4.0)',
+};
+
 export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai (model CC BY 4.0, code MIT), run in the app in plain JavaScript';

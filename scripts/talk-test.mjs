@@ -8,11 +8,11 @@ import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { TALK_VOICES, TALK_VERSION, TALK_FILE } from '../src/kit/talk-files.js';
+import { TALK_VOICES, TALK_VERSION, TALK_FILE, TALK_DECODER } from '../src/kit/talk-files.js';
 import { unpack } from '../src/kit/talk-pack.js';
-import { makeTTS, makeFlow, makeMimi, seeded, SPLIT3 } from '../src/kit/pocket-tts.js';
+import { makeTTS, makeFlow, makeMimi, seeded, SPLIT3, withDecoder, cutsFor, MIMI_SMALL, MIMI_BIG } from '../src/kit/pocket-tts.js';
 import { spoken, respell } from '../src/kit/say-words.js';
-import { stretch, marksFrom } from '../src/kit/voice-fx.js';
+import { stretch, marksFrom, notch, resample } from '../src/kit/voice-fx.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,10 +69,20 @@ for (const [text, want, lang] of [
   for (const t of [.8, 1.25]) { const y = stretch(x, r, t); ok(Math.abs(y.length - r / t) < 2 && Math.abs(f0(y.subarray(2000, y.length - 2000), r) - 180) < 4, `stretch ${t}: ${y.length} samples at ${f0(y.subarray(2000, y.length - 2000), r).toFixed(0)} Hz`); }
 }
 
-let bytes = null;
+{ // the small decoder's whine filtered out: a steady 3600 Hz tone gone, a voice's 300 Hz and 3500 Hz left as they were
+  const r = 24000, n = r, tone = f => Float32Array.from({ length: n }, (_, i) => Math.sin(2 * Math.PI * f * i / r)), lvl = (a, f) => { let c = 0, q = 0; for (let i = r / 2; i < n; i++) { c += a[i] * Math.cos(2 * Math.PI * f * i / r); q += a[i] * Math.sin(2 * Math.PI * f * i / r); } return Math.hypot(c, q) / (n / 4); };
+  const db = f => 20 * Math.log10(lvl(notch(tone(f), r, MIMI_SMALL.whine), f) + 1e-9);
+  ok(db(3600) < -30 && Math.abs(db(300)) < .2 && Math.abs(db(3500)) < 1, `whine filter: 3600 Hz down ${(-db(3600)).toFixed(0)} dB, 300 Hz ${db(300).toFixed(2)} dB, 3500 Hz ${db(3500).toFixed(2)} dB`);
+  // the resampler (shape()): 24 kHz to 48 kHz with nothing mirrored above the old top
+  const up = resample(tone(9000), 2), m = 48000, at = f => { let c = 0, q = 0; for (let i = m / 4; i < m * 3 / 4; i++) { c += up[i] * Math.cos(2 * Math.PI * f * i / m); q += up[i] * Math.sin(2 * Math.PI * f * i / m); } return Math.hypot(c, q) / (m / 4); };
+  ok(Math.abs(up.length - m) < 4 && at(9000) > .95 && at(15000) < .001, `resample: 9 kHz kept (${at(9000).toFixed(3)}), its mirror at 15 kHz ${(20 * Math.log10(at(15000) + 1e-9)).toFixed(0)} dB`);
+}
+
+let bytes = null, dec = null;
 try {
-  const { writeTo } = await import('./talk-pack.mjs');
+  const { writeTo, writeDecoder } = await import('./talk-pack.mjs');
   bytes = readFileSync(await writeTo(join(ROOT, 'ml-cache')));
+  dec = readFileSync(await writeDecoder(join(ROOT, 'ml-cache')));
 } catch (e) { console.log(`no voice file (${e.message}): the checks that speak are left out`); }
 
 if (bytes) {
@@ -150,6 +160,24 @@ if (bytes) {
   ok(bytes.length > 8e6 && bytes.length < 16e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
 }
 
+if (bytes && dec) { // the computers' bigger decoder: the same voices without the whine, cut across workers the same way
+  const d = unpack(dec), pack = withDecoder(unpack(bytes), d), small = unpack(bytes);
+  ok(d.mimi?.d === MIMI_BIG.d && dec.length > 8e6 && dec.length < 12e6 && /Kyutai/.test(d.about), `decoder file: ${(dec.length / 1e6).toFixed(1)} MB (${TALK_DECODER.version}/${TALK_DECODER.file}), d ${d.mimi?.d}`);
+  const flow = makeFlow(pack), lats = (text, voice, seed) => { const l = flow.line(text, voice, { rnd: seeded(seed) }), out = []; let x; while ((x = l.next())) out.push({ x: x.slice(), first: l.first }); return out; };
+  const run = (stages, L) => { let S = null; const out = []; for (const { x, first } of L) { if (first || !S) S = stages.map(m => m.start()); let y = x; stages.forEach((m, i) => { y = m.step(S[i], y); }); out.push(y); } const a = new Float32Array(out.length * 1920); out.forEach((p, i) => a.set(p, i * 1920)); return a; };
+  const one = makeMimi(pack), cut = n => { const c = cutsFor(pack.mimi, n); return c.map((lo, i) => makeMimi(pack, { lo, hi: c[i + 1] })); };
+  const L = lats('Door three is opening. Please stand clear.', 'george', 1);
+  let t0 = performance.now(); const a = run([one], L); const ms = performance.now() - t0;
+  ok(a.length > 24000 && Math.abs(f0(a, 24000) - 115) < 20, `bigger decoder: george speaks at ${f0(a, 24000).toFixed(0)} Hz, ${(a.length / 24000 / ms * 1000).toFixed(1)}x real time on one thread`);
+  for (const n of [2, 3]) { const b = run(cut(n), L); ok(b.length === a.length && b.every((x, i) => x === a[i]), `bigger decoder: cut for ${n} workers (${cutsFor(pack.mimi, n).join(', ')}), the same sound as one`); }
+  // the whine: how far the 3.6 kHz line stands above the sound just beside it, through each decoder, over three voices
+  const stand = x => { const r = 24000, lv = f => { let c = 0, q = 0; for (let i = 0; i < x.length; i++) { const w = .5 - .5 * Math.cos(2 * Math.PI * i / x.length); c += w * x[i] * Math.cos(2 * Math.PI * f * i / r); q += w * x[i] * Math.sin(2 * Math.PI * f * i / r); } return c * c + q * q; };
+    let side = 0; for (const o of [-60, -45, -30, 30, 45, 60]) side += lv(3600 + o); return 10 * Math.log10(lv(3600) / (side / 6)); };
+  let sw = 0, bw = 0;
+  for (const [v, sd] of [['anna', 2], ['paul', 3], ['alba', 4]]) { const Lv = lats('There is a lantern by the door, if you want it.', v, sd); bw += stand(run([one], Lv)); sw += stand(run([makeMimi(small)], Lv)); }
+  ok(bw / 3 < sw / 3 - 6, `bigger decoder: the 3.6 kHz whine stands ${(bw / 3).toFixed(1)} dB above the sound beside it (the small one: ${(sw / 3).toFixed(1)} dB)`);
+}
+
 if (bytes && process.argv.includes('--browser')) await inBrowser();
 
 console.log(fails ? `${fails} failed` : 'all passed');
@@ -223,5 +251,18 @@ async function inBrowser() {
     ok(r.cores === (r.threads >= 8 ? 3 : r.threads >= 4 ? 2 : 1), `page: ${r.cores} worker${r.cores > 1 ? 's' : ''} write the voice (${r.threads} threads here)`);
     ok(r.said3 === true && r.again === true && r.ms4 < r.ms3, `page: numbers, a respelled name and lively said (${(r.ms3 / 1000).toFixed(1)} s), the same line again from the kept take (${(r.ms4 / 1000).toFixed(1)} s)`);
     ok(!errs.length, 'page: no errors' + (errs.length ? ': ' + errs.join(' | ') : ''));
+    // as the computer apps speak: with the bigger decoder (a fresh browser profile, so nothing kept from the small one)
+    const ctx = await b.newContext(), q = await ctx.newPage(), errs2 = [];
+    q.on('pageerror', e => errs2.push(e.message)); q.on('console', m => { if (m.type() === 'error') errs2.push(m.text()); });
+    await q.addInitScript(() => { window.__gsOwnVoice = true; window.__gsBigVoice = true; });
+    await q.goto('http://localhost:4187/scripts/talk-test.html');
+    const g = await q.evaluate(async () => {
+      const s = await import('/src/kit/sound.js'), t = await import('/src/kit/talk.js');
+      const up = await t.readyNow(), t0 = performance.now(), said = await s.say('The lantern is by the door.', { voice: 'woman' }), ms = performance.now() - t0;
+      return { up, said, ms, big: t.ownBig(), cores: t.ownCores(), threads: navigator.hardwareConcurrency };
+    });
+    ok(g.up && g.said === true && g.big === (g.threads >= 4), `page, computer: says a line ${g.big ? 'with the bigger decoder' : 'with the small one (under 4 threads)'} on ${g.cores} worker${g.cores > 1 ? 's' : ''} (${(g.ms / 1000).toFixed(1)} s from the call to the last word)`);
+    ok(!errs2.length, 'page, computer: no errors' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
+    await ctx.close();
   } finally { await b.close(); await server.close(); }
 }

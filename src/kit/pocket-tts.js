@@ -389,46 +389,87 @@ export function makeFlow(pack, { plain = false } = {}) {
  * The second half: Mimi's decoder, latents in, sound out (1920 samples at 24 kHz for each). pack: as makeTTS.
  *   const S = mimi.start()                          a fresh decoder (one at a time: it starts again from silence)
  *   mimi.frame(S, latent [, out]) -> Float32Array    that latent's 80 ms of sound
- * It can be cut into stages, each in a worker of its own: a stage runs transformer layers lo..hi-1 of 12 (from a
- * latent where lo is 0, else from the rows the stage before made) and the convolutions to sound where convs is true:
- *   part 'front' = { hi: split, convs: false }, 'back' = { lo: split }; mimi.step(S, latent or rows) -> rows (16 x 128) or sound
+ * It can be cut into stages, each in a worker of its own: a stage runs transformer layers lo..hi-1 (from a latent where
+ * it is the first, else from the rows the stage before made) and the convolutions to sound where convs is true:
+ *   part 'front' = { hi: split, convs: false }, 'back' = { lo: split }; mimi.step(S, latent or rows) -> rows (16 x d) or sound
+ * Two decoders read the same latents: the 7M's own (MIMI_SMALL, distilled, light) and the one Kyutai's 100M model speaks
+ * through (MIMI_BIG: 2 layers of 512 and convolutions twice as wide, about 3.5 times the work). The small one puts a
+ * steady whine at 3.6 kHz (and fainter ones beside it) and a faint 200 Hz buzz into every voice, which the big one mostly
+ * doesn't: the "robotic twang". cfg: which (a pack made for the big one says so: pack.mimi).
  */
+// whine: the steady tones the small one adds (Hz, measured over every voice), filtered out after it (voice-fx.js notch)
+export const MIMI_SMALL = { d: 128, layers: 12, heads: 4, ff: 384, context: 50, nf: 32, k0: 3, whine: [3400, 3600, 3800, 9162, 9562, 9681] };
+export const MIMI_BIG = { d: 512, layers: 2, heads: 8, ff: 2048, context: 250, nf: 64, k0: 7 };
+const OPS = 8;   // the convolutions to sound in steps a stage can start or end between (makeMimi)
 export const SPLIT = 8;   // (measured: the flow LM and 8 layers take as long as 4 layers and the convolutions)
 export const SPLIT3 = [3, 12];   // three stages: the flow LM and 3 layers | 9 layers | the convolutions
-export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo, hi, convs } = {}) {
-  lo ??= part === 'back' ? split : 0; hi ??= part === 'front' ? split : 12; convs ??= part !== 'front';
-  const W = weightsOf(pack), first = lo === 0;
-  const H = heap(.2e6 + (hi - lo) * .17e6 + (convs ? 2.4e6 : 0)), { F } = H, mm = gemm(H.memory, { plain });
+/** Kyutai's 100M model's decoder in place of the 7M's own: pack.get reads its weights from dec, the rest from main. */
+export const withDecoder = (main, dec) => dec ? { ...main, get: n => n.startsWith('mimi.') ? dec.get(n) : main.get(n), mimi: dec.mimi || MIMI_BIG } : main;
+/**
+ * Where n workers cut the decoder, as [0, where the second stage starts, ...]: places 0..layers are before each
+ * transformer layer, then layers + k after k of the steps to sound. Measured (ms for 80 ms of sound): the small one's
+ * flow and layers are light, the big one's two layers take 10 each and its steps to sound 25 in all.
+ */
+export function cutsFor(cfg, n) {
+  if (cfg.layers === MIMI_SMALL.layers) return n >= 3 ? [0, ...SPLIT3] : n === 2 ? [0, SPLIT] : [0];
+  return n >= 3 ? [0, 1, cfg.layers + 2] : n === 2 ? [0, cfg.layers] : [0];   // the big one: flow + layer | layer + 2 steps | the rest
+}
+export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo, hi, convs, latent, cfg = pack.mimi || MIMI_SMALL } = {}) {
+  const { d: D2, layers: NL, heads, ff, context, nf, k0 } = cfg, cap = context + 30, END = NL + OPS;
+  lo ??= part === 'back' ? split : 0; hi ??= part === 'front' ? split : END;
+  if (convs === true) hi = END; else if (convs === false) hi = Math.min(hi, NL);
+  const W = weightsOf(pack), first = latent ?? lo === 0, olo = Math.max(0, lo - NL), ohi = Math.max(0, hi - NL);
+  const T = 16, c8 = nf * 8, c4 = nf * 4, c2 = nf * 2, c1 = nf, ch = nf / 2;
+  // the convolutions to sound, one step each (a stage can start or stop between them): what each puts out, rows x channels
+  const outs = [T * c8, 6 * T * c4, 6 * T * c4, 30 * T * c2, 30 * T * c2, 120 * T * c1, 120 * T * c1, FRAME];
+  const dw = (i, p = 'conv') => [W(`mimi.decoder.model.${i}.${p}.weight`), W(`mimi.decoder.model.${i}.${p}.bias`)];
+  const parts = [
+    () => [conv(H, mm, ...dw(0), D2, c8, k0)],
+    () => [convT(H, mm, ...dw(2, 'convtr'), c8, c4, 12, 6)],
+    () => [conv(H, mm, ...dw('3.block.1'), c4, c2, 3), conv(H, mm, ...dw('3.block.3'), c2, c4, 1)],
+    () => [convT(H, mm, ...dw(5, 'convtr'), c4, c2, 10, 5)],
+    () => [conv(H, mm, ...dw('6.block.1'), c2, c1, 3), conv(H, mm, ...dw('6.block.3'), c1, c2, 1)],
+    () => [convT(H, mm, ...dw(8, 'convtr'), c2, c1, 8, 4)],
+    () => [conv(H, mm, ...dw('9.block.1'), c1, ch, 3), conv(H, mm, ...dw('9.block.3'), ch, c1, 1)],
+    () => [conv(H, mm, ...dw(11), c1, 1, 3)],
+  ];
+  const sizes = ['0', '2', '3.block.1', '3.block.3', '5', '6.block.1', '6.block.3', '8', '9.block.1', '9.block.3', '11'];
+  const convFloats = ohi > olo ? sizes.reduce((n, i) => n + W(`mimi.decoder.model.${i}.${i === '2' || i === '5' || i === '8' ? 'convtr' : 'conv'}.weight`).length, 0) * 2.1 + 1920 * nf * 14 : 0;
+  const H = heap(.2e6 + (Math.min(hi, NL) - Math.min(lo, NL)) * (4 * D2 * D2 + 2 * D2 * ff + 2 * cap * D2 + T * (3 * D2 + ff) * 2) * 1.1 + convFloats), { F } = H, mm = gemm(H.memory, { plain });
   const P = n => H.put(W(n));
-  const T = 16, D2 = 128;
-  const mt = hi > lo ? stack(H, mm, W, 'mimi.decoder_transformer.transformer', { layers: 12, d: D2, heads: 4, kvHeads: 4, headDim: 32, ff: 384, context: 50, scale: true, maxCap: 80, lo, hi }) : null;
-  let mean, std, quant, upW, c0, t2, r3a, r3b, t5, r6a, r6b, t8, r9a, r9b, c11, nB, qB;
+  const mt = hi > lo && lo < NL ? stack(H, mm, W, 'mimi.decoder_transformer.transformer', { layers: NL, d: D2, heads, kvHeads: heads, headDim: D2 / heads, ff, context, scale: true, maxCap: cap, lo, hi: Math.min(hi, NL) }) : null;
+  let mean, std, quant, upW, nB, qB;
   if (first) {
     mean = W('flow_lm.emb_mean'); std = W('flow_lm.emb_std');
     quant = P('mimi.quantizer.output_proj.weight'); upW = W('mimi.upsample.convtr.convtr.weight');
     nB = H.alloc(LAT); qB = H.alloc(D2);
   }
-  if (convs) {
-    const dw = (i, p = 'conv') => [W(`mimi.decoder.model.${i}.${p}.weight`), W(`mimi.decoder.model.${i}.${p}.bias`)];
-    c0 = conv(H, mm, ...dw(0), 128, 256, 3);
-    t2 = convT(H, mm, ...dw(2, 'convtr'), 256, 128, 12, 6); r3a = conv(H, mm, ...dw('3.block.1'), 128, 64, 3); r3b = conv(H, mm, ...dw('3.block.3'), 64, 128, 1);
-    t5 = convT(H, mm, ...dw(5, 'convtr'), 128, 64, 10, 5); r6a = conv(H, mm, ...dw('6.block.1'), 64, 32, 3); r6b = conv(H, mm, ...dw('6.block.3'), 32, 64, 1);
-    t8 = convT(H, mm, ...dw(8, 'convtr'), 64, 32, 8, 4); r9a = conv(H, mm, ...dw('9.block.1'), 32, 16, 3); r9b = conv(H, mm, ...dw('9.block.3'), 16, 32, 1);
-    c11 = conv(H, mm, ...dw(11), 32, 1, 3);
-  }
-  const seqB = H.alloc(T * D2);
+  const ops = [];
+  for (let k = olo; k < ohi; k++) ops.push({ k, c: parts[k]() });
+  const seqB = H.alloc(olo > 0 ? outs[olo - 1] : T * D2);
   const base = H.mark();
 
   const lin = (w, x, y, n, m) => mm(x, n, w, n, y, m, 1, m, n, 0);
-  // (a ring of 80 keys: 50 looked back + 16 written at once, so it never overwrites a key still wanted)
+  // (a ring of context + 30 keys: those looked back + 16 written at once, so it never overwrites a key still wanted)
   const start = () => {
     H.reset(base);
-    return { C: mt && mt.cache(80), up: first ? H.zalloc(D2) : 0, s: convs ? [c0, t2, r3a, r3b, t5, r6a, r6b, t8, r9a, r9b, c11].map(c => c.state()) : null };
+    return { C: mt && mt.cache(cap), up: first ? H.zalloc(D2) : 0, s: ops.map(o => o.c.map(c => c.state())) };
   };
   const eluTo = (x, n) => { const y = H.alloc(n); for (let i = 0; i < n; i++) { const v = F[x + i]; F[y + i] = v > 0 ? v : expm1(v); } return y; };
-  const res = (a, sa, b, sb, v, T, ch) => { const h = b.run(sb, eluTo(a.run(sa, eluTo(v, T * ch), T), T * ch / 2), T); for (let i = 0; i < T * ch; i++) F[h + i] += F[v + i]; return h; };
-  // a latent (or the rows the stage before made) to 16 rows at 200 a second through this stage's layers, then to sound
-  const step = (S, x, out = convs ? new Float32Array(FRAME) : null) => {
+  const res = ([a, b], [sa, sb], v, T, ch) => { const h = b.run(sb, eluTo(a.run(sa, eluTo(v, T * ch), T), T * ch / 2), T); for (let i = 0; i < T * ch; i++) F[h + i] += F[v + i]; return h; };
+  const run = [
+    (c, s, v) => c[0].run(s[0], v, T),
+    (c, s, v) => c[0].run(s[0], eluTo(v, T * c8), T),
+    (c, s, v) => res(c, s, v, T * 6, c4),
+    (c, s, v) => c[0].run(s[0], eluTo(v, T * 6 * c4), T * 6),
+    (c, s, v) => res(c, s, v, T * 30, c2),
+    (c, s, v) => c[0].run(s[0], eluTo(v, T * 30 * c2), T * 30),
+    (c, s, v) => res(c, s, v, T * 120, c1),
+    (c, s, v) => c[0].run(s[0], eluTo(v, T * 120 * c1), T * 120),
+  ];
+  const sound = hi === END;
+  // a latent (or what the stage before made) on through this stage's layers and convolutions: rows, or the sound
+  const step = (S, x, out = sound ? new Float32Array(FRAME) : null) => {
     if (first) {
       for (let i = 0; i < LAT; i++) F[nB + i] = x[i] * std[i] + mean[i];
       lin(quant, nB, qB, LAT, D2);
@@ -436,18 +477,16 @@ export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo,
       F.copyWithin(S.up, qB, qB + D2);
     } else F.set(x, seqB);
     if (mt) mt.run(seqB, T, S.C);
-    if (!convs) return F.slice(seqB, seqB + T * D2);
-    const mark = H.mark(), s = S.s;
-    let v = c0.run(s[0], seqB, T);
-    v = t2.run(s[1], eluTo(v, T * 256), T); v = res(r3a, s[2], r3b, s[3], v, T * 6, 128);
-    v = t5.run(s[4], eluTo(v, T * 6 * 128), T * 6); v = res(r6a, s[5], r6b, s[6], v, T * 30, 64);
-    v = t8.run(s[7], eluTo(v, T * 30 * 64), T * 30); v = res(r9a, s[8], r9b, s[9], v, T * 120, 32);
-    v = c11.run(s[10], eluTo(v, T * 120 * 32), T * 120);
-    out.set(F.subarray(v, v + FRAME));
+    if (!ops.length) return F.slice(seqB, seqB + T * D2);
+    const mark = H.mark();
+    let v = seqB;
+    ops.forEach((o, i) => { v = run[o.k](o.c, S.s[i], v); });
+    const n = outs[ohi - 1], r = sound ? out : new Float32Array(n);
+    r.set(F.subarray(v, v + n));
     H.reset(mark);
-    return out;
+    return r;
   };
-  return { start, step, frame: step, front: step, back: step, lo, hi, convs, rate: SR, samples: FRAME, simd: mm.simd };
+  return { start, step, frame: step, front: step, back: step, lo, hi, convs: sound, cfg, rate: SR, samples: FRAME, simd: mm.simd };
 }
 
 /** Numbers from 0 to 1 that come out the same from the same seed (a line said the same way each time). */
