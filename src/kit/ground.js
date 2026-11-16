@@ -3,7 +3,7 @@
 // pale stones in it, wear where traffic runs, oil and rust; or asphalt, paving, a plaza's flags, grass. On it the
 // game lays painted lines, bays and hatched boxes (chipped, and worn where wheels run), lanes polished by traffic,
 // oil, skid marks and scorches. In the rain (gs.sky.Weather) puddles gather with a soaked band and a damp halo
-// round them, and water stays in the joints and cracks.
+// round them, and water stays in the joints and cracks; the puddles mirror what stands round them (v.mirror()).
 //
 //   ground = new Ground(view, { size: 80, kind: 'yard' });                     // in make(): its mesh is in the scene
 //   ground.lane(-30, 0, 30, 0, { width: 3.5 });                                 // where the trucks run
@@ -26,9 +26,10 @@ export class Ground {
   /**
    * view: an HDView. size: metres across (or [width, depth]); kind: 'yard' | 'asphalt' | 'paving' | 'plaza' | 'grass';
    * colour: its base colour; at: [x, z] of its middle; y: its height; bumps: how rough its face is up close (0..1, .3);
-   * levels: [[metres, texels], [metres, texels]] of the two pictures painted round the camera (fine first).
+   * levels: [[metres, texels], [metres, texels]] of the two pictures painted round the camera (fine first); mirror: its puddles
+   * mirror what stands round them (v.mirror(); true, false for none).
    */
-  constructor(view, { size = 60, kind = 'yard', colour, color, at = [0, 0], y = 0, bumps = .3, levels } = {}) {
+  constructor(view, { size = 60, kind = 'yard', colour, color, at = [0, 0], y = 0, bumps = .3, levels, mirror = true } = {}) {
     if (!(kind in PAINT_KINDS)) throw new Error(`gs.outdoors.Ground: no kind '${kind}' (try ${Object.keys(PAINT_KINDS).join(', ')})`);
     this.view = view; this.kind = kind;
     const [w, d] = Array.isArray(size) ? size : [size, size];
@@ -40,6 +41,7 @@ export class Ground {
     view.scene.add(this.mesh); this.mesh.updateMatrixWorld(true);
     this.paint = new GroundPaint(view, levels ? { levels } : undefined);
     this.paint.add(this.mesh, kind);
+    if (mirror && view.mirror) view.mirror(this.mesh, { y });
   }
   // the view's metres to the world's own (origin.js: a world that moves its centre keeps its marks where they were)
   wx(x) { return x + ORIGIN.x; }

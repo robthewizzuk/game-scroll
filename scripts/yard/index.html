@@ -5,7 +5,7 @@
 // A row for each camera, a column for each moment of the rain, to judge the ground, the shores and the mirror by eye.
 //   ?views=over,low,down,props,shore (default: over,low,down)   &cols=4   &cell=360x240   &gpu (WebGPU)
 //   &kind=yard (asphalt, paving, plaza)   &time=17.5 (hour)   &rain=0,.3,.6,1 (how far the puddles have spread at each column: weather.pools; 0 dry)   &norain (no streaks)
-//   &mirror (the planar puddle mirror on)   &tier=2 (the quality tier: 0 low .. 3 ultra)   &noprops
+//   &nomirror (the planar puddle mirror off: HD.mirror = false)   &tier=2 (the quality tier: 0 low .. 3 ultra)   &noprops
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -51,7 +51,7 @@ try {
     const row = (Q.get('props') || 'barrier,barrier,waterbarrier,waterbarrier,mesh,mesh,oildrum,oildrum,oildrum,pallets,reel,cable,bollard,skip').split(',');
     let x = -16; row.forEach((n, i) => { const o = M.prop(n, { seed: i }); const bb = new T.Box3().setFromObject(o), w = bb.max.x - bb.min.x; put(o, x - bb.min.x, -8.5); x += w + (n === row[i + 1] ? .05 : 1.2); });
   }
-  if (Q.has('mirror') && v.mirror) v.mirror(ground.mesh);
+  if (Q.has('nomirror')) window.__hd.mirror = false;
   const weather = new gs.sky.Weather(v, { kind: 'clear', amount: Q.has('norain') ? 0 : .5, area: 30, max: 700, level: true });
   const info = []; let t = 0;
   for (let col = 0; col < cols; col++) {
@@ -67,7 +67,7 @@ try {
       sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${views[r]}  puddles ${pools}  wet ${weather.wet.toFixed(2)}`, col * cw + 4, r * ch + 12);
     }
   }
-  info.push(`ground paint: ${JSON.stringify(ground.paint.info)}; mirror: ${window.__hd.info.mirror ?? 'none'}`);
+  info.push(`ground paint: ${JSON.stringify(ground.paint.info)}; mirror: ${JSON.stringify(window.__hd.info.mirror ?? null)}`);
   window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
 } catch (e) { window.result = { error: String(e && e.stack || e) }; }
 </script>

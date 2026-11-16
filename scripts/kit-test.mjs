@@ -3031,6 +3031,32 @@ console.log('physics ok');
   console.log(`ground paint marks: ${marks} marks in ${got.length} pieces of at most ${STAMPS_MAX}, every one painted, lanes first ok`);
 }
 
+// the puddle mirror's camera (mirror.js): turned over in the ground's plane, what is under the plane cut by its near plane, and a point
+// on the plane at the same place in both pictures (turned left to right), for each way depth runs (WebGL, WebGPU, WebGPU reversed)
+{
+  const T3 = await import('three'), { mirrorCamera, mirrorCam } = await import('../src/kit/mirror.js');
+  let bad = 0, seen = 0, seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (const depth of ['gl', 'gpu', 'rev']) for (let t = 0; t < 100; t++) {
+    const cam = new T3.PerspectiveCamera(50 + rnd() * 30, 1.5, .1, 300);
+    cam.coordinateSystem = depth === 'gl' ? T3.WebGLCoordinateSystem : T3.WebGPUCoordinateSystem; if (depth === 'rev') cam._reversedDepth = true;
+    cam.updateProjectionMatrix();
+    const h = rnd() * 2 - 1; cam.position.set(rnd() * 20 - 10, h + .5 + rnd() * 10, rnd() * 20 - 10); cam.lookAt(rnd() * 20 - 10, h - rnd() * 3, rnd() * 20 - 10);
+    const m = mirrorCam(); assert(mirrorCamera(cam, h, m, depth), 'mirror camera above the plane');
+    const lo = depth === 'rev' ? 0 : depth === 'gl' ? -1 : 0, hi = 1;
+    for (let k = 0; k < 20; k++) {
+      const p = new T3.Vector3(rnd() * 40 - 20, h + (rnd() - .5) * 6, rnd() * 40 - 20), v = new T3.Vector4(p.x, p.y, p.z, 1).applyMatrix4(m.matrixWorldInverse).applyMatrix4(m.projectionMatrix);
+      if (!(v.w > 0 && Math.abs(v.x / v.w) < 1 && Math.abs(v.y / v.w) < 1) || p.distanceTo(m.position) > 200) continue;
+      const z = v.z / v.w, kept = z >= lo - 1e-4 && z <= hi + 1e-4; seen++;
+      if ((p.y > h + .05 && !kept) || (p.y < h - .05 && kept)) bad++;
+    }
+    const q = new T3.Vector3(cam.position.x + 3, h, cam.position.z - 3), a = q.clone().project(cam), b = new T3.Vector4(q.x, q.y, q.z, 1).applyMatrix4(m.matrixWorldInverse).applyMatrix4(m.projectionMatrix);
+    if (Math.abs(a.x + b.x / b.w) > 1e-3 || Math.abs(a.y - b.y / b.w) > 1e-3) bad++;
+    cam.position.y = h - .5; assert(!mirrorCamera(cam, h, m, depth), 'no mirror from under the plane');
+  }
+  assert(bad === 0 && seen > 500, `puddle mirror camera: ${bad} wrong of ${seen}`);
+  console.log(`puddle mirror camera: ${seen} points cut at the plane right on WebGL, WebGPU and reversed depth, the plane where it shows ok`);
+}
+
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {
   const { Tree, Choose } = await import('../src/kit/bt.js');

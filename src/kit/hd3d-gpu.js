@@ -80,6 +80,8 @@ export function bounceGrid(w, h, d, nx, ny, nz) {
 }
 export { bakeProbe };   // v.bakeLight() on this renderer
 export { FarWorld } from './hd3d-gpu-far.js';   // v.farWorld: the far world drawn into pictures round the camera
+export { Mirror } from './hd3d-gpu-mirror.js';   // v.mirror(): the puddle mirror
+import { mirrorLight } from './hd3d-gpu-mirror.js';
 import { FAR_LAYER } from './hd3d-gpu-far.js';
 export { gpuFlood } from './flood-gpu.js';
 export { gpuFluid } from './fluid-gpu.js';
@@ -916,7 +918,12 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   afterColor(m, o, c => { const d = wetTint(c, w, por).mul(rw.out.w.oneMinus()).mul(damp); return mix(mix(d, d.mul(mix(float(.85), float(.42), deep)).add(vec3(.004, .006, .0065).mul(deep)), p), vec3(.86, .9, .96), s); });
   const rr = puddleRings(AIR, wp, p);
   m.normalNode = mix(wetN, flat, max(max(p.mul(.92), soak.mul(.45)), s.mul(.6))).normalize().add(cameraViewMatrix.mul(vec4(rr.x, 0, rr.y, 0)).xyz.mul(p.mul(.4).mul(smoothstep(0, .03, dep)))).normalize();
-  m.userData.gsPuddle = { p, soak, film };   // (the puddle mirror's weight: hd3d-gpu-mirror.js)
+  m.userData.gsPuddle = { p, soak, film };
+  // the puddle mirror (v.mirror(), mirror.js): what stands round the water, laid on where it is (AIR_WET's sums)
+  if (m.userData.gsMirror) {
+    const nW = normalize(vec4(m.normalNode, 0).mul(cameraViewMatrix).xyz), mw = max(p, max(soak.mul(.6), film.mul(.7))).mul(s.oneMinus());
+    m.emissiveNode = (m.emissiveNode ? vec3(m.emissiveNode) : materialEmissive).add(mirrorLight(mw, nW, rough));
+  }
 }
 // value noise (AIR_WET's gsVN)
 const VN = Fn(([p]) => {
