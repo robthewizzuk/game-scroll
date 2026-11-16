@@ -185,17 +185,19 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   phone rule steers one browser version.
 
 **Its own voice.** Characters who speak (`gs.sound.say`) use a voice built into the app, the same on every
-computer (and in the phone apps): Kyutai's Pocket TTS 7M (`src/kit/talk.js`, `pocket-tts.js`), a small speech model
-ported to plain JavaScript and WebAssembly and run in background workers, with 23 voices from speakers who gave them
+computer (and in the phone apps): Kyutai's Pocket TTS 7M with the decoder of their 100M model (`src/kit/talk.js`,
+`pocket-tts.js`), a small speech model ported to plain JavaScript and WebAssembly and run in background workers, with 23 voices from speakers who gave them
 under open licences (`src/kit/talk-files.js`; the credits are under Settings › Licence), and 91 more made between two
-of them when a cast needs more. Its file (13.2 MB of 8-bit numbers, packed from Kyutai's own files by
-`scripts/talk-pack.mjs`) downloads from the games host the first time a character speaks, is checked against its
-SHA-256 and stays in the cache. Where the computer has the threads, workers share each line as a production line
-(4 threads: two, the text half and the first 8 of the decoder's 12 layers in one, the rest a frame behind; 8 threads:
-three, cut at layers 3 and 12), and the maths uses fused multiply-adds where WebAssembly has them: in Chromium on a
-slow server's cores about 7 times faster than it plays on one worker, 14 on two, 17 on three. A line comes back a
-piece at a time, its first sentence first, so it starts playing about a tenth of a second after the call while the
-rest is written; `gs.sound.prepare()` writes a line ahead (a cutscene does its actors' lines when it starts). It reads
+of them when a cast needs more. Its file (21.5 MB of 8-bit numbers, packed from Kyutai's own files by
+`scripts/talk-pack.mjs`, which fetches only the decoder's part of the 100M model's 219 MB file) downloads from the
+games host the first time a character speaks, is checked against its SHA-256 and stays in the cache. Where the device
+has the threads, workers share each line as a production line (`pocket-tts.js` `cutsFor`; 4 threads: two, the text
+half and the decoder's two layers | its steps to sound; 8 threads: three, flow and a layer | a layer and two steps |
+the rest). The maths (`gemm.js`) reads each block of weights once and uses it for every row while it is close at
+hand, with fused multiply-adds where WebAssembly has them, in tiles of 2 or 4 rows (timed on the device: 4 suits a
+phone's 32 vector registers, 2 a PC's 16): in Chromium on a slow server's cores about 2.6 times faster than it plays
+on one worker, 5 on two, 7 on three. A line comes back a piece at a time, its first sentence first, so it starts
+playing about 0.3 s after the call while the rest is written; `gs.sound.prepare()` writes a line ahead (a cutscene does its actors' lines when it starts). It reads
 numbers, money, times and dates as words first (`src/kit/say-words.js`), says a line the same way each time, and keeps
 the last 400 lines it wrote (cache storage) so they start at once after the next launch. Word marks for lip sync come
 from the sound's pauses (`voice-fx.js` `marksFrom`: about twice as close to a speech recogniser's timings as a guess by
@@ -206,15 +208,13 @@ rate by the app's own filter (`voice-fx.js` `resample`; the browser's own conver
 **Without the twang.** The 7M's own small decoder (latents to sound) adds a steady whine at 3.6 kHz, fainter tones
 beside it and a faint 200 Hz buzz to every voice: the "robotic twang". The 18M model has the same decoder and the same
 whine; the decoder Kyutai's 100M model speaks through hears the 7M's latents just as well (the same voice and pitch,
-the words still right, its whine 11 dB lower). So on a computer with 4 threads or more the app downloads that decoder
-too (`TALK_DECODER` in `talk-files.js`: 10.4 MB of 8-bit numbers, only its part of Kyutai's file fetched by
-`talk-pack.mjs`) and makes the sound with it: about 3.5 times the work, cut across the workers by `pocket-tts.js`
-`cutsFor` (two: the text half and its two layers | the steps to sound; three: also inside those steps), in Chromium on
-a slow server about 5 to 7 times faster than it plays, the first sentence in about 0.4 s. Where that file can't be had,
-on a computer too slow for it (two lines in a row; then the small one), and on the phones, the small decoder speaks
-with its fixed tones filtered out (`voice-fx.js` `notch`). Until the file is in, for
-languages other than English, on a phone saving data, and on a device too slow to write lines faster than they play
-(two in a row), the device's own voices speak: on Linux Chromium only lists speech-dispatcher's voices with
+the words still right, the whine gone into the sound around it), for about 3.5 times the work, so that is the one
+packed (the small one isn't shipped). Its weights have an 8-bit scale for every 64 numbers (half the error of one a
+row). The first time the file is used on a device, the worker times a line of its own (kept, so once a file): a
+device that writes speech less than 1.4 times faster than it plays keeps its own voices, as does a phone with under
+4 GB. Until the file is in, for
+languages other than English, on a phone saving data, and on a device too slow at the start or later (two lines in
+a row written slower than they play), the device's own voices speak: on Linux Chromium only lists speech-dispatcher's voices with
 `--enable-speech-dispatcher`, which `desktop/main.cjs` turns on (SteamOS has espeak-ng; of its ~100 variants a
 language, only the plain voice and its numbered male and female ones are cast). `npm run talk-test` checks it
 (`--browser`: in a page, through the workers and the mixer).

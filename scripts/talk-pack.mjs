@@ -1,19 +1,18 @@
-// Makes the desktop app's voice file (src/kit/talk-files.js) from Kyutai's own Pocket TTS 7M files:
-//   node scripts/talk-pack.mjs [outDir]          (default ml-cache/: writes <outDir>/<TALK_VERSION>/<TALK_FILE>, and the
-//                                                computers' decoder <outDir>/<TALK_DECODER.version>/<TALK_DECODER.file>)
+// Makes the app's voice file (src/kit/talk-files.js) from Kyutai's own Pocket TTS files (the 7M, and the 100M's decoder):
+//   node scripts/talk-pack.mjs [outDir]          (default ml-cache/: writes <outDir>/<TALK_VERSION>/<TALK_FILE>)
 //   node scripts/talk-pack.mjs --from <dir>      reads model.safetensors, tokenizer.json and embeddings/ from a folder
 //                                                instead of downloading them (Hugging Face, at the pinned revision)
-//   --from-big <dir>                             the 100M model's folder, for the computers' decoder (TALK_DECODER;
-//                                                downloaded, only the decoder's part of the file is fetched)
+//   --from-big <dir>                             the 100M model's folder, for its decoder (TALK_SOURCE.decoderDir;
+//                                                downloaded, only the decoder's part of its 219 MB file is fetched)
 // scripts/fetch-ml.mjs runs it too, so the games workflow uploads the file with the face tracking files. The file
 // comes out the same every time; its SHA-256 must match TALK_SHA256 (the app checks it too), or this stops.
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { TALK_VERSION, TALK_FILE, TALK_SHA256, TALK_SOURCE, TALK_VOICES, TALK_ABOUT, TALK_DECODER } from '../src/kit/talk-files.js';
+import { TALK_VERSION, TALK_FILE, TALK_SHA256, TALK_SOURCE, TALK_VOICES, TALK_ABOUT } from '../src/kit/talk-files.js';
 import { pack } from '../src/kit/talk-pack.js';
-import { makeTTS, makeMimi, MIMI_BIG } from '../src/kit/pocket-tts.js';
+import { makeTTS, MIMI_BIG } from '../src/kit/pocket-tts.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,13 +54,15 @@ async function source(from) {
 }
 
 /** The file's bytes, from Kyutai's files. */
-export async function build(from = null) {
-  const { weights, tok, voices } = await source(from);
-  // only what speaking needs: the engine says which weights it reads (the voice-cloning encoder stays out)
+export async function build(from = null, fromBig = null) {
+  const { weights: w7, tok, voices } = await source(from), big = await decoderWeights(fromBig);
+  const weights = n => n.startsWith('mimi.') ? big[n] : w7[n];
+  // only what speaking needs: the engine says which weights it reads (the voice-cloning encoder and the 7M's own
+  // decoder stay out)
   const used = new Set(), pieces = tok.model.vocab.map(x => x[0]), scores = tok.model.vocab.map(x => x[1]);
-  makeTTS({ get: n => { used.add(n); return weights[n]; }, pieces, scores, voices: {} }, { plain: true });
+  makeTTS({ get: n => { used.add(n); return weights(n); }, pieces, scores, voices: {}, mimi: MIMI_BIG }, { plain: true });
   const tensors = {};
-  for (const n of [...used].sort()) { if (!weights[n]) throw new Error(`talk-pack: no ${n}`); tensors[n] = weights[n]; }
+  for (const n of [...used].sort()) { if (!weights(n)) throw new Error(`talk-pack: no ${n}`); tensors[n] = weights(n); }
   if (tok.model?.type !== 'Unigram' || !tok.model.byte_fallback) throw new Error('talk-pack: the word pieces are not the kind the engine reads');
   const cast = voices.map(({ name, kind, hz, lang, credit, file }) => {
     const k = [], v = []; let pos = 0;
@@ -74,31 +75,23 @@ export async function build(from = null) {
     }
     return { name, kind, lang, credit: `${credit}; voice state from Kyutai TTS voices`, hz, pos, k, v };
   });
-  return pack({ tensors, pieces, scores, voices: cast, about: TALK_ABOUT });
+  return pack({ tensors, pieces, scores, voices: cast, about: TALK_ABOUT, mimi: MIMI_BIG });
 }
 
 /**
- * The computers' decoder file (TALK_DECODER) from the 100M model: only the decoder's weights (the file is 219 MB, so a
- * download fetches its header, then just the decoder's part of it).
+ * The 100M model's decoder weights (mimi.*): from a folder, or downloaded at the pinned revision. Its file is 219 MB, so
+ * a download fetches the header, then only the decoder's part of it.
  */
-export async function buildDecoder(from = null) {
+async function decoderWeights(from = null) {
   const want = n => /^mimi\.(decoder|decoder_transformer|quantizer\.output_proj|upsample)\./.test(n);
-  let weights;
-  if (from) weights = safetensors(readFileSync(join(from, 'model.safetensors')));
-  else {
-    const url = urlOf(TALK_DECODER.dir, 'model.safetensors'), n = Number((await download(url, [0, 8])).readBigUInt64LE(0));
-    const head = JSON.parse((await download(url, [8, 8 + n])).toString()), names = Object.keys(head).filter(want);
-    const lo = Math.min(...names.map(k => head[k].data_offsets[0])), hi = Math.max(...names.map(k => head[k].data_offsets[1]));
-    const part = await download(url, [8 + n + lo, 8 + n + hi]), json = Buffer.from(JSON.stringify(Object.fromEntries(names.map(k => [k, { ...head[k], data_offsets: head[k].data_offsets.map(o => o - lo) }]))));
-    const small = Buffer.alloc(8 + json.length + part.length);   // a safetensors file of only those
-    small.writeBigUInt64LE(BigInt(json.length), 0); json.copy(small, 8); part.copy(small, 8 + json.length);
-    weights = safetensors(small);
-  }
-  const used = new Set(), stub = new Float32Array(32);
-  makeMimi({ get: n => { if (n.startsWith('mimi.')) { used.add(n); return weights[n]; } return stub; } }, { cfg: MIMI_BIG, plain: true });
-  const tensors = {};
-  for (const n of [...used].sort()) { if (!weights[n]) throw new Error(`talk-pack: no ${n}`); tensors[n] = weights[n]; }
-  return pack({ tensors, about: TALK_DECODER.about, mimi: MIMI_BIG });
+  if (from) return safetensors(readFileSync(join(from, 'model.safetensors')));
+  const url = urlOf(TALK_SOURCE.decoderDir, 'model.safetensors'), n = Number((await download(url, [0, 8])).readBigUInt64LE(0));
+  const head = JSON.parse((await download(url, [8, 8 + n])).toString()), names = Object.keys(head).filter(want);
+  const lo = Math.min(...names.map(k => head[k].data_offsets[0])), hi = Math.max(...names.map(k => head[k].data_offsets[1]));
+  const part = await download(url, [8 + n + lo, 8 + n + hi]), json = Buffer.from(JSON.stringify(Object.fromEntries(names.map(k => [k, { ...head[k], data_offsets: head[k].data_offsets.map(o => o - lo) }]))));
+  const small = Buffer.alloc(8 + json.length + part.length);   // a safetensors file of only those
+  small.writeBigUInt64LE(BigInt(json.length), 0); json.copy(small, 8); part.copy(small, 8 + json.length);
+  return safetensors(small);
 }
 
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -113,14 +106,11 @@ async function made(dir, version, file, want, make, check) {
   return dest;
 }
 /** Writes <dir>/<TALK_VERSION>/<TALK_FILE> unless it is there already with the right hash. */
-export const writeTo = (dir, from = null, { check = true } = {}) => made(dir, TALK_VERSION, TALK_FILE, TALK_SHA256, () => build(from), check);
-/** Writes <dir>/<TALK_DECODER.version>/<TALK_DECODER.file>, the computers' decoder, the same way. */
-export const writeDecoder = (dir, from = null, { check = true } = {}) => made(dir, TALK_DECODER.version, TALK_DECODER.file, TALK_DECODER.sha256, () => buildDecoder(from), check);
+export const writeTo = (dir, from = null, { check = true, fromBig = null } = {}) => made(dir, TALK_VERSION, TALK_FILE, TALK_SHA256, () => build(from, fromBig), check);
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2), opt = name => { const at = args.indexOf(name); return at >= 0 ? args.splice(at, 2)[1] : null; };
   const from = opt('--from'), fromBig = opt('--from-big'), check = !args.includes('--new');
   const dir = resolve(args.find(a => !a.startsWith('--')) || join(ROOT, 'ml-cache'));
-  await writeTo(dir, from, { check });
-  await writeDecoder(dir, fromBig, { check });
+  await writeTo(dir, from, { check, fromBig });
 }

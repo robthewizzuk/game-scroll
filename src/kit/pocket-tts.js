@@ -235,6 +235,10 @@ function stack(H, mm, W, pre, { layers, d, heads, kvHeads, headDim, ff, context 
 }
 
 /* ---------- streaming convolutions (Mimi's decoder), time-major: row t holds every channel ---------- */
+const copyIn = (F, to, from, n, elu) => {
+  if (!elu) { F.copyWithin(to, from, from + n); return; }
+  for (let i = 0; i < n; i++) { const v = F[from + i]; F[to + i] = v > 0 ? v : expm1(v); }
+};
 // conv: torch weight [out, in, k], stride 1; reordered to [out][k][in] so row t's window is one run of the input.
 function conv(H, mm, w, b, cin, cout, k) {
   const { F } = H, r = new Float32Array(cout * k * cin);
@@ -242,10 +246,10 @@ function conv(H, mm, w, b, cin, cout, k) {
   const W = H.put(r), B = H.put(b), keep = k - 1;
   return {
     state: () => keep ? H.zalloc(keep * cin) : 0,      // the last k-1 rows it saw (zeros at the start)
-    run(st, x, T) {
+    run(st, x, T, elu = false) {   // elu: the input through elu first (as it is copied in)
       const buf = H.alloc((keep + T) * cin), y = H.alloc(T * cout);
       if (keep) F.copyWithin(buf, st, st + keep * cin);
-      F.copyWithin(buf + keep * cin, x, x + T * cin);
+      copyIn(F, buf + keep * cin, x, T * cin, elu);
       mm(buf, cin, W, k * cin, y, cout, T, cout, k * cin, B);
       if (keep) F.copyWithin(st, buf + T * cin, buf + (T + keep) * cin);
       return y;
@@ -263,9 +267,9 @@ function convT(H, mm, w, b, cin, cout, k, s) {
   const B = H.put(b);
   return {
     state: () => H.zalloc(cin),                         // the last row it saw (zeros at the start)
-    run(st, x, T) {
+    run(st, x, T, elu = false) {
       const buf = H.alloc((1 + T) * cin), y = H.alloc(T * s * cout);
-      F.copyWithin(buf, st, st + cin); F.copyWithin(buf + cin, x, x + T * cin);
+      F.copyWithin(buf, st, st + cin); copyIn(F, buf + cin, x, T * cin, elu);
       for (let r = 0; r < s; r++) mm(buf, cin, Bs[r], 2 * cin, y + r * cout, s * cout, T, cout, 2 * cin, B);
       F.copyWithin(st, buf + T * cin, buf + (T + 1) * cin);
       return y;
@@ -389,35 +393,25 @@ export function makeFlow(pack, { plain = false } = {}) {
  * The second half: Mimi's decoder, latents in, sound out (1920 samples at 24 kHz for each). pack: as makeTTS.
  *   const S = mimi.start()                          a fresh decoder (one at a time: it starts again from silence)
  *   mimi.frame(S, latent [, out]) -> Float32Array    that latent's 80 ms of sound
- * It can be cut into stages, each in a worker of its own: a stage runs transformer layers lo..hi-1 (from a latent where
- * it is the first, else from the rows the stage before made) and the convolutions to sound where convs is true:
- *   part 'front' = { hi: split, convs: false }, 'back' = { lo: split }; mimi.step(S, latent or rows) -> rows (16 x d) or sound
- * Two decoders read the same latents: the 7M's own (MIMI_SMALL, distilled, light) and the one Kyutai's 100M model speaks
- * through (MIMI_BIG: 2 layers of 512 and convolutions twice as wide, about 3.5 times the work). The small one puts a
- * steady whine at 3.6 kHz (and fainter ones beside it) and a faint 200 Hz buzz into every voice, which the big one mostly
- * doesn't: the "robotic twang". cfg: which (a pack made for the big one says so: pack.mimi).
+ * It can be cut into stages, each in a worker of its own: a stage runs from place lo to place hi (places 0..layers are
+ * before each transformer layer, then layers + k after k of the 8 steps to sound; cutsFor says where), from a latent
+ * where it is the first, else from what the stage before made: mimi.step(S, latent or rows) -> rows, or the sound.
+ * The decoder is the one Kyutai's 100M model speaks through (MIMI_BIG: 2 layers of 512, convolutions 64 wide), which
+ * reads the 7M's latents just as well: the 7M's own (12 layers of 128, 32 wide; about a third of the work) puts a
+ * steady whine at 3.6 kHz and a faint 200 Hz buzz into every voice (the "robotic twang"), so it isn't shipped.
  */
-// whine: the steady tones the small one adds (Hz, measured over every voice), filtered out after it (voice-fx.js notch)
-export const MIMI_SMALL = { d: 128, layers: 12, heads: 4, ff: 384, context: 50, nf: 32, k0: 3, whine: [3400, 3600, 3800, 9162, 9562, 9681] };
 export const MIMI_BIG = { d: 512, layers: 2, heads: 8, ff: 2048, context: 250, nf: 64, k0: 7 };
-const OPS = 8;   // the convolutions to sound in steps a stage can start or end between (makeMimi)
-export const SPLIT = 8;   // (measured: the flow LM and 8 layers take as long as 4 layers and the convolutions)
-export const SPLIT3 = [3, 12];   // three stages: the flow LM and 3 layers | 9 layers | the convolutions
-/** Kyutai's 100M model's decoder in place of the 7M's own: pack.get reads its weights from dec, the rest from main. */
-export const withDecoder = (main, dec) => dec ? { ...main, get: n => n.startsWith('mimi.') ? dec.get(n) : main.get(n), mimi: dec.mimi || MIMI_BIG } : main;
+const OPS = 8;   // the steps to sound, a stage can start or end between them (makeMimi)
 /**
- * Where n workers cut the decoder, as [0, where the second stage starts, ...]: places 0..layers are before each
- * transformer layer, then layers + k after k of the steps to sound. Measured (ms for 80 ms of sound): the small one's
- * flow and layers are light, the big one's two layers take 10 each and its steps to sound 25 in all.
+ * Where n workers cut the decoder, as [0, where the second stage starts, ...]. Measured (ms for 80 ms of sound): the
+ * flow 3, each layer 8 (the first with the upsampling), the steps to sound 3.4 2.5 1.5 2.8 2.3 3.3 3.1 1.0.
  */
 export function cutsFor(cfg, n) {
-  if (cfg.layers === MIMI_SMALL.layers) return n >= 3 ? [0, ...SPLIT3] : n === 2 ? [0, SPLIT] : [0];
-  return n >= 3 ? [0, 1, cfg.layers + 2] : n === 2 ? [0, cfg.layers] : [0];   // the big one: flow + layer | layer + 2 steps | the rest
+  return n >= 3 ? [0, 1, cfg.layers + 2] : n === 2 ? [0, cfg.layers] : [0];   // flow + layer | layer + 2 steps | the rest
 }
-export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo, hi, convs, latent, cfg = pack.mimi || MIMI_SMALL } = {}) {
+export function makeMimi(pack, { plain = false, lo = 0, hi, latent, cfg = pack.mimi || MIMI_BIG } = {}) {
   const { d: D2, layers: NL, heads, ff, context, nf, k0 } = cfg, cap = context + 30, END = NL + OPS;
-  lo ??= part === 'back' ? split : 0; hi ??= part === 'front' ? split : END;
-  if (convs === true) hi = END; else if (convs === false) hi = Math.min(hi, NL);
+  hi ??= END;
   const W = weightsOf(pack), first = latent ?? lo === 0, olo = Math.max(0, lo - NL), ohi = Math.max(0, hi - NL);
   const T = 16, c8 = nf * 8, c4 = nf * 4, c2 = nf * 2, c1 = nf, ch = nf / 2;
   // the convolutions to sound, one step each (a stage can start or stop between them): what each puts out, rows x channels
@@ -455,17 +449,16 @@ export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo,
     H.reset(base);
     return { C: mt && mt.cache(cap), up: first ? H.zalloc(D2) : 0, s: ops.map(o => o.c.map(c => c.state())) };
   };
-  const eluTo = (x, n) => { const y = H.alloc(n); for (let i = 0; i < n; i++) { const v = F[x + i]; F[y + i] = v > 0 ? v : expm1(v); } return y; };
-  const res = ([a, b], [sa, sb], v, T, ch) => { const h = b.run(sb, eluTo(a.run(sa, eluTo(v, T * ch), T), T * ch / 2), T); for (let i = 0; i < T * ch; i++) F[h + i] += F[v + i]; return h; };
+  const res = ([a, b], [sa, sb], v, T, ch) => { const h = b.run(sb, a.run(sa, v, T, true), T, true); for (let i = 0; i < T * ch; i++) F[h + i] += F[v + i]; return h; };
   const run = [
     (c, s, v) => c[0].run(s[0], v, T),
-    (c, s, v) => c[0].run(s[0], eluTo(v, T * c8), T),
+    (c, s, v) => c[0].run(s[0], v, T, true),
     (c, s, v) => res(c, s, v, T * 6, c4),
-    (c, s, v) => c[0].run(s[0], eluTo(v, T * 6 * c4), T * 6),
+    (c, s, v) => c[0].run(s[0], v, T * 6, true),
     (c, s, v) => res(c, s, v, T * 30, c2),
-    (c, s, v) => c[0].run(s[0], eluTo(v, T * 30 * c2), T * 30),
+    (c, s, v) => c[0].run(s[0], v, T * 30, true),
     (c, s, v) => res(c, s, v, T * 120, c1),
-    (c, s, v) => c[0].run(s[0], eluTo(v, T * 120 * c1), T * 120),
+    (c, s, v) => c[0].run(s[0], v, T * 120, true),
   ];
   const sound = hi === END;
   // a latent (or what the stage before made) on through this stage's layers and convolutions: rows, or the sound
@@ -486,7 +479,7 @@ export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo,
     H.reset(mark);
     return r;
   };
-  return { start, step, frame: step, front: step, back: step, lo, hi, convs: sound, cfg, rate: SR, samples: FRAME, simd: mm.simd };
+  return { start, step, frame: step, lo, hi, sound, cfg, rate: SR, samples: FRAME, simd: mm.simd };
 }
 
 /** Numbers from 0 to 1 that come out the same from the same seed (a line said the same way each time). */

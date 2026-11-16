@@ -315,21 +315,6 @@ export function resample(x, ratio) {
 }
 
 /**
- * Takes steady tones out of x in place: a narrow notch (25 Hz wide: the whine wanders a few Hz) at each frequency in Hz, the rest left as it
- * was. For the whine the built-in voice's small decoder puts at the same pitches in every line (pocket-tts.js MIMI_SMALL).
- */
-export function notch(x, rate, freqs, width = 25) {
-  for (const f of freqs) {
-    if (!(f > 0 && f < rate / 2)) continue;
-    const w = 2 * Math.PI * f / rate, al = Math.sin(w) * width / (2 * f), cs = Math.cos(w), a0 = 1 + al;
-    const b0 = 1 / a0, b1 = -2 * cs / a0, a1 = b1, a2 = (1 - al) / a0;
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    for (let i = 0; i < x.length; i++) { const v = x[i], y = b0 * v + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v; y2 = y1; y1 = y; x[i] = y; }
-  }
-  return x;
-}
-
-/**
  * The same speech faster or slower at the same pitch (tempo 1.25: a quarter faster): overlapping slices of 30 ms
  * laid down a fixed step apart, each taken from where it lines up best with the one before (WSOLA). For engines
  * with no speed of their own (the desktop app's built-in voice). tempo .5 to 2.

@@ -14,117 +14,77 @@ const str = s => [...leb(s.length, []), ...[...s].map(c => c.charCodeAt(0))];
 const section = (id, body) => [id, ...leb(body.length, []), ...body];
 const vec = items => [...leb(items.length, []), ...items.flat()];
 
-function gemmBody(fma = false) {
+// R rows of A at a time (2 or 4) against 4 rows of B, each loaded once a step and used for every row of A: R x 4 sums
+// in registers. 4 rows suit phones (32 vector registers), 2 most PCs (16); gemm() times both and keeps the faster.
+function gemmBody(fma = false, R = 2) {
   // params: a lda b ldb c ldc M N K bias (all i32, floats counted)
   const A = 0, LDA = 1, B = 2, LDB = 3, C = 4, LDC = 5, M = 6, N = 7, K = 8, BIAS = 9;
-  // locals
-  const m = 10, n = 11, kk = 12, ar = 13, cr = 14, b0 = 15, b1 = 16, b2 = 17, b3 = 18, K4 = 19, ar2 = 20, cr2 = 21;
-  const a0 = 22, s0 = 23, s1 = 24, s2 = 25, s3 = 26, t0 = 27, t1 = 28, t2 = 29, t3 = 30, a1 = 31;   // v128
-  const f = 32;   // f32
+  // i32 locals
+  let at = 10; const m = at++, n = at++, kk = at++, K4 = at++, ar = [at++, at++, at++, at++], cr = [at++, at++, at++, at++], bb = [at++, at++, at++, at++];
+  const nI32 = at - 10;
+  // v128 locals
+  const acc = Array.from({ length: 4 }, () => [at++, at++, at++, at++]), bv = [at++, at++, at++, at++], av = at++;
+  const nV = at - 10 - nI32;
   const c = [];
   const get = i => c.push(0x20, ...leb(i, [])), set = i => c.push(0x21, ...leb(i, [])), tee = i => c.push(0x22, ...leb(i, []));
   const i32 = v => c.push(0x41, ...sleb(v, []));
-  const add = () => c.push(0x6a), mul = () => c.push(0x6c), shl = () => c.push(0x74), lts = () => c.push(0x48), les = () => c.push(0x4c);
+  const add = () => c.push(0x6a), mul = () => c.push(0x6c), shl = () => c.push(0x74), lts = () => c.push(0x48), les = () => c.push(0x4c), not = () => c.push(0x41, 1, 0x73);
   const simd = op => c.push(0xfd, ...leb(op, []));
   const vload = () => { simd(0x00); c.push(0, 0); }, vzero = () => { simd(0x0c); for (let i = 0; i < 16; i++) c.push(0); };
   const fadd4 = () => simd(0xe4), fmul4 = () => simd(0xe6), lane = l => { simd(0x1f); c.push(l); };
-  // acc += x * y, x and y pushed by the two functions: one fused multiply-add where relaxed SIMD has it (f32x4.relaxed_madd)
-  const madd = (acc, x, y) => { if (fma) { x(); y(); get(acc); simd(0x105); } else { get(acc); x(); y(); fmul4(); fadd4(); } set(acc); };
+  // acc += x * y: one fused multiply-add where relaxed SIMD has it (f32x4.relaxed_madd)
+  const madd = (sum, x, y) => { if (fma) { get(x); get(y); get(sum); simd(0x105); } else { get(sum); get(x); get(y); fmul4(); fadd4(); } set(sum); };
   const f32load = () => c.push(0x2a, 2, 0), f32store = () => c.push(0x38, 2, 0), fadd = () => c.push(0x92);
   const block = () => c.push(0x02, 0x40), loop = () => c.push(0x03, 0x40), end = () => c.push(0x0b), br = d => c.push(0x0c, d), brif = d => c.push(0x0d, d);
   const iff = () => c.push(0x04, 0x40), els = () => c.push(0x05);
-  const bytesOf = i => { get(i); i32(2); shl(); };                       // floats -> bytes
   const hsum = v => { get(v); lane(0); get(v); lane(1); fadd(); get(v); lane(2); fadd(); get(v); lane(3); fadd(); };
-  // acc += load(x + kk) * load(y + kk)
-  const mac = (acc, x, y) => madd(acc, () => { get(x); get(kk); add(); vload(); }, () => { get(y); get(kk); add(); vload(); });
   const store = (row, col, sum) => {      // C[row + col] = sum (+ bias[col])
     get(row); get(n); i32(col); add(); i32(2); shl(); add();
     hsum(sum);
     get(BIAS); c.push(0x04, 0x7d); get(BIAS); get(n); add(); i32(col); add(); i32(2); shl(); f32load(); els(); c.push(0x43, 0, 0, 0, 0); end(); fadd();
     f32store();
   };
-  // byte sizes
-  bytesOf(K); set(K4);
-  i32(0); set(m);
-  block(); loop();                                                       // rows, two at a time while they last
-    get(m); get(M); lts(); i32(1); c.push(0x73); brif(1);                // m >= M: done   (0x73 = i32.xor)
-    get(A); get(m); get(LDA); mul(); add(); i32(2); shl(); set(ar);
-    get(C); get(m); get(LDC); mul(); add(); i32(2); shl(); set(cr);
-    get(m); i32(1); add(); get(M); lts();
-    iff();                                                               // two rows: m and m + 1
-      get(ar); get(LDA); i32(2); shl(); add(); set(ar2);
-      get(cr); get(LDC); i32(2); shl(); add(); set(cr2);
-      i32(0); set(n);
-      block(); loop();
-        get(n); i32(4); add(); get(N); les(); i32(1); c.push(0x73); brif(1);
-        get(B); get(n); get(LDB); mul(); add(); i32(2); shl(); tee(b0); get(LDB); i32(2); shl(); add(); tee(b1); get(LDB); i32(2); shl(); add(); tee(b2); get(LDB); i32(2); shl(); add(); set(b3);
-        vzero(); set(s0); vzero(); set(s1); vzero(); set(s2); vzero(); set(s3); vzero(); set(t0); vzero(); set(t1); vzero(); set(t2); vzero(); set(t3);
-        i32(0); set(kk);
-        block(); loop();
-          get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
-          get(ar); get(kk); add(); vload(); set(a0);
-          get(ar2); get(kk); add(); vload(); set(a1);
-          for (const [acc, br0, row] of [[s0, b0, a0], [s1, b1, a0], [s2, b2, a0], [s3, b3, a0], [t0, b0, a1], [t1, b1, a1], [t2, b2, a1], [t3, b3, a1]]) {
-            madd(acc, () => get(row), () => { get(br0); get(kk); add(); vload(); });
-          }
-          get(kk); i32(16); add(); set(kk); br(0);
-        end(); end();
-        store(cr, 0, s0); store(cr, 1, s1); store(cr, 2, s2); store(cr, 3, s3);
-        store(cr2, 0, t0); store(cr2, 1, t1); store(cr2, 2, t2); store(cr2, 3, t3);
-        get(n); i32(4); add(); set(n); br(0);
+  const bRows = cols => {                 // bb[j] = byte address of B's row n + j
+    get(B); get(n); get(LDB); mul(); add(); i32(2); shl(); set(bb[0]);
+    for (let j = 1; j < cols; j++) { get(bb[j - 1]); get(LDB); i32(2); shl(); add(); set(bb[j]); }
+  };
+  // rows m .. m + r - 1 of C against B's rows n .. n + cols - 1 (bb, set by the caller)
+  const tile = (r, cols) => {
+    get(A); get(m); get(LDA); mul(); add(); i32(2); shl(); set(ar[0]);
+    get(C); get(m); get(LDC); mul(); add(); i32(2); shl(); set(cr[0]);
+    for (let i = 1; i < r; i++) { get(ar[i - 1]); get(LDA); i32(2); shl(); add(); set(ar[i]); get(cr[i - 1]); get(LDC); i32(2); shl(); add(); set(cr[i]); }
+    for (let i = 0; i < r; i++) for (let j = 0; j < cols; j++) { vzero(); set(acc[i][j]); }
+    i32(0); set(kk);
+    block(); loop();
+      get(kk); get(K4); lts(); not(); brif(1);
+      for (let j = 0; j < cols; j++) { get(bb[j]); get(kk); add(); vload(); set(bv[j]); }
+      for (let i = 0; i < r; i++) { get(ar[i]); get(kk); add(); vload(); set(av); for (let j = 0; j < cols; j++) madd(acc[i][j], av, bv[j]); }
+      get(kk); i32(16); add(); set(kk); br(0);
+    end(); end();
+    for (let i = 0; i < r; i++) for (let j = 0; j < cols; j++) store(cr[i], j, acc[i][j]);
+    get(m); i32(r); add(); set(m);
+  };
+  get(K); i32(2); shl(); set(K4);
+  // B's rows (the weights, the big one) four at a time on the outside, so each is read from memory once and used for
+  // every row of A while it is close at hand; then the last few one at a time
+  i32(0); set(n);
+  for (const cols of [4, 1]) {
+    block(); loop();
+      if (cols === 4) { get(n); i32(4); add(); get(N); les(); } else { get(n); get(N); lts(); }
+      not(); brif(1);
+      bRows(cols);
+      i32(0); set(m);
+      block(); loop();                                                   // A's rows, R at a time while they last
+        get(m); get(M); lts(); not(); brif(1);
+        get(m); i32(R); add(); get(M); les();
+        iff(); tile(R, cols); els(); tile(1, cols); end();
+        br(0);
       end(); end();
-      block(); loop();                                                   // the last few columns, one at a time
-        get(n); get(N); lts(); i32(1); c.push(0x73); brif(1);
-        get(B); get(n); get(LDB); mul(); add(); i32(2); shl(); set(b0);
-        vzero(); set(s0); vzero(); set(t0);
-        i32(0); set(kk);
-        block(); loop();
-          get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
-          get(b0); get(kk); add(); vload(); set(a1);
-          madd(s0, () => { get(ar); get(kk); add(); vload(); }, () => get(a1));
-          madd(t0, () => { get(ar2); get(kk); add(); vload(); }, () => get(a1));
-          get(kk); i32(16); add(); set(kk); br(0);
-        end(); end();
-        store(cr, 0, s0); store(cr2, 0, t0);
-        get(n); i32(1); add(); set(n); br(0);
-      end(); end();
-      get(m); i32(2); add(); set(m);
-    els();                                                               // one row
-      i32(0); set(n);
-      block(); loop();
-        get(n); i32(4); add(); get(N); les(); i32(1); c.push(0x73); brif(1);
-        get(B); get(n); get(LDB); mul(); add(); i32(2); shl(); tee(b0); get(LDB); i32(2); shl(); add(); tee(b1); get(LDB); i32(2); shl(); add(); tee(b2); get(LDB); i32(2); shl(); add(); set(b3);
-        vzero(); set(s0); vzero(); set(s1); vzero(); set(s2); vzero(); set(s3);
-        i32(0); set(kk);
-        block(); loop();
-          get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
-          get(ar); get(kk); add(); vload(); set(a0);
-          for (const [acc, br0] of [[s0, b0], [s1, b1], [s2, b2], [s3, b3]]) madd(acc, () => get(a0), () => { get(br0); get(kk); add(); vload(); });
-          get(kk); i32(16); add(); set(kk); br(0);
-        end(); end();
-        store(cr, 0, s0); store(cr, 1, s1); store(cr, 2, s2); store(cr, 3, s3);
-        get(n); i32(4); add(); set(n); br(0);
-      end(); end();
-      block(); loop();
-        get(n); get(N); lts(); i32(1); c.push(0x73); brif(1);
-        get(B); get(n); get(LDB); mul(); add(); i32(2); shl(); set(b0);
-        vzero(); set(s0);
-        i32(0); set(kk);
-        block(); loop();
-          get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
-          mac(s0, ar, b0);
-          get(kk); i32(16); add(); set(kk); br(0);
-        end(); end();
-        store(cr, 0, s0);
-        get(n); i32(1); add(); set(n); br(0);
-      end(); end();
-      get(m); i32(1); add(); set(m);
-    end();
-    br(0);
-  end(); end();
+      get(n); i32(cols); add(); set(n); br(0);
+    end(); end();
+  }
   end();
-  void f;
-  const locals = vec([[...leb(12, []), 0x7f], [...leb(10, []), 0x7b], [1, 0x7d]]);
+  const locals = vec([[...leb(nI32, []), 0x7f], [...leb(nV, []), 0x7b]]);
   return [...locals, ...c];
 }
 
@@ -159,8 +119,8 @@ function wsumBody() {
   return [...vec([[...leb(5, []), 0x7f], [...leb(2, []), 0x7b]]), ...c];
 }
 
-function moduleBytes(pages, fma) {
-  const g = gemmBody(fma), w = wsumBody(), sig = n => [0x60, ...vec(Array.from({ length: n }, () => [0x7f])), 0];
+function moduleBytes(pages, fma, R) {
+  const g = gemmBody(fma, R), w = wsumBody(), sig = n => [0x60, ...vec(Array.from({ length: n }, () => [0x7f])), 0];
   return new Uint8Array([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     ...section(1, vec([sig(10), sig(7)])),
@@ -192,14 +152,33 @@ function slowWsum(F) {
   };
 }
 
-/** gemm over this memory, with .wsum (see wsumBody); `.simd` says whether they are the fast ones. */
-export function gemm(memory, { plain = false, fma = true } = {}) {
+/** Which tile is faster on this device (2 or 4 rows a step), timed once on a sum the size of the voice's. */
+let bestR = 0;
+function pickRows(fma) {
+  if (bestR) return bestR;
+  try {
+    const mem = new WebAssembly.Memory({ initial: 64 }), F = new Float32Array(mem.buffer);
+    for (let i = 0; i < 1 << 19; i++) F[i] = ((i * 7919) % 97) / 97 - .5;
+    const time = R => {
+      const fn = new WebAssembly.Instance(new WebAssembly.Module(moduleBytes(64, fma, R)), { e: { m: mem } }).exports.gemm;
+      let best = 1e9;
+      for (let r = 0; r < 7; r++) { const t = performance.now(); fn(0, 512, 16384, 512, 1 << 19, 384, 16, 384, 512, 0); best = Math.min(best, performance.now() - t); }
+      return best;
+    };
+    time(2); time(4);   // (warmed up)
+    bestR = time(4) < time(2) * .97 ? 4 : 2;
+  } catch { bestR = 2; }
+  return bestR;
+}
+
+/** gemm over this memory, with .wsum (see wsumBody); `.simd` says whether they are the fast ones, `.rows` the tile it uses. */
+export function gemm(memory, { plain = false, fma = true, rows = 0 } = {}) {
   const pages = memory.buffer.byteLength / 65536;
   if (!plain) for (const fused of fma ? [true, false] : [false]) {
     try {   // fused multiply-adds where the browser has relaxed SIMD, else the plain four-wide sums
-      const mod = new WebAssembly.Module(moduleBytes(pages, fused));
+      const R = rows || pickRows(fused), mod = new WebAssembly.Module(moduleBytes(pages, fused, R));
       const ex = new WebAssembly.Instance(mod, { e: { m: memory } }).exports, fn = ex.gemm;
-      fn.wsum = ex.wsum; fn.simd = true; fn.fma = fused;
+      fn.wsum = ex.wsum; fn.simd = true; fn.fma = fused; fn.rows = R;
       return fn;
     } catch (e) { if (globalThis.process?.env?.GEMM_DEBUG) console.error(e); /* not here */ }
   }
