@@ -286,7 +286,7 @@ export class Reputation {
   }
   /** A price from someone of a faction: dearer when they dislike the hero, cheaper when they like them (spread: .25 at the ends). sell: what they pay the hero (half, moved the other way). */
   price(base, faction = null, { sell = false, spread = .25 } = {}) {
-    const s = faction ? this.with(faction) / 100 : 0;
+    const s = faction ? (this.with(faction)) / 100 : 0;
     return Math.max(sell ? 0 : 1, Math.round(sell ? base * .5 * (1 + spread * s) : base * (1 - spread * s)));
   }
   /** The first title whose every range fits ({ name, good: [50, 100], fame: [40, 100] }), or null. */
