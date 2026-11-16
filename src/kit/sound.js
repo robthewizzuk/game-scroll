@@ -1106,11 +1106,11 @@ function ownClip(p, gen, stopped) {
   // (a mood: the voice as heard in that mood, 'gs-voice:anna~sad')
   const uri = pick.voiceURI || list[pick.at].voiceURI, o = { uri: p.mood ? `${uri}~${p.mood}` : uri, pitch: clampN(p.pitch * pick.pitch, .5, 2, 1), rate: clampN(p.rate * p.size, .3, 3, 1), lively: livelyOf(p, uri) };
   const keyOf = () => JSON.stringify([p.said, o.uri, p.rate, o.pitch, p.size, p.fx, p.joined, p.join, o.lively, o.rate, [].concat(p.lang)[0]]);
-  const found = () => {
-    if (p.fresh) return null;
-    const have = clips.get(o.key);
-    if (have) { clips.delete(o.key); clips.set(o.key, have); return Promise.resolve(have); }
-    const m = making.get(o.key);   // being written ahead already: that one, wanted now
+  const found = (key = o.key) => {
+    if (p.fresh || !key) return null;
+    const have = clips.get(key);
+    if (have) { clips.delete(key); clips.set(key, have); return Promise.resolve(have); }
+    const m = making.get(key);   // being written ahead already: that one, wanted now
     if (m) { if (gen >= 0) ownHurry(m.ticket); return m.clip; }
     return null;
   };
@@ -1118,12 +1118,14 @@ function ownClip(p, gen, stopped) {
   // and pace. The line before: after (a Cutscene gives it), else the last line said, if it was another voice's and recent
   // (a line written ahead without it is used as it was written)
   const before = p.after ? partnerOf(p.after, p.lang) : gen >= 0 && lastOwn && lastOwn.uri !== uri && performance.now() - lastOwn.at < 8000 ? lastOwn : null;
-  o.key = keyOf();
+  const plainKey = o.key = keyOf();
+  // (a line said again without its partner is said as it was last time, drifted or not: the take kept)
+  if (!p.after) { const same = found() || found(drifted.get(plainKey)); if (same) { if (gen >= 0) lastOwn = { uri, lively: o.lively, rate: p.rate, at: performance.now() }; return same; } }
   if (before && before.uri !== uri) {
-    const plain = found(); if (plain && !p.after) return plain;
     o.lively = Math.round((o.lively + DRIFT * (before.lively - o.lively)) * 100) / 100;
     o.rate = clampN(o.rate * (before.rate / Math.max(.3, p.rate)) ** DRIFT, .3, 3, 1);
     o.key = keyOf();
+    if (!p.fresh) { drifted.delete(plainKey); drifted.set(plainKey, o.key); if (drifted.size > 300) drifted.delete(drifted.keys().next().value); }
   }
   if (gen >= 0) lastOwn = { uri, lively: o.lively, rate: p.rate, at: performance.now() };
   const kept = found(); if (kept) return kept;
@@ -1136,6 +1138,7 @@ function ownClip(p, gen, stopped) {
 // movement and pace)
 const DRIFT = .35;
 let lastOwn = null;
+const drifted = new Map();   // a line's key as said plainly -> the key it was last said drifted with
 /** What the line before was like: { uri, lively, rate } for the line a say() after: { text, voice, rate, lively } names. */
 function partnerOf(a, lang) {
   const t = String(a.text ?? a ?? ''), pick = castOwn(wantOf(a.voice || 'any', a.lang || lang)); if (!pick) return null;
