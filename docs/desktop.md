@@ -185,18 +185,26 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   phone rule steers one browser version.
 
 **Its own voice.** Characters who speak (`gs.sound.say`) use a voice built into the app, the same on every
-computer: Kyutai's Pocket TTS 7M (`src/kit/talk.js`, `pocket-tts.js`), a small speech model ported to plain JavaScript
-and WebAssembly and run in a background worker, with 19 voices from speakers who gave them under open licences
-(`src/kit/talk-files.js`; the credits are under Settings › Licence). Its file (12.3 MB of 8-bit numbers, packed from
-Kyutai's own files by `scripts/talk-pack.mjs`) downloads from the games host the first time a character speaks, is
-checked against its SHA-256 and stays in the cache. Where the computer has four or more threads, two workers share
-each line (the text half and the first 8 of the decoder's 12 layers in one, the rest in the other, a frame behind):
-about ten times faster than it plays in Chromium on a slow server's cores, five on one. It reads numbers, money, times
-and dates as words first (`src/kit/say-words.js`), and says a line the same way each time. Every line plays through the mixer, as a shaped line
-does on the phones. Until the file is in, and for languages other than English, the computer's own voices speak: on
-Linux Chromium only lists speech-dispatcher's voices with `--enable-speech-dispatcher`, which `desktop/main.cjs`
-turns on (SteamOS has espeak-ng; of its ~100 variants a language, only the plain voice and its numbered male and
-female ones are cast). `npm run talk-test` checks it (`--browser`: in a page, through the worker and the mixer).
+computer (and in the phone apps): Kyutai's Pocket TTS 7M (`src/kit/talk.js`, `pocket-tts.js`), a small speech model
+ported to plain JavaScript and WebAssembly and run in background workers, with 23 voices from speakers who gave them
+under open licences (`src/kit/talk-files.js`; the credits are under Settings › Licence), and 91 more made between two
+of them when a cast needs more. Its file (13.2 MB of 8-bit numbers, packed from Kyutai's own files by
+`scripts/talk-pack.mjs`) downloads from the games host the first time a character speaks, is checked against its
+SHA-256 and stays in the cache. Where the computer has the threads, workers share each line as a production line
+(4 threads: two, the text half and the first 8 of the decoder's 12 layers in one, the rest a frame behind; 8 threads:
+three, cut at layers 3 and 12), and the maths uses fused multiply-adds where WebAssembly has them: in Chromium on a
+slow server's cores about 7 times faster than it plays on one worker, 14 on two, 17 on three. A line comes back a
+piece at a time, its first sentence first, so it starts playing about a tenth of a second after the call while the
+rest is written; `gs.sound.prepare()` writes a line ahead (a cutscene does its actors' lines when it starts). It reads
+numbers, money, times and dates as words first (`src/kit/say-words.js`), says a line the same way each time, and keeps
+the last 400 lines it wrote (cache storage) so they start at once after the next launch. Word marks for lip sync come
+from the sound's pauses (`voice-fx.js` `marksFrom`: about twice as close to a speech recogniser's timings as a guess by
+word length). Every line plays through the mixer, as a shaped line does on the phones. Until the file is in, for
+languages other than English, on a phone saving data, and on a device too slow to write lines faster than they play
+(two in a row), the device's own voices speak: on Linux Chromium only lists speech-dispatcher's voices with
+`--enable-speech-dispatcher`, which `desktop/main.cjs` turns on (SteamOS has espeak-ng; of its ~100 variants a
+language, only the plain voice and its numbered male and female ones are cast). `npm run talk-test` checks it
+(`--browser`: in a page, through the workers and the mixer).
 
 **Where it runs.** The app is served from `https://localhost`, the Android app's own address, read straight
 from the app's files (`protocol.handle` in `desktop/main.cjs`): the games host, the API and the page's security

@@ -8,12 +8,12 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FontsPart`, line 580), where every option and field is described.
+From `src/gamescroll.d.ts` (`FontsPart`, line 588), where every option and field is described.
 
-- `font(name: FontName | (string & {}), size?: number, weight?: number): string` The string for c.font: font('Bangers', 34) is '400 34px "Bangers", Rubik, sans-serif'. (:585)
-- `use(...names: (FontName | [FontName, number])[]): boolean` In make() or reset(): have these fonts in before the first frame ("Loading…" the first time). (:587)
-- `ready(name: FontName | (string & {}), weight?: number): boolean` Is this font in and ready to draw? (:589)
-- `readonly list: readonly { readonly name: FontName; readonly look: string; readonly weights: readonly number[]; readonly pixel: number }[]` Every font: its name, what it looks like, the weights that ship, and for pixel fonts the size in px its pixels are crisp at (else 0). (:591)
+- `font(name: FontName | (string & {}), size?: number, weight?: number): string` The string for c.font: font('Bangers', 34) is '400 34px "Bangers", Rubik, sans-serif'. (:593)
+- `use(...names: (FontName | [FontName, number])[]): boolean` In make() or reset(): have these fonts in before the first frame ("Loading…" the first time). (:595)
+- `ready(name: FontName | (string & {}), weight?: number): boolean` Is this font in and ready to draw? (:597)
+- `readonly list: readonly { readonly name: FontName; readonly look: string; readonly weights: readonly number[]; readonly pixel: number }[]` Every font: its name, what it looks like, the weights that ship, and for pixel fonts the size in px its pixels are crisp at (else 0). (:599)
 
 ## From the maker kit
 

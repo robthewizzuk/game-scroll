@@ -101,8 +101,11 @@ export function prepareText(text) {
   }
   return { text: t, after: (words <= 4 ? 3 : 1) + 2 };
 }
-/** Splits a long line into the sentence groups the model makes one at a time (at most `max` pieces each). */
-export function chunks(tok, text, max = 50) {
+/**
+ * Splits a long line into the sentence groups the model makes one at a time (at most `max` pieces each). quick: the
+ * first sentence on its own, so the line can start playing while the rest is written.
+ */
+export function chunks(tok, text, max = 50, quick = false) {
   const p = prepareText(text); if (!p) return [];
   const ids = tok.encode(p.text.trim());
   const ends = new Set(tok.encode('.!...?').slice(1)), soft = new Set(tok.encode(',;:').slice(1));
@@ -130,7 +133,7 @@ export function chunks(tok, text, max = 50) {
   const out = []; let cur = '', cn = 0;
   for (const [n, s] of refined) {
     if (!cur) { cur = s; cn = n; continue; }
-    if (cn + n > max) { out.push(cur.trim()); cur = s; cn = n; } else { cur += ' ' + s; cn += n; }
+    if (cn + n > max || (quick && !out.length)) { out.push(cur.trim()); cur = s; cn = n; } else { cur += ' ' + s; cn += n; }
   }
   if (cur) out.push(cur.trim());
   return out;
@@ -315,19 +318,30 @@ export function makeFlow(pack, { plain = false } = {}) {
     lin(fin.w, tB, lB, FD, LAT, fin.b);
   };
 
-  const voices = pack.voices;
+  const voices = { ...pack.voices };
+  // 'anna+vera': a voice between two, the speakers' key/value caches averaged where both have them (their positions
+  // line up, so the model hears one speaker between the two). Measured: words as clear, pitch and sound between the two.
+  const voiceOf = name => {
+    if (voices[name]) return voices[name];
+    const [a, b] = String(name).split('+').map(x => voices[x]);
+    if (!a || !b) return voices[Object.keys(voices)[0]];
+    const n = Math.min(a.pos, b.pos), kvd = a.k[0].length / a.pos, mix = (x, y) => { const o2 = new Float32Array(n * kvd); for (let i = 0; i < o2.length; i++) o2[i] = (x[i] + y[i]) * .5; return o2; };
+    const made = Object.keys(voices).filter(k => k.includes('+'));   // (the last few blends kept: about 2 MB each)
+    if (made.length >= 8) delete voices[made[0]];
+    return (voices[name] = { ...a, pos: n, k: a.k.map((x, l) => mix(x, b.k[l])), v: a.v.map((x, l) => mix(x, b.v[l])) });
+  };
   const gauss = rnd => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
   let busy = null;
 
   /** One line in a voice (one at a time: a new one ends the last). Options as makeTTS's line(). */
-  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, lively = 0 } = {}) {
+  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, lively = 0, quick = false } = {}) {
     // lively: each latent moved away from the part's average so far (1 + 0.6 lively times as far): a wider pitch range,
     // the words as clear (temperature, by contrast, changes the intonation hardly at all in this model). Only what Mimi
     // hears: the flow goes on from the latent it made.
     const wide = 1 + .6 * Math.max(0, Math.min(1, +lively || 0)), avg = new Float64Array(LAT);
     if (busy) busy.stop();
-    const V = voices[voice] || voices[Object.keys(voices)[0]];
-    const parts = chunks(tok, text);
+    const V = voiceOf(voice);
+    const parts = chunks(tok, text, 50, quick);
     let pi = -1, cur = null, stopped = false;
     const draw = () => { if (noise) F.set(noise(), nB); else { const sd = Math.sqrt(temp); for (let i = 0; i < LAT; i++) F[nB + i] = gauss(rnd) * sd; } };
     const start = () => {
@@ -346,7 +360,7 @@ export function makeFlow(pack, { plain = false } = {}) {
     };
     const next = () => {
       while (!stopped) {
-        if (!cur) { if (++pi >= parts.length) { busy = null; return null; } cur = start(); me.first = true; avg.fill(0); }
+        if (!cur) { if (++pi >= parts.length) { busy = null; return null; } cur = start(); me.first = true; me.part = pi; avg.fill(0); }
         const s = cur;
         if (s.step >= s.maxLen) { cur = null; continue; }
         lin(inLin, lB, xB, LAT, D);
@@ -364,36 +378,37 @@ export function makeFlow(pack, { plain = false } = {}) {
       }
       return null;
     };
-    const me = { next, first: true, stop: () => { stopped = true; if (busy === me) busy = null; }, parts };
+    const me = { next, first: true, part: 0, stop: () => { stopped = true; if (busy === me) busy = null; }, parts };
     busy = me;
     return me;
   }
-  return { line, tokenizer: tok, voices: Object.keys(voices), simd: mm.simd };
+  return { line, tokenizer: tok, voices: Object.keys(pack.voices), simd: mm.simd };
 }
 
 /**
  * The second half: Mimi's decoder, latents in, sound out (1920 samples at 24 kHz for each). pack: as makeTTS.
  *   const S = mimi.start()                          a fresh decoder (one at a time: it starts again from silence)
  *   mimi.frame(S, latent [, out]) -> Float32Array    that latent's 80 ms of sound
- * It can be cut in two for two cores (part 'front' and part 'back', each in its own worker): the front runs the
- * first `split` of its 12 transformer layers, the back the rest and the convolutions to sound:
- *   front.front(S, latent) -> Float32Array(16 x 128)    back.back(S, that) -> Float32Array(1920)
+ * It can be cut into stages, each in a worker of its own: a stage runs transformer layers lo..hi-1 of 12 (from a
+ * latent where lo is 0, else from the rows the stage before made) and the convolutions to sound where convs is true:
+ *   part 'front' = { hi: split, convs: false }, 'back' = { lo: split }; mimi.step(S, latent or rows) -> rows (16 x 128) or sound
  */
 export const SPLIT = 8;   // (measured: the flow LM and 8 layers take as long as 4 layers and the convolutions)
-export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT } = {}) {
-  const W = weightsOf(pack), front = part !== 'back', back = part !== 'front';
-  const H = heap(part === 'all' ? 4e6 : part === 'front' ? 1.6e6 : 3e6), { F } = H, mm = gemm(H.memory, { plain });
+export const SPLIT3 = [3, 12];   // three stages: the flow LM and 3 layers | 9 layers | the convolutions
+export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT, lo, hi, convs } = {}) {
+  lo ??= part === 'back' ? split : 0; hi ??= part === 'front' ? split : 12; convs ??= part !== 'front';
+  const W = weightsOf(pack), first = lo === 0;
+  const H = heap(.2e6 + (hi - lo) * .17e6 + (convs ? 2.4e6 : 0)), { F } = H, mm = gemm(H.memory, { plain });
   const P = n => H.put(W(n));
-  const T = 16, D2 = 128, at = { layers: 12, d: D2, heads: 4, kvHeads: 4, headDim: 32, ff: 384, context: 50, scale: true, maxCap: 80 };
-  const mtA = front ? stack(H, mm, W, 'mimi.decoder_transformer.transformer', { ...at, lo: 0, hi: part === 'all' ? 12 : split }) : null;
-  const mtB = part === 'back' ? stack(H, mm, W, 'mimi.decoder_transformer.transformer', { ...at, lo: split, hi: 12 }) : null;
+  const T = 16, D2 = 128;
+  const mt = hi > lo ? stack(H, mm, W, 'mimi.decoder_transformer.transformer', { layers: 12, d: D2, heads: 4, kvHeads: 4, headDim: 32, ff: 384, context: 50, scale: true, maxCap: 80, lo, hi }) : null;
   let mean, std, quant, upW, c0, t2, r3a, r3b, t5, r6a, r6b, t8, r9a, r9b, c11, nB, qB;
-  if (front) {
+  if (first) {
     mean = W('flow_lm.emb_mean'); std = W('flow_lm.emb_std');
     quant = P('mimi.quantizer.output_proj.weight'); upW = W('mimi.upsample.convtr.convtr.weight');
     nB = H.alloc(LAT); qB = H.alloc(D2);
   }
-  if (back) {
+  if (convs) {
     const dw = (i, p = 'conv') => [W(`mimi.decoder.model.${i}.${p}.weight`), W(`mimi.decoder.model.${i}.${p}.bias`)];
     c0 = conv(H, mm, ...dw(0), 128, 256, 3);
     t2 = convT(H, mm, ...dw(2, 'convtr'), 256, 128, 12, 6); r3a = conv(H, mm, ...dw('3.block.1'), 128, 64, 3); r3b = conv(H, mm, ...dw('3.block.3'), 64, 128, 1);
@@ -408,24 +423,21 @@ export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT } = 
   // (a ring of 80 keys: 50 looked back + 16 written at once, so it never overwrites a key still wanted)
   const start = () => {
     H.reset(base);
-    return { A: mtA && mtA.cache(80), B: mtB && mtB.cache(80), up: front ? H.zalloc(D2) : 0,
-      s: back ? [c0, t2, r3a, r3b, t5, r6a, r6b, t8, r9a, r9b, c11].map(c => c.state()) : null };
+    return { C: mt && mt.cache(80), up: first ? H.zalloc(D2) : 0, s: convs ? [c0, t2, r3a, r3b, t5, r6a, r6b, t8, r9a, r9b, c11].map(c => c.state()) : null };
   };
   const eluTo = (x, n) => { const y = H.alloc(n); for (let i = 0; i < n; i++) { const v = F[x + i]; F[y + i] = v > 0 ? v : expm1(v); } return y; };
   const res = (a, sa, b, sb, v, T, ch) => { const h = b.run(sb, eluTo(a.run(sa, eluTo(v, T * ch), T), T * ch / 2), T); for (let i = 0; i < T * ch; i++) F[h + i] += F[v + i]; return h; };
-  // a latent to 16 rows at 200 a second, through the front's transformer layers (left at seqB)
-  const toRows = (S, lat) => {
-    for (let i = 0; i < LAT; i++) F[nB + i] = lat[i] * std[i] + mean[i];
-    lin(quant, nB, qB, LAT, D2);
-    for (let r = 0; r < T; r++) for (let c = 0; c < D2; c++) F[seqB + r * D2 + c] = F[qB + c] * upW[c * 32 + r] + F[S.up + c] * upW[c * 32 + r + 16];
-    F.copyWithin(S.up, qB, qB + D2);
-    mtA.run(seqB, T, S.A);
-  };
-  // the rows at seqB to sound
-  const toSound = (S, out) => {
-    const mark = H.mark();
-    if (mtB) mtB.run(seqB, T, S.B);
-    const s = S.s;
+  // a latent (or the rows the stage before made) to 16 rows at 200 a second through this stage's layers, then to sound
+  const step = (S, x, out = convs ? new Float32Array(FRAME) : null) => {
+    if (first) {
+      for (let i = 0; i < LAT; i++) F[nB + i] = x[i] * std[i] + mean[i];
+      lin(quant, nB, qB, LAT, D2);
+      for (let r = 0; r < T; r++) for (let c = 0; c < D2; c++) F[seqB + r * D2 + c] = F[qB + c] * upW[c * 32 + r] + F[S.up + c] * upW[c * 32 + r + 16];
+      F.copyWithin(S.up, qB, qB + D2);
+    } else F.set(x, seqB);
+    if (mt) mt.run(seqB, T, S.C);
+    if (!convs) return F.slice(seqB, seqB + T * D2);
+    const mark = H.mark(), s = S.s;
     let v = c0.run(s[0], seqB, T);
     v = t2.run(s[1], eluTo(v, T * 256), T); v = res(r3a, s[2], r3b, s[3], v, T * 6, 128);
     v = t5.run(s[4], eluTo(v, T * 6 * 128), T * 6); v = res(r6a, s[5], r6b, s[6], v, T * 30, 64);
@@ -435,12 +447,7 @@ export function makeMimi(pack, { plain = false, part = 'all', split = SPLIT } = 
     H.reset(mark);
     return out;
   };
-  return {
-    start, rate: SR, samples: FRAME, simd: mm.simd,
-    frame: part === 'all' ? (S, lat, out = new Float32Array(FRAME)) => { toRows(S, lat); return toSound(S, out); } : null,
-    front: part === 'front' ? (S, lat) => { toRows(S, lat); return F.slice(seqB, seqB + T * D2); } : null,
-    back: part === 'back' ? (S, rows, out = new Float32Array(FRAME)) => { F.set(rows, seqB); return toSound(S, out); } : null,
-  };
+  return { start, step, frame: step, front: step, back: step, lo, hi, convs, rate: SR, samples: FRAME, simd: mm.simd };
 }
 
 /** Numbers from 0 to 1 that come out the same from the same seed (a line said the same way each time). */
@@ -456,7 +463,8 @@ export function makeTTS(pack, { plain = false } = {}) {
   /**
    * One line in a voice: { next() -> Float32Array of 1920 samples (24 kHz, 80 ms) or null at the end, stop() }.
    * One line at a time (a new one ends the last). temp: how varied (Kyutai's 0.3), rnd: () => 0..1 for the noise,
-   * noise: () => Float32Array(32) to use instead (tests).
+   * noise: () => Float32Array(32) to use instead (tests). lively: 0..1, a wider pitch range. quick: the first sentence
+   * a part of its own. line.part: which of line.parts the last frame belongs to.
    */
   function line(text, voice, opts = {}) {
     const l = flow.line(text, voice, opts);
@@ -465,11 +473,13 @@ export function makeTTS(pack, { plain = false } = {}) {
       const lat = l.next(); if (!lat) return null;
       const first = l.first || !S;
       if (first) S = mimi.start();
+      me.part = l.part;
       const out = mimi.frame(S, lat);
       if (first) for (let i = 0; i < 120; i++) out[i] *= i / 119;   // (each part fades in)
       return out;
     };
-    return { next, stop: l.stop, parts: l.parts };
+    const me = { next, stop: l.stop, parts: l.parts, part: 0 };
+    return me;
   }
   return { line, flow, mimi, tokenizer: flow.tokenizer, voices: flow.voices, rate: SR, frame: FRAME, simd: flow.simd };
 }

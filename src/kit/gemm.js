@@ -14,7 +14,7 @@ const str = s => [...leb(s.length, []), ...[...s].map(c => c.charCodeAt(0))];
 const section = (id, body) => [id, ...leb(body.length, []), ...body];
 const vec = items => [...leb(items.length, []), ...items.flat()];
 
-function gemmBody() {
+function gemmBody(fma = false) {
   // params: a lda b ldb c ldc M N K bias (all i32, floats counted)
   const A = 0, LDA = 1, B = 2, LDB = 3, C = 4, LDC = 5, M = 6, N = 7, K = 8, BIAS = 9;
   // locals
@@ -28,13 +28,15 @@ function gemmBody() {
   const simd = op => c.push(0xfd, ...leb(op, []));
   const vload = () => { simd(0x00); c.push(0, 0); }, vzero = () => { simd(0x0c); for (let i = 0; i < 16; i++) c.push(0); };
   const fadd4 = () => simd(0xe4), fmul4 = () => simd(0xe6), lane = l => { simd(0x1f); c.push(l); };
+  // acc += x * y, x and y pushed by the two functions: one fused multiply-add where relaxed SIMD has it (f32x4.relaxed_madd)
+  const madd = (acc, x, y) => { if (fma) { x(); y(); get(acc); simd(0x105); } else { get(acc); x(); y(); fmul4(); fadd4(); } set(acc); };
   const f32load = () => c.push(0x2a, 2, 0), f32store = () => c.push(0x38, 2, 0), fadd = () => c.push(0x92);
   const block = () => c.push(0x02, 0x40), loop = () => c.push(0x03, 0x40), end = () => c.push(0x0b), br = d => c.push(0x0c, d), brif = d => c.push(0x0d, d);
   const iff = () => c.push(0x04, 0x40), els = () => c.push(0x05);
   const bytesOf = i => { get(i); i32(2); shl(); };                       // floats -> bytes
   const hsum = v => { get(v); lane(0); get(v); lane(1); fadd(); get(v); lane(2); fadd(); get(v); lane(3); fadd(); };
   // acc += load(x + kk) * load(y + kk)
-  const mac = (acc, x, y) => { get(acc); get(x); get(kk); add(); vload(); get(y); get(kk); add(); vload(); fmul4(); fadd4(); set(acc); };
+  const mac = (acc, x, y) => madd(acc, () => { get(x); get(kk); add(); vload(); }, () => { get(y); get(kk); add(); vload(); });
   const store = (row, col, sum) => {      // C[row + col] = sum (+ bias[col])
     get(row); get(n); i32(col); add(); i32(2); shl(); add();
     hsum(sum);
@@ -63,7 +65,7 @@ function gemmBody() {
           get(ar); get(kk); add(); vload(); set(a0);
           get(ar2); get(kk); add(); vload(); set(a1);
           for (const [acc, br0, row] of [[s0, b0, a0], [s1, b1, a0], [s2, b2, a0], [s3, b3, a0], [t0, b0, a1], [t1, b1, a1], [t2, b2, a1], [t3, b3, a1]]) {
-            get(acc); get(row); get(br0); get(kk); add(); vload(); fmul4(); fadd4(); set(acc);
+            madd(acc, () => get(row), () => { get(br0); get(kk); add(); vload(); });
           }
           get(kk); i32(16); add(); set(kk); br(0);
         end(); end();
@@ -79,8 +81,8 @@ function gemmBody() {
         block(); loop();
           get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
           get(b0); get(kk); add(); vload(); set(a1);
-          get(s0); get(ar); get(kk); add(); vload(); get(a1); fmul4(); fadd4(); set(s0);
-          get(t0); get(ar2); get(kk); add(); vload(); get(a1); fmul4(); fadd4(); set(t0);
+          madd(s0, () => { get(ar); get(kk); add(); vload(); }, () => get(a1));
+          madd(t0, () => { get(ar2); get(kk); add(); vload(); }, () => get(a1));
           get(kk); i32(16); add(); set(kk); br(0);
         end(); end();
         store(cr, 0, s0); store(cr2, 0, t0);
@@ -97,7 +99,7 @@ function gemmBody() {
         block(); loop();
           get(kk); get(K4); lts(); i32(1); c.push(0x73); brif(1);
           get(ar); get(kk); add(); vload(); set(a0);
-          for (const [acc, br0] of [[s0, b0], [s1, b1], [s2, b2], [s3, b3]]) { get(acc); get(a0); get(br0); get(kk); add(); vload(); fmul4(); fadd4(); set(acc); }
+          for (const [acc, br0] of [[s0, b0], [s1, b1], [s2, b2], [s3, b3]]) madd(acc, () => get(a0), () => { get(br0); get(kk); add(); vload(); });
           get(kk); i32(16); add(); set(kk); br(0);
         end(); end();
         store(cr, 0, s0); store(cr, 1, s1); store(cr, 2, s2); store(cr, 3, s3);
@@ -157,8 +159,8 @@ function wsumBody() {
   return [...vec([[...leb(5, []), 0x7f], [...leb(2, []), 0x7b]]), ...c];
 }
 
-function moduleBytes(pages) {
-  const g = gemmBody(), w = wsumBody(), sig = n => [0x60, ...vec(Array.from({ length: n }, () => [0x7f])), 0];
+function moduleBytes(pages, fma) {
+  const g = gemmBody(fma), w = wsumBody(), sig = n => [0x60, ...vec(Array.from({ length: n }, () => [0x7f])), 0];
   return new Uint8Array([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     ...section(1, vec([sig(10), sig(7)])),
@@ -191,16 +193,16 @@ function slowWsum(F) {
 }
 
 /** gemm over this memory, with .wsum (see wsumBody); `.simd` says whether they are the fast ones. */
-export function gemm(memory, { plain = false } = {}) {
+export function gemm(memory, { plain = false, fma = true } = {}) {
   const pages = memory.buffer.byteLength / 65536;
-  if (!plain) {
-    try {
-      const mod = new WebAssembly.Module(moduleBytes(pages));
+  if (!plain) for (const fused of fma ? [true, false] : [false]) {
+    try {   // fused multiply-adds where the browser has relaxed SIMD, else the plain four-wide sums
+      const mod = new WebAssembly.Module(moduleBytes(pages, fused));
       const ex = new WebAssembly.Instance(mod, { e: { m: memory } }).exports, fn = ex.gemm;
-      fn.wsum = ex.wsum; fn.simd = true;
+      fn.wsum = ex.wsum; fn.simd = true; fn.fma = fused;
       return fn;
-    } catch (e) { if (globalThis.process?.env?.GEMM_DEBUG) console.error(e); /* no WebAssembly SIMD here */ }
+    } catch (e) { if (globalThis.process?.env?.GEMM_DEBUG) console.error(e); /* not here */ }
   }
-  const F = new Float32Array(memory.buffer), fn = slow(F); fn.wsum = slowWsum(F); fn.simd = false;
+  const F = new Float32Array(memory.buffer), fn = slow(F); fn.wsum = slowWsum(F); fn.simd = false; fn.fma = false;
   return fn;
 }

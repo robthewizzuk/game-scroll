@@ -10,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { TALK_VOICES, TALK_VERSION, TALK_FILE } from '../src/kit/talk-files.js';
 import { unpack } from '../src/kit/talk-pack.js';
-import { makeTTS, makeFlow, makeMimi, seeded } from '../src/kit/pocket-tts.js';
+import { makeTTS, makeFlow, makeMimi, seeded, SPLIT3 } from '../src/kit/pocket-tts.js';
 import { spoken, respell } from '../src/kit/say-words.js';
-import { stretch } from '../src/kit/voice-fx.js';
+import { stretch, marksFrom } from '../src/kit/voice-fx.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,14 +24,16 @@ globalThis.__gsOwnVoice = true;
 const { ownVoices, castOwn } = await import('../src/kit/talk.js');
 {
   const list = ownVoices(), kindOf = at => TALK_VOICES[at].kind, pick = w => castOwn(wantOf(w));
-  const women = new Set(), men = new Set();
-  for (let take = 0; take < 9; take++) { const w = pick({ kind: 'woman', take }); women.add(w.at); ok(kindOf(w.at) === 'woman' && w.pitch === 1, `cast: woman take ${take} is ${TALK_VOICES[w.at].name} (${TALK_VOICES[w.at].lang})`); }
-  for (let take = 0; take < 7; take++) { const m = pick({ kind: 'man', take }); men.add(m.at); ok(kindOf(m.at) === 'man' && m.pitch === 1, `cast: man take ${take} is ${TALK_VOICES[m.at].name} (${TALK_VOICES[m.at].lang})`); }
-  ok(women.size === 9 && men.size === 7, 'cast: every voice of a kind is a different one before any repeats');
-  ok(TALK_VOICES[pick({ kind: 'woman', take: 0 }).at].lang === 'en-GB' && pick({ kind: 'woman', take: 9 }).pitch !== 1, 'cast: a British voice first (the default accent), a nudged pitch once all are used');
+  const women = new Set(), men = new Set(), nW = TALK_VOICES.filter(v => v.kind === 'woman').length, nM = TALK_VOICES.filter(v => v.kind === 'man').length;
+  for (let take = 0; take < nW; take++) { const w = pick({ kind: 'woman', take }); women.add(w.at); ok(kindOf(w.at) === 'woman' && w.pitch === 1, `cast: woman take ${take} is ${TALK_VOICES[w.at].name} (${TALK_VOICES[w.at].lang})`); }
+  for (let take = 0; take < nM; take++) { const m = pick({ kind: 'man', take }); men.add(m.at); ok(kindOf(m.at) === 'man' && m.pitch === 1, `cast: man take ${take} is ${TALK_VOICES[m.at].name} (${TALK_VOICES[m.at].lang})`); }
+  ok(women.size === nW && men.size === nM && nW >= 11 && nM >= 9, 'cast: every voice of a kind is a different one before any repeats');
+  ok(TALK_VOICES[pick({ kind: 'woman', take: 0 }).at].lang === 'en-GB' && pick({ kind: 'woman', take: nW + nW * (nW - 1) / 2 }).pitch !== 1, 'cast: a British voice first (the default accent), a nudged pitch once all are used');
+  ok(pick({ kind: 'woman', take: nW }).voiceURI === 'gs-voice:anna+vera' && pick({ kind: 'man', take: nM }).voiceURI.includes('+') && pick({ kind: 'man', take: nM }).pitch === 1, `cast: then voices between two (${pick({ kind: 'woman', take: nW }).voiceURI}, ${pick({ kind: 'man', take: nM }).voiceURI})`);
   ok(TALK_VOICES[pick({ kind: 'woman', lang: 'en-US' }).at].lang === 'en-US' && TALK_VOICES[pick({ kind: 'man', lang: ['en-US'], take: 1 }).at].lang === 'en-US', 'cast: American voices when asked for en-US');
   ok(TALK_VOICES[pick({ kind: 'woman', take: 3 }).at].name === 'eponine', 'cast: a Scottish woman next after the English ones (en-GB-scotland is in en-GB)');
   ok(castOwn(wantOf({ kind: 'man', lang: 'fr-FR' })) === null, 'cast: no built-in voice for French (the computer says it)');
+  ok(TALK_VOICES[pick({ kind: 'woman', lang: ['en-FR'] }).at].name === 'estelle' && TALK_VOICES[pick({ kind: 'man', lang: ['en-IT'] }).at].name === 'giovanni', 'cast: an English line with a French or Italian accent when asked for');
   ok(list[pick({ like: ['javert'] }).at].voiceURI === 'gs-voice:javert' && TALK_VOICES[pick({ like: ['stuart'] }).at].kind === 'any', 'cast: a voice asked for by name, the in-between ones too');
   ok(TALK_VOICES[pick('any').at].name === 'anna', 'cast: a line with no voice given is said by the first British voice');
 }
@@ -108,6 +110,35 @@ if (bytes) {
     const two = new Float32Array(parts.length * 1920); parts.forEach((p, i) => two.set(p, i * 1920));
     ok(two.length === one.length && two.every((x, i) => x === one[i]), `two halves: the same sound as one (text and front ${(tf / parts.length).toFixed(1)} ms a frame, back ${(tb / parts.length).toFixed(1)} ms)`);
   }
+  { // three stages (a worker each where the computer has 8 threads) say it exactly as one does
+    const flow = makeFlow(pack), [c1, c2] = SPLIT3, st = [makeMimi(pack, { hi: c1, convs: false }), makeMimi(pack, { lo: c1, hi: c2, convs: false }), makeMimi(pack, { lo: c2, hi: 12, convs: true })];
+    const one = say('Three workers, one voice.', 'estelle', 5), l = flow.line('Three workers, one voice.', 'estelle', { rnd: seeded(5) }), parts = []; let lat, S = null;
+    while ((lat = l.next())) {
+      const first = l.first || !S; if (first) S = st.map(m => m.start());
+      let x = lat; st.forEach((m, i) => { x = m.step(S[i], x); });
+      if (first) for (let i = 0; i < 120; i++) x[i] *= i / 119;
+      parts.push(x);
+    }
+    const three = new Float32Array(parts.length * 1920); parts.forEach((p, i) => three.set(p, i * 1920));
+    ok(three.length === one.length && three.every((x, i) => x === one[i]), 'three stages: the same sound as one');
+  }
+  { // the first sentence is a part of its own (quick), so it can be played while the rest is written
+    const l = makeFlow(pack).line('Over here. The door at the end of the long hall is open now, so hurry.', 'anna', { rnd: seeded(2), quick: true });
+    ok(l.parts.length >= 2 && l.parts[0].trim() === 'Over here.', `pieces: the first sentence on its own ("${l.parts[0]}" of ${l.parts.length})`);
+    l.stop?.();
+  }
+  { // word marks from the sound: the word after each full stop starts at the end of a pause, not where length alone puts it
+    const text = 'Wait. Not that one. The red door, on the left.', a = say(text, 'george', 3), m = marksFrom(text, a, tts.rate);
+    const quietBefore = t => { const i = Math.round(t * tts.rate), w = Math.round(tts.rate * .06); let e = 0; for (let k = Math.max(0, i - w); k < i; k++) e += a[k] * a[k]; return Math.sqrt(e / w); };
+    let loud = 0; for (const x of a) loud += x * x; loud = Math.sqrt(loud / a.length);
+    const after = [text.indexOf('Not'), text.indexOf('The')].map(i => m[m.indexOf(i) + 1]);
+    ok(m.length === 2 * 10 && m.every((v, i) => i % 2 === 0 || i < 3 || v >= m[i - 2]) && after.every(t => quietBefore(t) < loud * .35),
+      `marks from the sound: 10 words in order, "Not" and "The" just after a pause (${after.map(t => t.toFixed(2)).join(', ')} s)`);
+  }
+  { // a voice between two: its pitch between theirs
+    const hz = v => f0(say('Pick up the lantern before the light goes.', v, 6), tts.rate), [a, b, m] = ['george', 'charles', 'george+charles'].map(hz);
+    ok(m > Math.min(a, b) - 5 && m < Math.max(a, b) + 5 && m !== a, `blend: george+charles speaks at ${m.toFixed(0)} Hz (george ${a.toFixed(0)}, charles ${b.toFixed(0)})`);
+  }
   { // lively: a wider pitch range, the same length of line, the words still there
     const plain = say('Oh, you found it! That is wonderful news.', 'george', 4), live = (() => { const l = tts.line('Oh, you found it! That is wonderful news.', 'george', { rnd: seeded(4), lively: 1 }), ps = []; let c; while ((c = l.next())) ps.push(c); const a = new Float32Array(ps.length * 1920); ps.forEach((p, i) => a.set(p, i * 1920)); return a; })();
     const spread = a => { const hz = pitches(a, tts.rate); const st = hz.map(h => 12 * Math.log2(h / 100)), m = st.reduce((x, y) => x + y, 0) / st.length; return Math.sqrt(st.reduce((x, y) => x + (y - m) ** 2, 0) / st.length); };
@@ -161,13 +192,35 @@ async function inBrowser() {
       const o = { voice: 'man', lively: 1, respell: { Zorblax: 'zor blacks' } }, line3 = 'Zorblax pays £5.99 at 3:30 pm on the 14th.';
       let t1 = performance.now(); const said3 = await s.say(line3, o); const ms3 = performance.now() - t1;
       t1 = performance.now(); const again = await s.say(line3, o); const ms4 = performance.now() - t1;
-      return { up, said, said2, ms, shaped: s.shaped(), words, n: list.length, first: list[0]?.name, cores: t.ownCores(), threads: navigator.hardwareConcurrency, said3, ms3, again, ms4 };
+      // a long line comes in pieces: the first (its first sentence) well before the last
+      const long = 'Right. The bridge is out, the river is high, and the only other way round is the old mine road, which nobody has used in years.';
+      t1 = performance.now(); const head = await t.speak({ text: long, voiceURI: 'gs-voice:daan', fresh: true }); const firstMs = performance.now() - t1;
+      let n = head ? 1 : 0; for (let pc = head; pc && !pc.last; pc = await pc.more) n++;
+      const lastMs = performance.now() - t1;
+      // written ahead: prepare() while nothing is said, then say() starts at once
+      const ahead = "We'll need a rope. And a lantern.", oa = { voice: { kind: 'woman', lang: ['en-ES'] } };
+      const kept = { text: 'Kept for next time. Twice over.', voiceURI: 'gs-voice:giovanni' };
+      for (let pc = await t.speak(kept); pc && !pc.last; pc = await pc.more);
+      const prepared = await s.prepare(ahead, oa); t1 = performance.now();
+      const said5 = await s.say(ahead, oa); const ms5 = performance.now() - t1;
+      return { up, said, said2, ms, shaped: s.shaped(), words, n: list.length, first: list[0]?.name, cores: t.ownCores(), threads: navigator.hardwareConcurrency, said3, ms3, again, ms4,
+        pieces: n, firstMs, lastMs, prepared, said5, ms5 };
     });
     ok(r.up === true, 'page: the voice file loads in the worker');
     ok(r.said === true && r.shaped === true, `page: say() speaks with the built-in voice through the mixer (${(r.ms / 1000).toFixed(1)} s from the call to the last word)`);
     ok(r.said2 === true && r.words.length === 4, `page: a cast, shaped, faster line speaks with its words timed (${r.words.join(', ')})`);
     ok(r.n === TALK_VOICES.length && /built in/.test(r.first), `page: voices() lists the built-in ones (${r.first})`);
-    ok(r.cores === (r.threads >= 4 ? 2 : 1), `page: ${r.cores} worker${r.cores > 1 ? 's' : ''} write the voice (${r.threads} threads here)`);
+    ok(r.pieces >= 2 && r.firstMs < r.lastMs * .6, `page: a long line in ${r.pieces} pieces, the first in ${(r.firstMs / 1000).toFixed(2)} s, all in ${(r.lastMs / 1000).toFixed(2)} s`);
+    ok(r.prepared === true && r.said5 === true, 'page: prepare() writes a line ahead and say() then says it');
+    // a new launch: the lines said before come from the kept takes
+    await p.reload();
+    const k = await p.evaluate(async () => {
+      const t = await import('/src/kit/talk.js'); await t.readyNow();
+      const t0 = performance.now(), head = await t.speak({ text: 'Kept for next time. Twice over.', voiceURI: 'gs-voice:giovanni' });
+      return { ms: performance.now() - t0, ok: !!head };
+    });
+    ok(k.ok && k.ms < 400, `page: after a reload, a line said before comes from the kept take (${k.ms.toFixed(0)} ms)`);
+    ok(r.cores === (r.threads >= 8 ? 3 : r.threads >= 4 ? 2 : 1), `page: ${r.cores} worker${r.cores > 1 ? 's' : ''} write the voice (${r.threads} threads here)`);
     ok(r.said3 === true && r.again === true && r.ms4 < r.ms3, `page: numbers, a respelled name and lively said (${(r.ms3 / 1000).toFixed(1)} s), the same line again from the kept take (${(r.ms4 / 1000).toFixed(1)} s)`);
     ok(!errs.length, 'page: no errors' + (errs.length ? ': ' + errs.join(' | ') : ''));
   } finally { await b.close(); await server.close(); }

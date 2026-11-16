@@ -1,21 +1,25 @@
-// The desktop app's built-in voice, off the main thread (src/kit/talk.js): downloads the voice file once (kept in the
-// browser's cache storage), checks its SHA-256, and writes lines to sound with Pocket TTS 7M (pocket-tts.js).
-// Two of these share the work where the computer has the cores: the lead turns text into latents and runs the first
-// part of Mimi's decoder (pocket-tts.js SPLIT), the back runs the rest and answers the page, a frame behind, so a line
-// takes about half as long. Alone, the lead does it all.
-//   lead: { type: 'load', url, sha, port? }               -> { type: 'ready', simd, cores } | { type: 'failed', why }
-//         { type: 'say', id, text, voice, lang, tempo, lively, seed }   (the answer comes from the back where there is one)
-//         { type: 'stop', id }                            ends that line early (its answer is pcm: null)
-//   back: { type: 'back', port }                          then works from what the lead sends down the port
-//   answer: { type: 'line', id, pcm: Float32Array (24 kHz), seconds } | { type: 'line', id, pcm: null }
+// The built-in voice, off the main thread (src/kit/talk.js): downloads the voice file once (kept in the browser's cache
+// storage), checks its SHA-256, and writes lines to sound with Pocket TTS 7M (pocket-tts.js).
+// Where the computer has the cores, two or three of these share each line as a production line: the lead turns text
+// into latents and runs the first layers of Mimi's decoder, each next stage runs more of it, a frame behind, and the
+// last makes the sound and answers the page. Alone, the lead does it all.
+// A line comes back a piece at a time (the model's parts: the first sentence on its own), so it can start playing
+// while the rest is written, and a finished line said the same way is kept (cache storage) for the next launch.
+//   lead:  { type: 'load', url, sha, port? }    -> { type: 'ready', simd, cores } | { type: 'failed', why }
+//          { type: 'say', id, text, voice, lang, tempo, lively, seed, ahead }   seed null: a fresh take, not kept;
+//                                               ahead: written ahead of time, after the lines wanted now
+//          { type: 'stop', id }                 ends that line early
+//          { type: 'soon', id }                 a line written ahead is wanted now
+//   stage: { type: 'stage', from: port, to: port | null, lo, hi, convs }   then works from what comes down the port
+//   to the page, from whichever writes the sound: { type: 'piece', id, pcm: Float32Array (24 kHz) | null, text, last, speed }
 import { unpack } from './talk-pack.js';
-import { makeTTS, makeFlow, makeMimi, seeded } from './pocket-tts.js';
+import { makeFlow, makeMimi, seeded } from './pocket-tts.js';
 import { stretch } from './voice-fx.js';
 import { spoken } from './say-words.js';
 
-let tts = null, loading = null, back = null;   // back: the port to the other worker, once it is ready
-let flow = null, front = null;
+let loading = null, flow = null, first = null, next = null;   // next: the port to the next stage, once it is ready
 const stops = new Set(), queue = [];
+let fileUrl = '';
 
 const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 async function bytesOf(url, sha) {
@@ -32,41 +36,112 @@ async function bytesOf(url, sha) {
   return buf;
 }
 
+/* ---------- lines kept between launches: the same words, voice and delivery come out the same, so once is enough ---------- */
+const LINES = 'gs-talk-lines', KEEP = 400;   // (about 6 MB for 400 lines of a few seconds)
+const lineUrl = key => `https://gs-talk.invalid/line/${key}`;
+async function keyOf(m, words) {
+  if (m.seed == null || !crypto?.subtle) return null;
+  const s = JSON.stringify([fileUrl, m.voice, m.lively || 0, m.tempo || 1, m.seed, words]);
+  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+}
+/** [{ text, pcm }] kept for this line, or null. */
+async function kept(key) {
+  try {
+    const r = await (await caches.open(LINES)).match(lineUrl(key)); if (!r) return null;
+    const b = await r.arrayBuffer(), d = new DataView(b), out = []; let at = 4;
+    for (let i = 0, n = d.getUint32(0, true); i < n; i++) {
+      const tl = d.getUint32(at, true), text = new TextDecoder().decode(new Uint8Array(b, at + 4, tl)); at += 4 + tl; at += (4 - at % 4) % 4;
+      const len = d.getUint32(at, true), q = new Int16Array(b, at + 4, len), pcm = new Float32Array(len); at += 4 + len * 2; at += (4 - at % 4) % 4;
+      for (let j = 0; j < len; j++) pcm[j] = q[j] / 32767;
+      out.push({ text, pcm });
+    }
+    return out;
+  } catch { return null; }
+}
+async function keep(key, pieces) {
+  try {
+    const enc = pieces.map(p => new TextEncoder().encode(p.text || '')), pad = n => n + (4 - n % 4) % 4;
+    let size = 4; pieces.forEach((p, i) => { size += pad(4 + enc[i].length) + pad(4 + p.pcm.length * 2); });
+    const b = new ArrayBuffer(size), d = new DataView(b); let at = 4; d.setUint32(0, pieces.length, true);
+    pieces.forEach((p, i) => {
+      d.setUint32(at, enc[i].length, true); new Uint8Array(b, at + 4).set(enc[i]); at = pad(at + 4 + enc[i].length);
+      d.setUint32(at, p.pcm.length, true); const q = new Int16Array(b, at + 4, p.pcm.length);
+      for (let j = 0; j < p.pcm.length; j++) q[j] = Math.max(-32767, Math.min(32767, Math.round(p.pcm[j] * 32767)));
+      at = pad(at + 4 + p.pcm.length * 2);
+    });
+    const store = await caches.open(LINES), idx = lineUrl('index');
+    const list = await (await store.match(idx))?.json().catch(() => []) || [];
+    const keys = list.filter(k => k !== key); keys.push(key);
+    while (keys.length > KEEP) await store.delete(lineUrl(keys.shift()));
+    await store.put(lineUrl(key), new Response(b, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    await store.put(idx, new Response(JSON.stringify(keys), { headers: { 'Content-Type': 'application/json' } }));
+  } catch { /* no cache storage, or it is full: it is written again next time */ }
+}
+
 // a moment for messages (a stop) between frames, without the clamped wait of setTimeout
 const ch = new MessageChannel(), waits = [];
 ch.port1.onmessage = () => waits.shift()?.();
 const breathe = () => new Promise(res => { waits.push(res); ch.port2.postMessage(0); });
 
 const join = parts => { let n = 0; for (const p of parts) n += p.length; const a = new Float32Array(n); n = 0; for (const p of parts) { a.set(p, n); n += p.length; } return a; };
-const answer = (id, pcm) => pcm ? postMessage({ type: 'line', id, pcm, seconds: pcm.length / 24000 }, [pcm.buffer]) : postMessage({ type: 'line', id, pcm: null });
-const none = id => back ? back.postMessage({ type: 'stop', id }) : answer(id, null);
+const piece = (id, pcm, text, last, speed = 0) => pcm
+  ? postMessage({ type: 'piece', id, pcm, text, last, speed }, [pcm.buffer])
+  : postMessage({ type: 'piece', id, pcm: null, text: '', last: true, speed: 0 });
 
-async function speak({ id, text, voice, lang, tempo = 1, lively = 0, seed = null }) {
-  const opts = { lively, rnd: seed == null ? Math.random : seeded(seed) }, words = spoken(String(text), { lang });
-  let t0 = performance.now();
-  const halt = async () => {
-    if (performance.now() - t0 > 12) { await breathe(); t0 = performance.now(); }
-    return stops.delete(id);
+/** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
+function writer() {
+  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false;
+  const flush = last => {
+    if (!frames.length && !last) return;
+    const pcm = stretch(join(frames), 24000, tempo), copy = key ? pcm.slice() : null;
+    secs += pcm.length / 24000;
+    if (key) done.push({ text, pcm: copy });
+    // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much
+    piece(id, pcm, text, last, last && secs >= 2 ? secs / Math.max(.001, (Date.now() - t0) / 1000) : 0);
+    frames = [];
   };
-  if (back) {   // two cores: latents and the front of the decoder here, the rest down the port
-    const l = flow.line(words, voice, opts);
-    let S = null, lat;
-    while ((lat = l.next())) {
-      const first = l.first || !S;
-      if (first) S = front.start();
-      const rows = front.front(S, lat);
-      back.postMessage({ type: 'rows', id, rows, first }, [rows.buffer]);
-      if (await halt()) { l.stop(); return back.postMessage({ type: 'stop', id }); }
-    }
-    return back.postMessage({ type: 'end', id, tempo });
-  }
-  const line = tts.line(words, voice, opts), parts = [];
-  for (let c; (c = line.next());) {
-    parts.push(c);
-    if (await halt()) { line.stop(); return answer(id, null); }
-  }
-  answer(id, stretch(join(parts), 24000, tempo));
+  return {
+    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; },
+    frame(m, pcm, partText) {
+      if (m.id !== id || broken) return;
+      if (m.first && frames.length) flush(false);
+      if (m.first) text = partText ?? m.part ?? '';
+      if (m.first) for (let i = 0; i < 120; i++) pcm[i] *= i / 119;   // (each part fades in)
+      frames.push(pcm);
+    },
+    fail(m) { if (m.id === id) broken = true; },
+    end(m) {
+      if (m.id !== id || broken) { piece(m.id, null); id = -1; return; }
+      flush(true);
+      if (key && done.length) keep(key, done);
+      id = -1;
+    },
+    stop(m) { piece(m.id, null); if (m.id === id) id = -1; },
+  };
 }
+
+async function speak(m) {
+  const { id } = m, words = spoken(String(m.text), { lang: m.lang }), key = await keyOf(m, words);
+  if (key) {   // said before, the same way: from the cache, at once
+    const have = await kept(key);
+    if (have?.length) { have.forEach((p, i) => piece(id, p.pcm, p.text, i === have.length - 1, 99)); return; }
+  }
+  const opts = { lively: m.lively || 0, quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
+  const head = { id, tempo: m.tempo || 1, key, t0: Date.now() };
+  const l = flow.line(words, m.voice, opts), out = next || null, w = out ? null : writer();
+  if (out) out.postMessage({ type: 'line', ...head }); else w.line(head);
+  let S = null, lat, t0 = performance.now();
+  while ((lat = l.next())) {
+    const isFirst = l.first || !S;
+    if (isFirst) S = first.start();
+    const x = first.step(S, lat), msg = { type: 'rows', id, first: isFirst, part: isFirst ? l.parts[l.part] : null };
+    if (out) out.postMessage({ ...msg, rows: x }, [x.buffer]); else w.frame(msg, x, msg.part);
+    if (performance.now() - t0 > 12) { await breathe(); t0 = performance.now(); }
+    if (stops.delete(id)) { l.stop(); if (out) out.postMessage({ type: 'stop', id }); else w.stop({ id }); return; }
+  }
+  if (out) out.postMessage({ type: 'end', id }); else w.end({ id });
+}
+const none = id => next ? next.postMessage({ type: 'stop', id }) : piece(id, null);
 
 let running = false;
 async function drain() {
@@ -75,52 +150,72 @@ async function drain() {
   finally { running = false; }
 }
 
-/** The back: Mimi's last layers and convolutions, from the rows the lead sends, and the answer to the page. */
-function beBack(port) {
-  let mimi = null, S = null, at = -1, parts = [];
-  port.onmessage = e => {
+/** A stage after the lead: more of the decoder's layers (and the sound, if it is the last), from the rows that come in. */
+function beStage({ from, to, lo, hi, convs }) {
+  let mimi = null, S = null, at = -1;
+  const w = convs ? writer() : null;
+  from.onmessage = async e => {
     const m = e.data || {};
     if (m.type === 'bytes') {
-      try { mimi = makeMimi(unpack(m.bytes), { part: 'back' }); port.postMessage({ type: 'ready' }); }
-      catch (err) { port.postMessage({ type: 'failed', why: String(err?.message || err) }); }
-    } else if (m.type === 'rows') {
-      if (m.id !== at) { at = m.id; parts = []; S = null; }
-      if (!S || m.first) S = mimi.start();
       try {
-        const out = mimi.back(S, m.rows);
-        if (m.first) for (let i = 0; i < 120; i++) out[i] *= i / 119;   // (each part fades in)
-        parts.push(out);
-      } catch { at = -2; parts = null; }
-    } else if (m.type === 'end' || m.type === 'stop') {
-      const ok = m.type === 'end' && m.id === at && parts;
-      answer(m.id, ok ? stretch(join(parts), 24000, m.tempo) : null);
-      if (m.id === at) { at = -1; parts = []; S = null; }
+        mimi = makeMimi(unpack(m.bytes), { lo, hi, convs });
+        if (to) {   // the stage after this one gets its copy first
+          const up = await new Promise(res => { to.onmessage = ev => res(ev.data?.type === 'ready'); to.postMessage({ type: 'bytes', bytes: m.bytes }, [m.bytes]); });
+          to.onmessage = null;
+          if (!up) throw new Error('the next stage failed');
+        }
+        from.postMessage({ type: 'ready' });
+      } catch (err) { from.postMessage({ type: 'failed', why: String(err?.message || err) }); }
+      return;
     }
+    if (to) {   // a middle stage: rows in, rows on
+      if (m.type === 'rows') {
+        if (m.id !== at || m.first || !S) { at = m.id; S = mimi.start(); }
+        try { const r = mimi.step(S, m.rows); to.postMessage({ ...m, rows: r }, [r.buffer]); } catch { to.postMessage({ type: 'stop', id: m.id }); at = -2; }
+      } else to.postMessage(m);
+      return;
+    }
+    if (m.type === 'line') { w.line(m); at = m.id; S = null; }
+    else if (m.type === 'rows') {
+      if (m.id !== at) return;
+      if (m.first || !S) S = mimi.start();
+      try { w.frame(m, mimi.step(S, m.rows), m.part); } catch { w.fail(m); }
+    } else if (m.type === 'end') w.end(m);
+    else if (m.type === 'stop') w.stop(m);
   };
 }
 
-/** The lead's half of the start: the voice file, then the back (if there is one) gets its copy. */
+/** The lead's half of the start: the voice file, then the next stage (if there is one) gets its copy. */
 async function load(m) {
-  const bytes = await bytesOf(m.url, m.sha);
+  fileUrl = m.url;
+  const bytes = await bytesOf(m.url, m.sha), pack = unpack(bytes);
+  flow = makeFlow(pack);
   if (m.port) {
     const port = m.port;
-    const up = await new Promise(res => {
-      port.onmessage = e => res(e.data?.type === 'ready');
-      port.postMessage({ type: 'bytes', bytes: bytes.slice(0) });
-    });
+    const up = await new Promise(res => { port.onmessage = e => res(e.data?.type === 'ready'); port.postMessage({ type: 'bytes', bytes: bytes.slice(0) }); });
     port.onmessage = null;
-    if (up) { const pack = unpack(bytes); flow = makeFlow(pack); front = makeMimi(pack, { part: 'front' }); back = port; return flow.simd; }
+    if (up) { first = makeMimi(pack, { hi: m.hi, convs: false }); next = port; return { simd: flow.simd, cores: m.cores }; }
   }
-  tts = makeTTS(unpack(bytes));
-  return tts.simd;
+  first = makeMimi(pack);
+  return { simd: flow.simd, cores: 1 };
 }
 
 onmessage = e => {
   const m = e.data || {};
-  if (m.type === 'back') beBack(m.port);
+  if (m.type === 'stage') beStage(m);
   else if (m.type === 'load') {
-    loading ||= load(m).then(simd => postMessage({ type: 'ready', simd, cores: back ? 2 : 1 }),
+    loading ||= load(m).then(r => postMessage({ type: 'ready', ...r }),
       err => { loading = null; postMessage({ type: 'failed', why: String(err?.message || err) }); });
-  } else if (m.type === 'say') { if (!tts && !back) postMessage({ type: 'line', id: m.id, pcm: null }); else { queue.push(m); drain(); } }
-  else if (m.type === 'stop') stops.add(m.id);
+  } else if (m.type === 'say') {
+    if (!first) { piece(m.id, null); return; }
+    // a line written ahead (ahead: true) waits behind every line wanted now
+    const at = m.ahead ? -1 : queue.findIndex(q => q.ahead);
+    if (at < 0) queue.push(m); else queue.splice(at, 0, m);
+    drain();
+  }
+  else if (m.type === 'soon') {   // a line written ahead is wanted now: before the others written ahead
+    const at = queue.findIndex(q => q.id === m.id); if (at < 0) return;
+    const [q] = queue.splice(at, 1), to = queue.findIndex(x => x.ahead); q.ahead = false;
+    if (to < 0) queue.push(q); else queue.splice(to, 0, q);
+  } else if (m.type === 'stop') stops.add(m.id);
 };

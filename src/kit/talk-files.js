@@ -4,9 +4,9 @@
 // the app downloads it the first time a character speaks, checks it against TALK_SHA256, and keeps it.
 // Bump TALK_VERSION (and the hash: the pack script prints it) whenever the file changes.
 
-export const TALK_VERSION = 'pocket-tts-7m-1';
+export const TALK_VERSION = 'pocket-tts-7m-2';
 export const TALK_FILE = 'english-7m.gsv';
-export const TALK_SHA256 = '233a3b4fde6b294677435fca0ba878dd8a1f0f8ac2cdc7b3b274401667bee325';
+export const TALK_SHA256 = '3a6eb536f506160c84e59ec329ab050327e430e0b75bb06084de73a4a7e540a1';
 export const TALK_SOURCE = {
   repo: 'kyutai/pocket-tts-without-voice-cloning',
   revision: 'a7056f505a4a8ca72d8b5fb1440071d6f1a35739',
@@ -16,11 +16,13 @@ export const TALK_SOURCE = {
 // The voices packed in, each heard by the model from a recording a speaker gave under a licence that allows this.
 // kind: how the model's voice sounds, from its middle pitch in Hz over nine lines (hz): a man's under 125, a woman's
 // over 145; 'any' for the three that wander between the two from line to line (cast only when asked for by name).
-// lang: the speaker's accent where the dataset says it ('en' where it doesn't). Kyutai also ships
+// lang: the speaker's accent where the dataset says it ('en' where it doesn't); English said with another language's
+// accent is en-<country> (en-FR: English as a French speaker says it), cast after all the others or when asked for. Kyutai also ships
 // voices from datasets for non-commercial use only (Expresso, EARS): those are left out.
 const VCTK = 'VCTK corpus, CSTR, University of Edinburgh (CC BY 4.0)';
 const DONATED = 'Unmute Voice Donation Project, Kyutai (CC0)';
 const LIBRIVOX = 'Voice-Zero, from LibriVox (CC0)';
+const COMMON = 'Mozilla Common Voice (CC0)';
 export const TALK_VOICES = [
   { name: 'anna', kind: 'woman', hz: 197, lang: 'en-GB', credit: VCTK + ', speaker p228' },
   { name: 'vera', kind: 'woman', hz: 174, lang: 'en-GB', credit: VCTK + ', speaker p229' },
@@ -41,6 +43,11 @@ export const TALK_VOICES = [
   { name: 'bill_boerst', kind: 'man', hz: 121, lang: 'en', credit: LIBRIVOX + ', reader Bill Boerst' },
   { name: 'peter_yearsley', kind: 'man', hz: 82, lang: 'en', credit: LIBRIVOX + ', reader Peter Yearsley' },
   { name: 'stuart_bell', kind: 'any', hz: 130, lang: 'en', credit: LIBRIVOX + ', reader Stuart Bell' },
+  // speakers of other languages, speaking English with their accent (the juergen and rafael voices have no licence stated: left out)
+  { name: 'estelle', kind: 'woman', hz: 258, lang: 'en-FR', credit: 'Kyutai, a recording of its own for unmute.sh (CC0)' },
+  { name: 'lola', kind: 'woman', hz: 206, lang: 'en-ES', credit: COMMON + ', Spanish' },
+  { name: 'giovanni', kind: 'man', hz: 113, lang: 'en-IT', credit: COMMON + ', Italian' },
+  { name: 'daan', kind: 'man', hz: 88, lang: 'en-NL', credit: 'CML-TTS dataset, Dutch, speaker 11290 (CC BY 4.0)' },
 ];
 
 export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai (model CC BY 4.0, code MIT), run in the app in plain JavaScript';

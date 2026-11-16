@@ -6,7 +6,7 @@ Sound effects, 98 ready-made sounds, music and tunes made in code, the mixer, wo
 
 `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and `music({ layers }).intensity()` + `follow(song)` (living music)
 
-On the Mac, Windows and Linux app every English `say()` line is spoken by the app's own built-in voice (Pocket TTS 7M by Kyutai, run in a background worker; `src/kit/talk.js`), so a cast sounds the same on every computer and a SteamOS handheld doesn't fall back to espeak. Its 19 voices: 9 women and 7 men cast by `voice: 'woman' | 'man'` (British first, then Scottish, Canadian, American; `lang: 'en-US'` puts American first), and 3 in between that come only by name (`like: ['alba']`). Every line goes through the mixer as a shaped one does, so `size` and `fx` work there too. Lines in other languages, and lines before its 12 MB file has downloaded the first time, are said by the computer's own voices. It reads numbers, money, times and dates as words (`'£5.99 at 3:30 pm on 01/02'`: five pounds ninety-nine at three thirty p m on the first of February; `lang: 'en-US'` reads the month first), says a line the same way each time (`fresh: true` for a new take) and `lively: 0..1` widens a character's intonation. `respell: { Zorblax: 'zor blacks' }` says made-up names your way, with every voice.
+On the Mac, Windows and Linux app, and in the phone apps, every English `say()` line is spoken by the app's own built-in voice (Pocket TTS 7M by Kyutai, run in background workers; `src/kit/talk.js`), so a cast sounds the same everywhere and a SteamOS handheld doesn't fall back to espeak. Its 23 voices: 11 women and 9 men cast by `voice: 'woman' | 'man'` (British first, then Scottish, Canadian, American, then English with a French, Spanish, Italian or Dutch accent; `lang: 'en-US'` puts American first, `lang: ['en-FR']` the French one), and 3 in between that come only by name (`like: ['alba']`); a cast bigger than that gets voices made between two of one kind (55 more women, 36 more men). Every line goes through the mixer as a shaped one does, so `size` and `fx` work there too, and it starts after its first sentence is written (the rest is written while it plays). `gs.sound.prepare(text, o)` writes a line ahead so `say()` with the same words and options starts at once (a `Cutscene` prepares its actors' lines itself). Lines in other languages, and lines before its 13 MB file has downloaded the first time, are said by the device's own voices. It reads numbers, money, times and dates as words (`'£5.99 at 3:30 pm on 01/02'`: five pounds ninety-nine at three thirty p m on the first of February; `lang: 'en-US'` reads the month first), says a line the same way each time and keeps it for the next launch (`fresh: true` for a new take), and `lively: 0..1` widens a character's intonation (left out, each voice has a liveliness of its own, more on a line that shouts!). `respell: { Zorblax: 'zor blacks' }` says made-up names your way, with every voice.
 
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
@@ -31,10 +31,10 @@ From `src/gamescroll.d.ts` (`SoundPart`, line 161), where every option and field
 - `music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Recor…` Background music from patterns; start it in update(), not reset(). (:219)
 - `Ears: new (o?: { ref?: number; max?: number; rolloff?: number; hrtf?: boolean; flat?: boolean; space?: { tail: AudioNode } | null; send?: number; /** What stands in th…` 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones). (:229)
 - `Foley: FoleyClass` The sounds a world makes by itself, with nothing more to call than update() each frame: things that knock into each other in a gs.physics3d World3D sound of what they are made of (a body's `sound` option, else read… (:253)
-  - `new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; splashes?: boolean; breaks?: boolean; link?: boolean; ground?: ((x: number, z: nu…` ears, world, marks, weather, land: left out, each is the one the game made (found again when the game makes a new one, as a World3D each round); false: none. (:357)
-  - `readonly materials: FoleyMaterial[]` (:358)
-  - `readonly engines: FoleyEngine[]` (:359)
-  - `materialOf(obj: Loose): FoleyMaterial | null` What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. (:361)
+  - `new (o?: { ears?: Loose; world?: Loose; marks?: Loose; weather?: Loose; land?: Loose; splashes?: boolean; breaks?: boolean; link?: boolean; ground?: ((x: number, z: nu…` ears, world, marks, weather, land: left out, each is the one the game made (found again when the game makes a new one, as a World3D each round); false: none. (:365)
+  - `readonly materials: FoleyMaterial[]` (:366)
+  - `readonly engines: FoleyEngine[]` (:367)
+  - `materialOf(obj: Loose): FoleyMaterial | null` What a mesh or group is made of, as Foley hears it (userData.sound, its material's recipe or name); null if nothing says. (:369)
 - `acoustics: { caster(level: SoundLevel | null, o?: { flat?: boolean }): SoundCast | null; blocked(cast: SoundCast | null, ear: { x: number; y: number; z?: number }, sou…` The sums behind sound that knows the level, for your own sounds and subtitles (no audio): caster(level) makes one question of any level (cast(from, dir, max) => metres to the first solid thing, or Infinity),… (:259)
 - `zzfx(...params: number[]): void` ZzFX sound from its numbers (zzfx.micro). (:266)
 - `zsound(...params: number[]): () => void` (:267)
@@ -47,11 +47,12 @@ From `src/gamescroll.d.ts` (`SoundPart`, line 161), where every option and field
 - `KITS: Record<KitName, Loose>` (:279)
 - `delay(): number` Seconds between a sound being played and the player hearing it (the phone's output, Bluetooth included where it says). (:281)
 - `mixer: { volume(name: string, v: number, fade?: number): Loose; duck(name?: string, to?: number, hold?: number, back?: number): Loose; room(r?: 'none' | 'room' | 'hall…` Channels ('sfx', 'music', 'voice' or your own), ducking, room echo and muffle. (:283)
-- `say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; s…` Speaks a line with the phone's own voices (text to speech). (:313)
-- `voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>` The voices this phone has to cast from (joke voices left out). (:315)
-- `stopTalking(): void` (:316)
-- `talking(): boolean` (:317)
-- `shaped(): boolean | null` Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. (:319)
+- `say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; s…` Speaks a line with the phone's own voices (text to speech). (:315)
+- `prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: S…` Writes a line to sound ahead of time with the built-in voice, so a say() with the same words and options starts at once (a cutscene's next lines while this one plays; a Cutscene does its actors' lines itself). (:321)
+- `voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>` The voices this phone has to cast from (joke voices left out). (:323)
+- `stopTalking(): void` (:324)
+- `talking(): boolean` (:325)
+- `shaped(): boolean | null` Whether lines with a size or fx are being shaped: true once one has played that way, false where the phone can't (and in a browser), null before the first try. (:327)
 
 ## From the maker kit
 
