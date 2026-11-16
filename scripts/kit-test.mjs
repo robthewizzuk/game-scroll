@@ -3990,9 +3990,9 @@ console.log('physics ok');
 
 // gs.models material recipes: each tiles seamlessly (the same at p and p + one tile), with finite numbers
 {
-  const { JS } = await import('../src/kit/models/ops.js'), { RECIPES } = await import('../src/kit/models/recipes.js');
+  const { JS } = await import('../src/kit/models/ops.js'), { RECIPES, lookK } = await import('../src/kit/models/recipes.js');
   for (const [n, R] of Object.entries(RECIPES)) {
-    const K = {}; for (const k in R.look) K[k] = JS.rgb(R.look[k]);
+    const K = lookK(R, R.look, JS);
     for (let i = 0; i < 60; i++) {
       const x = (i * .618) % R.P, y = (i * .377) % R.P, a = R.f(JS, { x, y }, K);
       for (const b of [R.f(JS, { x: x + R.P, y }, K), R.f(JS, { x, y: y + R.P }, K)]) {
@@ -4004,6 +4004,19 @@ console.log('physics ok');
     }
   }
   console.log('gs.models: material recipes tile ok');
+  // paint damage (recipes.js paintDmg): more wear chips more of the paint to the undercoat, a plain-number look key stays a number
+  { const R = RECIPES.paint, chips = wear => { const K = lookK(R, { ...R.look, wear }, JS); let n = 0; for (let i = 0; i < 400; i++) n += R.f(JS, { x: (i * .618) % 4, y: (i * .377) % 4 }, K).metal; return n; };
+    assert.equal(typeof lookK(R, R.look, JS).wear, 'number', 'wear stays a number'); assert.ok(chips(.9) > chips(.35) * 1.5 && chips(.05) < chips(.35), `paint chips grow with wear (${chips(.05).toFixed(1)}, ${chips(.35).toFixed(1)}, ${chips(.9).toFixed(1)})`); }
+  // gs.hd.mark (decal-marks.js) and v.look's presets (look-presets.js): the options v.decal takes, each mood complete
+  { const { mark, marks } = await import('../src/kit/decal-marks.js'), { LOOKS } = await import('../src/kit/look-presets.js');
+    assert.ok(marks.length >= 14 && marks.includes('hazard') && marks.includes('rust'), 'the kinds of mark');
+    const h = mark('hazard'), st = mark('stencil', { text: 'NO PARKING' }), sc = mark('scorch', { size: 2 });
+    assert.ok(typeof h.paint === 'function' && h.angle === 0 && sc.angle === undefined && h.key !== mark('hazard', { sign: 'bolt' }).key && h.key === mark('hazard').key, 'upright kinds come upright, the same options the same picture');
+    assert.ok(st.size[0] > st.size[1] * 3 && Math.max(sc.size[0], sc.size[1]) === 2, 'a long stencil is wide; a number size scales the kind\'s own shape');
+    assert.throws(() => mark('nope'), /no kind/);
+    for (const [n, L] of Object.entries(LOOKS)) for (const k of ['bg', 'sky', 'ground', 'amb', 'sun', 'air', 'grade', 'glare', 'exposure', 'bloom', 'lut', 'weather']) assert.ok(L[k] !== undefined, `look '${n}' sets ${k}`);
+    for (const L of Object.values(LOOKS)) { const c = L.lut(.2, .5, .8); assert.ok(c.length === 3 && c.every(v => v >= 0 && v <= 1), 'a look table keeps colours in range'); }
+    console.log('gs.hd: marks and looks ok'); }
   // wear: a box's edges come out convex, its face middles flat; snow lands on top, grime at the foot
   const T = await import('three'), { wear, curvature } = await import('../src/kit/models/wear.js');
   const box = new T.Mesh(new T.BoxGeometry(1, 1, 1, 4, 4, 4), new T.MeshStandardMaterial()), { curve } = curvature(box.geometry), P = box.geometry.attributes.position;
@@ -4719,8 +4732,8 @@ console.log('physics ok');
     assert.ok(out === 0 && proud > .00024 && proud < .00026, `the cornea stands ${(proud * 1000).toFixed(2)} mm proud of the ball (the lids pass a fifth of a millimetre over it) and nothing else does`);
     assert.ok(mid && mid[2] > .999 && lean > .12 && round === 0, `its normals are a cornea's: straight out in the middle, ${lean.toFixed(2)} rad further over than the ball's at the iris's edge, the ball's own on the white`); }
   // ---- skin as a recipe: pores and fine lines, pale so a person's own colour comes through whole
-  { assert.deepEqual(Object.keys(RECIPES).filter(n => RECIPES[n].metal), ['metal', 'rust', 'paint'], 'the recipes with metal in them');
-    assert.ok(RECIPES.skin && RECIPES.palm && RECIPES.thatch && Object.keys(RECIPES).length === 20, 'a skin (and a palm trunk and thatch) among the recipes: ' + Object.keys(RECIPES).length); }
+  { assert.deepEqual(Object.keys(RECIPES).filter(n => RECIPES[n].metal), ['metal', 'rust', 'paint', 'hull', 'corrugated', 'galvanised', 'diamond', 'brushed', 'gunmetal'], 'the recipes with metal in them');
+    assert.ok(RECIPES.skin && RECIPES.palm && RECIPES.thatch && Object.keys(RECIPES).length === 34, 'a skin (and a palm trunk and thatch) among the recipes: ' + Object.keys(RECIPES).length); }
   console.log('gs.models: skin and eyes that read as flesh (how thin a sheet, a rim, a block and a sheet against a wall measure; only the ears of a head are thin, on both sides alike and smoothly; an eye in rings and bands with a cornea; a skin recipe) ok');
 }
 

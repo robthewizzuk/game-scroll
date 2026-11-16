@@ -39,7 +39,7 @@ import { stillRenderer } from './still.js';
 import { halfFn, halfWanted, halfKey } from './half.js';
 export { HALF, halfCheck, halfInfo, halfTexts } from './half.js';
 export { SUB, subgroupsInfo } from './subgroups.js';
-import { RECIPES } from './models/recipes.js';
+import { RECIPES, lookK } from './models/recipes.js';
 import { seeded } from './models/materials.js';
 import { oitPass } from 'three/examples/jsm/tsl/display/OITPassNode.js';
 import { lensflare } from 'three/examples/jsm/tsl/display/LensflareNode.js';
@@ -865,21 +865,36 @@ let NO_PART = null;
 const BLANK_PART = () => NO_PART ||= Object.assign(new DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (grass that stands as it grew: a Marks that was taken away)
 let BLANK_COVER = null;
 const blankCover = () => BLANK_COVER ||= Object.assign(new DataTexture(new Uint16Array([58320]), 1, 1, RedFormat, HalfFloatType), { minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, needsUpdate: true });   // (one spot at -1000 m: all open)
+// the world's own variation (AIR_WET's air.macro): tone and roughness drift over a few metres, on what stays put
+function macroVary(m, o, AIR, noise) {
+  const wp = positionWorld.add(ORG), q = vec2(wp.x.add(wp.y.mul(.6)), wp.z.sub(wp.y.mul(.4)));
+  const k = texture(noise, q.mul(.09)).r.mul(.6).add(texture(noise, q.mul(.023)).a.mul(.4)).sub(.5).mul(frameWide(AIR.gsRain).z).mul(frameWide(AIR.gsAirOn));
+  m.roughnessNode = clamp((m.roughnessNode ? float(m.roughnessNode) : materialRoughness).add(k.mul(.25)), .02, 1);
+  afterColor(m, o, c => c.mul(k.mul(.45).add(1)));
+}
+// wet colour (AIR_WET's sums): what drinks water (rough, not metal) goes much darker and richer, metal and glass only a little darker
+function wetTint(c, w, por) {
+  const l = dot(c, vec3(.299, .587, .114));
+  return max(mix(vec3(l), c, w.mul(por).mul(.3).add(1)), vec3(0)).mul(float(1).sub(w.mul(mix(float(.1), float(.45), por))));
+}
+const porosity = (m, r0) => smoothstep(.25, .85, r0).mul(float(1).sub(m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness));
 export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world = true) {
+  if (!dry && noise) macroVary(m, o, AIR, noise);
   if (!world) {
-    const w = frameWide(AIR.gsWet).mul(frameWide(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3));
-    m.roughnessNode = mix(m.roughnessNode ? float(m.roughnessNode) : materialRoughness, .12, w.mul(.8));
-    afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))));
+    const w = frameWide(AIR.gsWet).mul(frameWide(AIR.gsAirOn)).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3)), r0 = m.roughnessNode ? float(m.roughnessNode) : materialRoughness, por = porosity(m, r0);
+    m.roughnessNode = mix(r0, .12, w.mul(.8));
+    afterColor(m, o, c => wetTint(c, w, por));
     return;
   }
   const facing = m.userData.gsBothSides ? n => n : TSL.negateOnBackSide || TSL.directionToFaceDirection;   // (the side of a two-sided thing that is looked at; grass blades are lit alike on both, so snow lies on both)
   const on = frameWide(AIR.gsAirOn), flat = facing(normalViewGeometry), { wx, wp, gg, open } = openSky(AIR, facing);
   const w = max(frameWide(AIR.gsWet), wx.x.mul(open)).mul(on).mul(smoothstep(.15, .85, normalWorld.y).mul(.7).add(.3)), r0 = m.roughnessNode ? float(m.roughnessNode) : materialRoughness;
+  const por = porosity(m, r0);
   const coat = m.isMeshPhysicalNodeMaterial && m.clearcoat > 0 ? min(TSL.materialClearcoat.mul(2), 1).mul(smoothstep(.35, .7, TSL.materialClearcoatRoughness).oneMinus()) : null;
   const rw = runningWater(AIR, gg, wp, open.mul(on), r0, coat), runN = cameraViewMatrix.mul(vec4(rw.ga.mul(rw.out.x).add(rw.gd.mul(rw.out.y)), 0)).xyz;
   const base = m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, wetN = base.add(runN).normalize();
   let rough = mix(mix(r0, .12, w.mul(.8)), .03, rw.out.z);
-  if (dry) { m.roughnessNode = rough; afterColor(m, o, c => c.mul(float(1).sub(w.mul(.3))).mul(rw.out.w.oneMinus())); m.normalNode = wetN; return; }
+  if (dry) { m.roughnessNode = rough; afterColor(m, o, c => wetTint(c, w, por).mul(rw.out.w.oneMinus())); m.normalNode = wetN; return; }
   // the puddles (AIR_WET's sums, Saltline's way): one water level against how low the ground lies, a shore that wanders at 40, 15 and
   // 5 cm, standing water, a soaked band, a damp halo; water left in the joints and cracks of painted ground (gv: ground-paint-gpu.js)
   const gv = m.userData.gsGroove ? float(m.userData.gsGroove) : null, gvUp = gv ? max(gv, 0) : null;
@@ -898,7 +913,7 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   m.roughnessNode = rough;
   m.metalnessNode = (m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness).mul(s.oneMinus());
   const damp = float(1).sub(halo.mul(.14)).mul(float(1).sub(soak.mul(.32))).mul(float(1).sub(film.mul(.3)));
-  afterColor(m, o, c => { const d = c.mul(float(1).sub(w.mul(.3))).mul(rw.out.w.oneMinus()).mul(damp); return mix(mix(d, d.mul(mix(float(.85), float(.42), deep)).add(vec3(.004, .006, .0065).mul(deep)), p), vec3(.86, .9, .96), s); });
+  afterColor(m, o, c => { const d = wetTint(c, w, por).mul(rw.out.w.oneMinus()).mul(damp); return mix(mix(d, d.mul(mix(float(.85), float(.42), deep)).add(vec3(.004, .006, .0065).mul(deep)), p), vec3(.86, .9, .96), s); });
   const rr = puddleRings(AIR, wp, p);
   m.normalNode = mix(wetN, flat, max(max(p.mul(.92), soak.mul(.45)), s.mul(.6))).normalize().add(cameraViewMatrix.mul(vec4(rr.x, 0, rr.y, 0)).xyz.mul(p.mul(.4).mul(smoothstep(0, .03, dep)))).normalize();
   m.userData.gsPuddle = { p, soak, film };   // (the puddle mirror's weight: hd3d-gpu-mirror.js)
@@ -1647,7 +1662,7 @@ function recipeTwin(gm) {
   // pixels the textures are stretched over. A floor the camera stands on is close-up at its feet and
   // baked further off. The recipe is read where the textures were painted from (the same tile, and with
   // scatter the same four moved tiles), so the two looks lie on top of each other where they fade.
-  const near = copy(), O = seeded(tslOps(TSL), R.seed), K = {}; for (const k in R.look) K[k] = O.rgb(R.look[k]);
+  const near = copy(), O = seeded(tslOps(TSL), R.seed), K = lookK(REC, R.look, O);
   const num = v => (typeof v === 'number' ? float(v) : v), ref = TSL.materialReference;
   // (painted from the top row down, and a texture's v runs up: the recipe's y is turned over)
   const rec = qq => { const t = fract(qq); return REC.f(O, vec2(t.x, t.y.oneMinus()).mul(REC.P), K); };
@@ -2167,8 +2182,10 @@ function bloomChain(src, aoF, P = HALF4) {
   const lvl = (fn, i) => { const p = uniform(new Vector2(1, 1)); px[i] = p; return fn(p); };
   // bright parts only (anything brighter than the threshold keeps its full colour, fading in just under it), 4 taps
   M[0] = rtt(hdrOut(lvl(p => {
-    const pick = o => { const c = src.sample(uv().add(o.mul(p))).rgb.mul(aoF); return c.mul(smoothstep(.77, .87, dot(c, LUM))); };
-    return vec4(pick(vec2(-1, -1)).add(pick(vec2(1, -1))).add(pick(vec2(-1, 1))).add(pick(vec2(1, 1))).mul(.25), 1);
+    // (Karis's average: each tap weighed by 1 / (1 + brightness), so a lone glint doesn't bloom into a flickering square: hd3d.js BRIGHT)
+    const pick = o => { const c = src.sample(uv().add(o.mul(p))).rgb.mul(aoF), l = dot(c, LUM), w = float(1).div(l.add(1)); return vec4(c.mul(smoothstep(.77, .87, l)).mul(w), w); };
+    const k = pick(vec2(-1, -1)).add(pick(vec2(1, -1))).add(pick(vec2(-1, 1))).add(pick(vec2(1, 1)));
+    return vec4(k.rgb.div(k.a), 1);
   }, 0), P), 1, 1, P);
   for (let i = 1; i < N; i++) {
     const t = M[i - 1];

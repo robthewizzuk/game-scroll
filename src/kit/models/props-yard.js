@@ -31,7 +31,7 @@ function chainlink() {
 export const YARD_PROPS = {
   // a shipping container (size: its length, 6.06 a twenty-foot box, 12.19 a forty), doors at +z: corrugated walls and roof,
   // its frame and corner castings, four locking bars on the doors with their handles and hinges, a plate with its number
-  container: { slots: { walls: ['paint', { colour: '#8a3a2a', under: 'shade' }], frame: ['paint', { colour: '#3e3632', under: 'shade' }], castings: ['rust', { colour: '#3a3532' }], bars: ['metal', { colour: '#8a8e90' }], plate: ['paint', { colour: '#d8d4c8', under: 'shade' }] },
+  container: { slots: { walls: ['paint', { colour: '#8a3a2a', under: 'shade', wear: .3 }], frame: ['paint', { colour: '#3e3632', under: 'shade' }], castings: ['rust', { colour: '#3a3532' }], bars: ['metal', { colour: '#8a8e90' }], plate: ['paint', { colour: '#d8d4c8', under: 'shade' }] },
     colour: r => BOX_COLOURS[Math.floor(r() * BOX_COLOURS.length)],
     make(b, r, k) {
       const L = k.size ?? 6.06, W = 2.44, H = 2.59, c = .16, hz = L / 2;
@@ -67,7 +67,7 @@ export const YARD_PROPS = {
     } },
   // a rubber-tyred gantry crane over a stack of containers (size: its height, 18): four legs on their wheels, two girders across with a
   // trolley, its cab and the ropes down to the spreader; hazard stripes round the legs' feet
-  crane: { slots: { frame: ['paint', { colour: '#d8a21e', under: 'shade' }], cab: ['paint', { colour: '#e2ddd2', under: 'shade' }], stripes: ['paint', { colour: '#1c1c1c', under: 'shade' }], steel: ['metal', { colour: '#5a5e62' }], tyres: ['leather', { colour: '#1e1e1e' }], glass: ['metal', { colour: '#2a343a' }] },
+  crane: { slots: { frame: ['paint', { colour: '#d8a21e', under: 'shade' }], cab: ['paint', { colour: '#e2ddd2', under: 'shade' }], stripes: ['paint', { colour: '#1c1c1c', under: 'shade' }], steel: ['metal', { colour: '#5a5e62' }], tyres: ['rubber'], glass: ['metal', { colour: '#2a343a' }] },
     make(b, r, k) {
       const H = k.size ?? 18, span = H * 1.15, depth = H * .38, leg = H * .05;
       for (const x of [-1, 1]) {
@@ -95,7 +95,7 @@ export const YARD_PROPS = {
       for (const z of [-1, 1]) b.box('slots', .62, .09, .22, [0, .045, z * L * .28]);   // (the slots a forklift lifts it by)
     } },
   // a water-filled plastic barrier (size: its length, 1.5), red or white by its seed: the moulded shape, its filler cap, the lugs that join them
-  waterbarrier: { slots: { shell: ['paint', { colour: '#c4302a', under: 'shade' }], cap: ['paint', { colour: '#e8e4dc', under: 'shade' }] },
+  waterbarrier: { slots: { shell: ['plastic', { colour: '#c4302a' }], cap: ['plastic', { colour: '#e8e4dc' }] },
     colour: r => BARRIER_COLOURS[Math.floor(r() * BARRIER_COLOURS.length)],
     colour: r => (r() < .5 ? '#c4302a' : '#e4e0d8'),
     make(b, r, k) {
@@ -105,7 +105,7 @@ export const YARD_PROPS = {
       for (const z of [-1, 1]) for (const y of [.15, .6]) b.box('shell', .1, .1, .12, [0, y, z * (L / 2 - .02)], 0, .03);
     } },
   // a chain-link fence panel (size: its length, 2.5): galvanised posts, a top rail, the woven mesh, three strands of barbed wire on arms (barbed: false: none)
-  mesh: { slots: { posts: ['metal', { colour: '#9aa0a4' }], wire: chainlink },
+  mesh: { slots: { posts: ['galvanised'], wire: chainlink },
     make(b, r, k) {
       const L = k.size ?? 2.5, H = 2;
       for (const x of [-1, 1]) { b.cyl('posts', .03, .03, H + .1, [x * L / 2, (H + .1) / 2, 0], 0, 10); b.cyl('posts', .033, .033, .04, [x * L / 2, H + .12, 0], 0, 10); }
@@ -140,7 +140,7 @@ export const YARD_PROPS = {
       }
     } },
   // a cable reel standing on its flanges (size: across, 1.2): two plank flanges, the cable wound on it, its end trailing
-  reel: { slots: { wood: ['planks', { colour: '#9a7a50' }], cable: ['leather', { colour: '#1c1c1c' }], bolts: ['metal', { colour: '#6a6e70' }] },
+  reel: { slots: { wood: ['planks', { colour: '#9a7a50' }], cable: ['rubber'], bolts: ['metal', { colour: '#6a6e70' }] },
     make(b, r, k) {
       const D = k.size ?? 1.2, R = D / 2, w = D * .62;
       for (const s of [-1, 1]) b.cyl('wood', R, R, .05, [s * (w / 2 + .025), R, 0], [0, 0, Math.PI / 2], 24);
@@ -151,7 +151,7 @@ export const YARD_PROPS = {
       b.tube('cable', pts, .025);
     } },
   // a heavy cable lying loose on the ground (size: its length, 6), wandering this way and that
-  cable: { slots: { cable: ['leather', { colour: '#1c1c1c' }] },
+  cable: { slots: { cable: ['rubber'] },
     make(b, r, k) {
       const L = k.size ?? 6, n = Math.max(4, Math.round(L / .6)), pts = []; let x = -L / 2, z = 0, a = (r() - .5) * .6;
       for (let i = 0; i <= n; i++) { pts.push([x, .03, z]); a += (r() - .5) * .9; a = Math.max(-1.2, Math.min(1.2, a)); x += Math.cos(a) * L / n; z += Math.sin(a) * L / n; }
