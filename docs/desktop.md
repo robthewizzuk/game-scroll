@@ -189,8 +189,10 @@ computer: Kyutai's Pocket TTS 7M (`src/kit/talk.js`, `pocket-tts.js`), a small s
 and WebAssembly and run in a background worker, with 19 voices from speakers who gave them under open licences
 (`src/kit/talk-files.js`; the credits are under Settings › Licence). Its file (12.3 MB of 8-bit numbers, packed from
 Kyutai's own files by `scripts/talk-pack.mjs`) downloads from the games host the first time a character speaks, is
-checked against its SHA-256 and stays in the cache. It writes speech about three to four times faster than it plays
-on one core of a slow server, more on a laptop or a handheld. Every line plays through the mixer, as a shaped line
+checked against its SHA-256 and stays in the cache. Where the computer has four or more threads, two workers share
+each line (the text half and the first 8 of the decoder's 12 layers in one, the rest in the other, a frame behind):
+about ten times faster than it plays in Chromium on a slow server's cores, five on one. It reads numbers, money, times
+and dates as words first (`src/kit/say-words.js`), and says a line the same way each time. Every line plays through the mixer, as a shaped line
 does on the phones. Until the file is in, and for languages other than English, the computer's own voices speak: on
 Linux Chromium only lists speech-dispatcher's voices with `--enable-speech-dispatcher`, which `desktop/main.cjs`
 turns on (SteamOS has espeak-ng; of its ~100 variants a language, only the plain voice and its numbered male and

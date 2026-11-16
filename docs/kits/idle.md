@@ -8,26 +8,26 @@ Idle game maths: rising prices, big numbers, money earned while away.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`IdlePart`, line 3267), where every option and field is described.
+From `src/gamescroll.d.ts` (`IdlePart`, line 3271), where every option and field is described.
 
-- `cost(base: number, growth: number, owned?: number, n?: number): number` (:3268)
-- `afford(base: number, growth: number, owned: number, money: number, max?: number): number` (:3268)
-- `short(n: number, digits?: number): string` (:3269)
-- `curve(level: number, levels: number, from: number, to: number, power?: number): number` (:3269)
-- `Earner: new (defs?: Record<string, Loose>, money?: number) => Earner` (:3270)
-  - `defs: Record<string, { base: number; growth?: number; rate?: number; [k: string]: Loose }>` (:3263)
-  - `owned: Record<string, number>` (:3263)
-  - `money: number` (:3263)
-  - `mult: number` (:3263)
-  - `readonly perSecond: number` (:3263)
-  - `add(id: string, def: { base: number; growth?: number; rate?: number; [k: string]: Loose }): Earner` (:3264)
-  - `price(id: string, n?: number): number` (:3264)
-  - `canBuy(id: string, n?: number): boolean` (:3264)
-  - `buy(id: string, n?: number): boolean` (:3264)
-  - `update(dt: number): Earner` (:3265)
-  - `catchUp(seconds: number, share?: number): number` (:3265)
-  - `save(): Loose` (:3265)
-  - `load(d: Loose): Earner` (:3265)
+- `cost(base: number, growth: number, owned?: number, n?: number): number` (:3272)
+- `afford(base: number, growth: number, owned: number, money: number, max?: number): number` (:3272)
+- `short(n: number, digits?: number): string` (:3273)
+- `curve(level: number, levels: number, from: number, to: number, power?: number): number` (:3273)
+- `Earner: new (defs?: Record<string, Loose>, money?: number) => Earner` (:3274)
+  - `defs: Record<string, { base: number; growth?: number; rate?: number; [k: string]: Loose }>` (:3267)
+  - `owned: Record<string, number>` (:3267)
+  - `money: number` (:3267)
+  - `mult: number` (:3267)
+  - `readonly perSecond: number` (:3267)
+  - `add(id: string, def: { base: number; growth?: number; rate?: number; [k: string]: Loose }): Earner` (:3268)
+  - `price(id: string, n?: number): number` (:3268)
+  - `canBuy(id: string, n?: number): boolean` (:3268)
+  - `buy(id: string, n?: number): boolean` (:3268)
+  - `update(dt: number): Earner` (:3269)
+  - `catchUp(seconds: number, share?: number): number` (:3269)
+  - `save(): Loose` (:3269)
+  - `load(d: Loose): Earner` (:3269)
 
 ## From the maker kit
 

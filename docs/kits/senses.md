@@ -8,10 +8,10 @@ Enemy senses: sight cones, hearing, memory, moods from calm to searching; Noises
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SensesPart`, line 980), where every option and field is described.
+From `src/gamescroll.d.ts` (`SensesPart`, line 984), where every option and field is described.
 
-- `Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number; link?: b…` (:981)
-- `Noises: new (o?: { link?: boolean }) => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: num…` (:988)
+- `Senses: (new (o?: { range?: number; fov?: number; near?: number; hearing?: number; spotTime?: number; memory?: number; searchTime?: number; calmDown?: number; link?: b…` (:985)
+- `Noises: new (o?: { link?: boolean }) => { list: { x: number; y: number; loud: number; age: number }[]; make(x: number, y: number, loud?: number): Loose; update(dt: num…` (:992)
 
 ## From the maker kit
 

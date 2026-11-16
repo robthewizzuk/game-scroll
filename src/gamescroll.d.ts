@@ -304,9 +304,13 @@ export interface SoundPart {
    * lean of its pitch). It starts a moment later than a plain line: open with a short pause, say([.2, 'Ah. A door.'], { fx: 'tannoy' }).
    * The Mac, Windows and Linux app speaks every English line with its own built-in voice (Pocket TTS 7M, 19 voices: 9 women, 7 men,
    * 3 in between that come only by name, like: ['alba'], ['marius'], ['stuart']), shaped or not, through the mixer; other languages,
-   * and lines before its file has downloaded the first time, are said by the computer's voices.
+   * and lines before its file has downloaded the first time, are said by the computer's voices. It reads numbers, money, times and
+   * dates as words ('£5.99 at 3:30 pm on 01/02' -> 'five pounds ninety-nine at three thirty p m on the first of February'; lang
+   * 'en-US' reads month first), says a line the same way each time it is said (fresh: true for a new take), and lively (0 to 1)
+   * widens its intonation for an excitable character.
+   * respell: how made-up names are said, for every voice: { Zorblax: 'zor blacks', "Qa'tik": 'ka teek' } (whole words, any case).
    */
-  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null }): Promise<boolean>;
+  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
   voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>;
   stopTalking(): void;
@@ -366,7 +370,7 @@ export interface SoundPlace { size: number; walls: number; roof: number; enclose
 /** A character's voice for gs.sound.say: a kind, or which accents to try, which take of that kind, and voices to prefer by name. */
 export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any'; lang?: string | string[]; take?: number; like?: string | string[] };
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
-export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null };
+export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean };
 /** A treatment for a shaped voice (gs.sound.say's fx), by name or as a recipe that can start from a named one. */
 export type SayFxName = 'clean' | 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny';
 export type SayFx = SayFxName | {

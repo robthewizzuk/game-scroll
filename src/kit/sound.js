@@ -19,6 +19,7 @@ import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
 import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks } from './voice-fx.js';
 import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, readyNow as ownReady } from './talk.js';
+import { respell } from './say-words.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
 import { linksFor } from './links.js';
 
@@ -1066,7 +1067,7 @@ async function clipFor(p, gen, stopped) {
   const cast = pick && pick.at >= 0 ? list[pick.at] : null, uri = cast ? String(cast.voiceURI || '') : '';
   const lang = cast && langOk(cast.lang) ? cast.lang : [].concat(p.lang).find(langOk) || 'en-GB', who = uri || lang;
   if (noShape.has(who)) return null;
-  const pitch = clampN(p.pitch * (pick ? pick.pitch : 1), .5, 2, 1), key = JSON.stringify([p.text, who, p.rate, pitch, p.size, p.fx, p.joined, p.join]);
+  const pitch = clampN(p.pitch * (pick ? pick.pitch : 1), .5, 2, 1), key = JSON.stringify([p.said, who, p.rate, pitch, p.size, p.fx, p.joined, p.join]);
   const have = clips.get(key);
   if (have) { clips.delete(key); clips.set(key, have); return have; }
   let timer = null;
@@ -1074,7 +1075,7 @@ async function clipFor(p, gen, stopped) {
   try {
     // a phone that never answers must not hold the line up: after this long it says the line itself
     const late = new Promise(res => { timer = setTimeout(res, Math.min(6000, 2500 + p.text.length * 30), 'late'); });
-    const made = Promise.resolve(RENDER.render({ text: p.text, lang, voiceURI: uri, rate: clampN(p.rate * p.size, .3, 3, 1), pitch })).catch(() => null);
+    const made = Promise.resolve(RENDER.render({ text: p.said, lang, voiceURI: uri, rate: clampN(p.rate * p.size, .3, 3, 1), pitch })).catch(() => null);
     const r = await Promise.race([made, stopped, late]);
     if (gen !== talkGen) return null;   // (stopped: stopTalking() has told the phone already)
     if (r === 'late') { try { Promise.resolve(RENDER.cancel()).catch(() => {}); } catch { /* gone */ } }
@@ -1082,7 +1083,8 @@ async function clipFor(p, gen, stopped) {
     const made2 = await shape(pcm16(r.pcm), r.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: !p.joined, close: p.join == null, hold: p.join == null ? 0 : p.join + .06 });
     // the engine's word marks are in seconds of what it wrote: less the silence cut off the front, slowed (or sped) by size
     const said = made2.seconds - made2.lead, own = Array.isArray(r.marks) ? r.marks.map((v, i) => i % 2 ? Math.max(0, (v - made2.cut) * p.size) : v) : null;
-    const marks = goodMarks(own, p.text, said) || wordTimes(p.text, said);
+    const marks = goodMarks(own, p.said, said) || wordTimes(p.said, said);
+    for (let i = 0; i < marks.length; i += 2) marks[i] = p.at(marks[i]);
     for (let i = 1; i < marks.length; i += 2) marks[i] += made2.lead;
     return keepClip(key, { buffer: made2.buffer, gain: made2.gain, seconds: made2.seconds, total: made2.total, marks });
   } catch { shapeFailed(who); return null; } finally { clearTimeout(timer); rendering--; }
@@ -1097,7 +1099,7 @@ async function ownClip(p, gen, stopped) {
   const list = ownVoices(), pick = castOwn(wantOf(p.voice || 'any', p.lang));
   if (!pick) return null;
   const uri = list[pick.at].voiceURI, pitch = clampN(p.pitch * pick.pitch, .5, 2, 1), rate = clampN(p.rate * p.size, .3, 3, 1);
-  const key = JSON.stringify([p.text, uri, p.rate, pitch, p.size, p.fx, p.joined, p.join]), have = clips.get(key);
+  const key = JSON.stringify([p.said, uri, p.rate, pitch, p.size, p.fx, p.joined, p.join, p.lively]), have = !p.fresh && clips.get(key);
   if (have) { clips.delete(key); clips.set(key, have); return have; }
   let timer = null;
   const late = ms => new Promise(res => { clearTimeout(timer); timer = setTimeout(res, ms, 'late'); });
@@ -1107,13 +1109,13 @@ async function ownClip(p, gen, stopped) {
     if (gen !== talkGen) return null;
     if (up === false) { OWN = false; if (!RENDER) shapedOk = false; return null; }   // it can't run here: the computer's voices from now on
     if (up !== true) return null;   // still loading: this line in the computer's voice
-    const r = await Promise.race([ownSpeak({ text: p.text, voiceURI: uri, rate, pitch }), stopped, late(3000 + p.text.length * 40)]);
+    const r = await Promise.race([ownSpeak({ text: p.said, voiceURI: uri, rate, pitch, lively: p.lively, fresh: p.fresh, lang: [].concat(p.lang)[0] }), stopped, late(3000 + p.text.length * 40)]);
     if (gen !== talkGen) return null;
     if (r === 'late') ownCancel();
     if (!r || r === 'late' || !r.ok) { shapeFailed(uri); return null; }
     const made = await shape(r.samples, r.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: !p.joined, close: p.join == null, hold: p.join == null ? 0 : p.join + .06 });
-    const marks = wordTimes(p.text, made.seconds - made.lead);
-    for (let i = 1; i < marks.length; i += 2) marks[i] += made.lead;
+    const marks = wordTimes(p.said, made.seconds - made.lead);
+    for (let i = 0; i < marks.length; i += 2) { marks[i] = p.at(marks[i]); marks[i + 1] += made.lead; }
     return keepClip(key, { buffer: made.buffer, gain: made.gain, seconds: made.seconds, total: made.total, marks });
   } catch { shapeFailed(uri); return null; } finally { clearTimeout(timer); rendering--; }
 }
@@ -1165,7 +1167,7 @@ async function sayPart(p, gen, from, onWord, stopped) {
   const late = new Promise(res => { timer = setTimeout(res, 4000 + p.text.length * 120 / p.rate, 'late'); });
   try {
     if (TTS) {
-      const o = { text: p.text, lang, pitch, rate: p.rate, volume: p.volume, category: 'ambient', queueStrategy: 0 };
+      const o = { text: p.said, lang, pitch, rate: p.rate, volume: p.volume, category: 'ambient', queueStrategy: 0 };
       const go = opt => Promise.race([TTS.speak(opt).then(() => true, () => false), stopped, late]);
       let ok = await go(cast ? { ...o, voice: pick.at, lang: langOk(cast.lang) ? cast.lang : lang } : o);
       if (ok === false && cast && gen === talkGen) { badVoices.add(cast.voiceURI); ok = await go(o); }   // that voice isn't on this phone after all: its own voice
@@ -1175,12 +1177,12 @@ async function sayPart(p, gen, from, onWord, stopped) {
     if (!S || !U) return false;
     const said = new Promise(res => {
       try {
-        const u = new U(p.text); u.lang = lang; u.pitch = pitch; u.rate = p.rate; u.volume = p.volume;
+        const u = new U(p.said); u.lang = lang; u.pitch = pitch; u.rate = p.rate; u.volume = p.volume;
         const all = S.getVoices?.() || [];
         const v = cast || all.find(x => x.lang === lang) || all.find(x => x.lang?.startsWith(lang.slice(0, 2)));
         if (v) { u.voice = v; if (cast && v.lang) u.lang = v.lang; }
         u.onend = () => res(true); u.onerror = () => res(false);
-        if (typeof onWord === 'function') u.onboundary = e => { if (gen === talkGen && (!e.name || e.name === 'word')) try { onWord(from + e.charIndex); } catch { /* the game's */ } };
+        if (typeof onWord === 'function') u.onboundary = e => { if (gen === talkGen && (!e.name || e.name === 'word')) try { onWord(from + p.at(e.charIndex)); } catch { /* the game's */ } };
         S.speak(u);
       } catch { res(false); }
     });
@@ -1188,8 +1190,8 @@ async function sayPart(p, gen, from, onWord, stopped) {
     return ok === true || ok === 'late';
   } finally { clearTimeout(timer); }
 }
-export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, onWord = null, size = null, fx = null } = {}) {
-  // the parts of the line: strings (or { text, pitch, rate, volume, voice, lang, size, fx }) and pauses in seconds
+export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, onWord = null, size = null, fx = null, respell: names = null, lively = null, fresh = false } = {}) {
+  // the parts of the line: strings (or { text, pitch, rate, volume, voice, lang, size, fx, respell, lively, fresh }) and pauses in seconds
   const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false;
   for (const raw of Array.isArray(text) ? text : [text]) {
     if (typeof raw === 'number') { if (raw > 0) parts.push(Math.min(5, raw)); continue; }
@@ -1197,8 +1199,8 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
     const t = String(o.text ?? '').replace(/\s+/g, ' ').trim().slice(0, Math.min(300, room));
     if (!t) continue;
     room -= t.length; any = true;
-    const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx;
-    parts.push({ text: t, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
+    const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx, rs = respell(t, o.respell || names ? { ...names, ...o.respell } : null), lv = o.lively ?? lively;
+    parts.push({ text: t, said: rs.text, at: rs.at, lively: lv == null ? 0 : clampN(lv, 0, 1, 0), fresh: !!(o.fresh ?? fresh), pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
       size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: OWN || sz != null || (f != null && f !== false) });
   }
   stopTalking();

@@ -8,14 +8,14 @@ Grid puzzles: match, fall and refill, 2048 slides, flood fill, hints.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BoardPart`, line 2437), where every option and field is described.
+From `src/gamescroll.d.ts` (`BoardPart`, line 2441), where every option and field is described.
 
-- `Board: new (cols: number, rows: number, o?: { fill?: ((c: number, r: number) => BoardPiece | null) | null; same?: (a: BoardPiece, b: BoardPiece) => boolean; speed?: nu…` (:2437)
-  - `kind?: Loose` (:2420)
-  - `col?: number` (:2420)
-  - `row?: number` (:2420)
-  - `x?: number` (:2420)
-  - `y?: number` (:2420)
+- `Board: new (cols: number, rows: number, o?: { fill?: ((c: number, r: number) => BoardPiece | null) | null; same?: (a: BoardPiece, b: BoardPiece) => boolean; speed?: nu…` (:2441)
+  - `kind?: Loose` (:2424)
+  - `col?: number` (:2424)
+  - `row?: number` (:2424)
+  - `x?: number` (:2424)
+  - `y?: number` (:2424)
 
 ## From the maker kit
 

@@ -8,9 +8,9 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CameraPart`, line 1845), where every option and field is described.
+From `src/gamescroll.d.ts` (`CameraPart`, line 1849), where every option and field is described.
 
-- `CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; /** Wha…` (:1846)
+- `CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; /** Wha…` (:1850)
 
 ## From the maker kit
 

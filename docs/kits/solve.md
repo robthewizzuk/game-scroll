@@ -8,19 +8,19 @@ Logic puzzles with one answer (make, solve, grade, hint) and turn-based opponent
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SolvePart`, line 1004), where every option and field is described.
+From `src/gamescroll.d.ts` (`SolvePart`, line 1008), where every option and field is described.
 
-- `Puzzle: new () => PuzzleSolver` (:1005)
-  - `cell(id: string | number, values: Loose[]): this` (:993)
-  - `allDiff(ids: (string | number)[]): this` (:994)
-  - `sum(ids: (string | number)[], total: number): this` (:995)
-  - `rule(ids: (string | number)[], ok: (values: Loose[]) => boolean): this` (:996)
-  - `solve(o?: { known?: Record<string, Loose> | null; limit?: number; rng?: number | string | (() => number) | null }): { solution: Record<string, Loose> | null; count: nu…` (:997)
-  - `unique(known?: Record<string, Loose>): boolean` (:998)
-  - `grade(known?: Record<string, Loose>): { level: 'easy' | 'medium' | 'hard' | 'expert' | 'none'; guesses: number; open: number }` (:999)
-  - `carve(solution: Record<string, Loose>, o?: { rng?: number | string | (() => number); grade?: 'easy' | 'medium' | 'hard' | 'expert'; keep?: number }): Record<string, Lo…` (:1000)
-  - `hint(clues: Record<string, Loose>, moves?: Record<string, Loose>): { id: string | number | null; value: Loose; why: 'only' | 'last' | 'sum' | 'rule' | 'guess' | 'wrong…` (:1001)
-- `Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => { best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); …` (:1006)
+- `Puzzle: new () => PuzzleSolver` (:1009)
+  - `cell(id: string | number, values: Loose[]): this` (:997)
+  - `allDiff(ids: (string | number)[]): this` (:998)
+  - `sum(ids: (string | number)[], total: number): this` (:999)
+  - `rule(ids: (string | number)[], ok: (values: Loose[]) => boolean): this` (:1000)
+  - `solve(o?: { known?: Record<string, Loose> | null; limit?: number; rng?: number | string | (() => number) | null }): { solution: Record<string, Loose> | null; count: nu…` (:1001)
+  - `unique(known?: Record<string, Loose>): boolean` (:1002)
+  - `grade(known?: Record<string, Loose>): { level: 'easy' | 'medium' | 'hard' | 'expert' | 'none'; guesses: number; open: number }` (:1003)
+  - `carve(solution: Record<string, Loose>, o?: { rng?: number | string | (() => number); grade?: 'easy' | 'medium' | 'hard' | 'expert'; keep?: number }): Record<string, Lo…` (:1004)
+  - `hint(clues: Record<string, Loose>, moves?: Record<string, Loose>): { id: string | number | null; value: Loose; why: 'only' | 'last' | 'sum' | 'rule' | 'guess' | 'wrong…` (:1005)
+- `Search: new <S = Loose, M = Loose>(game: SearchGame<S, M>) => { best(s: S, o?: { time?: number; depth?: number; skill?: Skill; rng?: number | string | (() => number); …` (:1010)
 
 ## From the maker kit
 
