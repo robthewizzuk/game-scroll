@@ -14,7 +14,18 @@ crash reports**.
   "everyone" fps / slow frames / freezes, there's a **Crashes & stutters ↗** link to the page above,
   and **Copy report** now includes the worst stutters and the top crashes and errors. Everyone's
   numbers are fetched when the panel opens (at most every 30 minutes), not when the app starts.
-- **Raw JSON:** `GET https://api.game-scroll.com/perf` (worked out at most every 30 minutes).
+- **Raw JSON:** `GET https://api.game-scroll.com/perf` (up to 2 hours old; refreshed whenever the web page is
+  worked out).
+
+## What it costs the database
+
+D1's free plan allows 5 million rows read a day. Reports are added up per day as they arrive (tables
+`perf` and `crashes`), and also into running totals per build (`perf_builds`, `crash_builds`), which are
+what the page and the JSON read: one row per build, each read once, then added up in the Worker. Once a
+day (a cron trigger at 00:07 UTC) the days past the window are dropped and the running totals are
+remade from what is left. A finished page is kept in D1 for every Cloudflare location (`snapshots`).
+`cd workers/hearts && npm run reads` measures the rows each request reads on a local database the size
+of the live one, and each deploy's summary lists the live top queries by rows read.
 
 ## When did it happen, and is it already fixed?
 

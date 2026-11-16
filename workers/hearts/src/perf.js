@@ -5,7 +5,7 @@
 //                      errors: [ { kind, game, msg, place, n, v, at } ] }             at most 10
 //                      (kind: 'crash', 'error' (a script error), or 'gpu': the graphics chip was lost; its place
 //                      is the chip and the browser engine, "Adreno (TM) 830 · Chrome 142")
-//   GET  /perf  -> { days, games: [...], errors: [...] }                       last 14 days, cached 5 min
+//   GET  /perf  -> { days, games: [...], errors: [...] }                       last 14 days, kept up to 2 hours
 //   GET  /perf/report -> a web page: who is reporting, crashes, script errors, then smoothness per
 //                        phone, each row with the build it was last seen on and when
 //   GET  /perf/report?game=<id> -> one game's history by phone, day and build, newest first
@@ -78,53 +78,124 @@ export function cleanPerf(b, known, t = Date.now()) {
 export async function savePerf(db, { info, games, errors }, t = Date.now()) {
   const d = day(t), at = Math.floor(t / 1000), { platform, model, os, app, form } = info;
   const q = [
-    ...games.map(([g, r, f, ms, w, sl, h, x, v, hk, hw, hh]) => db.prepare(
+    ...games.flatMap(([g, r, f, ms, w, sl, h, x, v, hk, hw, hh]) => [db.prepare(
       'INSERT INTO perf (day, game, platform, model, form, app, ver, rounds, frames, ms, work_ms, slow, hitches, worst_ms, first_at, last_at, heat_ms, warm_ms, hot_ms) ' +
       'VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15, ?16, ?17, ?18) ON CONFLICT(day, game, platform, model, form, app, ver) DO UPDATE SET ' +
       'rounds = rounds + ?8, frames = frames + ?9, ms = ms + ?10, work_ms = work_ms + ?11, slow = slow + ?12, hitches = hitches + ?13, worst_ms = MAX(worst_ms, ?14), last_at = ?15, ' +
       'heat_ms = heat_ms + ?16, warm_ms = warm_ms + ?17, hot_ms = hot_ms + ?18'
-    ).bind(d, g, platform, model, form, app, v, r, f, ms, w, sl, h, x, at, hk, hw, hh)),
+    ).bind(d, g, platform, model, form, app, v, r, f, ms, w, sl, h, x, at, hk, hw, hh),
+    // The same, added to the build's running total (what the report reads).
+    db.prepare(
+      'INSERT INTO perf_builds (game, platform, model, form, app, ver, d0, d1, t1, rounds, frames, ms, work_ms, slow, hitches, worst_ms, heat_ms, warm_ms, hot_ms) ' +
+      'VALUES (?2, ?3, ?4, ?5, ?6, ?7, ?1, ?1, ?15, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?16, ?17, ?18) ON CONFLICT(game, platform, model, form, app, ver) DO UPDATE SET ' +
+      'd0 = MIN(d0, ?1), d1 = MAX(d1, ?1), t1 = MAX(t1, ?15), rounds = rounds + ?8, frames = frames + ?9, ms = ms + ?10, work_ms = work_ms + ?11, slow = slow + ?12, ' +
+      'hitches = hitches + ?13, worst_ms = MAX(worst_ms, ?14), heat_ms = heat_ms + ?16, warm_ms = warm_ms + ?17, hot_ms = hot_ms + ?18'
+    ).bind(d, g, platform, model, form, app, v, r, f, ms, w, sl, h, x, at, hk, hw, hh)]),
     // An error that says when it happened is filed under that day and time, not under when it was told.
-    ...errors.map(([kind, g, msg, place, cnt, v, when]) => db.prepare(
+    ...errors.flatMap(([kind, g, msg, place, cnt, v, when]) => [db.prepare(
       'INSERT INTO crashes (day, kind, game, msg, place, platform, model, os, app, ver, n, first_at, last_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ' +
       'ON CONFLICT(day, kind, game, msg, place, platform, model, os, app, ver) DO UPDATE SET n = n + ?11, last_at = MAX(last_at, ?12), ' +
       'first_at = CASE WHEN first_at = 0 THEN 0 ELSE MIN(first_at, ?12) END'
-    ).bind(when ? Math.floor(when / 86400) : d, kind, g, msg, place, platform, model, os, app, v, cnt, when || at)),
+    ).bind(when ? Math.floor(when / 86400) : d, kind, g, msg, place, platform, model, os, app, v, cnt, when || at),
+    db.prepare(
+      'INSERT INTO crash_builds (kind, game, msg, place, platform, model, app, ver, n, d0, d1, t0, t1) VALUES (?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10, ?11, ?1, ?1, ?12, ?12) ' +
+      'ON CONFLICT(kind, game, msg, place, platform, model, app, ver) DO UPDATE SET n = n + ?11, d0 = MIN(d0, ?1), d1 = MAX(d1, ?1), ' +
+      't0 = CASE WHEN t0 = 0 THEN ?12 ELSE MIN(t0, ?12) END, t1 = MAX(t1, ?12)'
+    ).bind(when ? Math.floor(when / 86400) : d, kind, g, msg, place, platform, model, os, app, v, cnt, when || at)]),
   ];
   if (q.length) await db.batch(q);
 }
 
-/** Totals for the last PERF_DAYS days: smoothness per game and phone, and the most common errors. Test robots are left out. */
-export async function perfTotals(db, t = Date.now()) {
-  const since = day(t) - PERF_DAYS;
-  const [g, e] = await db.batch([
-    db.prepare(
-      'SELECT game, platform, model, form, SUM(rounds) rounds, SUM(frames) frames, SUM(ms) ms, SUM(work_ms) work, ' +
-      `SUM(slow) slow, SUM(hitches) hitches, MAX(worst_ms) worst FROM perf WHERE day > ?1 AND platform NOT LIKE '%${ROBOT}' ` +
-      'GROUP BY game, platform, model, form ORDER BY SUM(slow) * 1.0 / SUM(frames) DESC LIMIT 500').bind(since),
-    db.prepare(
-      'SELECT kind, game, msg, place, SUM(n) n, MAX(day) last, GROUP_CONCAT(DISTINCT model) models, GROUP_CONCAT(DISTINCT app) apps ' +
-      `FROM crashes WHERE day > ?1 AND platform NOT LIKE '%${ROBOT}' GROUP BY kind, game, msg, place ORDER BY SUM(n) DESC LIMIT 200`).bind(since),
-  ]);
-  return {
-    days: PERF_DAYS,
-    games: g.results.map(r => ({ ...r, fps: r.ms ? Math.round(10 * 1000 * r.frames / r.ms) / 10 : 0 })),
-    errors: e.results.map(r => ({ ...r, last: new Date(r.last * 86400000).toISOString().slice(0, 10) })),
-  };
+// In the order of each table's key, which is the order they are stored in (so no sort, and each row
+// read once), and which puts the rows to be added up together next to each other.
+const PB = 'SELECT game, platform, model, form, app, ver, d0, d1, t1, rounds, frames, ms, work_ms work, slow, hitches, worst_ms worst, heat_ms heat, warm_ms warm, hot_ms hot FROM perf_builds';
+const PB_ORDER = ' ORDER BY game, platform, model, form, app, ver';
+const CB = 'SELECT kind, game, msg, place, platform, model, app, ver, n, d0, d1, t0, t1 FROM crash_builds';
+const CB_ORDER = ' ORDER BY kind, game, msg, place, platform, model, app, ver';
+/** The running totals per build (one game's, or all): { pb: perf_builds rows, cb: crash_builds rows }. Reads each row once. */
+async function builds(db, game = '') {
+  const [pb, cb] = await db.batch(game
+    ? [db.prepare(PB + ' WHERE game = ?1' + PB_ORDER).bind(game), db.prepare(CB + ' WHERE game = ?1' + CB_ORDER).bind(game)]
+    : [db.prepare(PB + PB_ORDER), db.prepare(CB + CB_ORDER)]);
+  return { pb: pb.results, cb: cb.results };
 }
 
-export const prunePerf = (db, t = Date.now()) => db.batch([
+// Adding up is done on rows in key order (runs of rows next to each other) and in maps of maps keyed
+// by the rows' own strings: keys made by joining strings cost several times more, and the Workers Free
+// plan allows 10 ms of work a request.
+/** Split rows that are in key order into runs of rows for which same(first, row). */
+function runs(rows, same) {
+  const out = [];
+  for (let i = 0; i < rows.length;) {
+    const a = rows[i];
+    let j = i + 1;
+    while (j < rows.length && same(a, rows[j])) j++;
+    out.push(rows.slice(i, j)); i = j;
+  }
+  return out;
+}
+/** The map under k in m, made the first time. */
+const sub = (m, k) => { let v = m.get(k); if (v === undefined) m.set(k, v = new Map()); return v; };
+const G3 = (a, b) => a.game === b.game && a.platform === b.platform && a.model === b.model;   // a game on a phone
+const G4 = (a, b) => G3(a, b) && a.form === b.form;                                          // ...on a screen
+const ERR = (a, b) => a.kind === b.kind && a.game === b.game && a.msg === b.msg && a.place === b.place;   // an error
+const ERR_PHONE = (a, b) => ERR(a, b) && a.platform === b.platform && a.model === b.model;  // ...on a phone
+const sum = (list, f) => list.reduce((a, r) => a + r[f], 0);
+const max = (list, f) => list.reduce((a, r) => Math.max(a, r[f]), -Infinity);
+const min = (list, f) => list.reduce((a, r) => Math.min(a, r[f]), Infinity);
+const isRobot = r => String(r.platform).endsWith(ROBOT);
+const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+const runOf = a => parseInt(String(a.app).slice(4), 10) || 0;   // the run number in "1.0.<run> <commit>"
+// The build that reported most recently first. Rows from before times were kept only have a day,
+// so those fall back to the day, then to the run number, then the label and the game file's version.
+const newestFirst = (a, b) => b.t1 - a.t1 || b.d1 - a.d1 || runOf(b) - runOf(a) || cmp(b.app, a.app) || cmp(b.ver, a.ver);
+
+/** Totals for the last PERF_DAYS days, from the running totals: smoothness per game and phone, and the most common errors. Test robots are left out. */
+function totalsFrom({ pb, cb }, g4 = runs(pb, G4)) {
+  const games = g4.filter(l => !isRobot(l[0])).map(l => {
+    const r = { game: l[0].game, platform: l[0].platform, model: l[0].model, form: l[0].form, rounds: sum(l, 'rounds'), frames: sum(l, 'frames'), ms: sum(l, 'ms'),
+      work: sum(l, 'work'), slow: sum(l, 'slow'), hitches: sum(l, 'hitches'), worst: max(l, 'worst') };
+    return { ...r, fps: r.ms ? Math.round(10 * 1000 * r.frames / r.ms) / 10 : 0 };
+  }).sort((a, b) => b.slow / b.frames - a.slow / a.frames).slice(0, 500);
+  const errors = runs(cb.filter(r => !isRobot(r)), ERR).map(l => ({
+    kind: l[0].kind, game: l[0].game, msg: l[0].msg, place: l[0].place, n: sum(l, 'n'), last: new Date(max(l, 'd1') * 86400000).toISOString().slice(0, 10),
+    models: [...new Set(l.map(r => r.model))].join(','), apps: [...new Set(l.map(r => r.app))].join(','),
+  })).sort((a, b) => b.n - a.n).slice(0, 200);
+  return { days: PERF_DAYS, games, errors };
+}
+
+/** Totals for the last PERF_DAYS days: smoothness per game and phone, and the most common errors. Test robots are left out. */
+export async function perfTotals(db) {
+  return totalsFrom(await builds(db));
+}
+
+/**
+ * Once a day: drop the days past the window, and remake the running totals from what is left, so
+ * they hold exactly the last PERF_DAYS days. (Between remakes they are only ever added to.)
+ */
+export const maintain = (db, t = Date.now()) => db.batch([
   db.prepare('DELETE FROM perf WHERE day <= ?1').bind(day(t) - PERF_DAYS - 1),
   db.prepare('DELETE FROM crashes WHERE day <= ?1').bind(day(t) - PERF_DAYS - 1),
+  db.prepare('DELETE FROM perf_builds'),
+  db.prepare(`INSERT INTO perf_builds (game, platform, model, form, app, ver, d0, d1, t1, rounds, frames, ms, work_ms, slow, hitches, worst_ms, heat_ms, warm_ms, hot_ms)
+    SELECT game, platform, model, form, app, ver, MIN(day), MAX(day), MAX(last_at), SUM(rounds), SUM(frames), SUM(ms), SUM(work_ms), SUM(slow), SUM(hitches), MAX(worst_ms), SUM(heat_ms), SUM(warm_ms), SUM(hot_ms)
+    FROM perf WHERE day > ?1 GROUP BY game, platform, model, form, app, ver`).bind(day(t) - PERF_DAYS),
+  db.prepare('DELETE FROM crash_builds'),
+  db.prepare(`INSERT INTO crash_builds (kind, game, msg, place, platform, model, app, ver, n, d0, d1, t0, t1)
+    SELECT kind, game, msg, place, platform, model, app, ver, SUM(n), MIN(day), MAX(day), COALESCE(MIN(NULLIF(first_at, 0)), 0), MAX(last_at)
+    FROM crashes WHERE day > ?1 GROUP BY kind, game, msg, place, platform, model, app, ver`).bind(day(t) - PERF_DAYS),
+  db.prepare('UPDATE rollup_day SET day = ?1 WHERE id = 1').bind(day(t)),
 ]);
+
+/** Have the running totals not been remade today (the daily run is late, or was missed)? One row read. */
+export async function stale(db, t = Date.now()) {
+  const r = await db.prepare('SELECT day FROM rollup_day WHERE id = 1').first();
+  return !r || r.day < day(t);
+}
 
 /* ---------- the report page ---------- */
 
 const MIN_FRAMES = 300;   // fewer frames than this say nothing about smoothness
-// The build that reported most recently first. Rows from before times were kept only have a day,
-// so those fall back to the day, then to the run number in "1.0.<run> <commit>".
-const NEWEST = 't1 DESC, d1 DESC, CAST(substr(app, 5) AS INTEGER) DESC, app DESC, ver DESC';
-const SUMS = 'SUM(rounds) rounds, SUM(frames) frames, SUM(ms) ms, SUM(work_ms) work, SUM(slow) slow, SUM(hitches) hitches, MAX(worst_ms) worst, SUM(heat_ms) heat, SUM(warm_ms) warm, SUM(hot_ms) hot';
 const counts = (r, p = '') => ({ rounds: r[p + 'rounds'], frames: r[p + 'frames'], ms: r[p + 'ms'], work: r[p + 'work'], slow: r[p + 'slow'], hitches: r[p + 'hitches'], worst: r[p + 'worst'],
   heat: r[p + 'heat'] || 0, warm: r[p + 'warm'] || 0, hot: r[p + 'hot'] || 0 });
 const pk = r => r.platform + '|' + r.model;   // one kind of reporter: a phone model, apart from the same model driven by a test robot
@@ -145,17 +216,86 @@ function phoneKind({ platform, model, builds = 0, d0 = 0, d1 = 0, crashes = 0 })
   return builds >= 12 && builds / (d1 - d0 + 1) >= 6 && crashes >= builds ? 'likely' : '';
 }
 
+/** [{ platform, model, builds, d0, d1, crashes }] for every phone model in the running totals (phoneKind's inputs). */
+function kindsFrom({ pb, cb }) {
+  const crashes = new Map(), phones = new Map();
+  for (const r of cb) if (r.kind === 'crash') { const m = sub(crashes, r.platform); m.set(r.model, (m.get(r.model) || 0) + r.n); }
+  for (const r of pb) {
+    const m = sub(phones, r.platform);
+    let p = m.get(r.model);
+    if (!p) m.set(r.model, p = { platform: r.platform, model: r.model, apps: new Set(), d0: r.d0, d1: r.d1 });
+    p.apps.add(r.app); if (r.d0 < p.d0) p.d0 = r.d0; if (r.d1 > p.d1) p.d1 = r.d1;
+  }
+  return [...phones.values()].flatMap(m => [...m.values()]).map(({ apps, ...p }) => ({ ...p, builds: apps.size, crashes: crashes.get(p.platform)?.get(p.model) || 0 }));
+}
+
 // What kind of machine each phone model is (phoneKind), from everything it has reported: in one game
-// alone a robot looks like any other phone. It reads both tables whole, so the Worker keeps the answer
-// a while (phoneKinds) and hands it to perfReport, which would otherwise read them again for every page.
+// alone a robot looks like any other phone. The Worker keeps the answer a while (the main report
+// keeps it as it is worked out) and hands it to perfReport for each game's page.
 const KINDS_SQL = `SELECT p.platform, p.model, p.builds, p.d0, p.d1, COALESCE(c.crashes, 0) crashes
-   FROM (SELECT platform, model, COUNT(DISTINCT app) builds, MIN(day) d0, MAX(day) d1 FROM perf WHERE day > ?1 GROUP BY platform, model) p
-   LEFT JOIN (SELECT platform, model, SUM(n) crashes FROM crashes WHERE day > ?1 AND kind = 'crash' GROUP BY platform, model) c
+   FROM (SELECT platform, model, COUNT(DISTINCT app) builds, MIN(d0) d0, MAX(d1) d1 FROM perf_builds GROUP BY platform, model) p
+   LEFT JOIN (SELECT platform, model, SUM(n) crashes FROM crash_builds WHERE kind = 'crash' GROUP BY platform, model) c
      ON c.platform = p.platform AND c.model = p.model`;
 
 /** [{ platform, model, builds, d0, d1, crashes }] for every phone model that reported in the last PERF_DAYS days. */
-export async function phoneKinds(db, t = Date.now()) {
-  return (await db.prepare(KINDS_SQL).bind(day(t) - PERF_DAYS).all()).results;
+export async function phoneKinds(db) {
+  return (await db.prepare(KINDS_SQL).all()).results;
+}
+
+/**
+ * For each error and phone model: how many other builds have played that game since it was last seen,
+ * without it, and for how many rounds. For a crash, without any crash in that game: its wording
+ * differs with what the phone could say about it, and "closed while playing" is the same trouble as
+ * "out of memory while playing". "Since": by the time where both have one. A row with no time is
+ * from before times were kept, so anything with a time was reported after it; otherwise by the day.
+ * -> Map "kind, game, msg, place, phone" -> { newer, rounds } (only errors with at least one such build).
+ */
+function laterBuilds({ pb, cb }, g4 = runs(pb, G4)) {
+  // What each phone played of each game, per build (app and game file), over both screens:
+  // game -> platform -> model -> app -> ver -> { d1, t1, rounds }. (g4 runs next to each other with
+  // the same game and phone are its screens.)
+  const played = new Map();
+  let m = null, list = null, last = null;
+  for (const l of g4) {
+    const f = l[0];
+    if (!last || !G3(last, f)) { m = new Map(); sub(sub(played, f.game), f.platform).set(f.model, list = []); }
+    last = f;
+    for (const r of l) {
+      const vers = sub(m, r.app);
+      const p = vers.get(r.ver);
+      if (!p) { const q = { app: r.app, ver: r.ver, d1: r.d1, t1: r.t1, rounds: r.rounds }; vers.set(r.ver, q); list.push(q); }
+      else { if (r.d1 > p.d1) p.d1 = r.d1; if (r.t1 > p.t1) p.t1 = r.t1; p.rounds += r.rounds; }
+    }
+  }
+  // Per kind of error, game and phone, the builds that had any of that kind (a crash is a crash,
+  // however worded): kind -> game -> platform -> model -> app -> Set of ver.
+  const anyOf = new Map();
+  for (const r of cb) {
+    if (!r.game) continue;
+    const apps = sub(sub(sub(sub(anyOf, r.kind), r.game), r.platform), r.model);
+    let vers = apps.get(r.app);
+    if (!vers) apps.set(r.app, vers = new Set());
+    vers.add(r.ver);
+  }
+  const out = new Map();
+  // Each error on each phone: when it was last seen, and the builds it was seen on.
+  for (const l of runs(cb, ERR_PHONE)) {
+    const e = l[0];
+    if (!e.game) continue;
+    const builds = played.get(e.game)?.get(e.platform)?.get(e.model);
+    if (!builds) continue;
+    const d1 = max(l, 'd1'), t1 = max(l, 't1');
+    let had = anyOf.get(e.kind).get(e.game).get(e.platform).get(e.model);
+    if (e.kind !== 'crash') { had = new Map(); for (const r of l) { let v = had.get(r.app); if (!v) had.set(r.app, v = new Set()); v.add(r.ver); } }
+    let newer = 0, rounds = 0;
+    for (let i = 0; i < builds.length; i++) {
+      const p = builds[i];
+      if (!(t1 > 0 && p.t1 > 0 ? p.t1 > t1 : p.t1 > 0 ? p.d1 >= d1 : p.d1 > d1) || had.get(p.app)?.has(p.ver)) continue;
+      newer++; rounds += p.rounds;
+    }
+    if (newer) out.set([e.kind, e.game, e.msg, e.place, pk(e)].join('\n'), { newer, rounds });
+  }
+  return out;
 }
 
 /**
@@ -173,57 +313,41 @@ export async function phoneKinds(db, t = Date.now()) {
  * change without the app changing. d0/d1 are day numbers and t0/t1 seconds since 1970 (0 where a
  * row is from before times were kept).
  *
- * kinds: phoneKinds() worked out a little earlier, if the caller keeps it; otherwise it is read here.
+ * It reads the running totals per build (perf_builds, crash_builds) once each and adds them up here,
+ * so a work-out costs about one row read per build, not the many passes over every day's rows that
+ * the same sums in SQL cost. kinds: phoneKinds() worked out a little earlier, if the caller keeps it.
  */
 export async function perfReport(db, t = Date.now(), game = '', kinds = null) {
-  const since = day(t) - PERF_DAYS, one = game ? ' AND game = ?2' : '';
-  const q = sql => game ? db.prepare(sql).bind(since, game) : db.prepare(sql).bind(since);
-  const [er, nw, ...rest] = await db.batch([
-    // Crashes and script errors, per phone model and build (added up per error below).
-    q(`SELECT kind, game, msg, place, platform, model, app, ver, SUM(n) n, MIN(day) d0, MAX(day) d1, MIN(NULLIF(first_at, 0)) t0, MAX(last_at) t1
-       FROM crashes WHERE day > ?1${one} GROUP BY kind, game, msg, place, platform, model, app, ver ORDER BY d1 DESC, t1 DESC LIMIT 5000`),
-    // For each error and phone model: how many other builds have played that game since it was last seen,
-    // without it, and for how many rounds. For a crash, without any crash in that game: its wording
-    // differs with what the phone could say about it, and "closed while playing" is the same trouble as
-    // "out of memory while playing". "Since": by the time where both have one. A row with no time is
-    // from before times were kept, so anything with a time was reported after it; otherwise by the day.
-    q(`WITH ea AS (SELECT kind, game, msg, place, platform, model, app, ver, MAX(day) d1, MAX(last_at) t1 FROM crashes WHERE day > ?1 AND game != ''${one} GROUP BY kind, game, msg, place, platform, model, app, ver),
-       e AS (SELECT kind, game, msg, place, platform, model, MAX(d1) d1, MAX(t1) t1 FROM ea GROUP BY kind, game, msg, place, platform, model),
-       p AS (SELECT game, platform, model, app, ver, MAX(day) d1, MAX(last_at) t1, SUM(rounds) rounds FROM perf WHERE day > ?1${one} GROUP BY game, platform, model, app, ver)
-       SELECT e.kind, e.game, e.msg, e.place, e.platform, e.model, COUNT(*) newer, SUM(p.rounds) rounds FROM e
-       JOIN p ON p.game = e.game AND p.platform = e.platform AND p.model = e.model
-         AND (CASE WHEN e.t1 > 0 AND p.t1 > 0 THEN p.t1 > e.t1 WHEN p.t1 > 0 THEN p.d1 >= e.d1 ELSE p.d1 > e.d1 END)
-       WHERE NOT EXISTS (SELECT 1 FROM ea x WHERE x.kind = e.kind AND x.game = e.game AND x.platform = e.platform AND x.model = e.model AND x.app = p.app AND x.ver = p.ver
-                         AND (e.kind = 'crash' OR (x.msg = e.msg AND x.place = e.place)))
-       GROUP BY e.kind, e.game, e.msg, e.place, e.platform, e.model`),
-    // What kind of machine each phone model is (phoneKind), unless the caller has it already.
-    ...(kinds ? [] : [db.prepare(KINDS_SQL).bind(since)]),
-    ...(game ? [
-      // One game: every day and build it was played on, on every phone, newest first.
-      q(`SELECT platform, model, form, app, ver, day, day d1, first_at t0, last_at t1, rounds, frames, ms, work_ms work, slow, hitches, worst_ms worst, heat_ms heat, warm_ms warm, hot_ms hot
-         FROM perf WHERE day > ?1 AND game = ?2 ORDER BY ${NEWEST} LIMIT 2000`),
-    ] : [
-      // Who reports: each phone model, the build it reported most recently and how many builds it has run.
-      q(`WITH b AS (SELECT platform, model, app, '' ver, MIN(day) d0, MAX(day) d1, MAX(last_at) t1, SUM(rounds) rounds, SUM(ms) ms FROM perf WHERE day > ?1 GROUP BY platform, model, app),
-           r AS (SELECT b.*, ROW_NUMBER() OVER (PARTITION BY platform, model ORDER BY ${NEWEST}) rn, COUNT(*) OVER p builds, MIN(d0) OVER p a_d0, SUM(rounds) OVER p a_rounds, SUM(ms) OVER p a_ms
-                 FROM b WINDOW p AS (PARTITION BY platform, model))
-           SELECT platform, model, app, a_d0 d0, d1, t1, builds, a_rounds rounds, a_ms ms FROM r WHERE rn = 1 ORDER BY t1 DESC, d1 DESC LIMIT 200`),
-      // Smoothness per game, phone and screen: the newest build that played it, beside the totals for every build.
-      q(`WITH b AS (SELECT game, platform, model, form, app, ver, MIN(day) d0, MAX(day) d1, MAX(last_at) t1, ${SUMS} FROM perf WHERE day > ?1 GROUP BY game, platform, model, form, app, ver),
-       r AS (SELECT b.*, ROW_NUMBER() OVER (PARTITION BY game, platform, model, form ORDER BY ${NEWEST}) rn, COUNT(*) OVER p builds, MIN(d0) OVER p a_d0,
-                    SUM(rounds) OVER p a_rounds, SUM(frames) OVER p a_frames, SUM(ms) OVER p a_ms, SUM(work) OVER p a_work, SUM(slow) OVER p a_slow, SUM(hitches) OVER p a_hitches, MAX(worst) OVER p a_worst
-             FROM b WINDOW p AS (PARTITION BY game, platform, model, form))
-       SELECT * FROM r WHERE rn = 1 ORDER BY a_slow * 1.0 / a_frames DESC LIMIT 500`),
-    ]),
-  ]);
+  return (await perfAll(db, t, game, kinds)).report;
+}
 
-  const kd = kinds ? { results: kinds } : rest.shift(), [ph, gm] = rest;
-  const run = a => parseInt(String(a.app).slice(4), 10) || 0;
-  const later = (a, b) => (a.t1 || 0) - (b.t1 || 0) || a.d1 - b.d1 || run(a) - run(b);   // > 0: a was reported after b
-  const history = game ? ph.results : [];
-  const kindBy = new Map(kd.results.map(r => [pk(r), { kind: phoneKind(r), crashes: r.crashes }]));
+/** perfReport, with the phone kinds and the QA panel's totals (GET /perf) worked out from the same reads (all games only). */
+export async function perfAll(db, t = Date.now(), game = '', kinds = null) {
+  const b = await builds(db, game);
+  const history = game ? (await db.prepare(
+    `SELECT platform, model, form, app, ver, day, day d1, first_at t0, last_at t1, rounds, frames, ms, work_ms work, slow, hitches, worst_ms worst, heat_ms heat, warm_ms warm, hot_ms hot
+     FROM perf WHERE day > ?1 AND game = ?2`).bind(day(t) - PERF_DAYS, game).all()).results.sort(newestFirst).slice(0, 2000) : [];
+  if (!kinds) kinds = game ? await phoneKinds(db) : kindsFrom(b);
+  const g4 = runs(b.pb, G4);   // each game on each phone and screen, its builds
+
+  const later = (a, b) => (a.t1 || 0) - (b.t1 || 0) || a.d1 - b.d1 || runOf(a) - runOf(b);   // > 0: a was reported after b
+  const kindBy = new Map(kinds.map(r => [pk(r), { kind: phoneKind(r), crashes: r.crashes }]));
   const kindOf = p => kindBy.get(pk(p)) || { kind: phoneKind(p), crashes: 0 };
-  const phones = game ? [] : ph.results.map(r => ({ ...r, ...kindOf(r) }));
+  // Who reports: each phone model, the build it reported most recently and how many builds it has run.
+  const byPhone = new Map();   // platform -> model -> { rounds, ms, apps: app -> { d0, d1, t1 } }
+  if (!game) for (const r of b.pb) {
+    const m = sub(byPhone, r.platform);
+    let p = m.get(r.model);
+    if (!p) m.set(r.model, p = { platform: r.platform, model: r.model, rounds: 0, ms: 0, apps: new Map() });
+    const a = p.apps.get(r.app);
+    if (!a) p.apps.set(r.app, { app: r.app, ver: '', d0: r.d0, d1: r.d1, t1: r.t1 });
+    else { if (r.d0 < a.d0) a.d0 = r.d0; if (r.d1 > a.d1) a.d1 = r.d1; if (r.t1 > a.t1) a.t1 = r.t1; }
+    p.rounds += r.rounds; p.ms += r.ms;
+  }
+  const phones = [...byPhone.values()].flatMap(m => [...m.values()]).map(({ apps: m, ...p }) => {
+    const apps = [...m.values()], last = apps.reduce((a, x) => newestFirst(a, x) <= 0 ? a : x);
+    return { ...p, app: last.app, d0: min(apps, 'd0'), d1: last.d1, t1: last.t1, builds: apps.length };
+  }).sort((a, b) => b.t1 - a.t1 || b.d1 - a.d1).slice(0, 200).map(r => ({ ...r, ...kindOf(r) }));
   // The build each phone model ran most recently, to tell which errors are on it.
   const newest = new Map(phones.map(p => [pk(p), p]));
   if (game) {
@@ -237,16 +361,22 @@ export async function perfReport(db, t = Date.now(), game = '', kinds = null) {
     for (const { apps, ...p } of seen.values()) phones.push({ ...p, builds: apps.size, ...kindOf(p) });
     for (const p of phones) if (!newest.has(pk(p)) || later(p, newest.get(pk(p))) > 0) newest.set(pk(p), p);
   }
+  // Crashes and script errors, per phone model and build, the most recent first (added up per error below).
+  const er = b.cb.slice().sort((a, b) => b.d1 - a.d1 || b.t1 - a.t1).slice(0, 5000);
   // A build that only got as far as an error counts as a build that phone ran.
-  for (const r of er.results) if (!newest.has(pk(r)) || later(r, newest.get(pk(r))) > 0) newest.set(pk(r), r);
+  for (const r of er) { const k = pk(r), p = newest.get(k); if (!p || later(r, p) > 0) newest.set(k, r); }
 
-  const games = (gm?.results || []).map(r => ({ game: r.game, platform: r.platform, model: r.model, form: r.form, builds: r.builds, d0: r.a_d0,
-    all: counts(r, 'a_'), app: r.app, ver: r.ver, d1: r.d1, t1: r.t1, now: counts(r) }));
+  // Smoothness per game, phone and screen: the newest build that played it, beside the totals for every build.
+  const games = game ? [] : g4.map(l => {
+    const r = l.reduce((a, x) => newestFirst(a, x) <= 0 ? a : x);
+    const all = { rounds: sum(l, 'rounds'), frames: sum(l, 'frames'), ms: sum(l, 'ms'), work: sum(l, 'work'), slow: sum(l, 'slow'), hitches: sum(l, 'hitches'), worst: max(l, 'worst'), heat: 0, warm: 0, hot: 0 };
+    return { game: r.game, platform: r.platform, model: r.model, form: r.form, builds: l.length, d0: min(l, 'd0'), all, app: r.app, ver: r.ver, d1: r.d1, t1: r.t1, now: counts(r) };
+  }).sort((a, b) => b.all.slow / b.all.frames - a.all.slow / a.all.frames).slice(0, 500);
 
   // Errors: add the per-phone, per-build rows up into one entry per error, and say whether it is still happening.
-  const newer = new Map(nw.results.map(r => [[r.kind, r.game, r.msg, r.place, pk(r)].join('\n'), r]));
+  const newer = laterBuilds(b, g4);
   const byErr = new Map();
-  for (const r of er.results) {
+  for (const r of er) {
     const k = [r.kind, r.game, r.msg, r.place].join('\n');
     let e = byErr.get(k);
     if (!e) byErr.set(k, e = { kind: r.kind, game: r.game, msg: r.msg, place: r.place, n: 0, d0: r.d0, d1: r.d1, t0: 0, t1: 0, phones: new Map(), apps: new Map() });
@@ -271,7 +401,7 @@ export async function perfReport(db, t = Date.now(), game = '', kinds = null) {
       phones: [...e.phones.values()].map(({ platform, model }) => ({ platform, model, kind: kindOf({ platform, model }).kind })),
       apps: [...e.apps.values()].sort((a, b) => later(b, a)), state: now ? 'now' : gone ? 'gone' : 'unknown', newer: now ? 0 : gone, rounds: now ? 0 : rounds };
   });
-  return { days: PERF_DAYS, at: Math.floor(t / 1000), game, phones, games, history, errors };
+  return { report: { days: PERF_DAYS, at: Math.floor(t / 1000), game, phones, games, history, errors }, kinds, totals: game ? null : totalsFrom(b, g4) };
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

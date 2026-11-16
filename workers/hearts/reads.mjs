@@ -7,11 +7,13 @@
 // The data is shaped like the live crash and stutter report on 13 Nov 2026 (9 phone models, about 3,800
 // rounds and 260 crashes in the last 14 days, play stats for 280 games); scale 5 makes five times as
 // much. Each request is made as if its Cloudflare location had nothing cached: "worked out" is the
-// first location to ask, "kept" any other location while the kept answer is fresh (src/kept.js).
+// first location to ask, "kept" any other location while the kept answer is fresh (src/kept.js). The
+// main report page also keeps GET /perf's answer and the phone kinds that game pages use. The daily run
+// (drops old days, remakes the report's running totals) is measured once.
 import { getPlatformProxy } from 'wrangler';
 import { readdirSync, readFileSync } from 'node:fs';
 import worker from './src/index.js';
-import { savePerf } from './src/perf.js';
+import { savePerf, maintain } from './src/perf.js';
 import { saveBatch } from './src/stats.js';
 
 const SCALE = Number(process.argv[2] || 1);
@@ -42,6 +44,9 @@ for (const [platform, model, b, r, c] of PHONES) {
   }
 }
 for (let d = 0; d < 30; d++) await saveBatch(raw, GAMES.filter(() => rnd() < .35).map(g => [g, 3, 2, 1, 60]), now - d * 864e5);
+// heart counts for 170 games, as live
+for (const g of GAMES.slice(0, 170)) await raw.prepare('INSERT INTO counts (game, n) VALUES (?1, ?2)').bind(g, 1 + Math.floor(rnd() * 9)).run();
+// the daily run (drops old days, remakes the report's running totals), measured below
 const count = async t => (await raw.prepare(`SELECT COUNT(*) n FROM ${t}`).first()).n;
 console.log(`D1 rows read per request, scale ${SCALE}: perf ${await count('perf')} rows, crashes ${await count('crashes')}, play_stats ${await count('play_stats')}\n`);
 
@@ -61,6 +66,7 @@ async function cost(path) {
   return { read, text };
 }
 const rows = [['GET /counts', '/counts'], ['GET /stats', '/stats'], ['GET /perf', '/perf'], ['GET /perf/report', '/perf/report'], ['GET /perf/report?game=', '/perf/report?game=game-3']];
+read = 0; await maintain(DB); console.log(`daily run (once a day): ${read} rows read\n`);
 console.log('request'.padEnd(26), 'worked out'.padStart(12), 'kept'.padStart(8));
 // (a game's page reuses the phone kinds the main page kept, as it does live)
 for (const [name, path] of rows) {
