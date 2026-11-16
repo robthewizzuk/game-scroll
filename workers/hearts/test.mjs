@@ -16,9 +16,9 @@ import { newChallenge, checkChallenge, newSession, readSession } from './src/ses
 import { cbor, b64u, sha256, concat } from './src/util.js';
 import { cleanBatch } from './src/stats.js';
 import { sharePage, shareGame, idFromPath } from './src/sharepage.js';
-import { cleanPerf, perfPage, perfReport, steerGroups, steerRule } from './src/perf.js';
+import { cleanPerf, perfPage, perfReport, steerGroups, steerRule, maintain } from './src/perf.js';
 import { plausible, cleanSecs } from './src/scores.js';
-import { kept, left, forget } from './src/kept.js';
+import { kept, left, forget, COUNT_INTO_KEPT } from './src/kept.js';
 
 x509.cryptoProvider.set(crypto);
 const ok = msg => console.log('  ✓ ' + msg);
@@ -160,6 +160,11 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
     failed.run(d, 'crash', 'short-game', 'App closed while playing', 'android', 'Mine', '1.0.139 aaaaaaa', 1, noon, noon);
     played.run(d, 'short-game', 'android', 'Mine', 'phone', '1.0.139 aaaaaaa', '', 1, 0, 0);
     played.run(d, 'short-game', 'android', 'Mine', 'phone', '1.0.120 aaaaaaa', '', 5, 0, 0);
+    played.run(d - 20, 'old-game', 'android', 'Mine', 'phone', '1.0.99 aaaaaaa', '', 1, 0, 0);   // past the 14 days
+    await maintain(db, now);   // (rows put straight into perf and crashes: add them up per build, as the daily run does)
+    assert.equal(sq.prepare("SELECT COUNT(*) n FROM perf WHERE game = 'old-game'").get().n, 0, 'the daily run drops days past the window');
+    assert.equal(sq.prepare("SELECT COUNT(*) n FROM perf_builds WHERE game = 'old-game'").get().n, 0, '...and remakes the running totals without them');
+    assert.equal(sq.prepare("SELECT SUM(rounds) n FROM perf_builds").get().n, sq.prepare("SELECT SUM(rounds) n FROM perf").get().n);
     const all = await perfReport(db, now), kind = (r, m) => r.phones.find(x => x.model === m).kind;
     assert.equal(kind(all, 'Mine'), '', 'a phone given many builds a day by the person trying them is a phone');
     assert.equal(kind(all, 'Bot'), 'likely', 'many builds a day and a crash for every build is a robot');
@@ -226,6 +231,20 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   await forget(db, t + 300_000 + 86_400_000); assert.deepEqual([...rows.keys()], ['report', 'report:mini-golf'], 'a day later, only what was asked for since is kept');
   await forget(db, t + 300_001 + 86_400_000); assert.equal(rows.size, 0);
   ok('expensive answers are worked out once and kept for every location, for as long as asked');
+}
+
+/* ---------- heart counts kept for every location, changed by each heart ---------- */
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const sq = new DatabaseSync(':memory:');
+  for (const f of readdirSync('migrations').sort()) sq.exec(readFileSync('migrations/' + f, 'utf8'));
+  sq.prepare("INSERT INTO snapshots (key, at, body) VALUES ('counts', 1, ?)").run(JSON.stringify({ counts: { 'mini-golf': 3, 'stack-up': 1 }, at: 1 }));
+  const set = (game, n) => { sq.prepare('INSERT INTO counts (game, n) VALUES (?1, ?2) ON CONFLICT(game) DO UPDATE SET n = ?2').run(game, n); sq.prepare(COUNT_INTO_KEPT).run(game); };
+  const body = () => JSON.parse(sq.prepare("SELECT body FROM snapshots WHERE key = 'counts'").get().body);
+  set('mini-golf', 4); set('new-game', 1); set('stack-up', 0);
+  assert.deepEqual(body(), { counts: { 'mini-golf': 4, 'new-game': 1 }, at: 1 });
+  sq.close();
+  ok('a heart changes its game in the kept counts, and a game at 0 leaves them');
 }
 
 /* ---------- sessions ---------- */

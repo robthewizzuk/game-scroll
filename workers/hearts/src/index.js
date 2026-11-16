@@ -1,6 +1,6 @@
 // Game Scroll API (Cloudflare Worker + D1): shared heart counts, protected by app attestation.
 //
-//   GET  /counts      -> { counts: { "<game id>": n, ... }, at }   cached ~60 s at the edge
+//   GET  /counts      -> { counts: { "<game id>": n, ... }, at }   cached ~60 s at the edge, kept in D1 (each heart updates it)
 //   GET  /challenge   -> { challenge }                              single use, valid 5 min
 //   POST /session     body { device, platform: "ios"|"android", challenge, ... } -> { session, expires }
 //                     iOS:     first time { keyId, attestation }, later { keyId, assertion }  (App Attest)
@@ -23,8 +23,8 @@ import { verifyIntegrity } from './playintegrity.js';
 import { unb64, b64u } from './util.js';
 import { cleanBatch, saveBatch, totals, prune } from './stats.js';
 import { sharePage, shareGame, idFromPath } from './sharepage.js';
-import { cleanPerf, savePerf, perfTotals, perfReport, prunePerf, perfPage, phoneKinds } from './perf.js';
-import { kept, left, forget } from './kept.js';
+import { cleanPerf, savePerf, perfTotals, perfAll, perfPage, phoneKinds, maintain, stale } from './perf.js';
+import { kept, keep, left, forget, COUNT_INTO_KEPT } from './kept.js';
 import { cleanScore, cleanSecs, checkScore, saveScore, board, pruneScores } from './scores.js';
 import { cleanBrain, saveBrain, sharedBrain, pruneBrains, NAME_RE, SHAPE_RE } from './brains.js';
 
@@ -39,13 +39,18 @@ const ORIGINS = [
   /^https:\/\/([a-z0-9-]+\.)?game-scroll\.com$/,
 ];
 const COUNTS_TTL = 60;
+// The counts are kept in D1 (snapshots) for every location, and each heart changes its game's count
+// there too, so a location whose edge cache ran out reads one row instead of the whole counts table.
+// Worked out again from the table every 15 minutes all the same, in case two changes crossed.
+const COUNTS_KEEP = 900;
 const DEVICE_RE = /^[A-Za-z0-9-]{16,64}$/;
 const GAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_BODY = { '/heart': 512, '/score': 512, '/brain': 4096, '/session': 24_000, '/stats': 8_000, '/perf': 12_000 };
 // How long the expensive answers are kept (seconds), in D1 for every location (kept.js) and at each
 // location's edge. The app fetches play stats at most every 30 minutes; GET /perf is for the QA panel
-// only; the report pages are what someone checks after trying a build, so they stay fresh.
-const STATS_TTL = 1800, PERF_TTL = 1800, REPORT_TTL = 300, KINDS_TTL = 1800;
+// only (and is kept again each time the main report page is worked out); the report pages are what
+// someone checks after trying a build, so they stay fresh.
+const STATS_TTL = 1800, PERF_TTL = 7200, REPORT_TTL = 300, KINDS_TTL = 1800;
 /** A keep time, or the tests' STATS_TTL (0: keep nothing). */
 const keepFor = (env, ttl) => env.STATS_TTL !== undefined ? Math.min(ttl, Number(env.STATS_TTL)) : ttl;
 
@@ -90,10 +95,13 @@ async function counts(env, ctx, req) {
   const cache = caches.default, key = new Request(new URL('/counts', req.url).toString());
   let res = await cache.match(key);
   if (!res) {
-    const { results } = await env.DB.prepare('SELECT game, n FROM counts WHERE n > 0').all();
-    const out = {};
-    for (const r of results) out[r.game] = r.n;
-    res = new Response(JSON.stringify({ counts: out, at: Date.now() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${COUNTS_TTL}` } });
+    const { text } = await kept(env.DB, 'counts', keepFor(env, COUNTS_KEEP), async () => {
+      const { results } = await env.DB.prepare('SELECT game, n FROM counts WHERE n > 0').all();
+      const out = {};
+      for (const r of results) out[r.game] = r.n;
+      return JSON.stringify({ counts: out, at: Date.now() });
+    });
+    res = new Response(text, { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${COUNTS_TTL}` } });
     ctx.waitUntil(cache.put(key, res.clone()));
   }
   // CORS depends on the caller, so add it after the cache.
@@ -168,10 +176,7 @@ async function getStats(env, ctx, req) {
   const cache = caches.default, key = new Request(new URL('/stats', req.url).toString());
   let res = ttl > 0 ? await cache.match(key) : null;
   if (!res) {
-    const { text, at } = await kept(env.DB, 'stats', ttl, async () => {
-      if (Math.random() < 0.05) ctx.waitUntil(prune(env.DB));   // now and then, drop days past the window
-      return JSON.stringify(await totals(env.DB));
-    });
+    const { text, at } = await kept(env.DB, 'stats', ttl, async () => JSON.stringify(await totals(env.DB)));
     res = new Response(text, { headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${left(ttl, at)}` } });
     if (ttl > 0) ctx.waitUntil(cache.put(key, res.clone()));
   }
@@ -203,11 +208,18 @@ async function getPerf(env, ctx, req, page) {
   if (!res) {
     if (game && await limited(env.LIMIT_PAGES, 'pg:' + ip(req))) return new Response('Slow down.', { status: 429, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60' } });
     const { text, at } = await kept(env.DB, page ? 'report' + (game ? ':' + game : '') : 'perf', ttl, async () => {
-      if (Math.random() < 0.05) ctx.waitUntil(Promise.all([prunePerf(env.DB), forget(env.DB)]));
+      if (await stale(env.DB)) await daily(env);   // (normally done by the daily run)
       if (!page) return JSON.stringify(await perfTotals(env.DB));
-      // What kind of machine each phone is reads both tables whole: kept longer, and shared by every page.
-      const kinds = JSON.parse((await kept(env.DB, 'kinds', keepFor(env, KINDS_TTL), async () => JSON.stringify(await phoneKinds(env.DB)))).text);
-      return perfPage(await perfReport(env.DB, Date.now(), game, kinds), await titles(), env.REPO_URL);
+      if (game) {
+        // What kind of machine each phone is takes every game's builds: kept longer, and shared by every page.
+        const kinds = JSON.parse((await kept(env.DB, 'kinds', keepFor(env, KINDS_TTL), async () => JSON.stringify(await phoneKinds(env.DB)))).text);
+        return perfPage((await perfAll(env.DB, Date.now(), game, kinds)).report, await titles(), env.REPO_URL);
+      }
+      // The main page reads every build once, and keeps the phone kinds and the QA panel's totals it
+      // worked out on the way, so those aren't read again for a while.
+      const all = await perfAll(env.DB);
+      if (ttl > 0) ctx.waitUntil(Promise.all([keep(env.DB, 'kinds', JSON.stringify(all.kinds)), keep(env.DB, 'perf', JSON.stringify(all.totals))]));
+      return perfPage(all.report, await titles(), env.REPO_URL);
     });
     res = page
       ? new Response(text, { headers: {
@@ -334,13 +346,23 @@ async function heart(env, ctx, req) {
   const bump = env.DB.prepare(
     `INSERT INTO counts (game, n) VALUES (?1, MAX(0, ${on ? '' : '-'}changes())) ` +
     `ON CONFLICT(game) DO UPDATE SET n = MAX(0, n ${on ? '+' : '-'} changes()) RETURNING n`).bind(game);
-  const [, res] = await env.DB.batch([change, bump]);
+  // The kept list of counts (GET /counts) gets the new number too, or loses the game at 0.
+  const mirror = env.DB.prepare(COUNT_INTO_KEPT).bind(game);
+  const [, res] = await env.DB.batch([change, bump, mirror]);
   // Drop this location's cached list so nearby players see the change soon (others within a minute).
   ctx.waitUntil(caches.default.delete(new Request(new URL('/counts', req.url).toString())));
   return json(req, { game, n: res.results[0]?.n ?? 0 });
 }
 
+const daily = env => Promise.all([maintain(env.DB), prune(env.DB), forget(env.DB)]);
+
 export default {
+  // Once a day (wrangler.toml [triggers]): drop the days past each window, remake the report's running
+  // totals, and forget kept answers nobody has asked for in a day.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(daily(env));
+  },
+
   async fetch(req, env, ctx) {
     const { pathname, hostname } = new URL(req.url);
     if (hostname.startsWith('play.')) return await share(env, req);

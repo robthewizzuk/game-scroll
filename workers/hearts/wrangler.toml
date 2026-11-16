@@ -16,6 +16,11 @@ routes = [
   { pattern = "play.game-scroll.com", custom_domain = true },
 ]
 
+# Once a day, just after midnight UTC: drop the days past each window and remake the crash and stutter
+# report's running totals (the scheduled() handler in src/index.js).
+[triggers]
+crons = ["7 0 * * *"]
+
 [vars]
 # "on" = hearts need a pass from App Attest / Play Integrity. Leave "off" until the app is in the
 # App Store and Play Store, or today's sideloaded test builds can't add hearts.
