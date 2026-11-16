@@ -90,7 +90,7 @@ const BOATS = {
     for (const s of [-1, 1]) for (const u of [.3, .5, .7]) b.ring('rubber', .24, .09, [s * (h.half(u) + .08), h.top(u) - .5, h.Z(u)], [0, PI / 2, 0], PI * 2, 14);
     b.ring('beam', .22, .05, [1.03, fl + 1.2, hz - .5], [0, PI / 2, 0], PI * 2, 14).box('lamp', .1, .12, .1, [0, fl + 2.14, hz - 1]).box('tail', .08, .1, .08, [-1.05, fl + 1.9, hz - .9]);
     Object.assign(points, { helm: [0, fl, hz + .2], deck: [0, fl, h.Z(.6)], bow: [0, h.top(.04), h.Z(.04)], wake: [0, 0, L / 2], exhaust: [.6, fl + 3.1, hz + .7] });
-    return { T: .85 };
+    return { T: .85, stand: ['helm', 'deck'] };
   },
   // a patrol boat: a grey hull, a bridge with glass all round, a mast with a radar that turns, a gun forward, rails
   patrol(b, o, parts, points) {
@@ -109,15 +109,33 @@ const BOATS = {
     Tt.cyl('paint', .62, .7, .34, [0, .17, 0], 0, 18).box('paint', 1, .62, .9, [0, .62, .12], 0, .1);
     for (const s of [-1, 1]) G.bar('steel', [s * .14, 0, -.2], [s * .14, 0, -2.3], .045, 8, .035); G.box('paint', .5, .3, .4, [0, 0, -.25], 0, .05);
     parts.turret = { shape: Tt, at: [0, dk(.2), h.Z(.2)] }; parts.gun = { shape: G, at: [0, .64, -.3], on: 'turret' };
-    Object.assign(points, { helm: [0, D + 1.1, zb - .5], muzzle: { at: [0, 0, -2.4], on: 'gun' }, bow: [0, dk(.03), h.Z(.03)], deck: [0, dk(.85), h.Z(.85)], wake: [0, 0, L / 2] });
-    return { T: 1.05, gun: 2.4 };
+    Object.assign(points, { helm: [0, D + 1.1, zb - .5], muzzle: { at: [0, 0, -2.4], on: 'gun' }, bow: [0, dk(.03), h.Z(.03)], deck: [0, dk(.85), h.Z(.85)], wake: [0, 0, L / 2], exhaust: [0, D + 1.2, zb + 2.4] });
+    return { T: 1.05, gun: 2.4, stand: ['helm', 'deck'] };
+  },
+  // a harbour police launch: a white hull with a band, a wheelhouse with a light bar on its roof, an open deck aft with a
+  // rail round it, fenders along its sides; its crew stand at the wheel and on the deck behind
+  police(b, o, parts, points) {
+    const L = 8.6, D = 1, h = hull(b, { L, B: 2.9, D, T: .5, sheer: .35, tw: .92, hard: true, camber: .05, cap: 'paint2', deck: 'paint2' }), dk = u => h.top(u) + .03;
+    for (const s of [-1, 1]) b.bar('paint2', [s * (h.half(.12) - .02), D * .62, h.Z(.12)], [s * (h.half(.96) - .02), D * .55, h.Z(.96)], .05, 6, .03);   // (the band along each side)
+    const zc = h.Z(.4), y = dk(.4);
+    house(b, 2.1, 2.5, 1.75, [0, y, zc], { slot: 'paint', roofSlot: 'paint2', glass: [.42, .9], over: .08 });
+    const ry = y + 1.75 + .06;
+    b.box('dark', 1.3, .08, .26, [0, ry + .04, zc + .3], 0, .02).box('beaconA', .5, .12, .2, [-.34, ry + .14, zc + .3], 0, .04).box('beaconB', .5, .12, .2, [.34, ry + .14, zc + .3], 0, .04);
+    b.bar('steel', [0, ry, zc + .9], [0, ry + 1.4, zc + .9], .025, 6).box('lamp', .14, .1, .1, [0, ry + 1.42, zc + .9]);
+    railing(b, h, .05, .26, 5, .7); railing(b, h, .62, .985, 6, .75);
+    for (const s of [-1, 1]) for (const u of [.3, .55, .8]) b.cyl('rubber', .13, .13, .5, [s * (h.half(u) + .1), D * .4, h.Z(u)], 0, 10);
+    b.box('lamp', .14, .1, .08, [-.7, y + 1.2, zc - 1.27]).box('lamp', .14, .1, .08, [.7, y + 1.2, zc - 1.27]).box('tail', .1, .12, .06, [0, dk(.98) + .3, h.Z(.99)]);
+    Object.assign(points, { helm: [-.42, y, zc - .5], passenger: [.42, y, zc - .5], deck: [0, dk(.78), h.Z(.78)], bow: [0, dk(.03), h.Z(.03)], wake: [0, 0, L / 2], exhaust: [.8, dk(.95) + .2, h.Z(.96)] });
+    return { T: .5, stand: ['helm', 'passenger', 'deck'], beacons: [{ at: [-.34, ry + .14, zc + .3], slot: 'beaconA' }, { at: [.34, ry + .14, zc + .3], slot: 'beaconB' }] };
   },
 };
-/** A boat: rowboat, motor, fishing, patrol. */
+/** A boat: rowboat, motor, fishing, patrol, police. */
 export function boat(o = {}) {
   const style = BOATS[o.style] ? o.style : 'rowboat', b = new Shape(), parts = {}, points = {}, m = BOATS[style](b, o, parts, points);
+  (m.beacons || []).forEach((q, i) => { points['beacon' + i] = q.at; });
   const bx = b.bounds();
-  return { kind: 'boat', style, body: b, parts, wheels: [], points, size: { length: bx.l, width: bx.w, height: bx.hi[1] }, draft: m.T, steer: m.steer || null, gun: m.gun || 0 };
+  // (stand: the seats that are a place to stand, at a wheel or on a deck, and not a cushion)
+  return { kind: 'boat', style, body: b, parts, wheels: [], points, beacons: m.beacons || [], stand: m.stand || [], size: { length: bx.l, width: bx.w, height: bx.hi[1] }, draft: m.T, steer: m.steer || null, gun: m.gun || 0 };
 }
 
 // a wing, tailplane or fin: aerofoil sections from its root to its tip. root, tip: where the leading edge is at each;

@@ -151,6 +151,33 @@ player and keeps their escape rate near a half. A `Predict` learns which way thi
 junctions, so cut-offs and roadblocks go to the road they will take. What it learns is kept in the game's
 brain slot. `brains: false` keeps to the rules alone.
 
+### Guns, the helicopter and the water (2 to 5 stars)
+
+```js
+law = new Wanted(city, api);                                   // armed, air and water are on by default
+law.on('shot', e => { if (e.hit) hp -= e.damage; });            // an officer or a launch fired at the player: the damage is the game's
+law.on('officer down', o => score += 10);
+if (firing) law.shoot(gun.muzzle, aimDir, { damage: 25 });     // the player fires back: officers (head shots twice), the helicopter, launches
+// on foot or in the water, pass it on: law.update(dt, { x, z, heading, v, car: false, y, swim: true }) / { ..., boat: true }
+```
+
+- **Two stars:** officers who get out of their cars are armed (a pistol; an SMG or a shotgun from four stars), with
+  `gs.combat` `Health` and `gs.characters` `Reactions` (they flinch, stagger and fall). A `gs.tactics` `Squad` moves them:
+  to low cover where the city has it (they crouch behind it), flanking, holding back from a moving player. They fire only
+  with a clear line (the city's buildings and the game's World3D both stop shots), less often at a moving target and in a car.
+- **Three stars:** a police helicopter (`gs.models` `vehicle('helicopter', { style: 'police' })` flown by a `gs.craft`
+  `Hover`) comes from the distance, climbs over the towers on its way, and keeps the player in sight from above: while it
+  sees them they stay seen. By night its searchlight lights them (a spot in the city's lamp pool: no light comes or goes, so no
+  shader is built) with a beam in the air. Shot enough it smokes, sinks and crashes; it leaves when the stars are gone.
+- **On the water:** a player in a boat or swimming gets police launches (`vehicle('boat', { style: 'police' })` on a
+  `gs.craft` `Boat`, lights and siren on), from the water found through the city's water links. They come alongside, cut
+  ahead, circle or ram; from three stars their crew fires. Shot or rammed enough they burn and sink.
+- **Tiny Brains:** how the helicopter and the launches close in (`close`, `ahead`, `wide`, `ram`) is one support brain,
+  taught by rules at first and learning from escapes and busts like the cars' brain; the squad has a `Coach` for
+  corrections. `law.brains` gives them all (`cars`, `turns`, `support`, `squad`) to save or look into.
+- `law.heli` and `law.boats` are what is out now (their `craft`, `model`, `tactic`, `down`); `armed: false`, `air: false`,
+  `water: false` leave any of it out. On a phone below Next Gen there are no sculpted officers, so no guns: the cars still chase.
+
 ## Taking a car
 
 `city.cars.take(car, { by })` takes any car: one in the traffic (its driver at the wheel, ready for
@@ -270,9 +297,15 @@ update(dt) {
   city.update(dt, me); inside.update(dt, me);              // after the city's update
   if (inside.entered) say('Welcome to the ' + inside.room.kind);
   const shop = inside.room;                                // the room the player is in, or null
-  if (shop) keeper.position.set(shop.spots.keeper.x, shop.spots.keeper.y, shop.spots.keeper.z);
+  if (shop?.keeper) shop.keeper.face?.look(me);            // its keeper, made with the room
 }
+inside.on('enter', room => music(room.kind)).on('leave', () => music('street'));
 ```
+
+- People: on Next Gen a room is made with its keeper behind the counter (not in homes) and patrons sat at its seats or stood
+  about (`ROOM_PEOPLE`: 3 on a top phone, 2 mid, 1 low; `people: 2` for a number, `false` for none). `room.people` and
+  `room.keeper` are theirs to talk to; they look round, check their phones, and the keeper talks to someone at the counter.
+  They go with the room. `on('enter' | 'leave' | 'made', room => ...)` (or `onEnter`, `onLeave`) says when.
 
 - `inside.near(p, 6)` is the nearest front door: `{ building, door, room, ready }` (`room` once it is made).
 - A room's `spots`: `keeper` (where the one who works there stands, and which way they face: `{ x, y, z, turn }`),

@@ -2063,4 +2063,4 @@ export { Gps } from './city-gps.js';
 // the police and the wanted level (city-police.js)
 export { Wanted, CRIMES, TACTICS } from './city-police.js';
 // rooms behind the doors: shops, diners, bars, homes, lobbies and warehouses to walk into (city-inside.js)
-export { Interiors, roomPlan, roomKind, INSIDE_KINDS } from './city-inside.js';
+export { Interiors, roomPlan, roomKind, INSIDE_KINDS, ROOM_PEOPLE } from './city-inside.js';

@@ -4,15 +4,17 @@ Planes, boats, hovercraft and floating things.
 
 `gs.craft` (`Plane`, `Boat`, `Hover`, `Floater`)
 
+Give `Boat` and `Hover` a `gs.models.vehicle('boat' | 'helicopter')` as `vehicle` and they move it and wear it: its size sets the hull, crashes `hit()` it, a failing engine slows a boat and sinks a helicopter, a wrecked boat lists and goes down (`boat.sunk`), a wrecked helicopter falls spinning and a hard landing crashes it (`hover.crashed`, `crashSpeed`). Getting on and off is the vehicle's `enter()` / `exit()` (from a dock or the water, onto a dock, a shore or into the water).
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CraftPart`, line 5406), where every option and field is described.
+From `src/gamescroll.d.ts` (`CraftPart`, line 5438), where every option and field is described.
 
-- `Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number…` Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. (:5408)
-- `Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: nu…` water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves… (:5414)
-- `Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: n…` (:5418)
+- `Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number…` Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. (:5440)
+- `Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: nu…` water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves… (:5446)
+- `Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: n…` (:5452)
 
 ## From the maker kit
 

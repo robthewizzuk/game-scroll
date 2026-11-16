@@ -1876,6 +1876,12 @@ console.log('physics ok');
   d.aim({ x: 0, y: 0, z: 1 }); assert.ok(d.through === 'left' && d.dir.z > .9, 'follows the car round');
   car.position = { x: 0, y: 0, z: -.5 }; d.update(1 / 60); car.position = { x: 0, y: 0, z: -1 }; d.update(1 / 60);
   const s = d.fire(new Gun({ speed: 80, spread: 0 }))[0]; assert.ok(s && s.carry.z < -20 && d.spread > .012, 'flying shots carry the car\'s speed; the ride spreads the aim');
+  // an open seat (a boat's helm): all the way round, no glass in the way
+  const boat = { kind: 'boat', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, points: { helm: { position: { x: .3, y: 1, z: .5 } } }, size: { width: 2.2 } };
+  const ob = new DriveBy(boat, { seat: 'helm' }); assert.ok(ob.open, 'a boat\'s seat is open');
+  ob.aim({ x: 0, y: 0, z: 1 }); assert.ok(ob.dir.z > .8 && !ob.glass, 'aims far back from an open seat (around: 2.6 rad either side), no glass: ' + JSON.stringify(ob.dir));
+  ob.aim({ x: 1, y: 0, z: 0 }); assert.ok(ob.dir.x > .9 && !ob.glass, 'and across the far side');
+  assert.ok(!new DriveBy(car).open, 'a car\'s seat is not');
   console.log('combat: shooting from a car ok');
 }
 {
@@ -2631,6 +2637,60 @@ console.log('physics ok');
   for (let i = 0; i < 60 * 60 && !bust; i++) lawStep(1);
   assert.equal(bust, 1, 'police: stopped beside a police car, the player is caught');
   console.log('city traffic and police: lane changes, crashes, chases across the city, sirens, the rules, escaping and being caught ok');
+}
+// the police when it gets serious (city-force.js): armed officers hurt and going down, the player's shots, the shots fired
+// at the player (hits by chance, none through walls), a helicopter that comes at three stars and keeps the player seen,
+// police launches on the water that close in and fire at three stars, a boat blown up sinks, and the support brain's rules
+{
+  const { layout, Traffic, City, Wanted } = await import('../src/kit/city.js'), { Group, Scene } = await import('three'), { vehicle } = await import('../src/kit/models/vehicles.js'), { SUPPORT } = await import('../src/kit/city-force.js');
+  const plan = layout({ seed: 7, blocks: 6 });
+  const fake = { plan, seed: 7, opts: {}, group: new Group(), view: { scene: new Scene() }, t: 0, next: [], events: [], night: 0, signal: City.prototype.signal, signalLeft: City.prototype.signalLeft, honk() {},
+    event(e) { this.next.push(e); }, collide: () => null, ray: () => null, road: City.prototype.road, route: City.prototype.route, spot: City.prototype.spot, ground: () => 0,
+    people: { witness: () => [], report() {}, fromCar() {}, list: [] } };
+  const T = new Traffic(fake, 30); fake.cars = T; T.reset({ x: 0, z: 0 });
+  const law = new Wanted(fake, null, { officers: false }), F = law.force, s0 = fake.spot('street', { near: { x: 0, z: 0 } }), me = { x: s0.x, z: s0.z, heading: 0, v: 3, car: false };
+  const step = n => { for (let i = 0; i < n; i++) { fake.events = fake.next; fake.next = []; T.update(1 / 60, me, fake.t += 1 / 60); law.update(1 / 60, me); } };
+  assert.ok(F && law.brains.support && law.brains.squad && law.brains.cars, 'force: the support brain, the squad coach and the cars\' brain are the law\'s');
+  assert.equal(F.allow([.1, 0, .5, 1, 1, 1, 0], 'ram'), 'close', 'force: a helicopter never rams'); assert.equal(F.allow([.1, 0, .5, 2 / 5, -1, 1, 0], 'ram'), 'close', 'force: a boat rams only from three stars');
+  assert.ok(SUPPORT.includes(F.teach([.2, .5, .6, .6, 1, 1, .5])) && F.teach([.2, .5, .6, .6, 1, 1, .5]) === 'ahead', 'force: the helicopter goes ahead of a fast player');
+  // an armed officer (a stand-in body): health, a pistol at two stars, hurt by the player's shot, a head shot twice as hard, down at the end
+  const stub = () => { const body = new Group(); body.rig = { play() {}, blend() {}, update() {} }; return { body, react: { busy: false, hits: 0, fell: 0, hit() { this.hits++; }, fall() { this.fell++; this.busy = true; }, update() {}, brace() {} }, x: me.x + 6, z: me.z, heading: 0, speed: 0, unit: { id: 1, x: me.x + 8, z: me.z, v: 0 }, gone: false }; };
+  step(1); law.set(2); const o = F.arm(stub()); o.body.position.set(o.x, 0, o.z); law.officers.push(o);
+  assert.ok(o.armed && o.kind === 'pistol' && o.health.hp === 100 && o.alive, 'force: at two stars an officer carries a pistol and has health');
+  const h1 = law.shoot({ x: me.x, y: 1.2, z: me.z }, { x: 1, y: 0, z: 0 }, { damage: 20 });
+  assert.ok(h1?.kind === 'officer' && h1.target === o && !h1.head && o.health.hp === 80 && o.react.hits === 1, 'force: the player\'s shot hits the officer in its way and hurts them (' + o.health.hp + ')');
+  law.shoot({ x: me.x, y: 1.7, z: me.z }, { x: 1, y: 0, z: 0 }, { damage: 20 }); assert.equal(o.health.hp, 40, 'force: a head shot hurts twice');
+  assert.equal(law.shoot({ x: me.x, y: 1.2, z: me.z }, { x: -1, y: 0, z: 0 }), null, 'force: a shot the other way hits nothing');
+  fake.ray = () => ({ dist: 2 }); assert.equal(law.shoot({ x: me.x, y: 1.2, z: me.z }, { x: 1, y: 0, z: 0 }), null, 'force: not through a wall'); fake.ray = () => null;
+  law.shoot({ x: me.x, y: 1.2, z: me.z }, { x: 1, y: 0, z: 0 }, { damage: 60 }); assert.ok(!o.alive && o.react.fell === 1, 'force: hurt enough, the officer goes down');
+  law.officers.length = 0;
+  // shots at the player: some hit up close, none through a wall
+  let hits = 0, shots = 0; law.on('shot', s => { shots++; if (s.hit) hits++; });
+  for (let i = 0; i < 200; i++) F.shotAt(o, { x: me.x + 8, y: 1.5, z: me.z }, { x: me.x, y: 1.2, z: me.z }, 8, 20, 'pistol');
+  assert.ok(shots === 200 && hits > 30 && hits < 170, 'force: shots at the player hit by chance up close (' + hits + ' of 200)');
+  fake.ray = () => ({ dist: 3 }); hits = 0; for (let i = 0; i < 100; i++) F.shotAt(o, { x: me.x + 8, y: 1.5, z: me.z }, { x: me.x, y: 1.2, z: me.z }, 8, 20, 'pistol'); fake.ray = () => null;
+  assert.equal(hits, 0, 'force: none hit through a wall');
+  // the helicopter at three stars: it comes, closes in, keeps the player seen with no police car near; it goes when the stars do
+  F.heliModel = vehicle('helicopter', { style: 'police' }); fake.view.scene.add(F.heliModel); F.heliModel.visible = false;
+  law.set(3); law.seenNow(me); let heli = 0; law.on('heli', () => heli++);
+  step(60 * 2); for (const u of law.units.splice(0)) law.dismiss(u, true);   // (no police cars: only the helicopter can see)
+  law.dispatch = () => {}; step(60 * 16);
+  const H = law.heli; assert.ok(heli === 1 && H && Math.hypot(H.craft.pos.x - me.x, H.craft.pos.z - me.z) < 70 && H.craft.pos.y > 20, 'force: a police helicopter comes at three stars and stays over the player (' + (H && Math.hypot(H.craft.pos.x - me.x, H.craft.pos.z - me.z).toFixed(0)) + ' m off, ' + (H && H.craft.pos.y.toFixed(0)) + ' m up)');
+  assert.ok(law.policeSee(me) && SUPPORT.includes(H.tactic) && H.model.visible, 'force: the helicopter sees the player (tactic ' + H.tactic + ')');
+  // shot down: hurt enough it goes down, falls and crashes
+  let down = 0; law.on('heli down', () => down++);
+  for (let i = 0; i < 60 && !H.down; i++) law.shoot({ x: H.craft.pos.x, y: H.craft.pos.y - 8, z: H.craft.pos.z }, { x: 0, y: 1, z: 0 }, { damage: 40 }) || H.model.harm(.05);
+  step(60 * 12); assert.ok(down === 1 && H.craft.crashed && H.model.wrecked, 'force: shot down, the helicopter falls and crashes (' + [down, H.craft.crashed, H.model.wrecked] + ')');
+  law.set(0); step(60); law.force.reset();
+  // the water: police launches come out to a player on it and close in, and fire from three stars
+  F.waterOf.water = -.4; F.boatModels = [vehicle('boat', { style: 'police' })]; for (const m of F.boatModels) { fake.view.scene.add(m); m.visible = false; }
+  law.set(3); law.seenNow(me); shots = 0; me.v = 0; step(60 * 30);
+  const B = law.boats[0], bd = B && Math.hypot(B.craft.x - me.x, B.craft.z - me.z);
+  assert.ok(B && bd < 30 && B.model.sirenOn, 'force: a police launch comes out to a player on the water, lights going (' + (bd ?? 0).toFixed(0) + ' m off)');
+  assert.ok(shots > 0, 'force: its crew fire at three stars (' + shots + ' shots)');
+  let sunk = 0; law.on('boat down', () => sunk++); B.model.blow(); step(60 * 18);
+  assert.ok(sunk === 1 && !law.boats.includes(B), 'force: a launch blown up goes down and is gone');
+  console.log('city police force: armed officers, shots both ways, the helicopter, launches on the water, the support brain\'s rules ok');
 }
 // the city to the horizon (city-far.js): the same for a seed, never on the city's own ground or the harbour's water, blocks coarser
 // further out, land from where the city's ground ends, the camera made to see it, lit windows at night

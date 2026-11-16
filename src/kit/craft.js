@@ -17,6 +17,11 @@
 // crashes into what stands in its way. Without a ground function they find the ground in the world. craft.crash
 // is what it ran into this frame ({ thing, normal, point, speed }); craft.rider is its body there. The water a
 // Boat or a Floater floats on can be a gs.outdoors Water, a gs.fluid Fluid, a gs.flow Flood or Streams.
+//
+// Give a Boat or a Hover its look (vehicle: a gs.models.vehicle boat or helicopter) and it moves it each update, turns
+// its motor, rotor and radar, and goes by how it is: a smoking engine pulls less, a holed boat sits low and lists and a
+// blown-up one sinks (sunk: true at the bottom of it), a helicopter that is failing sinks and spins, and one that has
+// lost its rotor falls; crashed (Hover) once it hits the ground hard, when its vehicle blows up.
 
 import { linksFor, linked } from './links.js';
 const V = (x = 0, y = 0, z = 0) => ({ x, y, z });
@@ -141,10 +146,12 @@ export class Plane {
 export class Boat {
   constructor(water, o) {
     if (o === undefined && plain(water)) { o = water; water = null; }   // (new Boat({ power: 9 }): the game's water)
-    let { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = 4, width = 1.8, draft = .2, world = null, height = 1, link = true } = o || {};
+    let { at = V(), heading = 0, power = 8, top = 16, turn = 1.4, drift = .25, drag = .6, length = null, width = null, draft = null, world = null, height = 1, link = true, vehicle = null } = o || {};
+    length ??= vehicle?.size?.length ?? 4; width ??= vehicle?.size?.width ?? 1.8; draft ??= vehicle ? 0 : .2;   // (a vehicle's waterline is its origin: its own draft is under it)
     // (links.js: with no water given, the newest Water or Sea the game made; with no world, its World3D; both made before the boat)
     const L = linksFor(null, link); water ??= L?.one('water') ?? FLAT; world = linked(world, L, 'world');
-    Object.assign(this, { water, power, top, turnK: turn, drift, dragK: drag, length, width, draft });
+    Object.assign(this, { water, power, top, turnK: turn, drift, dragK: drag, length, width, draft, vehicle });
+    this.sunk = false;
     this.h = surface(water); const h0 = this.h(at.x, at.z);
     this.x = at.x; this.z = at.z; this.y = h0 > -Infinity ? h0 : at.y ?? 0; this.heading = heading; this.vx = 0; this.vz = 0; this.spin = 0; this.quat = yawQ(-heading); this.wake = []; this.air = 0; this.crash = null;
     if (world) { this.world = world; this.rider = world.rider({ box: [width, height, length], at: V(this.x, this.y - draft, this.z), turn: -heading, slope: 0, mass: 800, tag: 'boat' }); this.rider.owner = this; }
@@ -154,7 +161,9 @@ export class Boat {
   get forward() { return V(Math.sin(this.heading), 0, -Math.cos(this.heading)); }
   /** throttle -1..1, steer -1..1 (+ right). */
   update(dt, { throttle = 0, steer = 0 } = {}) {
-    const f = this.forward, r = V(-f.z, 0, f.x), w = this.water;
+    const f = this.forward, r = V(-f.z, 0, f.x), w = this.water, car = this.vehicle;
+    const sink = car?.sinking || 0; this.sunk = sink >= 1;
+    if (car) { throttle *= (car.engine ?? 1) * (1 - Math.min(1, sink * 2)); steer *= 1 - Math.min(1, sink * 1.5); }   // (a smoking engine pulls less; a boat going down answers to nothing)
     const along = this.vx * f.x + this.vz * f.z, side = this.vx * r.x + this.vz * r.z;
     let na = along + throttle * this.power * dt * (throttle < 0 ? .5 : 1); na *= 1 - this.dragK * .1 * dt; na = clamp(na, -this.top * .4, this.top);
     const ns = side * Math.max(0, 1 - (1 - this.drift) * 6 * dt);
@@ -166,7 +175,7 @@ export class Boat {
     const L = this.length / 2, W = this.width / 2, f2 = this.forward, r2 = V(-f2.z, 0, f2.x), H = this.h;
     const at = (x, z) => { const v = H(x, z); return v > -Infinity ? v : this.y + this.draft; };   // (dry there: as it is)
     const hb = at(nx + f2.x * L, nz + f2.z * L), hs = at(nx - f2.x * L, nz - f2.z * L), hr = at(nx + r2.x * W, nz + r2.z * W), hl = at(nx - r2.x * W, nz - r2.z * W);
-    const target = (hb + hs + hr + hl) / 4 - this.draft;
+    const target = (hb + hs + hr + hl) / 4 - this.draft - sink * sink * ((car?.size?.height ?? 1.5) + (car?.draft ?? .3) + 1);   // (going down: lower and lower, then under)
     let ny = this.y;
     if (ny > target + .05) { this.air += dt; ny = Math.max(target, ny - 9.8 * this.air * dt); } else { this.air = 0; ny += (target - ny) * Math.min(1, dt * 8); }
     if (this.rider) {   // in a world: docks, rocks and other boats stop it, floating things get shoved, and a shore it runs onto holds it up
@@ -175,8 +184,9 @@ export class Boat {
       const v = V(this.vx, 0, this.vz), hit = wallHit(r, v, .7); if (hit) { this.crash = hit; this.vx = v.x; this.vz = v.z; this.spin *= .5; }
     }
     this.x = nx; this.z = nz; this.y = ny;
-    const pitch = Math.atan2(hb - hs, this.length), roll = Math.atan2(hl - hr, this.width);
+    const pitch = Math.atan2(hb - hs, this.length) + sink * .35, roll = Math.atan2(hl - hr, this.width) + Math.min(1, sink * 3) * .22;   // (going down by the stern, listing)
     this.quat = qnorm(qmul(qmul(yawQ(-this.heading), qaxis(1, 0, 0, pitch)), qaxis(0, 0, 1, roll)));
+    if (car) { car.position.set(this.x, this.y, this.z); car.quaternion.set(this.quat.x, this.quat.y, this.quat.z, this.quat.w); car.move?.(dt, along, { steer, power: Math.abs(throttle) }); }
     // wake points behind the stern for your game to draw
     if (this.speed > 1) { this.wake.push({ x: this.x - f2.x * L, z: this.z - f2.z * L, life: 1.5 }); if (this.wake.length > 60) this.wake.shift(); }
     for (const p of this.wake) p.life -= dt; this.wake = this.wake.filter(p => p.life > 0);
@@ -189,18 +199,27 @@ export class Boat {
  * that way; yaw to turn. ground(x, z) for landing. Speeds are m/s.
  */
 export class Hover {
-  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null, world = null, size = [1, .4, 1], link = true } = {}) {
+  constructor({ at = V(0, 2, 0), heading = 0, climb = 6, speed = 14, accel = 6, turn = 1.8, tilt = .35, gravity = 9.8, ground = null, world = null, size = null, link = true, vehicle = null, crashSpeed = 6 } = {}) {
     world = linked(world, linksFor(null, link), 'world');   // (links.js)
-    Object.assign(this, { climb, top: speed, accel, turnK: turn, tiltMax: tilt, gravity, ground });
+    size ??= vehicle ? [Math.min(vehicle.size.width, 2.4), Math.min(vehicle.size.height, 2.6), Math.min(vehicle.size.length, 5)] : [1, .4, 1];   // (a helicopter's body, not its rotor's sweep)
+    Object.assign(this, { climb, top: speed, accel, turnK: turn, tiltMax: tilt, gravity, ground, vehicle, crashSpeed });
+    this.crashed = false; this.events = [];
     this.pos = V(at.x, at.y, at.z); this.vel = V(); this.heading = heading; this.quat = yawQ(-heading); this.onGround = false; this.tiltX = 0; this.tiltZ = 0; this.crash = null;
     if (world) { this.world = world; this.rider = world.rider({ box: size, at, turn: -heading, slope: 0, mass: 60, tag: 'hover' }); this.rider.owner = this; }
   }
   get speed() { return Math.hypot(this.vel.x, this.vel.z); }
   /** x, y: stick (-1..1; y + forward), up: -1..1 climb or sink, yaw: -1..1. */
   update(dt, { x = 0, y = 0, up = 0, yaw = 0 } = {}) {
+    this.events.length = 0;
+    const car = this.vehicle, falling = !!car && (car.wrecked || this.crashed), failing = !!car && !falling && (car.engine ?? 1) < .75;
+    if (this.crashed) { this.place(dt, 0); return this; }
+    if (falling) { x = y = 0; up = -1; yaw = 1.6; }   // (no rotor: it drops, turning)
+    else if (failing) { const k = 1 - (car.engine ?? 1); up = Math.min(up, 1 - k * 2.2) - k * .8; yaw += k * 1.4; x *= 1 - k; y *= 1 - k; }   // (an engine that is going: it sinks and the tail swings)
+    const vy0 = this.vel.y;
     this.heading += yaw * this.turnK * dt;
     const s = Math.sin(this.heading), c = Math.cos(this.heading), wx = (x * c + y * s) * this.top, wz = (x * s - y * c) * this.top, k = Math.min(1, this.accel * dt / this.top * 2);
-    this.vel.x += (wx - this.vel.x) * k; this.vel.z += (wz - this.vel.z) * k; this.vel.y += (up * this.climb - this.vel.y) * Math.min(1, dt * 3);
+    this.vel.x += (wx - this.vel.x) * k; this.vel.z += (wz - this.vel.z) * k;
+    if (falling) this.vel.y -= this.gravity * dt; else this.vel.y += (up * this.climb - this.vel.y) * Math.min(1, dt * 3);
     this.crash = null;
     if (this.rider) {   // in a world: walls and roofs stop it, it sets down on whatever is under it
       const r = this.rider, dy = this.vel.y * dt; r.move(this.pos.x + this.vel.x * dt, this.pos.y + dy, this.pos.z + this.vel.z * dt, -this.heading, dt);
@@ -218,7 +237,16 @@ export class Hover {
     // lean into the way it's going
     this.tiltX += (y * this.tiltMax - this.tiltX) * Math.min(1, dt * 5); this.tiltZ += (-x * this.tiltMax - this.tiltZ) * Math.min(1, dt * 5);
     this.quat = qnorm(qmul(qmul(yawQ(-this.heading), qaxis(1, 0, 0, -this.tiltX)), qaxis(0, 0, 1, this.tiltZ)));
+    // a hard landing (falling, or coming down too fast) is a crash: its vehicle takes it, and one that fell blows up
+    if (car && this.onGround && (falling || -vy0 > this.crashSpeed)) { this.crashed = true; this.events.push('crash'); car.hit?.(V(this.pos.x, this.pos.y, this.pos.z), { power: 1.6 }); if (falling || -vy0 > this.crashSpeed * 2) car.blow?.(); else car.harm?.(.5); this.vel.x = this.vel.y = this.vel.z = 0; }
+    this.place(dt, falling ? 0 : 1);
     return this;
+  }
+  // its vehicle where it is (pos is the bottom of it: its skids), its rotors turning
+  place(dt, power) {
+    const car = this.vehicle; if (!car) return;
+    car.position.set(this.pos.x, this.pos.y, this.pos.z); car.quaternion.set(this.quat.x, this.quat.y, this.quat.z, this.quat.w);
+    car.move?.(dt, 0, { power: this.crashed ? 0 : power, ground: false });
   }
 }
 
