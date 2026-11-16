@@ -5,6 +5,8 @@ import { surfaceMath } from './surface-math.js';
 import { paintRecipe } from './models/recipe-paint.js';
 import { sculptArrays } from './models/sculpt-arrays.js';
 import { rockArrays } from './land-rock.js';
+import { renderSound } from './sound-render.js';
+import { renderScorePart } from './score-render.js';
 
 const JOBS = {
   // a surface's normal map and rougher small copies, from its height and roughness layers (gs.hd.surface)
@@ -15,6 +17,8 @@ const JOBS = {
   sculpt: ({ shapes, o }) => sculptArrays(shapes, o),
   // a land's rock: cliffs, caves and shapes as triangles, and the spans of solid height (gs.outdoors land.rocks())
   rock: ({ grid, o }) => rockArrays(grid, o),
+  // a sound rendered into buffers: a gunshot's take, a gun's click, a place's tail (gunshots.js), a film score's stem (score.js)
+  sound: o => o.what === 'score' ? renderScorePart(o) : renderSound(o),
 };
 // every array buffer in an answer, once each (they are handed over, not copied)
 function buffers(v, out = new Set()) {

@@ -8,16 +8,16 @@ Mission scripts, zones, objectives and markers, open-world jobs, phone calls, a 
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MissionsPart`, line 3715), where every option and field is described.
+From `src/gamescroll.d.ts` (`MissionsPart`, line 3766), where every option and field is described.
 
-- `zone(at: P3 | { x: number; y: number; w: number; h: number }, r?: number | null): { has(p: P3): boolean; any(list: P3[]): boolean; count(list: P3[]): number }` (:3716)
-- `Mission: new (script: (m: Mission, ctx?: Loose) => Generator<Loose, void, Loose>, o?: { save?: () => Loose; load?: (d: Loose) => void; ctx?: Loose }) => Mission` save() gives your state at a checkpoint, load(data) puts it back after restart(). (:3718)
-- `Jobs: new (list: Job[], o?: { radius?: number; start?: 'tap' | 'enter'; phone?: Loose | false; calls?: number; link?: boolean }) => On<Loose> & { list: Job[]; done: Se…` The jobs of an open world: a marker for each open one, start from it (a tap, or walking on with start: 'enter'), pay, unlocks (needs), retry from a checkpoint mid-city (put the player at mission.respawn), and a Phone… (:3724)
-- `Phone: new (o?: { rings?: number; every?: number; buzz?: boolean; link?: boolean; jobs?: Loose | false; radio?: Loose | false }) => On<Loose> & { state: 'idle' | 'ring…` The player's phone: calls that ring, spoken on a phone line and shown as text, and texts. (:3737)
-- `WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean; slots?: number }) => { size: number; readonly room: number; droppe…` The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone, Radio and the gs.rpg Quests, Growth, Reputation and Flags found by themselves; rounded, measured, saved when it changes; local parts and save… (:3743)
-- `compact<T>(v: T, places?: number): T` Rounds every number in it to `places`. (:3754)
-- `rows(list: Record<string, Loose>[], keys: string[]): Loose[][]` A list of records as rows of values (the names once, in `keys`), and back. (:3756)
-- `unrows(data: Loose[][], keys: string[]): Record<string, Loose>[]` (:3757)
+- `zone(at: P3 | { x: number; y: number; w: number; h: number }, r?: number | null): { has(p: P3): boolean; any(list: P3[]): boolean; count(list: P3[]): number }` (:3767)
+- `Mission: new (script: (m: Mission, ctx?: Loose) => Generator<Loose, void, Loose>, o?: { save?: () => Loose; load?: (d: Loose) => void; ctx?: Loose }) => Mission` save() gives your state at a checkpoint, load(data) puts it back after restart(). (:3769)
+- `Jobs: new (list: Job[], o?: { radius?: number; start?: 'tap' | 'enter'; phone?: Loose | false; calls?: number; link?: boolean }) => On<Loose> & { list: Job[]; done: Se…` The jobs of an open world: a marker for each open one, start from it (a tap, or walking on with start: 'enter'), pay, unlocks (needs), retry from a checkpoint mid-city (put the player at mission.respawn), and a Phone… (:3775)
+- `Phone: new (o?: { rings?: number; every?: number; buzz?: boolean; link?: boolean; jobs?: Loose | false; radio?: Loose | false }) => On<Loose> & { state: 'idle' | 'ring…` The player's phone: calls that ring, spoken on a phone line and shown as text, and texts. (:3788)
+- `WorldSave: new (api: GameApi, o?: { every?: number; places?: number; limit?: number; link?: boolean; slots?: number }) => { size: number; readonly room: number; droppe…` The world's state in api.save()'s 8 KB: parts you keep, plus Jobs, Phone, Radio and the gs.rpg Quests, Growth, Reputation and Flags found by themselves; rounded, measured, saved when it changes; local parts and save… (:3794)
+- `compact<T>(v: T, places?: number): T` Rounds every number in it to `places`. (:3805)
+- `rows(list: Record<string, Loose>[], keys: string[]): Loose[][]` A list of records as rows of values (the names once, in `keys`), and back. (:3807)
+- `unrows(data: Loose[][], keys: string[]): Record<string, Loose>[]` (:3808)
 
 ## From the maker kit
 

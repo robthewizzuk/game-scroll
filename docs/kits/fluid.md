@@ -12,10 +12,10 @@ foam colours and shader are made with it, so the first splash builds nothing.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FluidPart`, line 1281), where every option and field is described.
+From `src/gamescroll.d.ts` (`FluidPart`, line 1302), where every option and field is described.
 
-- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1283)
-- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1290)
+- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1304)
+- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1311)
 
 ## From the maker kit
 

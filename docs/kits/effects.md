@@ -10,7 +10,7 @@ Feel: coin, hit, boom, jump and more as particles, shake, sound and haptics in o
 
 From `src/gamescroll.d.ts`, where every option and field is described.
 
-- `effects: { Feel: typeof Feel }` (:5663)
+- `effects: { Feel: typeof Feel }` (:5714)
 
 ## From the maker kit
 

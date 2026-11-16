@@ -8,12 +8,12 @@ Real-world signals with no permission: the sun, the moon, the battery, headphone
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RealPart`, line 906), where every option and field is described.
+From `src/gamescroll.d.ts` (`RealPart`, line 927), where every option and field is described.
 
-- `sun(place?: { lat: number; lon: number } | null, when?: Date | number): { /** Above the horizon. */ up: boolean; /** Degrees above the horizon (negative below it). */ …` The sun where the player is. (:911)
-- `moon(place?: { lat: number; lon: number } | null, when?: Date | number): { /** 0 new, .25 first quarter, .5 full, .75 last quarter. */ phase: number; /** How much of i…` The moon where the player is (the phase is the same everywhere). (:922)
-- `battery(): { level: number | null; charging: boolean | null; saver: boolean }` The phone's battery: level 0 to 1 and charging (both null where the phone won't say), and whether power saving is on. (:930)
-- `headphones(): boolean | null` Is the sound going to headphones (wired, USB or Bluetooth)? (:932)
+- `sun(place?: { lat: number; lon: number } | null, when?: Date | number): { /** Above the horizon. */ up: boolean; /** Degrees above the horizon (negative below it). */ …` The sun where the player is. (:932)
+- `moon(place?: { lat: number; lon: number } | null, when?: Date | number): { /** 0 new, .25 first quarter, .5 full, .75 last quarter. */ phase: number; /** How much of i…` The moon where the player is (the phase is the same everywhere). (:943)
+- `battery(): { level: number | null; charging: boolean | null; saver: boolean }` The phone's battery: level 0 to 1 and charging (both null where the phone won't say), and whether power saving is on. (:951)
+- `headphones(): boolean | null` Is the sound going to headphones (wired, USB or Bluetooth)? (:953)
 
 ## From the maker kit
 

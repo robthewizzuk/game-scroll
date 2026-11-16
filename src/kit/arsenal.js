@@ -22,6 +22,7 @@ import { noise, tone } from './sound.js';
 import { linksFor } from './links.js';
 import { Bow } from './bow.js';
 import { ARMS, SHIELD } from './melee3d.js';
+import { playGun, playMech, prepareGun } from './gunshots.js';
 
 /**
  * Each weapon's numbers: gun (options for gs.combat.Gun: arm(kind) makes one), ammo (the kind of rounds it takes, a
@@ -52,7 +53,7 @@ const SLOTS = ['melee', 'hand', 'long', 'heavy', 'throw', 'off'];
 /** A gs.combat.Gun with a weapon's numbers (ARSENAL[kind].gun), o over them (a pouch, rng, damage...). */
 export function arm(kind, o = {}) {
   const A = ARSENAL[kind]; if (!A?.gun) throw new Error(`gs.combat.arm: '${kind}' is not a gun (try ${Object.keys(ARSENAL).filter(k => ARSENAL[k].gun).join(', ')})`);
-  const g = new Gun({ ...A.gun, ammoType: A.ammo, ...o }); g.kind = kind; return g;
+  const g = new Gun({ ...A.gun, ammoType: A.ammo, ...o }); g.kind = kind; prepareGun(kind); return g;
 }
 
 /**
@@ -90,9 +91,24 @@ const T = (f, o, at) => { const E = at && findEars(); if (E) E.tone(f, at, o); e
  * 'draw' (taken out); 'clang' (steel on steel, a blow blocked), 'parry', 'bash' (a shield into someone); a bow's 'nock', 'draw' (over time),
  * 'fire' (loosed), 'thunk' (into wood or earth), 'flesh'. at: where it happens ({ x, y, z }): through the game's gs.sound.Ears when there is one, so it
  * is heard from there, muffled behind walls and echoing in the place. Each shot sounds a little different.
+ * A gun's shots, clicks and the tail a shot leaves are rendered into sound buffers ahead (gunshots.js: layered noise bands,
+ * struck metal for the action, takes played in turn, a tail for indoors and one for outside, and the music and other sounds
+ * dipping under the player's own shots); until they are made (a moment after the gun is first armed), the live sound
+ * plays. place: 'in' | 'out' says where the shot is (else the Ears' sense of the place decides).
  */
-export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary = .08 } = {}) {
+export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary = .08, place = null } = {}) {
   const v = 1 + (Math.random() - .5) * 2 * vary, A = ARSENAL[kind] || {};
+  if (A.gun) {   // (rendered: the takes, clicks and tails gunshots.js made; false while they are being made)
+    if (what === 'fire' && playGun(kind, at, { place })) { if (kind === 'shotgun') weaponSound(kind, 'pump', at, { time: .35 }); if (kind === 'sniper') weaponSound(kind, 'pump', at, { time: .6 }); return; }
+    if (what === 'empty' && playMech(kind, 'empty', at)) return;
+    if (what === 'draw' && playMech(kind, 'draw', at)) return;
+    if (what === 'pump' && playMech(kind, 'pumpBack', at, { delay: time })) { playMech(kind, 'pumpFwd', at, { delay: time + .16 }); return; }
+    if (what === 'reload') {
+      if ((kind === 'revolver' || kind === 'shotgun') && playMech(kind, 'shell', at, { delay: time * .25 })) { for (let i = 1; i < 3; i++) playMech(kind, 'shell', at, { delay: time * (.25 + i * .2) }); playMech(kind, kind === 'shotgun' ? 'pumpFwd' : 'catch', at, { delay: time * .9 }); return; }
+      if (kind === 'launcher' && playMech(kind, 'magin', at, { delay: time * .7 })) return;
+      if (playMech(kind, 'magout', at, { delay: time * .15 })) { playMech(kind, 'magin', at, { delay: time * .7 }); playMech(kind, kind === 'sniper' ? 'pumpFwd' : 'catch', at, { delay: time * .9 }); return; }
+    }
+  }
   if (kind === 'bow') {   // (a bow: the arrow onto the string, the creak of the draw, the string's slap, the arrow going in)
     if (what === 'nock') return N(.05, { vol: .03, from: 2500, to: 3500, filter: 'bandpass', q: 3 }, at);
     if (what === 'draw') { N(Math.max(.2, time * .9), { vol: .018, from: 300 * v, to: 520 * v, filter: 'bandpass', q: 6, attack: .1 }, at); return; }
@@ -139,7 +155,9 @@ export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary =
  * for none (the game plays its own).
  */
 export class Loadout {
-  constructor({ pouch = new Pouch(), sounds = true, health = null } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.off = null; this.switching = 0; }
+  constructor({ pouch = new Pouch(), sounds = true, health = null, link } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.off = null; this.switching = 0; this.links = linksFor(null, link); }
+  // the gun held in first person (a gs.camera GunRig the game made): kicked, brought up and reloaded with the gun's own
+  get heldRig() { return this.links?.one('gunrig') || null; }
   get gun() { return this.carried[this.kind]?.gun || null; }
   get bow() { return this.carried[this.kind]?.bow || null; }
   get info() { return ARSENAL[this.kind] || null; }
@@ -168,7 +186,7 @@ export class Loadout {
     return 1;
   }
   /** Takes out a weapon carried (it takes a moment: switching counts down from .4 s, no firing meanwhile). */
-  use(kind) { if (!this.carried[kind] || kind === this.kind || ARSENAL[kind].slot === 'off') return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); return this; }
+  use(kind) { if (!this.carried[kind] || kind === this.kind || ARSENAL[kind].slot === 'off') return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); this.heldRig?.draw(); return this; }
   next(step = 1) { const L = this.list.filter(k => ARSENAL[k].slot !== 'off'); if (L.length) this.use(L[(L.indexOf(this.kind) + step + L.length) % L.length]); return this; }
   prev() { return this.next(-1); }
   update(dt) { this.switching = Math.max(0, this.switching - dt); for (const k in this.carried) this.carried[k].gun?.update(dt); return this; }   // (a bow is updated by the game: arms.bow.update(dt, { pull, from, dir, targets }))
@@ -177,9 +195,10 @@ export class Loadout {
     const g = this.gun; if (!g || this.switching > 0) return [];
     const was = g.reloadLeft > 0, shots = g.pull(from, dir, pressed);
     if (this.sounds) { if (shots.length) weaponSound(this.kind, 'fire', at); else if (g.empty) weaponSound(this.kind, 'empty', at); if (!was && g.reloadLeft > 0) weaponSound(this.kind, 'reload', at, { time: g.reload }); }
+    const H = this.heldRig; if (H) { if (shots.length) H.fire(1, this.kind); if (!was && g.reloadLeft > 0) H.reload(g.reload); }
     return shots;
   }
-  reload({ at = null } = {}) { const g = this.gun; if (g?.startReload() && this.sounds) weaponSound(this.kind, 'reload', at, { time: g.reload }); return this; }
+  reload({ at = null } = {}) { const g = this.gun; if (g?.startReload()) { if (this.sounds) weaponSound(this.kind, 'reload', at, { time: g.reload }); this.heldRig?.reload(g.reload); } return this; }
   save() { return { k: this.kind, c: Object.fromEntries(Object.entries(this.carried).map(([k, v]) => [k, v.gun ? v.gun.ammo : 0])), p: this.pouch.save() }; }
   load(d) {
     if (!d) return this;

@@ -8,9 +8,9 @@ Motion moves with the phone: swing, punch, throw, flip, twist, knock, shake.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MovesPart`, line 574), where every option and field is described.
+From `src/gamescroll.d.ts` (`MovesPart`, line 595), where every option and field is described.
 
-- `Moves: new (o?: { sensitivity?: number; /** A gs.brains.Examples (of: 'move'): moves of your own, or the player's, fire under the names it knows. */ learn?: Examples |…` (:574)
+- `Moves: new (o?: { sensitivity?: number; /** A gs.brains.Examples (of: 'move'): moves of your own, or the player's, fire under the names it knows. */ learn?: Examples |…` (:595)
 
 ## From the maker kit
 

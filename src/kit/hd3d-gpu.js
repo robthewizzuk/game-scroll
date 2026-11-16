@@ -2243,7 +2243,7 @@ function bigChain(src, aoF, P = HALF4) {
   const A = rtt(hdrOut(vec4(box(src, px[0], .25).mul(aoF), 1), P), 1, 1, P), B = rtt(hdrOut(vec4(box(A, px[1], .25), 1), P), 1, 1, P);
   A.renderTarget.gsPart = B.renderTarget.gsPart = 'effects';
   return {
-    wide: B,
+    wide: B, soft: A,   // (A: also aiming's soft edges, hd3d.js FINAL_EFFECTS react)
     size(w, h) {
       if (this.key === `${w}x${h}`) return; this.key = `${w}x${h}`;
       const aw = Math.max(1, Math.ceil(w / 4)), ah = Math.max(1, Math.ceil(h / 4));
@@ -2265,13 +2265,14 @@ function bigChain(src, aoF, P = HALF4) {
 const grainHash = p => fract(sin(dot(p, vec2(12.9898, 78.233))).mul(43758.5453));
 function touches(U, col, t, k) {
   const d = screenUV.sub(.5), r2 = dot(d, d);
-  col = col.mul(float(1).sub(U.vig.mul(smoothstep(.12, .62, r2.mul(1.6)))));                       // vignette
+  const vg = U.vig.add(U.low.mul(U.beat.mul(.22).add(.38))).add(U.aimK.mul(.2));                    // (low health: closing in with a heartbeat; aiming: a little)
+  col = col.mul(max(float(1).sub(vg.mul(smoothstep(.12, .62, r2.mul(1.6)))), 0));                    // vignette
   col = col.mul(float(1).add(grainHash(vec2(t.mul(3.1), 1.7)).sub(.5).mul(U.flick)));                  // flicker
   const p = floor(vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y)).mul(k).div(U.gSize)).add(.5).add(t);   // (WebGL counts pixel rows from the bottom)
   const gl = clamp(dot(col, vec3(.2126, .7152, .0722)), 0, 1), ga = U.grain.mul(mix(float(1), gl.mul(float(1).sub(gl)).mul(3.4).add(.45), U.gLum));
   const g = mix(vec3(grainHash(p).sub(.5)), vec3(grainHash(p.add(17.3)), grainHash(p.add(41.7)), grainHash(p.add(71.1))).sub(.5), U.gCol);
   col = col.add(g.mul(ga));                                                                          // grain
-  return mix(col, col.mul(vec3(1.25, .45, .4)).add(vec3(.12, 0, 0)), U.hurt.mul(smoothstep(.04, .4, r2)));   // hurt
+  return mix(col, col.mul(vec3(1.25, .45, .4)).add(vec3(.12, 0, 0)), max(U.hurt, U.pain.mul(.8)).mul(smoothstep(.04, .4, r2)));   // hurt (and a hit's pulse)
 }
 // Snapdragon GSR 1 on WebGPU: sgsr.js's one pass (Qualcomm, BSD 3-Clause; the licence and what changed
 // are in that file), written as TSL. The finished small picture is drawn at the render size, then this
@@ -2813,7 +2814,9 @@ export class GpuChain {
     this.F = { tint: uniform(new Vector3(1, 1, 1)), th: uniform(.15), sp: uniform(.3), fade: uniform(20), k: uniform(1), dk: uniform(0), dirt: texture(new Texture()) };   // v.flare
     this.D = { drops: uniformArray(Array.from({ length: DROPS_N }, () => new Vector4()), 'vec4'), dropN: uniform(0), aspect: null };   // v.drops (lens-drops.js)
     this.U = {
-      giK: uniform(1), t: uniform(0), hurt: uniform(0), vig: uniform(.32), gradeOn: uniform(0), sat: uniform(1), con: uniform(1),
+      giK: uniform(1), t: uniform(0), hurt: uniform(0), vig: uniform(.32),
+      // the screen reacting to play (hd3d.js v.hit, v.health, v.aiming; FINAL_EFFECTS react): a hit, low health and its heartbeat, aiming
+      pain: uniform(0), low: uniform(0), beat: uniform(0), aimK: uniform(0), gradeOn: uniform(0), sat: uniform(1), con: uniform(1),
       lo: uniform(new Vector3(1, 1, 1)), hi: uniform(new Vector3(1, 1, 1)), glare: uniform(0), sunUV: uniform(new Vector2(.5, .5)),
       sunCol: uniform(new Color()), aspect: uniform(1), lutK: uniform(1),
       // HDR screens (gpu.js): how far past paper white the brightest highlights go (headroom - 1), and the exposure
@@ -3108,6 +3111,12 @@ export class GpuChain {
       const uv = uv0;
       // smooth: with FXAA on (below) no fringe; otherwise a touch of lens fringing at the edges
       let col = smooth ? lit : vec3(src.sample(uv.add(d.mul(r2).mul(U.fringe))).r.mul(srcAo).add(shafts.r), lit.g, src.sample(uv.sub(d.mul(r2).mul(U.fringe))).b.mul(srcAo).add(shafts.b));
+      // the screen reacting to play (hd3d.js FINAL_EFFECTS react): a hit splits the colours at the edges; aiming softens
+      // the edges round the middle (the quarter-size picture, then the sixteenth further out)
+      // (a const of its own: TSL runs the If blocks' bodies when it builds, after `col` below is a new node)
+      const cv = col.toVar(); col = cv;
+      If(U.pain.greaterThan(0), () => { const po = d.mul(r2).mul(U.pain.mul(.06)); cv.assign(vec3(src.sample(uv.add(po)).r.mul(srcAo), cv.g, src.sample(uv.sub(po)).b.mul(srcAo))); });
+      If(U.aimK.greaterThan(0), () => { cv.assign(mix(cv, mix(this.bigN.soft.sample(uv).rgb, this.bigN.wide.sample(uv).rgb, smoothstep(.12, .3, r2)), smoothstep(.04, .2, r2).mul(U.aimK).mul(.8))); });
       // bloom
       col = col.add(this.bloomN.out.mul(this.bloomK));
       // film halation and anamorphic streaks (v.film; hd3d.js FINAL_EFFECTS film)
@@ -3133,7 +3142,9 @@ export class GpuChain {
         const s0 = tap(vec2(0, 0)).add(tap(vec2(.006, 0))).add(tap(vec2(-.006, 0))).add(tap(vec2(0, .008))).add(tap(vec2(0, -.008)));
         seen.assign(smoothstep(1.5, 6, dot(s0, LUM).mul(.2)));
       });
-      return GRADE({ col, sat: U.sat, con: U.con, lo: U.lo, hi: U.hi, on: U.gradeOn, uv, su, aspect: U.aspect, seen, sunCol: U.sunCol, glare: U.glare }, half);
+      const gr = GRADE({ col, sat: U.sat, con: U.con, lo: U.lo, hi: U.hi, on: U.gradeOn, uv, su, aspect: U.aspect, seen, sunCol: U.sunCol, glare: U.glare }, half);
+      // hurt and low on health, the colour drains (hd3d.js FINAL_EFFECTS grade)
+      return mix(gr, vec3(dot(gr, LUM)), clamp(U.pain.mul(.5).add(U.low.mul(.65)), 0, .9));
     })();
     // tone mapping (ACES, the renderer's exposure) and sRGB (named outright under SGSR 2 and 1: drawn outside the pipeline)
     let out = s2 || s1 ? renderOutput(vec4(graded, 1), TM, SRGBColorSpace) : renderOutput(vec4(graded, 1));
@@ -3251,6 +3262,7 @@ export class GpuChain {
       if (this.giN && 'resolutionScale' in this.giN) this.giN.resolutionScale = (this.spGI ? .5 : 1) * k;
       this.bloomK.value = Math.max(0, o.bloom) * .8; this.bloomN.size(o.w, o.h, o.bloomScale || .5); this.bigN.size(o.w, o.h);
       U.t.value = o.t; U.hurt.value = o.hurt; U.grain.value = o.grain ?? .035;
+      const rx = o.react; U.pain.value = rx ? rx.pain : 0; U.low.value = rx ? rx.low : 0; U.beat.value = rx ? rx.beat : 0; U.aimK.value = rx ? rx.aim : 0;
       const fm = o.film; U.fringe.value = fm ? fm.fringe : .012; U.gLum.value = fm ? 1 : 0; U.gSize.value = fm ? fm.grainSize : 1; U.gCol.value = fm ? fm.grainColour : 0; U.flick.value = fm ? fm.flicker : 0;
       if (fm) { U.hal.value = fm.halation; U.streak.value = fm.streaks; U.streakLen.value = fm.streakLength; U.halTint.value.copy(fm.halationTint); U.streakTint.value.copy(fm.streakTint); }
       if (this.r.gsHdr) { U.hdrK.value = Math.max(0, (o.headroom ?? 2) - 1); U.hdrExp.value = this.r.toneMappingExposure; }

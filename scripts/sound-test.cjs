@@ -1,6 +1,6 @@
 // Checks the sound kit in a real browser: every ready-made sound and the limiter, the instrument sets,
-// the music clock, sound that knows the level, the voice cap, the sounds a world makes by itself, shaped speech (against a pretend phone: lib/fake-speech-audio.js) and the car radio.
-// Usage: node scripts/sound-test.cjs [sounds|band|clock|level|cap|foley|speech|radio] [--list]   (--list prints each measurement)
+// the music clock, sound that knows the level, the voice cap, the sounds a world makes by itself, shaped speech (against a pretend phone: lib/fake-speech-audio.js), the car radio, rendered gunshots and the film score.
+// Usage: node scripts/sound-test.cjs [sounds|band|clock|level|cap|foley|speech|radio|guns|score] [--list]   (--list prints each measurement)
 const path = require('path');
 const { chromium } = require('playwright');
 (async () => {
@@ -9,7 +9,7 @@ const { chromium } = require('playwright');
   const server = await vite.createServer({ server: { port: 4186 }, mode: 'bundled', logLevel: 'error' }); await server.listen();
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   let failed = 0;
-  for (const part of ['sounds', 'band', 'clock', 'level', 'cap', 'foley', 'speech', 'radio']) {
+  for (const part of ['sounds', 'band', 'clock', 'level', 'cap', 'foley', 'speech', 'radio', 'guns', 'score']) {
     if (only.length && !only.includes(part)) continue;
     const p = await b.newPage(), errs = [];
     p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });

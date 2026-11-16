@@ -913,7 +913,7 @@ const UP = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float k; varyin
 // full-screen draw on phones, and each piece can be ported to a WebGPU node on its own). They run
 // in this order; FINAL is them joined. Uniforms: the pass's own (FinalPass below).
 export const FINAL_EFFECTS = [
-  { name: 'head', what: 'uniforms, the tone mapping three leaves out under SGSR, helpers', glsl: `uniform sampler2D tDiffuse, tBloom, tBig; uniform float t, hurt, vig, bloom, grain, oled; uniform vec2 px; varying vec2 vUv;
+  { name: 'head', what: 'uniforms, the tone mapping three leaves out under SGSR, helpers', glsl: `uniform sampler2D tDiffuse, tBloom, tBig, tSoft; uniform float t, hurt, vig, bloom, grain, oled, pain, low, beat, aimK; uniform vec2 px; varying vec2 vUv;
   uniform float gradeOn, sat, con, glare, aspect; uniform vec3 lo, hi, sunCol; uniform vec2 sunUV;
   uniform float fringe, gLum, gSize, gCol, flick;
   #ifdef FILM
@@ -957,6 +957,11 @@ ${ShaderChunk.tonemapping_pars_fragment}
     vec3 col = vec3(tex(vUv + off).r, tex(vUv).g, tex(vUv - off).b);
   #endif
 ` },
+  { name: 'react', what: 'the screen reacting to play: a hit\'s colour fringe (v.hit), aiming softens the edges (v.aiming)', glsl: `    // a hit splits the colours at the edges for a moment
+    if (pain > 0.) { vec2 po = d * r2 * pain * .06; col.r = tex(vUv + po).r; col.b = tex(vUv - po).b; }
+    // aiming: the edges go soft, softer further out (tSoft: a quarter-size picture, tBig: a sixteenth), the middle stays sharp
+    if (aimK > 0.) col = mix(col, mix(texture2D(tSoft, vUv).rgb, texture2D(tBig, vUv).rgb, smoothstep(.12, .3, r2)), smoothstep(.04, .2, r2) * aimK * .8);
+` },
   { name: 'bloom', what: 'bloom', glsl: `    col += texture2D(tBloom, vUv).rgb * bloom;
 ` },
   { name: 'film', what: 'film halation and anamorphic streaks (v.film)', glsl: `  #ifdef FILM
@@ -983,6 +988,8 @@ ${ShaderChunk.tonemapping_pars_fragment}
       col = pow(col / .18 + 1e-5, vec3(con)) * .18;
       col *= mix(lo, hi, smoothstep(.15, .85, clamp(log2(l / .18 + 1e-4) * .16 + .5, 0., 1.)));
     }
+    // hurt and low on health, the colour drains (v.hit, v.health)
+    col = mix(col, vec3(dot(col, vec3(.2126, .7152, .0722))), clamp(pain * .5 + low * .65, 0., .9));
 ` },
   { name: 'glare', what: 'sun glare (v.glare)', glsl: `    // sun glare (v.glare): a soft bloom round the sun and two faint lens ghosts, only while the sun itself shows
     if (glare > 0.) {
@@ -1005,7 +1012,7 @@ ${ShaderChunk.tonemapping_pars_fragment}
     // more, the costliest of an OLED's three lights)
     if (oled > 0.) col *= 1. - oled * smoothstep(.1, .7, dot(texture2D(tBig, vUv).rgb * toneMappingExposure, vec3(.2126, .7152, .0722))) * vec3(.9, .9, 1.2);
 ` },
-  { name: 'vignette', what: 'vignette', glsl: `    col *= 1. - vig * smoothstep(.12, .62, r2 * 1.6);
+  { name: 'vignette', what: 'vignette (closing in with a heartbeat when low on health, and a little when aiming)', glsl: `    col *= max(0., 1. - (vig + low * (.38 + .22 * beat) + aimK * .2) * smoothstep(.12, .62, r2 * 1.6));
 ` },
   { name: 'grain', what: 'film grain (v.film: following the brightness, in clumps, a touch of colour) and the film\'s flicker', glsl: `    col *= 1. + (h(vec2(t * 3.1, 1.7)) - .5) * flick;
     { vec2 gp = gSize > 1. ? floor(vUv / px / gSize) + .5 : vUv / px;
@@ -1014,7 +1021,7 @@ ${ShaderChunk.tonemapping_pars_fragment}
       if (gCol > 0.) g = mix(g, vec3(h(gp + t + 17.3), h(gp + t + 41.7), h(gp + t + 71.1)) - .5, gCol);
       col += g * ga; }
 ` },
-  { name: 'hurt', what: 'hurt tint (v.hurt)', glsl: `    col = mix(col, col * vec3(1.25, .45, .4) + vec3(.12, 0., 0.), hurt * smoothstep(.04, .4, r2));
+  { name: 'hurt', what: 'hurt tint (v.hurt, and a hit\'s pulse: v.hit)', glsl: `    col = mix(col, col * vec3(1.25, .45, .4) + vec3(.12, 0., 0.), max(hurt, pain * .8) * smoothstep(.04, .4, r2));
 ` },
   { name: 'out', what: 'end', glsl: `    gl_FragColor = vec4(col, 1.);
   }` },
@@ -1045,7 +1052,7 @@ class FinalPass extends Pass {
     this.bright = qmat(BRIGHT, { tDiffuse: { value: null }, px: { value: new Vector2() }, thr: { value: .82 } });
     this.down = qmat(DOWN, { tDiffuse: { value: null }, px: { value: new Vector2() } });
     this.up = qmat(UP, { tDiffuse: { value: null }, px: { value: new Vector2() }, k: { value: 1 } }, { blending: ADD });
-    this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, tBig: { value: null }, oled: { value: 0 }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
+    this.final = qmat(FINAL, { tDiffuse: { value: null }, tBloom: { value: null }, tBig: { value: null }, tSoft: { value: null }, oled: { value: 0 }, pain: { value: 0 }, low: { value: 0 }, beat: { value: 0 }, aimK: { value: 0 }, t: { value: 0 }, hurt: { value: 0 }, vig: { value: .32 }, grain: { value: .035 }, bloom: { value: .7 }, px: { value: new Vector2(1, 1) }, toneMappingExposure: { value: 1 },
       gradeOn: { value: 0 }, sat: { value: 1 }, con: { value: 1 }, lo: { value: new Vector3(1, 1, 1) }, hi: { value: new Vector3(1, 1, 1) }, glare: { value: 0 }, sunUV: { value: new Vector2() }, sunCol: { value: new Color() }, aspect: { value: 1 }, tLut: { value: null }, lutS: { value: 1 }, lutO: { value: 0 }, lutK: { value: 1 }, tDirt: { value: null }, flareTh: { value: .3 }, flareSp: { value: .25 }, flareFade: { value: 25 }, flareK: { value: 1 }, dirtK: { value: 0 }, flareTint: { value: new Vector3(1, 1, 1) },
       drops: { value: Array.from({ length: DROPS_N }, () => new Vector4()) }, dropN: { value: 0 },
       fringe: { value: .012 }, gLum: { value: 0 }, gSize: { value: 1 }, gCol: { value: 0 }, flick: { value: 0 },
@@ -1115,11 +1122,12 @@ class FinalPass extends Pass {
       r.autoClear = auto;
     }
     F.tDiffuse.value = readBuffer.texture; F.tBloom.value = M[0]?.texture ?? null; F.tBloom1.value = M[1]?.texture ?? M[0]?.texture ?? null; F.bloom.value = on ? this.strength * .8 : 0;
-    if (F.oled.value > 0 && this.big.length) {   // the OLED dimming: how bright each area is, a 16 x 16 block average
+    if ((F.oled.value > 0 || F.aimK.value > 0 || !this.boxBuilt) && this.big.length) {   // the OLED dimming and aiming's soft edges: the picture averaged in 4 x 4 and 16 x 16 blocks
+      this.boxBuilt = true;   // (drawn on the first frame too, so its shader is built under the loading screen, not at the first aim)
       const b = this.box.uniforms; b.tDiffuse.value = readBuffer.texture; b.px.value.set(1 / readBuffer.width, 1 / readBuffer.height); this.pass(r, this.box, this.big[0]);
       b.tDiffuse.value = this.big[0].texture; b.px.value.set(1 / this.big[0].width, 1 / this.big[0].height); this.pass(r, this.box, this.big[1]);
-      F.tBig.value = this.big[1].texture;
-    } else { F.oled.value = 0; F.tBig.value = M[0]?.texture ?? null; }
+      F.tBig.value = this.big[1].texture; F.tSoft.value = this.big[0].texture;
+    } else { F.oled.value = 0; F.aimK.value = 0; F.tBig.value = F.tSoft.value = M[0]?.texture ?? null; }
     F.toneMappingExposure.value = r.toneMappingExposure; F.px.value.set(1 / readBuffer.width, 1 / readBuffer.height);
     if (this.eyeView?.eye) {   // auto exposure's light meter, from the scene before tone mapping
       const v = this.eyeView, src = readBuffer.texture;
@@ -2238,7 +2246,7 @@ export class HDView {
     if (fog) this.scene.fog = new FogExp2(bg, fog);
     this.envI = env; this.hemi = new HemisphereLight(sky, ground, amb); this.scene.add(this.hemi);
     this.cam = new PerspectiveCamera(fov, 1, .05, 120); this.scene.add(this.cam);
-    this.hurt = 0; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.film = null; this.fog3d = null; this.liveBounce = null;
+    this.hurt = 0; this.health = 1; this.aiming = 0; this.pain = 0; this._react = { at: 0, low: 0, ph: 0, beat: 0 }; this.t = 0; this.W = 240; this.H = 320; this.exposure = 1; this.bloom = .7; this.tone = 'aces'; this.autoExposure = false; this.eye = null; this.lut = null; this.lutAmount = 1; this.oit = false; this.flare = null; this.film = null; this.fog3d = null; this.liveBounce = null;
     this.drops = new LensDrops();   // rain on the lens (lens-drops.js): gs.sky.Weather lands drops while it rains; add() for a splash of your own
     this.lamps = []; this.tierSeen = -1; this.parts = []; this.reflectors = []; this.contacts = [];
     this.env = null; this.envMaker = null; this.grade = null; this.glare = 0; this._air = null;
@@ -3052,6 +3060,25 @@ export class HDView {
    * gs.fx3d's fire, explosions and sparks, GPUParticles bursts with flash and gs.gas explosions make theirs by
    * themselves. Returns { at(x, y, z) (or at(point)), stop(), on }.
    */
+  /**
+   * A hit taken: the screen's edges pulse red, the colours split and drain for a moment, more for a bigger hit (damage
+   * as the game counts it: 10 a light one, 40 a heavy one). v.health (0..1, 1) below a half drains the colour and
+   * closes the edges in with a heartbeat that quickens as it falls; v.aiming (0..1) softens the edges round the middle
+   * (a gs.camera GunRig sets it as it aims).
+   */
+  hit(damage = 10) { this.pain = Math.min(1, this.pain + .3 + Math.max(0, damage) / 50); return this; }
+  // the screen's reactions this frame (eased on the wall clock, so they run at the same speed at any frame rate)
+  reactions(now, frozen = false) {
+    const R = this._react, dt = R.at ? Math.min(.1, Math.max(0, (now - R.at) / 1000)) : 0; R.at = now;
+    const out = R.out ||= { pain: 0, low: 0, beat: 0, aim: 0 };
+    if (frozen) { out.pain = out.low = out.beat = out.aim = 0; return out; }
+    this.pain = Math.max(0, this.pain - dt * 2.2);
+    const h = Math.max(0, Math.min(1, this.health ?? 1)), to = 1 - Math.min(1, Math.max(0, (h - .15) / .35)), lowTo = to * to * (3 - 2 * to);
+    R.low += (lowTo - R.low) * (1 - Math.exp(-dt * 3));
+    R.ph = (R.ph + dt * (68 + 62 * R.low) / 60) % 1;   // (a heartbeat, quicker the lower it gets: two beats close together)
+    const f = R.ph; R.beat = R.low > .001 ? Math.exp(-f * 16) + .65 * (f > .2 ? Math.exp(-(f - .2) * 16) : 0) : 0;
+    out.pain = this.pain; out.low = R.low < .001 ? 0 : R.low; out.beat = R.beat; out.aim = Math.max(0, Math.min(1, +this.aiming || 0)); return out;
+  }
   flash(x, y, z, o = {}) {
     if (typeof x === 'object' && x) { o = y || {}; z = x.z; y = x.y; x = x.x; }
     const f = { s: { x, y, z, col: o.col || o.colour || '#ffb060', i: 0, reach: o.reach ?? 8, decay: o.decay ?? 1.6, rank: .05 }, i0: o.i ?? 30, life: Math.max(.016, o.life ?? .2), age: 0, keep: !!o.keep, flicker: o.flicker ?? 0, seed: Math.random() * 100, on: true };
@@ -3509,6 +3536,7 @@ export class HDView {
       dofOn: false, lens: null, near: this.cam.near, far: this.cam.far, shaftsOn: false, shaft: 0, shaftCol: null, film: this.filmSet(), grain: HD.grain };
     if (o.film && HD.grain == null) o.grain = .035 * o.film.grain;
     o.oled = baking || off ? 0 : heat.oled() * OLED_MAX;   // (big bright areas dimmer while saving power: FINAL_EFFECTS oled)
+    o.react = this.reactions(now, baking || off);   // (a hit, low health, aiming: FINAL_EFFECTS react, vignette, hurt)
     // gs.fx3d's screen effects, and reflections where the game marked shiny things: high and
     // ultra here (WebGL: ultra only), traced at half size on high
     o.fx = this.extras?.length ? this.extras : null;
@@ -3755,7 +3783,7 @@ export class HDView {
     const e = cam.matrixWorld.elements, p = cam.projectionMatrix.elements, k = S.cam; let same = true;
     for (let i = 0; i < 16; i++) { if (k[i] !== e[i]) { same = false; k[i] = e[i]; } if (k[16 + i] !== p[i]) { same = false; k[16 + i] = p[i]; } }
     // a change it can't see in the picture yet: the camera, the hurt flash, a finger or key in the last moment
-    if (!same || this.hurt !== S.hurt || now - (speed.inputAt || 0) < 300 || this._ls?.moving) { S.run = 0; S.hurt = this.hurt; return false; }
+    if (!same || this.hurt !== S.hurt || this.pain > 0 || this._react.low > .001 || this.aiming > 0 || now - (speed.inputAt || 0) < 300 || this._ls?.moving) { S.run = 0; S.hurt = this.hurt; return false; }
     // a new answer from the picture check (a frame or two late): how many checks in a row saw nothing change
     if (st.seen !== S.seen) { S.seen = st.seen; S.run = st.changed() === 0 ? S.run + 1 : 0; }
     if (S.run < 3) return false;
@@ -3965,7 +3993,7 @@ export class HDView {
       if (!baking && !off) { fxFrame(); if (T.ao > 0) fxOn.add('ao'); if (this.bloom > 0 && T.bloom) fxOn.add('bloom'); }
       F.strength = this.bloom; F.setTone(this.tone); F.setLut(this.lutTex(), this.lutAmount); F.setFlare(this.bloom > 0 && T.bloom ? this.flareSet() : null); F.setDrops(this.drops.on ? this.drops : null); F.eyeView = baking || off ? null : this; F.setFxaa(!s2 && (!T.msaa || ssr));   // SGSR 2 smooths edges itself
       const film = this.filmSet(); F.setFilm(film && T.bloom ? film : film && { ...film, halation: 0, streaks: 0 });
-      const u = F.final.uniforms; u.t.value = this.t % 10; u.hurt.value = this.hurt; u.grain.value = HD.grain ?? .035 * (film ? film.grain : 1); u.oled.value = baking || off ? 0 : heat.oled() * OLED_MAX;
+      const u = F.final.uniforms, rx = this.reactions(now, baking || off); u.t.value = this.t % 10; u.hurt.value = this.hurt; u.pain.value = rx.pain; u.low.value = rx.low; u.beat.value = rx.beat; u.aimK.value = rx.aim; u.grain.value = HD.grain ?? .035 * (film ? film.grain : 1); u.oled.value = baking || off ? 0 : heat.oled() * OLED_MAX;
       const g = this.grade; u.gradeOn.value = g ? 1 : 0;
       if (g) { u.sat.value = g.saturation ?? 1; u.con.value = g.contrast ?? 1; toRGB(g.shadows, u.lo.value); toRGB(g.highlights, u.hi.value); }
       u.glare.value = 0;

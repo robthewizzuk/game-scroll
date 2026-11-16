@@ -8,13 +8,13 @@ Grapples, ziplines, wires to cut, locks to pick, codes to crack.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`GadgetsPart`, line 3797), where every option and field is described.
+From `src/gamescroll.d.ts` (`GadgetsPart`, line 3848), where every option and field is described.
 
-- `Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number; mass?: number; link?: boolean }) => { attached: boolean; flying: nu…` mass: the user's (kg): hooked onto a loose body in a World3D, the pull is shared by mass (a light crate comes to you, you go to a truck). (:3799)
-- `Zipline: new (a: P3, b: P3, o?: { gravity?: number; drag?: number; grab?: number; hang?: number }) => { riding: boolean; done?: boolean; t: number; speed: number; near…` (:3805)
-- `Wires: new (cols?: number, rows?: number, o?: { seed?: number }) => { cols: number; rows: number; cells: number[]; moves: number; readonly solved: boolean; get(c: numb…` (:3806)
-- `Lock: new (o?: { pins?: number; speed?: number; gap?: number; shrink?: number; seed?: number }) => { pin: number; pins: number; a: number; at: number; gap: number; fai…` (:3807)
-- `Code: new (o?: { keys?: number; start?: number; seed?: number }) => { seq: number[]; i: number; failed: boolean; readonly done: boolean; press(k: number): boolean; gro…` (:3808)
+- `Grapple: new (o?: { range?: number; reel?: number; swing?: boolean; flyTime?: number; min?: number; mass?: number; link?: boolean }) => { attached: boolean; flying: nu…` mass: the user's (kg): hooked onto a loose body in a World3D, the pull is shared by mass (a light crate comes to you, you go to a truck). (:3850)
+- `Zipline: new (a: P3, b: P3, o?: { gravity?: number; drag?: number; grab?: number; hang?: number }) => { riding: boolean; done?: boolean; t: number; speed: number; near…` (:3856)
+- `Wires: new (cols?: number, rows?: number, o?: { seed?: number }) => { cols: number; rows: number; cells: number[]; moves: number; readonly solved: boolean; get(c: numb…` (:3857)
+- `Lock: new (o?: { pins?: number; speed?: number; gap?: number; shrink?: number; seed?: number }) => { pin: number; pins: number; a: number; at: number; gap: number; fai…` (:3858)
+- `Code: new (o?: { keys?: number; start?: number; seed?: number }) => { seq: number[]; i: number; failed: boolean; readonly done: boolean; press(k: number): boolean; gro…` (:3859)
 
 ## From the maker kit
 
