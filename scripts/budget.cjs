@@ -62,12 +62,11 @@ const pct = (a, q) => { if (!a.length) return 0; const s = [...a].sort((x, y) =>
 const p95 = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * .95))]; };
 
 (async () => {
-  const { createServer } = await import('vite');
-  const server = await createServer({ mode: 'bundled', server: { port: 4186, hmr: false }, logLevel: 'error' }); await server.listen();
+  const { server, url } = await require('./lib/serve.cjs').dev({ mode: 'bundled', server: { hmr: false } });   // (a free port: speed reports run side by side, in other worktrees too)
   const b = await chromium.launch();
   const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
   const p = await ctx.newPage(), cdp = await ctx.newCDPSession(p);
-  await p.goto('http://localhost:4186/'); await p.waitForFunction(() => window.__gs, null, { timeout: 180000 }); await p.waitForTimeout(400);
+  await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 180000 }); await p.waitForTimeout(400);
   await p.addStyleTag({ content: '.lil-gui { display: none !important }' });   // the dev sliders: random taps must reach the game
   const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
   const ids = args.length ? args : await p.evaluate(() => __gs.GAMES.map(g => g.id));

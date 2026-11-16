@@ -8,13 +8,13 @@ const SIZES = {
 };
 const FLOWS = [['fold8-cover', 'fold8-inner', 'fold8-cover'], ['duo-cover', 'duo-inner', 'duo-cover']];
 (async () => {
-  const server = await (await import('vite')).preview({ preview: { port: 4180 } });
+  const { server, url } = await require('./lib/serve.cjs').preview();   // (a free port: checks run side by side)
   const argv = process.argv.slice(2), n = jobs(argv, 'heavy'); let failed = 0;   // (fewer at once: it waits on layout timing, and 3D games share the CPUs)
   const ids = argv.length ? argv : ['stack', 'cave', 'slice', 'gold-digger'];
   await pool(ids.flatMap(id => FLOWS.map(flow => [id, flow])), n, () => chromium.launch(), async (b, [id, flow]) => {
     const ctx = await b.newContext({ viewport: SIZES[flow[0]], hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
     const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
-    await p.goto('http://localhost:4180/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300);
+    await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300);
     await p.evaluate(id => __gs.only(id), id); await p.waitForTimeout(200);
     // a game whose kit loads on first use (physics, 3D...) can't start until it's in
     await p.waitForFunction(() => __gs.active && !__gs.active.loading, null, { timeout: 60000 }).catch(() => {});

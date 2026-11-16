@@ -17,7 +17,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 
 | You changed | Run | Time |
 | --- | --- | --- |
-| One game file, all at once | `node scripts/check.mjs <id>`: lint, types, unique, the streamed build, smoke, streamed, fold, sweep (3D games) and the playtest bot, the play checks side by side, with one report (each problem's line in the game's own file, the code on it and what to do; a crash while playing is traced back through the build's source maps). then the speed report (`budget.cjs`, alone so nothing else slows it; `--no-speed` leaves it out). `--quick` only the code checks, `--json` for tools | about 40 s to 1 min (3D longer); `--quick` 2 s |
+| One game file, all at once | `node scripts/check.mjs <id>`: lint, types, unique, the streamed build, smoke, streamed, fold, sweep (3D games), the playtest bot and the lazy tricks, the play checks side by side, with one report (each problem's line in the game's own file, the code on it and what to do; a crash while playing is traced back through the build's source maps). then the speed report (`budget.cjs`, alone so nothing else slows it; `--no-speed` leaves it out). `--quick` only the code checks, `--json` for tools | about 40 s to 1 min (3D longer); `--quick` 2 s |
 | Kit guides (`docs/kits/`, after changing `src/gamescroll.d.ts`, a kit's docs, or adding a part of `gs`) | `node scripts/kit-guides.mjs` remakes the pages' lower halves and the index; `--check` (the PR check) fails only for a part with no page or an index out of step; `npm run kit <name>` prints one page as it is now | about 2 s |
 | What a game looks and plays like, before and after a change | `npm run watch <id> [knob=value knob*factor ...]`: plays it with seeded taps and saves a strip of frames with the score over time, rounds and frame times; with knob changes, before and after from the same start (the file is not changed); `--seconds`, `--frames`, `--taps`, `--json` | about 20 s a play |
 | A game's knobs (its `gs.tweak('Feel', ...)` numbers) | `node scripts/knobs.mjs <id>` lists them; `node scripts/knobs.mjs <id> speed=140 jump*1.2` changes them in the file (only those numbers) | instant |
@@ -29,6 +29,7 @@ How to check a change without waiting longer than you need to. Written for peopl
 | A game's speed | `npm run speed <id>` (`node scripts/budget.cjs <id>`): the speed report, see [Speed report](#speed-report) | about 25 s |
 | A phone's frame lab recording | `node scripts/budget.cjs --lab <report.html or summary.txt>` (`-` reads pasted text): the same advice from what the phone measured | instant |
 | Can the goal be reached? | `node scripts/playtest.cjs <id> [--budget 20] [--strict]`: a bot plays faster than real time and tries to win (see below) | about 20 s a game |
+| Can it be won without playing? | `node scripts/lazy-check.cjs <id>`: the lazy tricks (doing nothing, holding the middle, mashing one spot, circles, swiping back and forth) played faster than real time; fails if one wins or the game scores left alone, warns past half the goal (see below) | about 10 to 30 s a game |
 | Layout, cards, folding | `node scripts/fold.cjs [id ...]` | about 12 s |
 | Feed swiping | `node scripts/feed-jank.cjs [swipes] [--filter nextgen]` (compare before and after, not with a phone) | about a minute |
 | The feed jumping back, or doing 3D work mid-swipe | `node scripts/feed-snapback.cjs [swipes] [--filter nextgen] [--cpu 4]`: finger flicks down the feed, each touch carrying its own time; counts swipes that sprang back or didn't move on, and the Next Gen live frames and loading passes that began while the feed was moving. `RESIZE=0` adds a resize after each flick (`BARS=40`: a real one), `DIRECT=1` puts the 3D canvas on the cards as the phone apps do | about a minute |
@@ -163,11 +164,28 @@ holds, double taps and swipe speeds in `gs.controls` read the same as on a phone
 puzzles, so on a **thinking game** (a tag with Puzzle, Word, Logic, Memory, Strategy, Cards, Match,
 Merge, Sort, Maze, Trivia...) "goal not reached" is a note, not a warning, and `--strict` ignores it.
 
+## Lazy tricks: can it be won without playing?
+
+`node scripts/lazy-check.cjs <id>` (after `npm run build:bundled`; `check.mjs` and the PR check run it)
+plays one round with each trick a player who doesn't want to play tries first: **idle** (no input at all),
+**hold the middle** (one finger down for the whole round), **mash one spot** (a tap every 0.14 s on the
+middle, low down and high up; the best of the three counts), **circles** (a finger going round the middle
+once a second) and **swipe back and forth** (left to right and back across the middle). Like the playtester
+it runs much faster than real time with a seeded `Math.random`. It fails a game that one of them wins (reaches
+the goal) or that scores while left alone, and warns when one gets past half the goal: a player will find
+it. The fix is in the rules, not the goal: a miss or a wrong tap should cost something (a life, time, points),
+so points come from timing, aim or choices rather than from any touch.
+
 **Emoji in the test browser.** Emoji show on phones, but a test machine without a colour emoji font
 draws them as empty boxes. On Debian or Ubuntu, `sudo apt-get install fonts-noto-color-emoji` fixes
 it; `smoke.cjs` says when the font is missing. Drawing icons yourself works everywhere too.
 
 ## Running many games at once
+
+Every check that plays games in a browser (`smoke.cjs`, `stream-smoke.mjs`, `fold.cjs`, `sweep.cjs`,
+`playtest.cjs`, `lazy-check.cjs`, `brain-check.mjs`, `budget.cjs`, `watch.mjs`) serves the app on a port the
+system picks (`scripts/lib/serve.cjs`), so checks run side by side: in one checkout (`check.mjs` does), or
+in several git worktrees at once. `PORT=4190` asks for a port of your own.
 
 `smoke.cjs`, `stream-smoke.mjs`, `fold.cjs` and `sweep.cjs` play several games side by side, one
 browser each (`scripts/lib/pool.cjs`). The default is one browser per CPU (up to 6) for the 2D-heavy

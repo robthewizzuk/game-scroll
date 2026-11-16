@@ -117,9 +117,9 @@ if (gi >= 0) {
   ids = ids.filter(id => { try { return usesBrains(id); } catch (_) { return false; } });
   if (!ids.length) { console.log('  no games with Tiny Brains to play'); process.exit(0); }
   const require = createRequire(import.meta.url), { chromium, devices } = require('playwright');
-  const server = await (await import('vite')).preview({ preview: { port: 4183 } });
+  const { server, url } = await require('./lib/serve.cjs').preview();   // (a free port: checks run side by side)
   const br = await chromium.launch(), ctx = await br.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 }), p = await ctx.newPage();
-  await p.goto('http://localhost:4183/'); await p.waitForFunction(() => window.__gs, null, { timeout: 20000 });
+  await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 20000 });
   let failed = 0;
   for (const id of ids) {
     await p.evaluate(id => __gs.only(id), id); await p.waitForTimeout(300);

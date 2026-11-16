@@ -34,7 +34,7 @@ import { linksFor } from './links.js';
 // step allows: sound crosses about .6 of a cell a step); G0 is gravity in cells a step squared, which
 // fixes the length of a step for a cell's size; VMAX is the fastest a drop may go.
 export const RHO = 4, K = .4, G0 = .012, VMAX = 1, LO = 3, WALL = 2, SOLIDS = 8, SINKS = 4, PUSHES = 4;
-const BUDGET = { gpu: { top: 40000, mid: 20000, low: 10000 }, cpu: { top: 2000, mid: 1200, low: 600 } };
+const BUDGET = { gpu: { top: 40000, mid: 20000, low: 10000 }, cpu: { top: 1400, mid: 800, low: 300 } };   // (CPU: 600 drops on a low phone took 10 ms of an 8 ms update in a game that does anything else: scripts/budget.cjs)
 const SUBSTEPS = { gpu: { top: 4, mid: 3, low: 2 }, cpu: { top: 2, mid: 2, low: 2 } };
 const SPACING = Math.cbrt(1 / RHO);   // between drops at rest, in cells
 /** The room a drop's drag works over, for how much liquid is round it (rho, drops a cell): a drop's own room in full liquid, less where it is thin. */
@@ -89,53 +89,53 @@ export const bulk = mu => Math.min(1, 1.9 - 2 * mu);
 
 /* ---------- solid shapes: how far a point is from one, and which way is out ---------- */
 // sdf() leaves its answer here: the distance (negative inside) and the way out
-let sd = 0, snx = 0, sny = 0, snz = 0;
+const SN = new Float64Array(4);   // [distance, out x, y, z] (a typed list: a number kept in a plain variable of the file is a new number object at every write)
 // Sim.near() leaves its answer here: how far the nearest solid's skin is, the way out, and how fast that spot moves
-let bd = 0, bnx = 0, bny = 0, bnz = 0, bux = 0, buy = 0, buz = 0;
+const BN = new Float64Array(7);   // [distance, out x, y, z, the spot's speed x, y, z]
 const twinV = [0, 0, 0];
 // T: 0 a ball (ax its radius), 1 a box (ax, ay, az half its sides), 2 a tube standing on y (ax its radius, ay half its height)
 function sdf(T, px, py, pz, ax, ay, az) {
-  if (T === 0) { const l = Math.hypot(px, py, pz) || 1e-9; sd = l - ax; snx = px / l; sny = py / l; snz = pz / l; return; }
+  if (T === 0) { const l = Math.hypot(px, py, pz) || 1e-9; SN[0] = l - ax; SN[1] = px / l; SN[2] = py / l; SN[3] = pz / l; return; }
   if (T === 1) {
     const qx = Math.abs(px) - ax, qy = Math.abs(py) - ay, qz = Math.abs(pz) - az;
-    snx = sny = snz = 0;
+    SN[1] = SN[2] = SN[3] = 0;
     if (qx <= 0 && qy <= 0 && qz <= 0) {
-      if (qx >= qy && qx >= qz) { sd = qx; snx = px < 0 ? -1 : 1; } else if (qy >= qz) { sd = qy; sny = py < 0 ? -1 : 1; } else { sd = qz; snz = pz < 0 ? -1 : 1; }
+      if (qx >= qy && qx >= qz) { SN[0] = qx; SN[1] = px < 0 ? -1 : 1; } else if (qy >= qz) { SN[0] = qy; SN[2] = py < 0 ? -1 : 1; } else { SN[0] = qz; SN[3] = pz < 0 ? -1 : 1; }
     } else {
       const mx = qx > 0 ? qx : 0, my = qy > 0 ? qy : 0, mz = qz > 0 ? qz : 0, l = Math.hypot(mx, my, mz);
-      sd = l; snx = (px < 0 ? -mx : mx) / l; sny = (py < 0 ? -my : my) / l; snz = (pz < 0 ? -mz : mz) / l;
+      SN[0] = l; SN[1] = (px < 0 ? -mx : mx) / l; SN[2] = (py < 0 ? -my : my) / l; SN[3] = (pz < 0 ? -mz : mz) / l;
     }
     return;
   }
   const lr = Math.hypot(px, pz) || 1e-9, qr = lr - ax, qy = Math.abs(py) - ay;
   if (qr <= 0 && qy <= 0) {
-    if (qr >= qy) { sd = qr; snx = px / lr; sny = 0; snz = pz / lr; } else { sd = qy; snx = 0; sny = py < 0 ? -1 : 1; snz = 0; }
+    if (qr >= qy) { SN[0] = qr; SN[1] = px / lr; SN[2] = 0; SN[3] = pz / lr; } else { SN[0] = qy; SN[1] = 0; SN[2] = py < 0 ? -1 : 1; SN[3] = 0; }
   } else {
     const mr = qr > 0 ? qr : 0, my = qy > 0 ? qy : 0, l = Math.hypot(mr, my);
-    sd = l; snx = px / lr * mr / l; sny = (py < 0 ? -my : my) / l; snz = pz / lr * mr / l;
+    SN[0] = l; SN[1] = px / lr * mr / l; SN[2] = (py < 0 ? -my : my) / l; SN[3] = pz / lr * mr / l;
   }
 }
-// a packed solid (Solid.pack) at a point, all in cells: sd and the way out in world axes. A hollow one
+// a packed solid (Solid.pack) at a point, all in cells: SN[0] and the way out in world axes. A hollow one
 // is its outside with the room inside it taken away (and, for an open one, the way in at the top)
 function solidAt(s, x, y, z) {
   const dx = x - s.cx, dy = y - s.cy, dz = z - s.cz, m = s.m;
   const px = m[0] * dx + m[1] * dy + m[2] * dz, py = m[3] * dx + m[4] * dy + m[5] * dz, pz = m[6] * dx + m[7] * dy + m[8] * dz;
   sdf(s.T, px, py, pz, s.ax, s.ay, s.az);
   if (s.hol) {
-    const d1 = sd, ax = snx, ay = sny, az = snz;
+    const d1 = SN[0], ax = SN[1], ay = SN[2], az = SN[3];
     sdf(s.T, px, py - s.io, pz, s.ix, s.iy, s.iz);
-    if (s.cut - py < sd) { sd = s.cut - py; snx = 0; sny = -1; snz = 0; }   // (an open one: all that is above its rim is room too)
-    if (-sd > d1) { sd = -sd; snx = -snx; sny = -sny; snz = -snz; } else { sd = d1; snx = ax; sny = ay; snz = az; }
+    if (s.cut - py < SN[0]) { SN[0] = s.cut - py; SN[1] = 0; SN[2] = -1; SN[3] = 0; }   // (an open one: all that is above its rim is room too)
+    if (-SN[0] > d1) { SN[0] = -SN[0]; SN[1] = -SN[1]; SN[2] = -SN[2]; SN[3] = -SN[3]; } else { SN[0] = d1; SN[1] = ax; SN[2] = ay; SN[3] = az; }
   }
-  const lx = snx, ly = sny, lz = snz;
-  snx = m[0] * lx + m[3] * ly + m[6] * lz; sny = m[1] * lx + m[4] * ly + m[7] * lz; snz = m[2] * lx + m[5] * ly + m[8] * lz;
+  const lx = SN[1], ly = SN[2], lz = SN[3];
+  SN[1] = m[0] * lx + m[3] * ly + m[6] * lz; SN[2] = m[1] * lx + m[4] * ly + m[7] * lz; SN[3] = m[2] * lx + m[5] * ly + m[8] * lz;
 }
-// how far inside a hollow solid's room a point is (negative inside), and its height in the solid's own axes (in snx)
+// how far inside a hollow solid's room a point is (negative inside), and its height in the solid's own axes (in SN[1])
 function roomAt(s, x, y, z) {
   const dx = x - s.cx, dy = y - s.cy, dz = z - s.cz, m = s.m;
   const px = m[0] * dx + m[1] * dy + m[2] * dz, py = m[3] * dx + m[4] * dy + m[5] * dz, pz = m[6] * dx + m[7] * dy + m[8] * dz;
-  sdf(s.T, px, py - s.io, pz, s.ix, s.iy, s.iz); if (py > s.top) sd = Math.max(sd, py - s.top);
-  snx = py;
+  sdf(s.T, px, py - s.io, pz, s.ix, s.iy, s.iz); if (py > s.top) SN[0] = Math.max(SN[0], py - s.top);
+  SN[1] = py;
 }
 
 const _q = new Quaternion(), _m = new Matrix4(), _v3 = new Vector3(), _s3 = new Vector3();
@@ -197,7 +197,7 @@ class Solid {
   fill(part = 1) {
     const F = this.fluid, S = F.sim, s = this.pack(S), [a, b] = this.size, T = this.T, t = this.hollow / S.h;
     const lo = (T === 0 ? -a : -b) / S.h + t, hi = T === 0 ? (this.open ? a * .35 / S.h : a / S.h - t) : this.open ? b / S.h : b / S.h - t, top = lo + (hi - lo) * Math.max(0, Math.min(1, part));
-    return F.lattice(s.cx - s.R, s.cy - s.R, s.cz - s.R, s.cx + s.R, s.cy + s.R, s.cz + s.R, (x, y, z) => { roomAt(s, x, y, z); return sd < -SKIN - .15 && snx <= top; });
+    return F.lattice(s.cx - s.R, s.cy - s.R, s.cz - s.R, s.cx + s.R, s.cy + s.R, s.cz + s.R, (x, y, z) => { roomAt(s, x, y, z); return SN[0] < -SKIN - .15 && SN[1] <= top; });
   }
   remove() { const l = this.fluid.solids, i = l.indexOf(this); if (i >= 0) l.splice(i, 1); }
 }
@@ -237,11 +237,11 @@ class Sim {
     const { nx, nz, h } = this, H = this.H = new Float32Array(nx * nz);
     for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) H[k * nx + i] = (fn(this.ox + (i + .5) * h, this.oz + (k + .5) * h) - this.oy) / h;
   }
-  // the ground at a place (cells): its height in sd's place... returns height, slope in snx, snz
+  // the ground at a place (cells): its height in SN[0]'s place... returns height, slope in SN[1], SN[3]
   groundAt(x, z) {
     const { nx, nz, H } = this, fx = Math.min(nx - 1.001, Math.max(0, x - .5)), fz = Math.min(nz - 1.001, Math.max(0, z - .5)), i = fx | 0, k = fz | 0, u = fx - i, w = fz - k, a = k * nx + i;
     const h00 = H[a], h10 = H[a + 1], h01 = H[a + nx], h11 = H[a + nx + 1];
-    snx = (h10 - h00) * (1 - w) + (h11 - h01) * w; snz = (h01 - h00) * (1 - u) + (h11 - h10) * u;
+    SN[1] = (h10 - h00) * (1 - w) + (h11 - h01) * w; SN[3] = (h01 - h00) * (1 - u) + (h11 - h10) * u;
     return h00 * (1 - u) * (1 - w) + h10 * u * (1 - w) + h01 * (1 - u) * w + h11 * u * w;
   }
   /** A new drop (cells and cells a step). Returns its slot, or -1 when the fluid is full. */
@@ -283,16 +283,16 @@ class Sim {
     return nt;
   }
   // the nearest solid thing or ground within REACH of a place: true if there is one, with how far its skin
-  // is in bd, the way out of it in bnx, bny, bnz and how fast that spot of it moves in bux, buy, buz
+  // is in BN[0], the way out of it in BN[1], BN[2], BN[3] and how fast that spot of it moves in BN[4], BN[5], BN[6]
   near(x, y, z) {
-    const solids = this.F.packed; bd = REACH;
+    const solids = this.F.packed; BN[0] = REACH;
     for (let j = 0; j < solids.length; j++) {
       const s = solids[j], ex = x - s.cx, ey = y - s.cy, ez = z - s.cz; if (ex * ex + ey * ey + ez * ez > s.R * s.R) continue;
-      solidAt(s, x, y, z); const d = sd - SKIN; if (d >= bd) continue;
-      bd = d; bnx = snx; bny = sny; bnz = snz; bux = s.vx + s.wy * ez - s.wz * ey; buy = s.vy + s.wz * ex - s.wx * ez; buz = s.vz + s.wx * ey - s.wy * ex;
+      solidAt(s, x, y, z); const d = SN[0] - SKIN; if (d >= BN[0]) continue;
+      BN[0] = d; BN[1] = SN[1]; BN[2] = SN[2]; BN[3] = SN[3]; BN[4] = s.vx + s.wy * ez - s.wz * ey; BN[5] = s.vy + s.wz * ex - s.wx * ez; BN[6] = s.vz + s.wx * ey - s.wy * ex;
     }
-    if (this.H) { const gh = this.groundAt(x, z), l = Math.hypot(snx, 1, snz), d = (y - gh) / l - SKIN; if (d < bd) { bd = d; bnx = -snx / l; bny = 1 / l; bnz = -snz / l; bux = buy = buz = 0; } }
-    return bd < REACH;
+    if (this.H) { const gh = this.groundAt(x, z), l = Math.hypot(SN[1], 1, SN[3]), d = (y - gh) / l - SKIN; if (d < BN[0]) { BN[0] = d; BN[1] = -SN[1] / l; BN[2] = 1 / l; BN[3] = -SN[3] / l; BN[4] = BN[5] = BN[6] = 0; } }
+    return BN[0] < REACH;
   }
   // snow packs: squeezed past a little over its resting fullness, that fullness rises (up to 1 + packs), so it stays squeezed. Returns it.
   pack(E, e, rho) {
@@ -322,6 +322,10 @@ class Sim {
     const F = this.F, { nx, ny, P, V, C, D, lo, hi } = this, nxy = nx * ny, top = this.top;
     const G = this.G ||= new Float32Array(this.cells * 4), T = this.T ||= new Int32Array(this.cells), M = this.M ||= new Float32Array(this.N * 4);
     const mu = F.mu, zeta = bulk(mu), open = F.open, hx = hi[0], hy = hi[1], hz = hi[2], bounds = !!this.H || F.packed.length > 0;
+    // (the walls, worked out here, and the clamp to them below without branches: sums and tests met only in a branch a
+    // drop seldom takes had no type feedback when the step was optimised, so a drop at a wall threw it back to the slow
+    // interpreter, dozens of times a minute, where every sum is a new number object)
+    const wLo = LO + IN, wx = hx - IN, wy = hy - IN, wz = hz - IN;
     let nt = 0;
     // drops to grid: each drop's weight and push go to the 27 cells round it. A drop beside a solid thing or
     // the ground has a twin in the mirror, just inside it (M: where), which gives its cells the same, turned round
@@ -332,10 +336,10 @@ class Sim {
       let c00 = C[c], c01 = C[c + 1], c02 = C[c + 2], c10 = C[c + 4], c11 = C[c + 5], c12 = C[c + 6], c20 = C[c + 8], c21 = C[c + 9], c22 = C[c + 10];
       let twin = 0;
       if (bounds && this.near(x, y, z)) {
-        const d = bd > 0 ? bd : 0, rn = (vx - bux) * bnx + (vy - buy) * bny + (vz - buz) * bnz;
-        M[a] = x - 2 * d * bnx; M[a + 1] = y - 2 * d * bny; M[a + 2] = z - 2 * d * bnz;
+        const d = BN[0] > 0 ? BN[0] : 0, rn = (vx - BN[4]) * BN[1] + (vy - BN[5]) * BN[2] + (vz - BN[6]) * BN[3];
+        M[a] = x - 2 * d * BN[1]; M[a + 1] = y - 2 * d * BN[2]; M[a + 2] = z - 2 * d * BN[3];
         twin = M[a] > 1.5 && M[a + 1] > 1.5 && M[a + 2] > 1.5 && M[a] < nx - 1.5 && M[a + 1] < ny - 1.5 && M[a + 2] < this.nz - 1.5 ? 1 : 0;
-        twinV[0] = vx - 2 * rn * bnx; twinV[1] = vy - 2 * rn * bny; twinV[2] = vz - 2 * rn * bnz;
+        twinV[0] = vx - 2 * rn * BN[1]; twinV[1] = vy - 2 * rn * BN[2]; twinV[2] = vz - 2 * rn * BN[3];
       }
       M[a + 3] = twin;
       for (let pass = 0; pass <= twin; pass++) {
@@ -432,14 +436,14 @@ class Sim {
         if (l < b.r) { const f = b.s * (1 - l / b.r) / (l || 1); vx += ex * f; vy += ey * f + b.up * (1 - l / b.r); vz += ez * f; }
       }
       if (bounds && this.near(x, y, z)) {
-        if (bd < 0) {
-          let qx = vx - bux, qy = vy - buy, qz = vz - buz; const vn = qx * bnx + qy * bny + qz * bnz;
-          if (vn < 0) { qx -= vn * bnx; qy -= vn * bny; qz -= vn * bnz; }
-          vx = bux + qx; vy = buy + qy; vz = buz + qz;
+        if (BN[0] < 0) {
+          let qx = vx - BN[4], qy = vy - BN[5], qz = vz - BN[6]; const vn = qx * BN[1] + qy * BN[2] + qz * BN[3];
+          if (vn < 0) { qx -= vn * BN[1]; qy -= vn * BN[2]; qz -= vn * BN[3]; }
+          vx = BN[4] + qx; vy = BN[5] + qy; vz = BN[6] + qz;
         }
-        if (grip && bd < .5) {   // grains: a solid thing or the ground grips them (its own way of moving is kept)
-          const qx = vx - bux, qy = vy - buy, qz = vz - buz, vn = qx * bnx + qy * bny + qz * bnz;
-          vx -= grip * (qx - vn * bnx); vy -= grip * (qy - vn * bny); vz -= grip * (qz - vn * bnz);
+        if (grip && BN[0] < .5) {   // grains: a solid thing or the ground grips them (its own way of moving is kept)
+          const qx = vx - BN[4], qy = vy - BN[5], qz = vz - BN[6], vn = qx * BN[1] + qy * BN[2] + qz * BN[3];
+          vx -= grip * (qx - vn * BN[1]); vy -= grip * (qy - vn * BN[2]); vz -= grip * (qz - vn * BN[3]);
         }
       }
       if (grip && !open && iy === LO) { vx *= 1 - grip; vz *= 1 - grip; }   // (and the box's floor)
@@ -478,15 +482,18 @@ class Sim {
       x += vx; y += vy; z += vz;
       let dead = 0;
       // (the mirrors already stop the liquid at solid things and walls: these only catch what gets through, a fast thing sweeping into the liquid most of all)
-      if (bounds && this.near(x, y, z) && bd < IN) {
-        const out = IN - bd; x += bnx * out; y += bny * out; z += bnz * out;
-        const vn = (vx - bux) * bnx + (vy - buy) * bny + (vz - buz) * bnz; if (vn < 0) { vx -= vn * bnx; vy -= vn * bny; vz -= vn * bnz; }
+      if (bounds && this.near(x, y, z) && BN[0] < IN) {
+        const out = IN - BN[0]; x += BN[1] * out; y += BN[2] * out; z += BN[3] * out;
+        const vn = (vx - BN[4]) * BN[1] + (vy - BN[5]) * BN[2] + (vz - BN[6]) * BN[3]; if (vn < 0) { vx -= vn * BN[1]; vy -= vn * BN[2]; vz -= vn * BN[3]; }
       }
       if (open) { if (x < lo[0] || x > hx || y < lo[1] || y > hy || z < lo[2] || z > hz) dead = 1; }
       else {
-        if (x < LO + IN) { x = LO + IN; if (vx < 0) vx = 0; } else if (x > hx - IN) { x = hx - IN; if (vx > 0) vx = 0; }
-        if (y < LO + IN) { y = LO + IN; if (vy < 0) vy = 0; } else if (y > hy - IN) { y = hy - IN; if (vy > 0) vy = 0; }
-        if (z < LO + IN) { z = LO + IN; if (vz < 0) vz = 0; } else if (z > hz - IN) { z = hz - IN; if (vz > 0) vz = 0; }
+        // (kept inside the walls without a branch of its own: see wLo above)
+        const ax = x < wLo, bx = x > wx, ay = y < wLo, by = y > wy, az = z < wLo, bz = z > wz;
+        const px = vx > 0 ? vx : 0, nx_ = vx < 0 ? vx : 0, py = vy > 0 ? vy : 0, ny_ = vy < 0 ? vy : 0, pz = vz > 0 ? vz : 0, nz_ = vz < 0 ? vz : 0;
+        x = ax ? wLo : bx ? wx : x; vx = ax ? px : bx ? nx_ : vx;
+        y = ay ? wLo : by ? wy : y; vy = ay ? py : by ? ny_ : vy;
+        z = az ? wLo : bz ? wz : z; vz = az ? pz : bz ? nz_ : vz;
       }
       for (let j = 0; j < nk && !dead; j++) { const s = sinks[j], ex = x - s.gx, ey = y - s.gy, ez = z - s.gz; if (ex * ex + ey * ey + ez * ez < s.gr * s.gr) { dead = 1; s.took(this.drop); } }
       if (dead) { this.kill(p); continue; }
@@ -612,7 +619,7 @@ export class Fluid {
     for (let b = 0; b < ky; b++) for (let c = 0; c < kz; c++) for (let a = 0; a < kx; a++) {
       const px = x0 + (a + .5 + (rnd() - .5) * .3) * ex, py = y0 + (b + .5 + (rnd() - .5) * .3) * ey, pz = z0 + (c + .5 + (rnd() - .5) * .3) * ez;
       if (ok && !ok(px, py, pz)) continue;
-      if (!ok && S.near(px, py, pz) && bd < .15) continue;
+      if (!ok && S.near(px, py, pz) && BN[0] < .15) continue;
       if (!S.nfree) return n * S.drop;
       const slot = S.add(px, py, pz, 0, 0, 0); if (slot < 0) continue;
       if (!this.cpuOwns) this.staged.push(slot); n++;
@@ -716,6 +723,9 @@ export class Fluid {
     if (L.glow) { m.emissive = L.colour.clone(); m.emissiveIntensity = L.glow; }
     const mesh = new InstancedMesh(new IcosahedronGeometry(1, 1), m, Math.min(this.want, budget(false).drops));
     mesh.instanceMatrix.setUsage(DynamicDrawUsage); mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = mesh.receiveShadow = this.shadows;
+    // (its colours a ball are there from the start: made at the first sync(), the shader warmed under the loading
+    // screen had none, and the one with them was built mid-round at the first splash)
+    if (L.foam) { mesh.setColorAt(0, L.colour); mesh.instanceColor.setUsage(DynamicDrawUsage); }
     return mesh;
   }
   // the balls follow the drops (and whiten where the liquid is thin or fast, when there's foam)

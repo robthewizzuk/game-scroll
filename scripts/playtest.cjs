@@ -14,13 +14,13 @@ const { jobs, pool } = require('./lib/pool.cjs');
   const argv = process.argv.slice(2), n = jobs(argv), strict = argv.includes('--strict');
   const bi = argv.indexOf('--budget'), budget = bi >= 0 ? +argv[bi + 1] * 1000 : 20000;
   const ids0 = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--budget' && argv[i - 1] !== '--jobs');
-  const server = await (await import('vite')).preview({ preview: { port: 4183 } });
+  const { server, url } = await require('./lib/serve.cjs').preview();   // (a free port: checks run side by side)
   const open = async () => {
     const b = await chromium.launch();
     const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
     const p = await ctx.newPage(), w = { b, p, errs: [] };
     p.on('pageerror', e => w.errs.push(e.message));
-    await p.goto('http://localhost:4183/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
+    await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
     return w;
   };
   const first = await open();

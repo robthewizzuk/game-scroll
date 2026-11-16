@@ -61,7 +61,7 @@ const TOOLS = [
   },
   {
     name: 'check_game',
-    description: 'Every check a game needs, in one report: each problem with the line in the game file, the code on it and what to do (lint, types, unique, build, played with random taps, streamed, folded, 3D sweeps, a bot playtest, and the speed report). quick: only the code checks (2 s). Fix what fails and check again.',
+    description: 'Every check a game needs, in one report: each problem with the line in the game file, the code on it and what to do (lint, types, unique, build, played with random taps, streamed, folded, 3D sweeps, a bot playtest, the lazy tricks (doing nothing, holding, mashing one spot, circles, swiping must not win), and the speed report). quick: only the code checks (2 s). Fix what fails and check again.',
     inputSchema: { type: 'object', properties: { id: ID, quick: { type: 'boolean' }, speed: { type: 'boolean', description: 'false leaves the speed report out' } }, required: ['id'] },
     run: async ({ id, quick, speed }) => {
       const r = await run('check.mjs', [id, '--json', ...(quick ? ['--quick'] : []), ...(speed === false ? ['--no-speed'] : [])]);

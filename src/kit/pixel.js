@@ -19,29 +19,9 @@
 
 import { pixelFont, want, ready, whenFontArrives } from './fontlib.js';
 
-/* ---------- the tiny 3×5 font (always ready) ---------- */
-const G = {
-  A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110', E: '111100110100111', F: '111100110100100',
-  G: '011100101101011', H: '101101111101101', I: '111010010010111', J: '001001001101010', K: '101101110101101', L: '100100100100111',
-  M: '101111111101101', N: '110101101101101', O: '010101101101010', P: '110101110100100', Q: '010101101110011', R: '110101110101101',
-  S: '011100010001110', T: '111010010010010', U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101',
-  Y: '101101010010010', Z: '111001010100111',
-  0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110', 4: '101101111001001',
-  5: '111100110001110', 6: '011100111101111', 7: '111001010010010', 8: '111101111101111', 9: '111101111001110',
-  ' ': '000000000000000', '.': '000000000000010', ',': '000000000010100', '!': '010010010000010', '?': '110001010000010',
-  ':': '000010000010000', ';': '000010000010100', '-': '000000111000000', '+': '000010111010000', '=': '000111000111000',
-  '/': '001001010100100', '\\': '100100010001001', '(': '010100100100010', ')': '010001001001010', "'": '010010000000000',
-  '"': '101101000000000', '%': '101001010100101', '*': '000101010101000', '<': '001010100010001', '>': '100010001010100',
-  '#': '101111101111101', '_': '000000000000111', '[': '110100100100110', ']': '011001001001011', '♥': '000101111111010',
-  '♪': '011010010110110', '×': '000101010101000', '$': '011110010011110', '@': '010101111100011', '&': '010101010101011',
-};
+/* ---------- the tiny 3×5 font (always ready): its letters are in pixel-glyphs.js ---------- */
+import { GLYPHS as G } from './pixel-glyphs.js';
 
-const cache = new Map();
-function remember(key, make) {
-  let v = cache.get(key);
-  if (!v) { if (cache.size > 400) cache.delete(cache.keys().next().value); cache.set(key, v = make()); }
-  return v;
-}
 function canvas(w, h) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
   const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c;
@@ -131,14 +111,30 @@ function libFont(font) {
   return ready(p.font.name, p.weight) ? p : null;
 }
 
-// the picture of a piece of text (remembered); its key is left in pictureKey (no array a call)
-let pictureKey = '';
+// The picture of a piece of text, remembered. Found through maps by font, colour, outline and the text, so
+// drawing text already drawn makes nothing new (a key built as text, and a function to make it, each call was
+// garbage every frame for every piece of a HUD). The least recently drawn go first once there are 400.
+const texts = new Map(), allTexts = new Set();
+let textClock = 0;
+const mapIn = (m, k) => { let v = m.get(k); if (!v) m.set(k, v = new Map()); return v; };
 function picture(str, font, color, outline) {
   const lib = libFont(font), kind = lib ? font : font === 'small' ? 'small' : 'big';
   if (kind === 'big') loadBig();
-  const key = pictureKey = kind + '|' + color + '|' + (outline || '') + '|' + (lib ? arrived : bigFont) + '|' + str;
-  return remember(key, () => { const t = lib ? libText(lib.font, lib.weight, str, color) : kind === 'big' ? bigText(str, color) : smallText(str, color); return outline ? outlined(t, outline) : t; });
+  const home = mapIn(mapIn(mapIn(mapIn(texts, kind), lib ? arrived : bigFont), color), outline || '');
+  let e = home.get(str);
+  if (!e) {
+    if (allTexts.size >= 400) { let old = null; for (const x of allTexts) if (!old || x.used < old.used) old = x; allTexts.delete(old); old.home.delete(old.str); }
+    const t = lib ? libText(lib.font, lib.weight, str, color) : kind === 'big' ? bigText(str, color) : smallText(str, color);
+    e = { img: outline ? outlined(t, outline) : t, home, str, used: 0, shadows: null }; home.set(str, e); allTexts.add(e);
+  }
+  e.used = ++textClock;
+  return e;
 }
+const shadowOf = (e, shadow) => {
+  let t = (e.shadows ||= new Map()).get(shadow);
+  if (!t) { const img = e.img; t = canvas(img.width, img.height); const g = t.getContext('2d'); g.drawImage(img, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = shadow; g.fillRect(0, 0, t.width, t.height); e.shadows.set(shadow, t); }
+  return t;
+};
 
 /**
  * Draws pixel text with its top-left at (x, y). Options: color, size (whole-number scale), font:
@@ -147,11 +143,11 @@ function picture(str, font, color, outline) {
  * (a colour), shadow (a colour, drawn one pixel down-right). Returns the width drawn. '\n' starts a new line.
  */
 export function text(c, str, x, y, { color = '#ffffff', size = 1, font = 'small', align = 'left', outline = null, shadow = null } = {}) {
-  const img = picture(str, font, color, outline), key = pictureKey;
+  const e = picture(str, font, color, outline), img = e.img;
   const s = Math.max(1, Math.round(size)), w = img.width * s, h = img.height * s;
   const px = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x) - (outline ? s : 0), py = Math.round(y) - (outline ? s : 0);
   const smooth = c.imageSmoothingEnabled; c.imageSmoothingEnabled = false;
-  if (shadow) c.drawImage(remember('sh|' + key + shadow, () => { const t = canvas(img.width, img.height), g = t.getContext('2d'); g.drawImage(img, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = shadow; g.fillRect(0, 0, t.width, t.height); return t; }), px + s, py + s, w, h);
+  if (shadow) c.drawImage(shadowOf(e, shadow), px + s, py + s, w, h);
   c.drawImage(img, px, py, w, h);
   c.imageSmoothingEnabled = smooth;
   return w;
@@ -159,7 +155,7 @@ export function text(c, str, x, y, { color = '#ffffff', size = 1, font = 'small'
 /** Width and height (in pixels at size 1) of a piece of pixel text. */
 export function measure(str, font = 'small') {
   if (font === 'small') { const lines = String(str).split('\n'); return { w: Math.max(...lines.map(l => l.length)) * 4 - 1, h: lines.length * 6 - 1 }; }
-  const t = picture(str, font, '#ffffff', null); return { w: t.width, h: t.height };   // (the same picture text() draws in white)
+  const t = picture(str, font, '#ffffff', null).img; return { w: t.width, h: t.height };   // (the same picture text() draws in white)
 }
 
 /* ---------- sprites from text ---------- */

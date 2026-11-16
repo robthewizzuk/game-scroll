@@ -5507,7 +5507,7 @@ console.log('physics ok');
   const each = (f, fn) => { const S = f.sim; for (let p = 0; p < S.N; p++) { const a = p * 4; if (S.P[a + 3] > 0) fn(S.ox + S.P[a] * S.h, S.oy + S.P[a + 1] * S.h, S.oz + S.P[a + 2] * S.h, Math.hypot(S.V[a], S.V[a + 1], S.V[a + 2]) * S.h / S.dt); } };
   const outside = f => { const B = f.bounds; let n = 0; each(f, (x, y, z) => { if (!(x >= B[0] && x <= B[3] && y >= B[1] && y <= B[4] && z >= B[2] && z <= B[5])) n++; }); return n; };
   const most = (f, k) => { let m = -1e9; each(f, (x, y, z, v) => { m = Math.max(m, [x, y, z, v][k]); }); return m; };
-  FLUID.klass = 'low'; assert.equal(Fluid.max(), 600, 'a slow phone runs 600 drops'); FLUID.klass = 'top'; assert.equal(Fluid.max(), 2000, 'a fast one 2,000 (without WebGPU)');
+  FLUID.klass = 'low'; assert.equal(Fluid.max(), 300, 'a slow phone runs 300 drops'); FLUID.klass = 'top'; assert.equal(Fluid.max(), 1400, 'a fast one 1,400 (without WebGPU)');
   {
     // a pool: the liquid asked for goes in, keeps its depth, comes to rest and stays in its box
     const f = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2.2 }), put = f.fill({ y1: .5 }); run(f, 180);
@@ -5568,7 +5568,7 @@ console.log('physics ok');
   {
     // the same liquid at another size (the graphics chip handing over to this version), copies back from the chip, and the fluid's own dice
     const f = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2 }); f.fill({ y1: .5 }); run(f, 30); const a0 = f.amount();
-    FLUID.klass = 'low'; f.resize(false); FLUID.klass = 'top'; assert.ok(f.max === 600 && Math.abs(f.amount() / a0 - 1) < .02, 'resized to 600 drops it is the same liquid: ' + a0 + ' and ' + f.amount());
+    FLUID.klass = 'mid'; f.resize(false); FLUID.klass = 'top'; assert.ok(f.max === 800 && Math.abs(f.amount() / a0 - 1) < .02, 'resized to 800 drops it is the same liquid: ' + a0 + ' and ' + f.amount());
     run(f, 60); assert.ok(Math.abs(f.level(0, 0) - .5) < .1 && outside(f) === 0, 'which settles where it was');
     const r = new Fluid(view(), { box: [-1, 0, -1, 1, 2, 1], volume: 2 }); r.fill({ y1: .3 }); const d = r.drain({ x: 0, y: 0, z: 0, r: .01 }); run(r, 5);
     r.mode = 'gpu'; r.cpuOwns = false; const P = r.sim.P.slice(); P[3] = -1; P[7] = 0; const c0 = r.count; r.read(P, r.sim.steps + 1);

@@ -390,6 +390,13 @@ export class DepthMeter extends Pass {
     });
     this.quad = new FullScreenQuad(this.mat);
   }
+  /** Builds its shader now (once a renderer): made the first time occlusion woke, seconds into a round, it was a hitch. */
+  warm(renderer) {
+    const gl = renderer.getContext(); if (this.warmedFor === gl || gl.isContextLost()) return; this.warmedFor = gl;
+    const was = renderer.getRenderTarget(), rt = new WebGLRenderTarget(1, 1, { depthBuffer: false, minFilter: NearestFilter, magFilter: NearestFilter, generateMipmaps: false });
+    try { renderer.setRenderTarget(rt); this.quad.render(renderer); } catch (e) { /* only a warm-up */ }
+    renderer.setRenderTarget(was); rt.dispose();
+  }
   render(renderer, writeBuffer, readBuffer) {
     const job = this.job; this.job = null;
     const gl = renderer.getContext(); if (!job || !readBuffer.depthTexture || gl.isContextLost()) return;

@@ -4,6 +4,11 @@ Board games: a table in a 3D room or on your floor in AR, pieces, dice, turns, o
 
 `gs.tabletop` (Board games; guide `docs/board-games.md`): `Table(api, { span, room, table, pitch, frame })` is the table in a 3D room and, on the AR chip, on the player's floor: `board` (add pieces here, in board units), `update`/`draw`/`hud`, `down`/`move`/`up` (a tap, or `{ chip }`), `claim(id)`, `pick`, `over`, `nearest`, `toScreen`; turns as promises (`run`, `hop`, `slide`, `drop`, `pop`, `tween`, `wait`, `until`, `busy`), `think(search, state)` (a `gs.solve.Search` opponent, a little each frame), `dice(n, { tray })` (real dice: `roll({ keep })`, `park`), `crumble`, `puff`, `shake`, `lookAt`, `strip`, `status`, `say`, `frame`, `tall`, `hidden`. Pieces made in code: `slab({ w, d, paint })`, `decal`, `pawn`, `disc`, `stone`, `die`, `chessman`, `eyes`, `ring`, `dot`, `wood`, `fuse(group)`; `sounds`; `ROOMS`; `Chess` (rules + worker opponent: `moves`, `move`, `think({ level })`, `fen`).
 
+`T.think(search, state, o)` thinks a slice of each frame, by default a share of the frame the phone can
+spare (2.5 ms on a low phone at 60 Hz, 3.3 mid, 4 top; half that at 120 Hz): `o.slice` sets your own in
+milliseconds. `T.puff()` and `T.particles()` make their particles with the table (or when you call
+`particles()`), so their shader is built under the loading screen, not at the first burst.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it

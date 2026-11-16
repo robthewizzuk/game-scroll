@@ -109,8 +109,9 @@ something itself (Carrom's striker) calls `T.claim(id)` so the view doesn't turn
 so they pause with the game, and `T.reset()` drops whatever is still playing. An error inside a turn
 is raised from the next `T.update()`, where the app handles it as usual.
 
-**Opponents.** `await T.think(search, state, { time, depth, skill, wait })` runs a `gs.solve.Search`
-a few milliseconds a frame so the 3D never stutters, and takes at least `wait` seconds so a reply
+**Opponents.** `await T.think(search, state, { time, depth, skill, wait, slice })` runs a `gs.solve.Search`
+a few milliseconds a frame so the 3D never stutters (`slice`: by default a share of the frame the phone
+can spare, 2.5 ms on a low phone at 60 Hz up to 4 on a top one, less at 120 Hz), and takes at least `wait` seconds so a reply
 doesn't land the instant the player lets go. Write the rules as pure functions (`moves`, `play`,
 `turn`, `over`, `score`) and the search and the game share them.
 

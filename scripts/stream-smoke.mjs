@@ -14,9 +14,6 @@ const { jobs, pool } = require('./lib/pool.cjs');
 const argv = process.argv.slice(2), n = jobs(argv);
 const ROOT = resolve(import.meta.dirname, '..'), tmp = mkdtempSync(join(tmpdir(), 'gs-stream-'));
 const GAMES = join(tmp, 'games-host'), APP = join(tmp, 'app');
-execFileSync('node', ['scripts/build-games.mjs', GAMES], { cwd: ROOT, stdio: 'inherit' });
-execFileSync('npx', ['vite', 'build', '--outDir', APP, '--emptyOutDir', '--logLevel', 'error'], { cwd: ROOT, stdio: 'inherit',
-  env: { ...process.env, VITE_GAMES_URL: 'http://127.0.0.1:4194', VITE_CATALOGUE_KEY: '', VITE_HEARTS_URL: '' } });
 
 const inside = (root, url) => {
   const f = resolve(root, '.' + decodeURIComponent(url.split('?')[0]));
@@ -28,7 +25,14 @@ const serve = (root, port, cors) => createServer((req, res) => {
   res.writeHead(f ? 200 : 404, { ...(cors ? { 'Access-Control-Allow-Origin': '*' } : {}), 'Content-Type': (f && TYPES[f.split('.').pop()]) || 'application/octet-stream' });
   res.end(f ? readFileSync(f) : '');
 }).listen(port, '127.0.0.1');
-const host = serve(GAMES, 4194, true), app = serve(APP, 4193, false);
+// on ports the system picks (free ones), so two runs side by side, in other worktrees too, don't load each
+// other's games: the app is built knowing where its games host is
+const host = serve(GAMES, 0, true), app = serve(APP, 0, false);
+await Promise.all([host, app].map(s => new Promise(r => s.listening ? r() : s.once('listening', r))));
+const HOST = 'http://127.0.0.1:' + host.address().port, APP_URL = 'http://127.0.0.1:' + app.address().port + '/';
+execFileSync('node', ['scripts/build-games.mjs', GAMES], { cwd: ROOT, stdio: 'inherit' });
+execFileSync('npx', ['vite', 'build', '--outDir', APP, '--emptyOutDir', '--logLevel', 'error'], { cwd: ROOT, stdio: 'inherit',
+  env: { ...process.env, VITE_GAMES_URL: HOST, VITE_CATALOGUE_KEY: '', VITE_HEARTS_URL: '' } });
 
 // one browser per worker (each with its own GPU process)
 const open = async () => {
@@ -37,7 +41,7 @@ const open = async () => {
   const w = { b, p, errs: [] };
   p.on('pageerror', e => w.errs.push(e.message));
   p.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) w.errs.push(m.text()); if (m.type() === 'warning' && /^\[games\]/.test(m.text())) w.errs.push(m.text()); });
-  await p.goto('http://127.0.0.1:4193/'); await p.waitForFunction(() => window.__gs && __gs.GAMES.length, null, { timeout: 60000 });
+  await p.goto(APP_URL); await p.waitForFunction(() => window.__gs && __gs.GAMES.length, null, { timeout: 60000 });
   return w;
 };
 let spare = await open();

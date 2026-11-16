@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GAME_MODULES } from '../src/game-modules.js';
+import { GLYPHS } from '../src/kit/pixel-glyphs.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'), GAMES = join(ROOT, 'src', 'games');
 
@@ -116,7 +117,32 @@ export function hints(file) {
     const m = from[i].match(h.at);
     out.push({ line: i + 1, why: h.why.replace('$1', m[1] || m[0]), code: real[i].trim().slice(0, 120) });
   }
+  out.push(...glyphHints(src, real));
   return out.sort((a, b) => a.line - b.line);
+}
+
+// Letters the built-in 3×5 pixel font hasn't got (gs.pixel.text without a font, Ready({ pixel: true })): they
+// are drawn as '?'. Read from the game's strings when it uses that font; one hint a letter, at its first line.
+const usesTinyFont = src => /\bgs\s*\.\s*pixel\b|\bpixel\s*:\s*true\b/.test(src);
+const hasGlyph = ch => ch in GLYPHS || ch.toUpperCase() in GLYPHS || ch === '\n';
+function glyphHints(src, real) {
+  if (!usesTinyFont(src)) return [];
+  const out = [], seen = new Set();
+  real.forEach((line, i) => {
+    for (const m of line.matchAll(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)) {
+      const str = (m[1] ?? m[2] ?? m[3] ?? '').replace(/\$\{[^}]*\}/g, '');
+      if (/\b(hint|title|tag|creator|id|description)\s*:\s*$/.test(line.slice(0, m.index))) continue;   // (the card's words: the app draws them)
+      if (!/[a-z ]/i.test(str)) continue;   // (colours, sprite art, keys: not words)
+      for (const ch of str) {
+        if (hasGlyph(ch) || seen.has(ch) || ch.charCodeAt(0) < 32) continue;
+        seen.add(ch);
+        const u = 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+        out.push({ line: i + 1, code: line.trim().slice(0, 120),
+          why: `'${ch}' (${u}) isn't in the built-in 3×5 pixel font, so gs.pixel.text and Ready({ pixel: true }) draw it as '?'. Use one it has (letters, digits, . , ! ? : ; - + = / ( ) ' " % * < > # _ [ ] ♥ ♪ × $ @ & · ° – … ← → ↑ ↓ | ^ ~ { }) or a font: { font: 'big' }` });
+      }
+    }
+  });
+  return out;
 }
 
 // Blank out comments but keep line numbers, so a comment like "// no fetch here" isn't flagged.
@@ -124,11 +150,40 @@ const stripComments = s => s
   .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
   .replace(/(^|[^:\\'"`])\/\/.*$/gm, (m, p) => p + ' '.repeat(m.length - p.length));
 
-// Blank the text inside strings (keeping the quotes and line numbers). Template strings with ${...}
-// are left as they are, so code inside them is still checked.
-const stripStrings = s => s
-  .replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, m => m[0] + ' '.repeat(m.length - 2) + m[0])
-  .replace(/`(?:[^`\\$]|\\[^]|\$(?!\{))*`/g, m => m.replace(/[^\n]/g, (c, i) => (i === 0 || i === m.length - 1 ? '`' : ' ')));
+// Blank the text inside strings (keeping the quotes and line numbers). The code inside a template string's
+// ${...} is kept, so it is still checked. (A scanner, not one regular expression: a template with ${...} in it
+// once made the expression start at its closing quote and blank the code up to the next template string,
+// which hid a gs.tweak() call and gave a "no knobs" hint to a game that had them.)
+export function stripStrings(s) {
+  const n = s.length, out = [], blank = c => (c === '\n' ? c : ' ');
+  const holes = [];   // for each ${ open: the depth of { } inside it
+  let i = 0, inTpl = false;
+  const tpl = () => {   // inside a template's text, from after its opening quote or a }
+    while (i < n) {
+      const c = s[i];
+      if (c === '\\') { out.push(' ', blank(s[i + 1] ?? '')); i += 2; continue; }
+      if (c === '`') { out.push('`'); i++; inTpl = false; return; }
+      if (c === '$' && s[i + 1] === '{') { out.push('${'); i += 2; holes.push(0); inTpl = false; return; }
+      out.push(blank(c)); i++;
+    }
+  };
+  while (i < n) {
+    if (inTpl) { tpl(); continue; }
+    const c = s[i];
+    if (c === "'" || c === '"') {
+      let j = i + 1; while (j < n && s[j] !== c && s[j] !== '\n') j += s[j] === '\\' ? 2 : 1;
+      if (s[j] !== c) { out.push(c); i++; continue; }   // (not closed on its line: left as it is)
+      out.push(c); for (let k = i + 1; k < j; k++) out.push(blank(s[k])); out.push(c); i = j + 1; continue;
+    }
+    if (c === '`') { out.push('`'); i++; inTpl = true; continue; }
+    if (holes.length) {
+      if (c === '{') holes[holes.length - 1]++;
+      else if (c === '}') { if (holes[holes.length - 1] === 0) { holes.pop(); out.push('}'); i++; inTpl = true; continue; } holes[holes.length - 1]--; }
+    }
+    out.push(c); i++;
+  }
+  return out.join('');
+}
 
 export function lint(file) {
   const src = stripComments(readFileSync(file, 'utf8')), code = stripStrings(src).split('\n'), out = [];

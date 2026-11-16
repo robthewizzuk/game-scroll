@@ -4,6 +4,13 @@ Crisp pixel text in pixel fonts, sprites and animations drawn from text, tiles.
 
 `gs.pixel`: `text(c, str, x, y, { size, font: 'small'|'big'|'tiny'|'silkscreen'|'jersey'|'terminal', align, color, outline })`, `sprite(art, palette)`, `anim(frames, palette, fps)`, `tiles()`.
 
+Text drawn before is remembered: drawing the same text again makes nothing new, so a HUD can call `text()`
+every frame (text that changes, a score or a timer, is drawn afresh once each time it changes).
+
+The built-in 3×5 font (`font: 'small'`, the default, and `Ready({ pixel: true })`) has A to Z (small letters
+come out as capitals), 0 to 9 and `. , ! ? : ; - + = / \ ( ) [ ] { } ' " % * < > # _ $ @ & | ^ ~ ` ♥ ♪ × · • ° – — ‘ ’ “ ” … ← → ↑ ↓`.
+Anything else is drawn as `?`; `node scripts/game-lint.mjs <id>` names any letter a game's text uses that it hasn't got.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it

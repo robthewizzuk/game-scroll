@@ -6,6 +6,14 @@ Guide: [Next Gen 3D guide](../nextgen-3d.md).
 
 `gs.hd` (Next Gen: `HDView` with `decal`, `bounce` (bounce light), `room` (room reflections), `reflect(floor)` (marks shiny things for reflections; ray traced on the best phones, where a floor also shows what is off screen), `detail` (cluster detail: big meshes, still or moving, copies, skinned people, drawn only as finely as shows, by itself from 8,000 triangles), `occluders` (occlusion culling: what is behind other things is left out by itself; this adds boxes of your own), `farWorld` (the far world drawn into pictures round a camera that keeps still, and shown from them: a valley below a nest), `beams` (volumetric light), `motionBlur`, `lens` (a real camera: depth of field from the f-stop, bokeh discs, focus pulls and autofocus, exposure in stops), `bakeLight`, `shafts`, `lampLights` + `placeLamps` (many lamps: the nearest lit, with shadows, light shapes like a headlamp's beam or a window's bars, and neon tubes and signs from `neon` and `sign`), `contactShadows` and `farShadows` (finer sun shadows on WebGPU: cups, fingers and noses close up, far hills and towers; a crowd's far people throw capsule shadows by themselves), `flash` (a short-lived light: muzzle flashes; gs.fx3d fire, explosions and sparks and gs.gas blasts light the scene by themselves, and smoke takes the lamps' light), `pbr`, `rbox`, `surface`, `speckle`, `Particles`, `sun`, `spot`)
 
+**No shader built mid-round.** Under the loading screen after Play the view builds the shaders for
+everything in the scene, hidden things too (a victory marker, a muzzle flash, drops not poured yet), for the picture
+the scene is really drawn into, and again for what the round's first `update()` made. Make what a round shows in
+`make()`, `reset()` or that first `update()` and hide it until it's wanted, rather than adding it later. A
+material swapped in later: `v.warm(material)`; a new level made mid-game: `v.precompile()` while the screen is faded.
+A light switched on or off changes every lit shader (the lamps keep their lights on and go dark instead:
+`v.lampLights`, `v.flash`). `node scripts/budget.cjs <id>` says if a shader was still built in play.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it

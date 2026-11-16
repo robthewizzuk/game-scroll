@@ -18,7 +18,15 @@ const GRID = 512;   // every icon is one path on a 512 x 512 grid
 export const names = Object.freeze(Object.keys(ICONS));
 /** The plain words that also work, and the icon each one is: { sword: 'broadsword', ... }. */
 export const words = Object.freeze({ ...ALIAS });
-const nameOf = name => { const n = String(name).toLowerCase().trim().replace(/[\s_]+/g, '-'); return ICONS[n] ? n : ALIAS[n] && ICONS[ALIAS[n]] ? ALIAS[n] : null; };
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const looked = new Map();   // (a name asked for before: its icon, with no new strings made every frame)
+const nameOf = name => {
+  let n = looked.get(name); if (n !== undefined) return n;
+  const k = String(name).toLowerCase().trim().replace(/[\s_]+/g, '-');
+  n = own(ICONS, k) ? k : own(ALIAS, k) && own(ICONS, ALIAS[k]) ? ALIAS[k] : null;
+  if (typeof name === 'string' && looked.size < 2048) looked.set(name, n);
+  return n;
+};
 /** Is there an icon by this name (or plain word)? */
 export const has = name => !!nameOf(name);
 /** Icons whose name has this text in it: find('potion') is ['health-potion', 'round-potion', 'standing-potion']. */
@@ -34,8 +42,13 @@ export function path(name) {
   return p;
 }
 
-const cache = new Map();   // drawn icons, the least recently used dropped first
+// Drawn icons, the least recently used dropped first. Found through maps by name, size, colour and outline,
+// so drawing one that is already drawn makes nothing new: icon() runs many times a frame, and a key built
+// as text each call was about 400 bytes of garbage a call (5 MB a second in a game with a busy HUD).
+const cache = new Map(), all = new Set();
 const KEEP = 160;
+let clock = 0;
+const mapIn = (m, k) => { let v = m.get(k); if (!v) m.set(k, v = new Map()); return v; };
 function canvas(w, h) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
   const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
@@ -82,10 +95,14 @@ export function icon(c, name, x, y, size = 24, { color = '#ffffff', outline = nu
   if (!pixel && c.getTransform) { const m = c.getTransform(); scale = Math.hypot(m.a, m.b) || 1; }
   const px = pixel ? Math.max(4, Math.round(size)) : stepFor(Math.min(512, size * scale));
   const ow = outline ? (pixel ? Math.max(1, Math.round(width || 1)) : (width || size / 16) * px / size) : 0;
-  const key = n + '|' + px + '|' + color + '|' + (outline || '') + '|' + (outline ? ow.toFixed(2) : '') + (pixel ? '|p' : '');
-  let r = cache.get(key);
-  if (r) { cache.delete(key); cache.set(key, r); }
-  else { if (cache.size >= KEEP) cache.delete(cache.keys().next().value); cache.set(key, r = render(n, px, color, outline, ow, pixel)); }
+  const sizeKey = (pixel ? 1 : 0) + px * 2 + (outline ? Math.round(ow * 100) : 0) * 2048;
+  const byColor = mapIn(mapIn(cache, n), sizeKey), byOutline = mapIn(byColor, color), ok = outline || '';
+  let r = byOutline.get(ok);
+  if (!r) {
+    if (all.size >= KEEP) { let old = null; for (const e of all) if (!old || e.used < old.used) old = e; all.delete(old); old.home.delete(old.key); }
+    r = render(n, px, color, outline, ow, pixel); r.home = byOutline; r.key = ok; all.add(r); byOutline.set(ok, r);
+  }
+  r.used = ++clock;
   const k = pixel ? 1 : size / r.px, w = r.img.width * k, off = -(pixel ? r.px : size) / 2 - r.pad * k;   // pixel: drawn one to one, never scaled
   const plain = !angle && !flip && alpha === 1;
   const smooth = c.imageSmoothingEnabled; if (pixel) c.imageSmoothingEnabled = false;
@@ -98,4 +115,4 @@ export function icon(c, name, x, y, size = 24, { color = '#ffffff', outline = nu
   return true;
 }
 /** How many drawn icons are remembered right now (for tests and the debug overlay). */
-export const remembered = () => cache.size;
+export const remembered = () => all.size;

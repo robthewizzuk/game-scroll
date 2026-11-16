@@ -3639,7 +3639,7 @@ update(dt) { world.update(); me.vy -= 25 * dt; if (world.move(me, vx * dt, me.vy
 `gs.fluid.Fluid` (3D): a particle fluid in a box of your world. Drops fall, pile up, slosh, run round
 solid things and settle level. On phones with WebGPU the whole fluid runs on the graphics chip (tens
 of thousands of drops, drawn as one smooth body); everywhere else the same maths runs with fewer,
-bigger drops (600 to 2,000, drawn as beads). The game code is the same for both.
+bigger drops (300 to 1,400, drawn as beads). The game code is the same for both.
 
 ```js
 const { Fluid } = gs.fluid;
