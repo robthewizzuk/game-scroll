@@ -48,7 +48,7 @@ export class Ways {
     this.inner = grow(metro.bounds, INNER);
     this.holes = D.map(d => grow(d.rect, 40));
     // the sea: past each harbour on the south edge (shown while its district isn't made: the district's own water is), or a bay and the open sea (always shown)
-    this.seas = waters ? waters.map(w => ({ ...w, keep: true })) : D.filter(d => d.harbour).map(d => { const cx = (d.rect.x0 + d.rect.x1) / 2; return { x0: cx - 3000, x1: cx + 3000, z0: d.rect.z1 + 2, z1: d.rect.z1 + 3010 }; });
+    this.seas = waters ? waters.map(w => ({ ...w, keep: true })) : D.filter(d => d.harbour).map(d => { const cx = (d.rect.x0 + d.rect.x1) / 2; return { x0: cx - 3000, x1: cx + 3000, z0: d.rect.z1 + 10, z1: d.rect.z1 + 3010 }; });
     this.grass = grass;
     this.river = river || null;
     this.group = new Group(); this.group.name = 'metro ways'; metro.group?.add(this.group);
