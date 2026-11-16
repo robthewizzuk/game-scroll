@@ -8,25 +8,25 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Level3dPart`, line 3401), where every option and field is described.
+From `src/gamescroll.d.ts` (`Level3dPart`, line 3422), where every option and field is described.
 
-- `Level3D: new (text: string, o?: { size?: number; wall?: number; step?: number; floor?: number; water?: number; look?: Record<string, Loose> | ((ch: string) => Loose); …` (:3401)
-  - `grid: string[]` (:3395)
-  - `rows: number` (:3395)
-  - `cols: number` (:3395)
-  - `size: number` (:3395)
-  - `group: Loose` (:3395)
-  - `marks: Record<string, Level3DCell[]>` (:3395)
-  - `blocks: Loose[]` (:3395)
-  - `ch(col: number, row: number): string` (:3396)
-  - `cell(col: number, row: number): Level3DCell` (:3396)
-  - `at(x: number, z: number): { col: number; row: number; ch: string }` (:3396)
-  - `height(x: number, z: number): number | null` (:3397)
-  - `walkable(col: number, row: number): boolean` (:3397)
-  - `find(ch: string): Level3DCell[]` (:3397)
-  - `solid(world: Loose, o?: Loose): Loose[]` (:3398)
-  - `readonly blocked: (col: number, row: number) => boolean` (:3398)
-  - `dispose(): void` (:3398)
+- `Level3D: new (text: string, o?: { size?: number; wall?: number; step?: number; floor?: number; water?: number; look?: Record<string, Loose> | ((ch: string) => Loose); …` (:3422)
+  - `grid: string[]` (:3416)
+  - `rows: number` (:3416)
+  - `cols: number` (:3416)
+  - `size: number` (:3416)
+  - `group: Loose` (:3416)
+  - `marks: Record<string, Level3DCell[]>` (:3416)
+  - `blocks: Loose[]` (:3416)
+  - `ch(col: number, row: number): string` (:3417)
+  - `cell(col: number, row: number): Level3DCell` (:3417)
+  - `at(x: number, z: number): { col: number; row: number; ch: string }` (:3417)
+  - `height(x: number, z: number): number | null` (:3418)
+  - `walkable(col: number, row: number): boolean` (:3418)
+  - `find(ch: string): Level3DCell[]` (:3418)
+  - `solid(world: Loose, o?: Loose): Loose[]` (:3419)
+  - `readonly blocked: (col: number, row: number) => boolean` (:3419)
+  - `dispose(): void` (:3419)
 
 ## From the maker kit
 

@@ -8,21 +8,21 @@ On-screen thumbsticks and buttons, taps, holds, swipes, two-finger gestures, key
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ControlsPart`, line 553), where every option and field is described.
+From `src/gamescroll.d.ts` (`ControlsPart`, line 574), where every option and field is described.
 
-- `Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x…` Virtual thumbstick: x, y (-1..1), mag, angle, active; r its reach (change it as the screen changes); cx, cy where its ring is (where the finger landed, for a floating one) and kx, ky its knob, for a game that draws… (:555)
-  - `wants(x: number, y: number): boolean` (:552)
-  - `release(): void` (:552)
-  - `down(x: number, y: number, id?: number): boolean` (:552)
-  - `move(x: number, y: number, pressed: boolean, id?: number): boolean` (:552)
-  - `up(x: number, y: number, id?: number): boolean` (:552)
-  - `draw(c: Ctx, o?: Loose): void` (:552)
-- `Button: new (o?: { x?: number; y?: number; r?: number; label?: string; zone?: number[]; color?: string }) => Control & { isDown: boolean; readonly heldFor: number; pre…` Round button: isDown, pressed() once per press, released(), heldFor. (:557)
-- `Gestures: new (o?: Loose) => Loose` Tap, double tap, hold and swipe. (:559)
-- `TwoFingers: new (o?: { zone?: number[]; one?: Loose; minScale?: number; minTurn?: number; pinch?: (scale: number, x: number, y: number) => void; twist?: (angle: number…` Pinch, twist and two-finger pan (one-finger touches go to `one`). (:561)
-- `Keys: new () => { key(k: string, isDown: boolean): void; held(k: string): boolean; axis(): XY; clear(): void }` Keyboard state: keys.held('ArrowLeft'), keys.axis(). (:563)
-- `route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] }` Hands each finger to the first control that wants it. (:565)
-- `twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose` Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). (:567)
+- `Stick: new (o?: { x?: number; y?: number; r?: number; floating?: boolean; zone?: number[]; dead?: number; axis?: 'both' | 'x' | 'y'; color?: string }) => Control & { x…` Virtual thumbstick: x, y (-1..1), mag, angle, active; r its reach (change it as the screen changes); cx, cy where its ring is (where the finger landed, for a floating one) and kx, ky its knob, for a game that draws… (:576)
+  - `wants(x: number, y: number): boolean` (:573)
+  - `release(): void` (:573)
+  - `down(x: number, y: number, id?: number): boolean` (:573)
+  - `move(x: number, y: number, pressed: boolean, id?: number): boolean` (:573)
+  - `up(x: number, y: number, id?: number): boolean` (:573)
+  - `draw(c: Ctx, o?: Loose): void` (:573)
+- `Button: new (o?: { x?: number; y?: number; r?: number; label?: string; zone?: number[]; color?: string }) => Control & { isDown: boolean; readonly heldFor: number; pre…` Round button: isDown, pressed() once per press, released(), heldFor. (:578)
+- `Gestures: new (o?: Loose) => Loose` Tap, double tap, hold and swipe. (:580)
+- `TwoFingers: new (o?: { zone?: number[]; one?: Loose; minScale?: number; minTurn?: number; pinch?: (scale: number, x: number, y: number) => void; twist?: (angle: number…` Pinch, twist and two-finger pan (one-finger touches go to `one`). (:582)
+- `Keys: new () => { key(k: string, isDown: boolean): void; held(k: string): boolean; axis(): XY; clear(): void }` Keyboard state: keys.held('ArrowLeft'), keys.axis(). (:584)
+- `route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] }` Hands each finger to the first control that wants it. (:586)
+- `twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose` Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). (:588)
 
 ## From the maker kit
 

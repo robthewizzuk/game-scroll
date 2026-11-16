@@ -10,11 +10,11 @@ Give `Boat` and `Hover` a `gs.models.vehicle('boat' | 'helicopter')` as `vehicle
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CraftPart`, line 5450), where every option and field is described.
+From `src/gamescroll.d.ts` (`CraftPart`, line 5471), where every option and field is described.
 
-- `Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number…` Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. (:5452)
-- `Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: nu…` water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves… (:5458)
-- `Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: n…` (:5464)
+- `Plane: new (o?: { at?: P3; heading?: number; speed?: number; power?: number; lift?: number; drag?: number; stall?: number; top?: number; turn?: [number, number, number…` Arcade-true flight. Events this frame in events[]: 'stall', 'land', 'touch', 'crash', 'takeoff'. (:5473)
+- `Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: nu…` water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves… (:5479)
+- `Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: n…` (:5485)
 
 ## From the maker kit
 

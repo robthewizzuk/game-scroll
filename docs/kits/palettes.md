@@ -8,11 +8,11 @@ The fixed colour sets of the pixel styles (PAL, SHELL, C16).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PalettesPart`, line 486), where every option and field is described.
+From `src/gamescroll.d.ts` (`PalettesPart`, line 507), where every option and field is described.
 
-- `PAL: Record<string, string[]>` (:486)
-- `SHELL: Loose` (:486)
-- `C16: string[]` (:486)
+- `PAL: Record<string, string[]>` (:507)
+- `SHELL: Loose` (:507)
+- `C16: string[]` (:507)
 
 ## In real games
 

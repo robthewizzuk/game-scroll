@@ -4,7 +4,8 @@
 // faster than real time), ?part=band (the instrument sets, same way), ?part=clock (the music clock on
 // the real sound clock, with the page made busy on purpose), ?part=level (sound that knows the level:
 // walls and places, rendered the same way), ?part=cap (the voice cap), ?part=foley (the sounds a world makes by itself), ?part=speech (shaped speech: the treatments measured, then
-// say() end to end against a pretend phone), ?part=radio (the car radio). scripts/sound-test.cjs runs them all.
+// say() end to end against a pretend phone), ?part=radio (the car radio), ?part=guns (gunshots rendered into buffers: takes, tails, clicks, the
+// mix dipping), ?part=score (the film score: stems coming in with intensity, a riser landing on a bar line). scripts/sound-test.cjs runs them all.
 const part = new URLSearchParams(location.search).get('part') || 'sounds';
 const out = [], ok = (c, m) => out.push((c ? 'ok   ' : 'FAIL ') + m), note = m => out.push('     ' + m);
 const db = v => (v > 0 ? 20 * Math.log10(v) : -120).toFixed(1);
@@ -472,6 +473,65 @@ try {
     radio.off(); await wait(500); const off = await listen(400);
     ok(off.lv < .002 && !radio.track, `off again: silence (${off.lv.toFixed(4)})`);
     clearInterval(tick);
+  }
+
+  if (part === 'guns') {
+    // gunshots rendered into buffers (gunshots.js): made in the page's workers, each kind's takes and its tails; a shot
+    // as loud as the kit's other big sounds; takes in turn; a tail outside that rings on longer than one indoors; the
+    // music dipping under the player's own shot; the old live sound still there behind the switch
+    const G = await import('/src/kit/gunshots.js'), { weaponSound } = await import('/src/kit/arsenal.js');
+    const t0 = performance.now(); for (const k of G.GUN_KINDS) G.prepareGun(k);
+    while (!G.GUN_KINDS.every(G.gunReady) && performance.now() - t0 < 60000) await new Promise(r => setTimeout(r, 50));
+    const st = G.gunStats();
+    ok(G.GUN_KINDS.every(G.gunReady), `every gun's takes and tails made (${G.GUN_KINDS.length} guns, ${st.made} sounds in ${((performance.now() - t0) / 1000).toFixed(1)} s; ${st.inWorker} in workers, ${st.here} here)`);
+    ok(st.inWorker > 0, 'made in the background workers');
+    const SLOT = 2.5; offline(SLOT * 12);
+    const snd = await import('/src/kit/sound.js'), { audio } = await import('/src/sfx.js'), a = audio(); let duck = null, music = 1;
+    const kinds = ['pistol', 'rifle', 'shotgun', 'sniper', 'smg'];
+    const jobs = [
+      ...kinds.map(k => () => weaponSound(k, 'fire', null, { place: 'out' })),
+      () => weaponSound('rifle', 'fire', null, { place: 'in' }),
+      () => { G.GUNS.rendered = false; weaponSound('rifle', 'fire', null); G.GUNS.rendered = true; },   // the old live sound, for comparison
+      () => { snd.tone(220, { len: 2.2, wave: 'sine', vol: .05, hold: 2, bus: 'music' }); a.ctx.suspend(a.ctx.currentTime + .5).then(() => { music = snd.kitBus('music').gain.value; weaponSound('rifle', 'fire'); a.ctx.suspend(a.ctx.currentTime + .06).then(() => { duck = snd.kitBus('music').gain.value; a.ctx.go(); }); a.ctx.go(); }); },
+      () => { weaponSound('pistol', 'empty'); weaponSound('rifle', 'reload', null, { time: 1.6 }); },
+      () => { for (let i = 0; i < 30; i++) weaponSound('smg', 'fire'); },
+      () => {},
+    ];
+    const r = await render(a, jobs, SLOT);
+    kinds.forEach((k, i) => note(`${k.padEnd(8)} peak ${db(r[i].pre)} dB  rms ${db(r[i].rms)} dB  rings ${r[i].len.toFixed(2)} s`));
+    note(`rifle indoors: peak ${db(r[5].pre)} dB, rings ${r[5].len.toFixed(2)} s; the old live rifle: peak ${db(r[6].pre)} dB, rms ${db(r[6].rms)} dB, ${r[6].len.toFixed(2)} s`);
+    ok(kinds.every((k, i) => r[i].pre > .1 && r[i].pre < .9), 'each gun is loud but held under full scale (-20 to -1 dB)');
+    ok(r[1].len > 1.2 && r[1].len > r[5].len, `outside, a rifle's tail rolls on (${r[1].len.toFixed(2)} s), longer than indoors (${r[5].len.toFixed(2)} s)`);
+    ok(r[1].len > r[6].len * 2, `longer and fuller than the old live shot (${r[6].len.toFixed(2)} s)`);
+    ok(duck != null && duck < music * .7, `the music dips under the player's own shot (${music.toFixed(2)} to ${duck?.toFixed(2)})`);
+    ok(r[8].pre > .005, `a gun's clicks are heard (an empty click and a reload: peak ${db(r[8].pre)} dB)`);
+    ok(r[9].pre < .99, `thirty shots at once stay a sound, not a roar (peak ${db(r[9].pre)} dB)`);
+  }
+
+  if (part === 'score') {
+    // the film score: made in workers; the drone alone at rest, the rest coming in as intensity rises, a riser that
+    // lands its impact on a bar line, a hit on the beat; stopped, silent
+    const { score, scoreStats } = await import('/src/kit/score.js');
+    const s = score({ mood: 'tense', key: 'D' }), t0 = performance.now();
+    while (!(s.ready) && performance.now() - t0 < 90000) await new Promise(r => setTimeout(r, 50));
+    while (scoreStats().parts < 13 && performance.now() - t0 < 90000) await new Promise(r => setTimeout(r, 50));
+    ok(s.ready && scoreStats().parts >= 13, `all 7 stems and 6 moments made in ${((performance.now() - t0) / 1000).toFixed(1)} s (${scoreStats().inWorker} in workers)`);
+    const SLOT = 3; offline(SLOT * 10);
+    const { audio } = await import('/src/sfx.js'), a = audio(); let landAt = 0, bar = 0, t0a = 0;
+    const jobs = [
+      () => { s.start(); s.intensity(0, .05); },
+      () => {}, () => { s.intensity(.6, .05); }, () => {}, () => { s.intensity(1, .05); }, () => {},
+      () => { landAt = s.riser(2) - s.startedAt; bar = 240 / s.tempo; },
+      () => {}, () => { s.stop(); }, () => {},
+    ];
+    const r = await render(a, jobs, SLOT);
+    jobs.forEach((_, i) => note(`slot ${i}: rms ${db(r[i].rms)} dB peak ${db(r[i].pre)} dB`));
+    ok(r[1].rms > .003, `at rest the drone plays (${db(r[1].rms)} dB)`);
+    ok(r[3].rms > r[1].rms * 1.2, `at .6 strings, pulse and ticks come in (${db(r[3].rms)} dB)`);
+    ok(r[5].rms > r[3].rms * 1.15, `at full, the drums and brass (${db(r[5].rms)} dB)`);
+    ok(r[5].pre < .95, 'the whole score stays under full scale');
+    const lands = (landAt / bar) % 1; ok(landAt > 17 && (lands < .01 || lands > .99), `the riser's impact lands on a bar line (${landAt.toFixed(3)} s, bar ${(landAt / bar).toFixed(3)})`);
+    ok(r[9].pre < .002, `stopped: silent (${db(r[9].pre)} dB)`);
   }
 } catch (e) { out.push('FAIL threw: ' + (e && e.stack || e)); }
 window.result = out;

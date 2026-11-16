@@ -747,7 +747,8 @@ export class Ears {
    * A panner at p. With a level the sound is muffled by what stands between it and the ears; muffled: true
    * (behind a wall, as you say) or 0..1 says so yourself, false leaves it clear. Kit use; play sounds into it.
    */
-  node(p, { muffled, track = false, len = .6 } = {}) {
+  node(p, o = {}) {
+    const { muffled, track = false, len = .6 } = o;
     const a = audio(); if (!a) return null;
     try {
       const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, pn = a.ctx.createPanner();
@@ -763,7 +764,7 @@ export class Ears {
       }
       // with a space, some of each sound also goes into the place's echo (far sounds keep more of it)
       if (this.space?.tail) { const s = a.ctx.createGain(); s.gain.value = this.send; end.connect(s); s.connect(this.space.tail); }
-      end.connect(busIn('sfx')); return pn;
+      end.connect(busIn(o.bus || 'sfx')); return pn;
     } catch { return null; }
   }
   /** Kit use: a panner made with node(p, { track: true }) is done with (its place among the HRTF ones is free again). */
@@ -814,6 +815,29 @@ export class Ears {
   }
   /** How loud a sound at p would be here, 0..1 (for subtitles or "you heard that" hints): quieter with distance, and behind walls where there is a level. */
   heard(p) { const q = this.flat ? P3(p) : { x: p.x, y: p.y, z: p.z || 0 }, d = Math.hypot(q.x - this.pos.x, q.y - this.pos.y, q.z - this.pos.z); return this.ref / (this.ref + this.rolloff * Math.max(0, Math.min(this.max, d) - this.ref)) * (this.cast ? muffleOf(this.blocked(p)).gain : 1); }
+}
+/**
+ * Kit use (gunshots.js, score.js): plays an AudioBuffer once, counted in the voice cap like any other sound. at: a point
+ * in the world, heard through the game's Ears where it made one (muffled behind walls, panned, quieter far off; ears:
+ * which, else the game's own); none: straight into the channel. vol, rate (playback speed), bus ('sfx'), when (the
+ * audio clock's time to start at; now if not given), offset (seconds into the buffer), key (the same sound many times at
+ * once plays at most three). The playing source (to stop early), or null when it was left out.
+ */
+export function kitPlay(ab, { at = null, ears = null, vol = 1, rate = 1, bus = 'sfx', when = null, offset = 0, key = null } = {}) {
+  if (sound.muted || !sound.volume || !ab) return null;
+  const a = audio(); if (!a) return null;
+  let src = null;
+  const go = out => {
+    const { ctx } = a, t = when == null ? ctx.currentTime : Math.max(when, ctx.currentTime), len = (ab.duration - offset) / rate;
+    const vc = counted(bus) ? claim(ctx, t, len, vol * near, key) : null; if (vc === false) return;
+    const s = ctx.createBufferSource(), g = ctx.createGain(); s.buffer = ab; s.playbackRate.value = rate; g.gain.value = vol;
+    s.connect(g); g.connect(out); s.start(t, offset); if (vc) vc.cut = cutter(ctx, g, s); src = s;
+  };
+  try {
+    const E = at ? ears || linksFor(null, true)?.one('ears') : null;
+    if (E) E.at1(at, vol, go, { bus, len: ab.duration / rate }); else go(busIn(bus));
+  } catch { /* audio unavailable */ }
+  return src;
 }
 /** The sums behind sound that knows the level, for your own sounds: caster(level), blocked(cast, ear, source), muffleOf(amount), Room (see Ears). */
 export const acoustics = { caster, blocked, muffleOf, Room };

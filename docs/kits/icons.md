@@ -12,16 +12,16 @@ once outside `draw()` saves even that, worth it only for a lot of icons a frame)
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`IconsPart`, line 723), where every option and field is described.
+From `src/gamescroll.d.ts` (`IconsPart`, line 744), where every option and field is described.
 
-- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:730)
-- `readonly names: readonly string[]` Every icon's name, a to z. (:732)
-- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:734)
-- `has(name: string): boolean` (:735)
-- `find(text: string): string[]` Icons whose name has this text in it. (:737)
-- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:739)
-- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:741)
-- `remembered(): number` How many drawn icons are remembered right now. (:743)
+- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:751)
+- `readonly names: readonly string[]` Every icon's name, a to z. (:753)
+- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:755)
+- `has(name: string): boolean` (:756)
+- `find(text: string): string[]` Icons whose name has this text in it. (:758)
+- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:760)
+- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:762)
+- `remembered(): number` How many drawn icons are remembered right now. (:764)
 
 ## From the maker kit
 

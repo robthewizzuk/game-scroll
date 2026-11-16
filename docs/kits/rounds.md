@@ -8,11 +8,11 @@ Ready (wait for the first tap), Scenes with fades, Levels.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RoundsPart`, line 967), where every option and field is described.
+From `src/gamescroll.d.ts` (`RoundsPart`, line 988), where every option and field is described.
 
-- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:968)
-- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:970)
-- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:971)
+- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:989)
+- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:991)
+- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:992)
 
 ## From the maker kit
 

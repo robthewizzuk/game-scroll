@@ -8,28 +8,28 @@ A 2D camera: follow with a dead zone, look-ahead, zoom, level bounds, parallax l
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Camera2dPart`, line 1471), where every option and field is described.
+From `src/gamescroll.d.ts` (`Camera2dPart`, line 1492), where every option and field is described.
 
-- `Camera2D: typeof Camera2D` (:1471)
-  - `constructor(w: number, h: number, o?: { deadzone?: [number, number]; lag?: number; lead?: number; zoom?: number; bounds?: [number, number, number, number] | null; pixe…` (:1457)
-  - `x: number` The world point at the centre of the screen. (:1459)
-  - `y: number` (:1459)
-  - `zoom: number` (:1459)
-  - `deadzone: [number, number]` (:1459)
-  - `lag: number` (:1459)
-  - `lead: number` (:1459)
-  - `bounds: [number, number, number, number] | null` (:1459)
-  - `readonly view: { x: number; y: number; w: number; h: number }` (:1460)
-  - `update(dt: number, target?: { x: number; y: number; vx?: number; vy?: number }): this` (:1461)
-  - `snap(x: number, y: number): this` (:1462)
-  - `zoomIn(z: number, sec?: number): this` (:1463)
-  - `begin(c: Ctx): this` (:1464)
-  - `end(c: Ctx): this` (:1464)
-  - `layer(c: Ctx, f: number, draw: (c: Ctx) => void, o?: { repeat?: [number, number] | null }): this` A background layer moving at factor f of the camera (0 fixed, 1 with the world). (:1466)
-  - `toWorld(sx: number, sy: number): XY` (:1467)
-  - `toScreen(wx: number, wy: number): XY` (:1467)
-  - `sees(x: number, y: number, w?: number, h?: number, margin?: number): boolean` (:1468)
-  - `offset(f?: number): [number, number]` (:1469)
+- `Camera2D: typeof Camera2D` (:1492)
+  - `constructor(w: number, h: number, o?: { deadzone?: [number, number]; lag?: number; lead?: number; zoom?: number; bounds?: [number, number, number, number] | null; pixe…` (:1478)
+  - `x: number` The world point at the centre of the screen. (:1480)
+  - `y: number` (:1480)
+  - `zoom: number` (:1480)
+  - `deadzone: [number, number]` (:1480)
+  - `lag: number` (:1480)
+  - `lead: number` (:1480)
+  - `bounds: [number, number, number, number] | null` (:1480)
+  - `readonly view: { x: number; y: number; w: number; h: number }` (:1481)
+  - `update(dt: number, target?: { x: number; y: number; vx?: number; vy?: number }): this` (:1482)
+  - `snap(x: number, y: number): this` (:1483)
+  - `zoomIn(z: number, sec?: number): this` (:1484)
+  - `begin(c: Ctx): this` (:1485)
+  - `end(c: Ctx): this` (:1485)
+  - `layer(c: Ctx, f: number, draw: (c: Ctx) => void, o?: { repeat?: [number, number] | null }): this` A background layer moving at factor f of the camera (0 fixed, 1 with the world). (:1487)
+  - `toWorld(sx: number, sy: number): XY` (:1488)
+  - `toScreen(wx: number, wy: number): XY` (:1488)
+  - `sees(x: number, y: number, w?: number, h?: number, margin?: number): boolean` (:1489)
+  - `offset(f?: number): [number, number]` (:1490)
 
 ## From the maker kit
 

@@ -218,6 +218,27 @@ export interface SoundPart {
    */
   music(o?: { tempo?: number; vol?: number; swing?: number; lead?: string; bass?: string; drums?: string; layers?: Record<string, number>; set?: MusicSet; voices?: Record<string, VoiceName | KitName | 'chip'>; /** An audio node to play into instead of the music channel (one that ends up there). */ out?: AudioNode | null; [part: string]: Loose }): { /** From the top, or from step `at`. */ start(at?: number): Loose; /** Steps before it repeats. */ readonly length: number; /** Seconds a step lasts now. */ readonly stepTime: number; stop(): void; pause(): void; resume(): void; speed(x: number): Loose; layer(name: string, level?: number, fade?: number): Loose; intensity(x: number, fade?: number): Loose; readonly level: number; readonly playing: boolean; /** Where the tune is as the player hears it, in steps (a fraction), or -1 when it isn't playing. */ readonly pos: number; /** True once the set's instruments are in. */ readonly tuned: boolean; [k: string]: Loose };
   /**
+   * A film score (rendered, not played note by note): stems made once in the background while the round loads (a low
+   * drone, strings, an ostinato pulse, ticks, big drums, brass and a high lift), all looping together and faded in and
+   * out by intensity(), with an orchestral hit on the beat, a riser that lands an impact on a bar line, and stings.
+   * It plays on the music channel, so the player's music setting, the mixer and the dip under gunfire reach it.
+   * mood: 'tense' | 'heroic' | 'dark' | 'sad' | 'chase' | 'explore'; key: 'C' .. 'B' ('Bb' for a flat); tempo: the
+   * mood's own if left out; seed: the same seed, the same music. Make it in make() or reset(), start() it in update().
+   * gs.sound.follow(score) drives its intensity from the play.
+   */
+  score(o?: { mood?: 'tense' | 'heroic' | 'dark' | 'sad' | 'chase' | 'explore'; key?: string; tempo?: number | null; seed?: number; vol?: number }): {
+    /** Starts with the drone as soon as it is made; the other stems join on the loop as they come. */ start(): Loose; stop(): Loose; pause(): Loose; resume(): Loose;
+    /** 0..1: the drone alone; from .3 strings, pulse and ticks come in; from .7 drums and brass. */ intensity(x: number, fade?: number): Loose;
+    /** The last stand: the high lift on top (while intensity is up). */ final(on?: boolean): Loose;
+    /** An orchestral hit on the next beat, strength 0..1. */ hit(strength?: number): Loose;
+    /** A build that lands an impact on a bar line at least `secs` seconds away (1.2 to 5): the audio clock's time it lands, 0 if not ready. */ riser(secs?: number): number;
+    /** A sting on the next beat: 'win' (the tonic turned major), 'lose' (low strings sinking), 'found' (the motif on a horn). */ sting(what?: 'win' | 'lose' | 'found'): Loose;
+    /** The audio clock's time of the next beat and bar line, to line your own sounds up with. */ nextBeat(): number; nextBar(): number;
+    /** One stem's level by hand ('drone', 'strings', 'pulse', 'ticks', 'drums', 'brass', 'lift'). */ layer(name: string, level?: number, fade?: number): Loose;
+    /** (A rendered score keeps its tempo: here so follow() can drive it.) */ speed(x?: number): Loose;
+    readonly playing: boolean; /** Every stem made. */ readonly ready: boolean; readonly level: number; readonly tempo: number; readonly startedAt: number;
+  };
+  /**
    * 3D sound: the listener follows the camera; sounds play at points in the world (HRTF in headphones).
    * Sound that knows the level: with `level` (a gs.physics3d World3D, a TileMap, a City, Voxels, a function
    * (from, dir, max) => metres to the first solid thing, or a list of them) every sound is muffled by the walls
@@ -3541,7 +3562,7 @@ export interface CombatPart {
   /** Things lying in the world to pick up (weapons, kind 'ammo' with of and amount, kind 'health'); update(dt, who) gives those in reach; collect(dt, who, loadout) takes them. */
   Pickups: new (o?: { reach?: number; bob?: number }) => { list: Pickup[]; add(o: Partial<Pickup> & { kind: string }): Pickup; remove(p: Pickup): Loose; taken(p: Pickup): Loose; update(dt: number, who?: P3 | P3[] | null): Pickup[]; collect(dt: number, who: P3 | P3[], loadout: Loadout): Pickup[]; clear(): Loose };
   /** A weapon's sound: 'fire', 'empty', 'reload' (over time), 'pump', 'swing', 'pin', 'draw'; at: through the game's gs.sound.Ears when there is one. */
-  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw' | 'clang' | 'parry' | 'bash' | 'nock' | 'thunk' | 'flesh', at?: P3 | null, o?: { time?: number; vary?: number }): void;
+  weaponSound(kind: WeaponKind | string, what?: 'fire' | 'empty' | 'reload' | 'pump' | 'swing' | 'pin' | 'draw' | 'clang' | 'parry' | 'bash' | 'nock' | 'thunk' | 'flesh', at?: P3 | null, o?: { time?: number; vary?: number; /** Where the shot is heard: 'in' (close reflections, a room's hum) or 'out' (slaps off far walls, a long roll); left out, the Ears' sense of the place decides. */ place?: 'in' | 'out' | null }): void;
   /** push: how hard a hit shoves a loose body (kg metres a second) when update is given a physics world. */
   Shots: new (o?: { gravity?: number; push?: number; link?: boolean }) => { list: Loose[]; push: number; add(s: Shot, extra?: Loose): Loose;
     /** hits: your own test (from, to, shot) => what it hit, or a physics world (World3D or 2D Physics): each shot is traced through it, stops where it meets something ({ thing, point, normal }) and shoves it. extra.not on a shot: a body it passes (the shooter).

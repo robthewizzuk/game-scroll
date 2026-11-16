@@ -22,6 +22,7 @@ import { noise, tone } from './sound.js';
 import { linksFor } from './links.js';
 import { Bow } from './bow.js';
 import { ARMS, SHIELD } from './melee3d.js';
+import { playGun, playMech, prepareGun } from './gunshots.js';
 
 /**
  * Each weapon's numbers: gun (options for gs.combat.Gun: arm(kind) makes one), ammo (the kind of rounds it takes, a
@@ -52,7 +53,7 @@ const SLOTS = ['melee', 'hand', 'long', 'heavy', 'throw', 'off'];
 /** A gs.combat.Gun with a weapon's numbers (ARSENAL[kind].gun), o over them (a pouch, rng, damage...). */
 export function arm(kind, o = {}) {
   const A = ARSENAL[kind]; if (!A?.gun) throw new Error(`gs.combat.arm: '${kind}' is not a gun (try ${Object.keys(ARSENAL).filter(k => ARSENAL[k].gun).join(', ')})`);
-  const g = new Gun({ ...A.gun, ammoType: A.ammo, ...o }); g.kind = kind; return g;
+  const g = new Gun({ ...A.gun, ammoType: A.ammo, ...o }); g.kind = kind; prepareGun(kind); return g;
 }
 
 /**
@@ -90,9 +91,24 @@ const T = (f, o, at) => { const E = at && findEars(); if (E) E.tone(f, at, o); e
  * 'draw' (taken out); 'clang' (steel on steel, a blow blocked), 'parry', 'bash' (a shield into someone); a bow's 'nock', 'draw' (over time),
  * 'fire' (loosed), 'thunk' (into wood or earth), 'flesh'. at: where it happens ({ x, y, z }): through the game's gs.sound.Ears when there is one, so it
  * is heard from there, muffled behind walls and echoing in the place. Each shot sounds a little different.
+ * A gun's shots, clicks and the tail a shot leaves are rendered into sound buffers ahead (gunshots.js: layered noise bands,
+ * struck metal for the action, takes played in turn, a tail for indoors and one for outside, and the music and other sounds
+ * dipping under the player's own shots); until they are made (a moment after the gun is first armed), the live sound
+ * plays. place: 'in' | 'out' says where the shot is (else the Ears' sense of the place decides).
  */
-export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary = .08 } = {}) {
+export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary = .08, place = null } = {}) {
   const v = 1 + (Math.random() - .5) * 2 * vary, A = ARSENAL[kind] || {};
+  if (A.gun) {   // (rendered: the takes, clicks and tails gunshots.js made; false while they are being made)
+    if (what === 'fire' && playGun(kind, at, { place })) { if (kind === 'shotgun') weaponSound(kind, 'pump', at, { time: .35 }); if (kind === 'sniper') weaponSound(kind, 'pump', at, { time: .6 }); return; }
+    if (what === 'empty' && playMech(kind, 'empty', at)) return;
+    if (what === 'draw' && playMech(kind, 'draw', at)) return;
+    if (what === 'pump' && playMech(kind, 'pumpBack', at, { delay: time })) { playMech(kind, 'pumpFwd', at, { delay: time + .16 }); return; }
+    if (what === 'reload') {
+      if ((kind === 'revolver' || kind === 'shotgun') && playMech(kind, 'shell', at, { delay: time * .25 })) { for (let i = 1; i < 3; i++) playMech(kind, 'shell', at, { delay: time * (.25 + i * .2) }); playMech(kind, kind === 'shotgun' ? 'pumpFwd' : 'catch', at, { delay: time * .9 }); return; }
+      if (kind === 'launcher' && playMech(kind, 'magin', at, { delay: time * .7 })) return;
+      if (playMech(kind, 'magout', at, { delay: time * .15 })) { playMech(kind, 'magin', at, { delay: time * .7 }); playMech(kind, kind === 'sniper' ? 'pumpFwd' : 'catch', at, { delay: time * .9 }); return; }
+    }
+  }
   if (kind === 'bow') {   // (a bow: the arrow onto the string, the creak of the draw, the string's slap, the arrow going in)
     if (what === 'nock') return N(.05, { vol: .03, from: 2500, to: 3500, filter: 'bandpass', q: 3 }, at);
     if (what === 'draw') { N(Math.max(.2, time * .9), { vol: .018, from: 300 * v, to: 520 * v, filter: 'bandpass', q: 6, attack: .1 }, at); return; }

@@ -8,9 +8,9 @@ Quick-time prompts.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PromptsPart`, line 3782), where every option and field is described.
+From `src/gamescroll.d.ts` (`PromptsPart`, line 3803), where every option and field is described.
 
-- `Prompts: new (o?: { radius?: number; swipe?: number }) => On<Loose> & { active: boolean; timeScale: number; passed: number; readonly now: Prompt | null; readonly left:…` (:3783)
+- `Prompts: new (o?: { radius?: number; swipe?: number }) => On<Loose> & { active: boolean; timeScale: number; passed: number; readonly now: Prompt | null; readonly left:…` (:3804)
 
 ## From the maker kit
 

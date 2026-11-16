@@ -8,10 +8,10 @@ Smoke and fire that flow: rise, curl, spread under ceilings, go round things.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`GasPart`, line 1431), where every option and field is described.
+From `src/gamescroll.d.ts` (`GasPart`, line 1452), where every option and field is described.
 
-- `Gas: (new (view: Loose, o?: GasLook & { box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; /** Left out, out in the open: the Wind…` Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. (:1433)
-- `KINDS: Readonly<Record<GasKind, GasLook>>` (:1440)
+- `Gas: (new (view: Loose, o?: GasLook & { box?: [number, number, number, number, number, number]; open?: boolean; kind?: GasKind; /** Left out, out in the open: the Wind…` Smoke and fire in a box of your world: make it once with the scene, and clear() it each round. (:1454)
+- `KINDS: Readonly<Record<GasKind, GasLook>>` (:1461)
 
 ## From the maker kit
 

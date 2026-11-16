@@ -8,16 +8,16 @@ Small helpers: clamp, rnd, pix, disc, hash, fmt, letter, flick speed.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`UtilPart`, line 451), where every option and field is described.
+From `src/gamescroll.d.ts` (`UtilPart`, line 472), where every option and field is described.
 
-- `clamp(v: number, a: number, b: number): number` (:452)
-- `rnd(a: number, b: number): number` (:453)
-- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:455)
-- `disc(c: Ctx, x: number, y: number, r: number): void` (:456)
-- `hash(str: string): number` (:457)
-- `fmt(n: number): string` (:458)
-- `flickTracker(): Loose` (:459)
-- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:461)
+- `clamp(v: number, a: number, b: number): number` (:473)
+- `rnd(a: number, b: number): number` (:474)
+- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:476)
+- `disc(c: Ctx, x: number, y: number, r: number): void` (:477)
+- `hash(str: string): number` (:478)
+- `fmt(n: number): string` (:479)
+- `flickTracker(): Loose` (:480)
+- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:482)
 
 ## In real games
 

@@ -8,27 +8,27 @@ Drawn shapes: smoothed finger lines, a shape recogniser, lines into physics.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`StrokesPart`, line 3325), where every option and field is described.
+From `src/gamescroll.d.ts` (`StrokesPart`, line 3346), where every option and field is described.
 
-- `SHAPES: readonly string[]` (:3326)
-- `Stroke: new (o?: { smooth?: number; gap?: number }) => Stroke` (:3327)
-  - `points: Pt[]` (:3320)
-  - `length: number` (:3320)
-  - `readonly first: Pt` (:3320)
-  - `readonly last: Pt` (:3320)
-  - `readonly closed: boolean` (:3320)
-  - `readonly turns: number` (:3320)
-  - `readonly bounds: { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3321)
-  - `add(x: number, y: number): Stroke` (:3322)
-  - `simplify(tolerance?: number): Pt[]` (:3322)
-  - `resample(n?: number): Pt[]` (:3322)
-  - `draw(c: Ctx, o?: { width?: number; color?: string; cap?: CanvasLineCap }): void` (:3323)
-- `Shapes: new (names?: readonly string[], o?: { n?: number; sure?: number }) => { add(name: string, points: Pt[]): Loose; match(points: Pt[], o?: { min?: number }): { na…` (:3328)
-- `toPhysics(phys: Loose, points: Pt[], o?: { thick?: number; fixed?: boolean; [k: string]: Loose }): Loose` (:3331)
-- `pathLength(p: Pt[]): number` (:3332)
-- `bounds(p: Pt[]): { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3332)
-- `resample(p: Pt[], n?: number): Pt[]` (:3332)
-- `simplify(p: Pt[], tol?: number): Pt[]` (:3332)
+- `SHAPES: readonly string[]` (:3347)
+- `Stroke: new (o?: { smooth?: number; gap?: number }) => Stroke` (:3348)
+  - `points: Pt[]` (:3341)
+  - `length: number` (:3341)
+  - `readonly first: Pt` (:3341)
+  - `readonly last: Pt` (:3341)
+  - `readonly closed: boolean` (:3341)
+  - `readonly turns: number` (:3341)
+  - `readonly bounds: { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3342)
+  - `add(x: number, y: number): Stroke` (:3343)
+  - `simplify(tolerance?: number): Pt[]` (:3343)
+  - `resample(n?: number): Pt[]` (:3343)
+  - `draw(c: Ctx, o?: { width?: number; color?: string; cap?: CanvasLineCap }): void` (:3344)
+- `Shapes: new (names?: readonly string[], o?: { n?: number; sure?: number }) => { add(name: string, points: Pt[]): Loose; match(points: Pt[], o?: { min?: number }): { na…` (:3349)
+- `toPhysics(phys: Loose, points: Pt[], o?: { thick?: number; fixed?: boolean; [k: string]: Loose }): Loose` (:3352)
+- `pathLength(p: Pt[]): number` (:3353)
+- `bounds(p: Pt[]): { x: number; y: number; w: number; h: number; cx: number; cy: number }` (:3353)
+- `resample(p: Pt[], n?: number): Pt[]` (:3353)
+- `simplify(p: Pt[], tol?: number): Pt[]` (:3353)
 
 ## From the maker kit
 

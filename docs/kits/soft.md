@@ -8,10 +8,10 @@ Soft things: cloth, rope and jelly to grab and cut; 2D liquid.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SoftPart`, line 5476), where every option and field is described.
+From `src/gamescroll.d.ts` (`SoftPart`, line 5497), where every option and field is described.
 
-- `Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bou…` world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. (:5478)
-- `Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: num…` A simple 2D liquid (particles that pool and splash). (:5491)
+- `Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bou…` world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. (:5499)
+- `Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: num…` A simple 2D liquid (particles that pool and splash). (:5512)
 
 ## From the maker kit
 

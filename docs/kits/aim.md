@@ -8,9 +8,9 @@ Aim assist: sticky aim, pull onto targets, auto fire, in 2D or 3D.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`AimPart`, line 982), where every option and field is described.
+From `src/gamescroll.d.ts` (`AimPart`, line 1003), where every option and field is described.
 
-- `AimAssist: new (o?: { cone?: number; range?: number; pull?: number; slow?: number; autoFire?: number; stickTime?: number; strength?: number }) => { strength: number; t…` (:983)
+- `AimAssist: new (o?: { cone?: number; range?: number; pull?: number; slow?: number; autoFire?: number; stickTime?: number; strength?: number }) => { strength: number; t…` (:1004)
 
 ## From the maker kit
 

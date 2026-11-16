@@ -1885,6 +1885,35 @@ console.log('physics ok');
   console.log('combat: shooting from a car ok');
 }
 {
+  // sound rendered into buffers (sound-render.js, score-render.js): gunshots, clicks, tails, a film score's stems
+  const R = await import('../src/kit/sound-render.js'), S = await import('../src/kit/score-render.js');
+  const take = (kind, n, seed = 7) => R.renderSound({ what: 'gun', kind, n, sr: 44100, seed })[0];
+  for (const k of R.GUN_KINDS) { const b = take(k, 0); assert.ok(R.peak(b) > .5 && R.peak(b) < 1.3 && b.length > .3 * 44100 && Number.isFinite(R.rms(b)), k + ': a shot near full scale, a third of a second or more'); }
+  const a = take('rifle', 0), b = take('rifle', 1), c = take('rifle', 0);
+  assert.deepEqual(a, c, 'the same seed, the same shot');
+  let diff = 0; for (let i = 0; i < 4410; i++) diff += Math.abs(a[i] - b[i]); assert.ok(diff > 50, 'two takes differ: ' + diff.toFixed(1));
+  const crack = R.rms(a, 0, 441), late = R.rms(a, .3 * 44100, .4 * 44100); assert.ok(crack > late * 8, 'the crack is loud, the body dies away');
+  const [oL, oR] = R.renderSound({ what: 'tail', place: 'out', size: 'big', n: 0, sr: 22050, seed: 3 }), [iL] = R.renderSound({ what: 'tail', place: 'in', size: 'big', n: 0, sr: 22050, seed: 3 });
+  assert.ok(R.rms(oL, .8 * 22050, 1.2 * 22050) > R.rms(iL, .8 * 22050, 1.2 * 22050) * 2, 'outside rolls on longer than indoors');
+  let lr = 0; for (let i = 0; i < oL.length; i++) lr += Math.abs(oL[i] - oR[i]); assert.ok(lr > 100, 'a tail is wide (the two ears differ)');
+  for (const m of R.MECH_KINDS) assert.ok(R.peak(R.renderSound({ what: 'mech', kind: m, sr: 44100, seed: 1 })[0]) > .5, m + ': a click');
+  // the score: every stem a seamless loop of whole bars, each brought to its loudness; the moments made
+  const o = { mood: 'tense', key: 'D', seed: 1 }, P = S.plan(o);
+  assert.ok(Math.abs(P.bar - 2.5) < 1e-9 && P.root === 50, 'tense in D: 96 a minute, D3');
+  for (const n of S.STEMS) {
+    const [L, Rr] = S.renderScorePart({ ...o, part: n }), sr = S.partRate(n), len = S.stemLength(P, n);
+    assert.equal(L.length, Math.round(len * sr), n + ': a whole number of bars long');
+    let jump = 0; for (let i = 1; i < L.length; i++) jump = Math.max(jump, Math.abs(L[i] - L[i - 1]));
+    assert.ok(Math.abs(L[0] - L[L.length - 1]) <= jump * 1.01 + 1e-6, n + ': the loop joins without a click');
+    assert.ok(R.rms(L) > .015 && R.peak(L) < 1 && R.peak(Rr) < 1, n + ': heard, under full scale');
+  }
+  for (const n of S.ONESHOTS) { const [L] = S.renderScorePart({ ...o, part: n }); assert.ok(R.peak(L) > .4 && R.peak(L) < .9, n + ': made'); }
+  const { score } = await import('../src/kit/score.js'); const sc = score({ mood: 'chase' });
+  assert.ok(!sc.playing && sc.riser(3) === 0 && sc.start() === sc, 'a score with no audio waits quietly');
+  sc.stop();
+  console.log('sound rendered: gunshots, clicks, tails, score stems ok');
+}
+{
   // weapons: the arsenal's numbers, a pouch the guns share, a loadout, pickups; the models and two hands on them; hits and spent cases
   const { ARSENAL, arm, Pouch, Loadout, Pickups, weaponSound } = await import('../src/kit/combat.js');
   const { weapon, WEAPON_KINDS, Wield } = await import('../src/kit/models/weapons.js'), { figure } = await import('../src/kit/poses.js');

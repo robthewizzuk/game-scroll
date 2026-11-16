@@ -6,7 +6,7 @@
 //   const { sfx, sounds } = gs.sound, { haptic } = gs.device, { clamp, rnd } = gs.util;
 //
 // What's on it (docs/maker-kit.md has the full guide):
-//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say), a car radio (Radio: stations of original songs and made-up DJs)
+//   gs.sound     beeps, ready-made sounds, ZzFX designs, music loops (and compose(): original tunes from a mood and a seed), Tone.js synths, the mixer (and a voice cap), the sounds a world makes by itself (Foley), speech (say), a car radio (Radio: stations of original songs and made-up DJs), a film score (score: rendered stems, hits, risers)
 //   gs.device    haptics (and rich haptic patterns), tilt, shake, mic (level, pitch, claps, blowing), camera, compass, steps, air pressure, room light, proximity
 //   gs.util      clamp, rnd, pix, hash, fmt, disc, flickTracker
 //   gs.math      seeded random, daily seed, smooth noise, vectors, overlap tests, Grid, Timers
@@ -175,6 +175,7 @@ import { tick } from './kit/tick.js';
 import * as composer from './kit/compose.js';
 import * as foley from './kit/foley.js';
 import * as radio from './kit/radio.js';
+import * as filmScore from './kit/score.js';
 import * as solve from './kit/solve.js';
 import * as phoneSensors from './kit/sensors.js';
 import * as real from './kit/real.js';
@@ -184,7 +185,7 @@ import { StillLoading } from './kit/lazy.js';
 // App-only exports games never get: raw storage, the player's settings, the unrounded location,
 // the install's anonymous id, and the hooks the app uses to stop things between rounds.
 export const HIDDEN = {
-  sound: ['sound', 'setSound', 'audio', 'setSfxOut', 'stopMusic', 'pauseMusic', 'resumeMusic', 'warm', 'voiceCap', 'kitBus'],
+  sound: ['sound', 'setSound', 'audio', 'setSfxOut', 'stopMusic', 'pauseMusic', 'resumeMusic', 'warm', 'voiceCap', 'kitBus', 'kitPlay', 'scoreStats'],
   util: ['store', 'deviceId'],
   device: ['location', 'hapticSettings', 'setHaptics', 'stopSensors', 'hapticHooks'],
   real: ['guessPlace', 'readOutputs'],
@@ -288,7 +289,7 @@ export function offers(names) {
 }
 
 const core = {
-  sound: pick('sound', sound, sfx, composer, foley, radio),
+  sound: pick('sound', sound, sfx, composer, foley, radio, filmScore),
   device: pick('device', device, phoneSensors),
   util: pick('util', util),
   math: pick('math', math),

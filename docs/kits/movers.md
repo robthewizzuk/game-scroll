@@ -8,23 +8,23 @@ Platformer and top-down movement with coyote time, jump buffer, wall jumps and t
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MoversPart`, line 1501), where every option and field is described.
+From `src/gamescroll.d.ts` (`MoversPart`, line 1522), where every option and field is described.
 
-- `Platformer: new (o?: { x?: number; y?: number; w?: number; h?: number; jump?: number; jumpTime?: number; run?: number; accel?: number; airAccel?: number; stop?: number…` (:1502)
-  - `x: number` (:1500)
-  - `y: number` (:1500)
-  - `w: number` (:1500)
-  - `h: number` (:1500)
-  - `vx: number` (:1500)
-  - `vy: number` (:1500)
-  - `onGround: boolean` (:1500)
-  - `facing: number` (:1500)
-  - `hit: Partial<TileHit>` (:1500)
-  - `readonly left: number` (:1500)
-  - `readonly right: number` (:1500)
-  - `readonly top: number` (:1500)
-  - `readonly bottom: number` (:1500)
-- `TopDown: new (o?: { x?: number; y?: number; w?: number; h?: number; speed?: number; accel?: number; stop?: number }) => MoverBase & { speed: number; state: 'idle' | 'w…` (:1509)
+- `Platformer: new (o?: { x?: number; y?: number; w?: number; h?: number; jump?: number; jumpTime?: number; run?: number; accel?: number; airAccel?: number; stop?: number…` (:1523)
+  - `x: number` (:1521)
+  - `y: number` (:1521)
+  - `w: number` (:1521)
+  - `h: number` (:1521)
+  - `vx: number` (:1521)
+  - `vy: number` (:1521)
+  - `onGround: boolean` (:1521)
+  - `facing: number` (:1521)
+  - `hit: Partial<TileHit>` (:1521)
+  - `readonly left: number` (:1521)
+  - `readonly right: number` (:1521)
+  - `readonly top: number` (:1521)
+  - `readonly bottom: number` (:1521)
+- `TopDown: new (o?: { x?: number; y?: number; w?: number; h?: number; speed?: number; accel?: number; stop?: number }) => MoverBase & { speed: number; state: 'idle' | 'w…` (:1530)
 
 ## From the maker kit
 
