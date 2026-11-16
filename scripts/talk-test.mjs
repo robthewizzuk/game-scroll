@@ -157,7 +157,7 @@ if (bytes) {
   const long = say('This is a longer line. It goes on for a while, in more than one part, so that it is cut into pieces of text the model reads one after another, and each still comes out.', 'george');
   ok(long.length / tts.rate > 7, `a long line in parts: ${(long.length / tts.rate).toFixed(1)} s`);
   // the file the PR check makes is the one talk-files.js pins (writeTo checked its SHA-256)
-  ok(bytes.length > 18e6 && bytes.length < 25e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
+  ok(bytes.length > 25e6 && bytes.length < 32e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
 }
 
 if (bytes) { // the decoder is the 100M model's: no steady whine at 3.6 kHz standing out of the voice
