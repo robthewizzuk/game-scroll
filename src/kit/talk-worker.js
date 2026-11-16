@@ -19,6 +19,7 @@
 import { unpack } from './talk-pack.js';
 import { makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from './pocket-tts.js';
 import { stretch } from './voice-fx.js';
+import { humanize } from './voice-pitch.js';
 import { spoken } from './say-words.js';
 
 let loading = null, flow = null, first = null, next = null;   // next: the port to the next stage, once it is ready
@@ -45,7 +46,7 @@ const LINES = 'gs-talk-lines', KEEP = 400;   // (about 6 MB for 400 lines of a f
 const lineUrl = key => `https://gs-talk.invalid/line/${key}`;
 async function keyOf(m, words) {
   if (m.seed == null || !crypto?.subtle) return null;
-  const s = JSON.stringify([fileUrl, m.voice, m.lively || 0, m.tempo || 1, m.seed, words]);
+  const s = JSON.stringify([fileUrl, HUMAN, m.voice, m.lively || 0, m.tempo || 1, m.seed, words]);
   return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
 }
 /** [{ text, pcm }] kept for this line, or null. */
@@ -96,12 +97,21 @@ const piece = (id, pcm, text, last, speed = 0) => {
   else postMessage({ type: 'piece', id, pcm: null, text: '', last: true, speed: 0 });
 };
 
+/**
+ * How each part is made more like a person once it is spoken (voice-pitch.js): the pitch moved 1.4 times as far from the
+ * line it follows (up to 1.7 with lively 1), a little unsteadiness, and a breath before each sentence after the first
+ * and in long pauses. Measured on 8 lines: a speech-quality model's score 4.25 (with the old lively) to 4.38, the pitch
+ * range 9 to 13 semitones (Tiny Voca's: 15). Change HUMAN with them, so lines kept from before are made again.
+ */
+const HUMAN = 'h1', WIDE = 1.4, LIVELY_WIDE = .3;
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
-  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false;
+  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0;
   const flush = last => {
     if (!frames.length && !last) return;
-    const pcm = stretch(join(frames), 24000, tempo), copy = key ? pcm.slice() : null;
+    const said = humanize(join(frames), 24000, { wide: WIDE + LIVELY_WIDE * lively, seed: seed + part, first: part === 0 });
+    part++;
+    const pcm = stretch(said, 24000, tempo), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much
@@ -109,7 +119,7 @@ function writer() {
     frames = [];
   };
   return {
-    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; },
+    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; lively = m.lively || 0; seed = m.seed ?? (Math.random() * 2 ** 31) | 0; part = 0; },
     frame(m, pcm, partText) {
       if (m.id !== id || broken) return;
       if (m.first && frames.length) flush(false);
@@ -134,8 +144,8 @@ async function speak(m) {
     const have = await kept(key);
     if (have?.length) { have.forEach((p, i) => piece(id, p.pcm, p.text, i === have.length - 1, 99)); return; }
   }
-  const opts = { lively: m.lively || 0, quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
-  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe };
+  const opts = { quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
+  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe, lively: m.lively || 0, seed: m.seed };
   const l = flow.line(words, m.voice, opts), out = next || null, w = out ? null : writer();
   if (out) out.postMessage({ type: 'line', ...head }); else w.line(head);
   let S = null, lat, t0 = performance.now();

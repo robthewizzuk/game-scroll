@@ -136,7 +136,7 @@ export function readyNow() { if (!ownVoice() || failed) return Promise.resolve(f
  * the first piece { ok: true, samples (Float32Array), rate, text (the words of that piece, as said), last,
  * more: a promise of the next piece (null after the last) }, or null (not loaded, stopped, failed).
  * rate: how fast (1 normal, kept at the voice's pitch); pitch: how high (it raises the speed too, so the line is
- * slowed to match first). voiceURI: one of ownVoices(). lively: 0 (as the model speaks) to 1 (a wider pitch range). The same
+ * slowed to match first). voiceURI: one of ownVoices(). lively: 0 to 1, how far the pitch moves (every line moves further than the model speaks it, 1 the furthest: voice-pitch.js). The same
  * words in the same voice come out the same each time, and are kept for the next launch; fresh: true for a new take.
  * lang: how to read dates (en-US: month first). keep: a line written ahead of time: not ended by cancel(), and
  * written after the lines wanted now unless hurry(ticket) (ticket: an object speak() puts the line's id on).

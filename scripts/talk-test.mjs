@@ -13,6 +13,7 @@ import { unpack } from '../src/kit/talk-pack.js';
 import { makeTTS, makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from '../src/kit/pocket-tts.js';
 import { spoken, respell } from '../src/kit/say-words.js';
 import { stretch, marksFrom, resample } from '../src/kit/voice-fx.js';
+import { humanize } from '../src/kit/voice-pitch.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -133,10 +134,24 @@ if (bytes) {
     const hz = v => f0(say('Pick up the lantern before the light goes.', v, 6), tts.rate), [a, b, m] = ['george', 'charles', 'george+charles'].map(hz);
     ok(m > Math.min(a, b) - 5 && m < Math.max(a, b) + 5 && m !== a, `blend: george+charles speaks at ${m.toFixed(0)} Hz (george ${a.toFixed(0)}, charles ${b.toFixed(0)})`);
   }
-  { // lively: a wider pitch range, the same length of line, the words still there
-    const plain = say('Oh, you found it! That is wonderful news.', 'george', 4), live = (() => { const l = tts.line('Oh, you found it! That is wonderful news.', 'george', { rnd: seeded(4), lively: 1 }), ps = []; let c; while ((c = l.next())) ps.push(c); const a = new Float32Array(ps.length * 1920); ps.forEach((p, i) => a.set(p, i * 1920)); return a; })();
-    const spread = a => { const hz = pitches(a, tts.rate); const st = hz.map(h => 12 * Math.log2(h / 100)), m = st.reduce((x, y) => x + y, 0) / st.length; return Math.sqrt(st.reduce((x, y) => x + (y - m) ** 2, 0) / st.length); };
-    ok(live.length === plain.length && spread(live) > spread(plain) * 1.1, `lively: pitch spread ${spread(plain).toFixed(2)} -> ${spread(live).toFixed(2)} semitones`);
+  { // made more like a person after it is spoken (voice-pitch.js): with no change it gives the sound back; widened,
+    // the pitch moves further over the same length of line at the same loudness; a breath before a later sentence
+    const plain = say('Oh, you found it! That is wonderful news.', 'george', 4), R = tts.rate;
+    const spread = a => { const hz = pitches(a, R); const st = hz.map(h => 12 * Math.log2(h / 100)), m = st.reduce((x, y) => x + y, 0) / st.length; return Math.sqrt(st.reduce((x, y) => x + (y - m) ** 2, 0) / st.length); };
+    const rms = a => Math.sqrt(a.reduce((x, y) => x + y * y, 0) / a.length);
+    const same = humanize(plain, R, { wide: 1, wobble: 0, breath: 0, first: true });
+    let err = 0; for (let i = 0; i < plain.length; i++) err += (same[i] - plain[i]) ** 2;
+    const snr = 10 * Math.log10(plain.reduce((x, y) => x + y * y, 0) / Math.max(1e-30, err));
+    ok(same.length === plain.length && snr > 60, `voice-pitch: no change gives the same sound back (${snr.toFixed(0)} dB)`);
+    const wide = humanize(plain, R, { wide: 1.4, breath: 0, seed: 3, first: true }), again = humanize(plain, R, { wide: 1.4, breath: 0, seed: 3, first: true });
+    const loud = 20 * Math.log10(rms(wide) / rms(plain));
+    ok(wide.length === plain.length && spread(wide) > spread(plain) * 1.12 && Math.abs(loud) < 1 && wide.every((v, i) => v === again[i]),
+      `voice-pitch: pitch spread ${spread(plain).toFixed(2)} -> ${spread(wide).toFixed(2)} semitones, ${loud.toFixed(2)} dB, the same each time`);
+    const later = humanize(plain, R, { seed: 3 }), pre = later.length - plain.length, br = rms(later.subarray(0, Math.round(pre * .8)));
+    const under = 20 * Math.log10(br / rms(plain));
+    ok(pre > R * .3 && pre < R * .5 && under < -20 && under > -45, `voice-pitch: a breath before a later sentence (${(pre / R).toFixed(2)} s, ${under.toFixed(0)} dB under the voice)`);
+    let t = performance.now(); for (let k = 0; k < 3; k++) humanize(plain, R, { seed: k }); t = (performance.now() - t) / 3;
+    ok(t < plain.length / R * 1000 * .06, `voice-pitch: ${t.toFixed(0)} ms for ${(plain.length / R).toFixed(1)} s of sound`);
   }
   const long = say('This is a longer line. It goes on for a while, in more than one part, so that it is cut into pieces of text the model reads one after another, and each still comes out.', 'george');
   ok(long.length / tts.rate > 7, `a long line in parts: ${(long.length / tts.rate).toFixed(1)} s`);
