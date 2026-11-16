@@ -19,7 +19,8 @@
 // Actors: steps with actor (a gs.models.human or gs.poses person) direct the people in it. walk: { x, z } (at speed,
 // 1.3 m/s; they turn to it, walk there and stop), turn: an angle or a point to face, look: a point or thing for the
 // eyes (null: free), play: a gesture or move ('bow', 'nod', 'point'...: gs.poses GESTURES), mood + amount (a face
-// shape), and say with actor speaks the line in that person's voice (voice, pitch, fx) with the mouth moving to it.
+// shape), and say with actor speaks the line in that person's voice (voice, pitch, fx) with the mouth moving to it
+// (with the built-in voice, every such line is written to sound when the cutscene starts, so each starts on its step).
 // The game still updates each rig once a frame, with what the cutscene says it is doing:
 //     { at: 0, actor: mara, walk: { x: 1, z: 2 } }, { at: 2.5, actor: mara, play: 'bow' },
 //     { at: 3, actor: mara, say: 'You came back.', who: 'Mara', voice: 'woman', look: hero },
@@ -28,6 +29,7 @@
 // Reduce motion: camera moves still play (they're the story), but shakes added with { shake } are toned down.
 
 import { prefs } from './prefs.js';
+import { prepare } from './sound.js';
 
 const EASE = { linear: t => t, in: t => t * t, out: t => 1 - (1 - t) * (1 - t), inOut: t => (t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2) };
 const cr = (p0, p1, p2, p3, t) => { const t2 = t * t, t3 = t2 * t; return .5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3); };
@@ -59,6 +61,10 @@ export class Cutscene {
   get progress() { return this.length ? Math.min(1, this.t / this.length) : 1; }
   update(dt) {
     if (!this.playing) { this.bars = Math.max(0, this.bars - dt * 1.5 * this.barsTo); return this; }
+    if (!this.t && !this.prepared) {   // the lines actors speak, written to sound ahead (the built-in voice), so each starts on its step
+      this.prepared = true;
+      for (const s of this.steps) if (s.say != null && s.actor?.face?.say) prepare(s.say, this.sayOpts(s)).catch(() => {});
+    }
     this.t += dt;
     for (const s of this.steps) {
       if (s.at > this.t) break;
@@ -80,13 +86,14 @@ export class Cutscene {
   start(s) {
     if (s.actor) this.direct(s);
     if (s.cam) this.camStep = s;
-    if (s.say != null && s.actor?.face?.say) s.actor.face.say(s.say, { voice: s.voice ?? null, pitch: s.pitch ?? 1, rate: s.rate ?? 1, fx: s.fx ?? null, size: s.size ?? null });
+    if (s.say != null && s.actor?.face?.say) s.actor.face.say(s.say, this.sayOpts(s));
     if (s.say != null) { this.line = { text: s.say, who: s.who ?? null, until: s.at + (s.time ?? Math.max(2, s.say.length * .06)) }; this.emit('say', this.line); }
     if (s.do) s.do(this);
     if (s.shake) { this.shakeAmt = s.shake; this.shakeLeft = s.time ?? .5; }
     if (s.bars != null) this.barsTo = s.bars;
     if (s.lens !== undefined) this.lens = s.lens;
   }
+  sayOpts(s) { return { voice: s.voice ?? null, pitch: s.pitch ?? 1, rate: s.rate ?? 1, fx: s.fx ?? null, size: s.size ?? null }; }
   // an actor's step: what it is told to do from now on
   direct(s) {
     const p = s.actor, a = this.acting.get(p) || { speed: 0, to: null, face: null };

@@ -17,9 +17,9 @@ import { lazy } from './lazy.js';
 import { register, own } from './cleanup.js';
 import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.js';
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
-import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks } from './voice-fx.js';
-import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, readyNow as ownReady } from './talk.js';
-import { respell } from './say-words.js';
+import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks, marksFrom } from './voice-fx.js';
+import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, hurry as ownHurry, readyNow as ownReady } from './talk.js';
+import { respell, spoken } from './say-words.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
 import { linksFor } from './links.js';
 
@@ -1016,18 +1016,18 @@ register('mixer', { stop: () => mixer.reset() });
 // size as a small change of pitch and no fx. shaped() says which: true once a line has played shaped,
 // false where it can't be, null before the first try. A shaped line starts a moment later than a plain
 // one (the phone writes all of it first), so open with a short pause: say([.2, 'Ah. A door.'], ...).
-// The Mac, Windows and Linux app has a voice of its own built in (talk.js: Pocket TTS 7M, 19 voices): there every
-// line is written to sound that way and played through the mixer, shaped or not, and the cast comes from its voices.
-// Until it has loaded (the first line ever, a 12 MB download), and for languages other than English, the computer's
-// own voices say the line.
+// The Mac, Windows and Linux app and the phone apps have a voice of their own built in (talk.js: Pocket TTS 7M, 23 voices
+// and blends of two): there every English line is written to sound that way and played through the mixer, shaped or not,
+// a sentence at a time as it is written, and the cast comes from its voices. prepare(line, o) writes one ahead. Until it
+// has loaded (the first line ever, a 13 MB download), and for languages other than English, the device's own voices say it.
 const TTS = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TextToSpeech') ? registerPlugin('TextToSpeech') : null;
 const RENDER = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SpeechAudio') ? registerPlugin('SpeechAudio') : null;   // plugins/speech-audio
 let talkingNow = 0, talkGen = 0, cancelTalk = null, voiceList = null;
 // shaped lines: whether this phone can (null: not tried yet), voices that could not be written to sound, lines already
 // made (the last few, so a line said twice starts at once), and the ones playing
-let OWN = ownVoice() && canShape();   // the desktop app's built-in voice (false once it can't run here)
+let OWN = ownVoice() && canShape();   // the built-in voice (false once it can't run here)
 let shapedOk = (RENDER || OWN) && canShape() ? null : false, shapeFails = 0, rendering = 0, clipSecs = 0;
-const noShape = new Set(), clips = new Map(), live = new Set();
+const noShape = new Set(), clips = new Map(), live = new Set(), making = new Map();   // making: lines being written ahead (prepare)
 const badVoices = new Set();   // voices that failed here (not downloaded, say): not cast again this session
 const clampN = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? +v : d));
 const langOk = l => /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l);
@@ -1090,62 +1090,137 @@ async function clipFor(p, gen, stopped) {
   } catch { shapeFailed(who); return null; } finally { clearTimeout(timer); rendering--; }
 }
 /**
- * clipFor() with the desktop app's built-in voice: cast from its own voices (none for a language it doesn't speak:
- * then null, and the computer's voice says it). A line that comes while the voice is still loading is said by the
- * computer's voice too, without counting as a failure.
+ * clipFor() with the built-in voice (the desktop app, the phone apps): cast from its own voices (none for a language it
+ * doesn't speak: then null, and the device's voice says it). A line that comes while the voice is still loading is said
+ * by the device's voice too, without counting as a failure. The line comes in pieces (the first sentence first), each
+ * shaped as it comes: the clip is the first piece, and clip.more a promise of the next (null after the last), so it
+ * starts playing while the rest is written. gen -1: written ahead (prepare()), for a say() to come.
  */
-async function ownClip(p, gen, stopped) {
-  const a = audio(); if (!a) return null;
+function ownClip(p, gen, stopped) {
+  const a = audio(); if (!a) return Promise.resolve(null);
   const list = ownVoices(), pick = castOwn(wantOf(p.voice || 'any', p.lang));
-  if (!pick) return null;
-  const uri = list[pick.at].voiceURI, pitch = clampN(p.pitch * pick.pitch, .5, 2, 1), rate = clampN(p.rate * p.size, .3, 3, 1);
-  const key = JSON.stringify([p.said, uri, p.rate, pitch, p.size, p.fx, p.joined, p.join, p.lively]), have = !p.fresh && clips.get(key);
-  if (have) { clips.delete(key); clips.set(key, have); return have; }
+  if (!pick) return Promise.resolve(null);
+  const uri = pick.voiceURI || list[pick.at].voiceURI, o = { uri, pitch: clampN(p.pitch * pick.pitch, .5, 2, 1), rate: clampN(p.rate * p.size, .3, 3, 1), lively: livelyOf(p, uri) };
+  o.key = JSON.stringify([p.said, uri, p.rate, o.pitch, p.size, p.fx, p.joined, p.join, o.lively, [].concat(p.lang)[0]]);
+  if (!p.fresh) {
+    const have = clips.get(o.key);
+    if (have) { clips.delete(o.key); clips.set(o.key, have); return Promise.resolve(have); }
+    const m = making.get(o.key);   // being written ahead already: that one, wanted now
+    if (m) { if (gen >= 0) ownHurry(m.ticket); return m.clip; }
+  }
+  o.ticket = {};
+  const job = ownLine(p, gen, stopped, a, o);
+  if (gen < 0 && !p.fresh) { making.set(o.key, { ticket: o.ticket, clip: job }); job.then(c => c ? c.all : null).catch(() => null).finally(() => { if (making.get(o.key)?.clip === job) making.delete(o.key); }); }
+  return job;
+}
+/** How lively a line is said when the game doesn't say: each voice a little its own way, more for a shout, a little for a question. */
+function livelyOf(p, uri) {
+  if (p.lively != null) return p.lively;
+  let h = 7; for (let i = 0; i < uri.length; i++) h = Math.imul(h ^ uri.charCodeAt(i), 0x01000193);
+  const t = p.said, shout = (t.match(/!/g) || []).length, ask = (t.match(/\?/g) || []).length, n = Math.max(1, (t.match(/[.!?…]+/g) || []).length);
+  return Math.round(Math.min(1, ((h >>> 0) % 31) / 100 + .35 * Math.min(1, shout / n * 1.5) + .1 * Math.min(1, ask / n * 1.5)) * 100) / 100;
+}
+async function ownLine(p, gen, stopped, a, o) {
+  const ahead = gen < 0, stale = () => !ahead && gen !== talkGen;
   let timer = null;
-  const late = ms => new Promise(res => { clearTimeout(timer); timer = setTimeout(res, ms, 'late'); });
-  rendering++;
+  const late = ms => ahead ? new Promise(() => {}) : new Promise(res => { clearTimeout(timer); timer = setTimeout(res, ms, 'late'); });
+  if (!ahead) rendering++;
   try {
     const up = await Promise.race([ownReady(), stopped, late(Math.min(4000, 1500 + p.text.length * 20))]);
-    if (gen !== talkGen) return null;
-    if (up === false) { OWN = false; if (!RENDER) shapedOk = false; return null; }   // it can't run here: the computer's voices from now on
-    if (up !== true) return null;   // still loading: this line in the computer's voice
-    const r = await Promise.race([ownSpeak({ text: p.said, voiceURI: uri, rate, pitch, lively: p.lively, fresh: p.fresh, lang: [].concat(p.lang)[0] }), stopped, late(3000 + p.text.length * 40)]);
-    if (gen !== talkGen) return null;
+    if (stale()) return null;
+    if (up === false) { OWN = false; if (!RENDER) shapedOk = false; return null; }   // it can't run here: the device's voices from now on
+    if (up !== true) return null;   // still loading: this line in the device's voice
+    const lang = [].concat(p.lang)[0];
+    // the first piece is the first sentence: it has this long to come
+    const r = await Promise.race([ownSpeak({ text: p.said, voiceURI: o.uri, rate: o.rate, pitch: o.pitch, lively: o.lively, fresh: p.fresh, lang, keep: ahead, ticket: o.ticket }), stopped, late(3000 + Math.min(p.text.length, 120) * 40)]);
+    if (stale()) return null;
     if (r === 'late') ownCancel();
-    if (!r || r === 'late' || !r.ok) { shapeFailed(uri); return null; }
-    const made = await shape(r.samples, r.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: !p.joined, close: p.join == null, hold: p.join == null ? 0 : p.join + .06 });
-    const marks = wordTimes(p.said, made.seconds - made.lead);
-    for (let i = 0; i < marks.length; i += 2) { marks[i] = p.at(marks[i]); marks[i + 1] += made.lead; }
-    return keepClip(key, { buffer: made.buffer, gain: made.gain, seconds: made.seconds, total: made.total, marks });
-  } catch { shapeFailed(uri); return null; } finally { clearTimeout(timer); rendering--; }
+    if (!r || r === 'late' || !r.ok) { shapeFailed(o.uri); return null; }
+    // which words of the line each piece says: its share of the words as spoken, ended at the nearest sentence end
+    const said = p.said, L = Math.max(1, spoken(said, { lang }).length);
+    let chars = 0, from = 0, gain0 = 0, total = 0;
+    const words = r2 => {
+      chars += r2.text.length + 1;
+      if (r2.last) { const w = said.slice(from); const at = from; from = said.length; return { w, at }; }
+      const want = Math.round(Math.min(1, chars / L) * said.length), ends = [];
+      for (const m of said.matchAll(/[.!?…]+["')\]]?\s+|\s+/g)) if (m.index + m[0].length > from) ends.push({ i: m.index + m[0].length, stop: /[.!?…]/.test(m[0]) });
+      let best = said.length, cost = Infinity;
+      for (const e of ends) { const c = Math.abs(e.i - want) / said.length - (e.stop ? .25 : 0); if (c < cost) { cost = c; best = e.i; } }
+      const at = from; from = best; return { w: said.slice(at, best), at };
+    };
+    const one = async (r2, first) => {
+      const last = !!r2.last;
+      const made = await shape(r2.samples, r2.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: first && !p.joined, close: last && p.join == null,
+        hold: last && p.join != null ? p.join + .06 : 0, trimStart: first, trimEnd: last });
+      // each piece as loud as its own words, but kept near the first so the line doesn't jump between sentences
+      if (first) gain0 = made.gain; else made.gain = Math.max(gain0 * .75, Math.min(gain0 * 1.33, made.gain));
+      // its words when they are heard (sound.js marksFrom): in the shaped time (less what was cut off the front, slowed by size)
+      const { w, at } = words(r2), marks = marksFrom(w, r2.samples, r2.rate);
+      for (let i = 0; i < marks.length; i += 2) { marks[i] = p.at(at + marks[i]); marks[i + 1] = made.lead + Math.max(0, marks[i + 1] - made.cut) * p.size; }
+      total += made.total;
+      return { buffer: made.buffer, gain: made.gain, seconds: made.seconds, total: made.total, marks, last, more: null };
+    };
+    const head = await one(r, true);
+    if (stale()) return null;
+    // the pieces after it, shaped as they come (each clip's more: a promise of the next); the whole line is kept once it is all in
+    const link = () => { let put = null; const pr = new Promise(r2 => { put = r2; }); return { pr, put }; };
+    let l = link(), cur = head; head.more = l.pr;
+    head.all = (async () => {
+      let nx = r;
+      try {
+        while (!nx.last) {
+          nx = await Promise.race([nx.more, ahead ? new Promise(() => {}) : stopped]);
+          if (!nx || !nx.ok) break;
+          const c = await one(nx, false), l2 = link(); c.more = l2.pr; l.put(c); l = l2; cur = c;
+        }
+      } catch { /* the line ends where it got to */ }
+      l.put(null);
+      if (cur.last && !p.fresh) { head.chainTotal = total; keepClip(o.key, head); }
+      return head;
+    })();
+    return head;
+  } catch { shapeFailed(o.uri); return null; } finally { clearTimeout(timer); if (!ahead) rendering--; }
 }
 /** Keeps a made line for a while (the last few, so one said twice starts at once). */
 function keepClip(key, clip) {
-  clips.set(key, clip); clipSecs += clip.total; shapeFails = 0;
-  while (clips.size > 1 && (clips.size > 32 || clipSecs > 45)) { const [k0, c0] = clips.entries().next().value; clips.delete(k0); clipSecs -= c0.total; }
+  clips.set(key, clip); clipSecs += clip.chainTotal ?? clip.total; shapeFails = 0;
+  while (clips.size > 1 && (clips.size > 32 || clipSecs > 45)) { const [k0, c0] = clips.entries().next().value; clips.delete(k0); clipSecs -= c0.chainTotal ?? c0.total; }
   return clip;
 }
 /** Fades a playing line out in a few thousandths of a second (a cut dead would click). */
 function hush(v) { try { const t = v.g.context.currentTime; v.g.gain.cancelScheduledValues(t); v.g.gain.setTargetAtTime(0, t, .008); v.src.stop(t + .06); } catch { /* ended already */ } }
-/** Plays a shaped part through the mixer's voice channel. Resolves true when its last word ends (its echoes ring on). */
+/**
+ * Plays a shaped part through the mixer's voice channel. Resolves true when its last word ends (its echoes ring on).
+ * A clip in pieces (clip.more) plays each the moment the one before has said its last word, as it comes in.
+ */
 function playClip(clip, p, gen, from, onWord, stopped) {
   const a = audio(); if (!a) return Promise.resolve(false);
   return new Promise(res => {
-    const { ctx } = a, src = ctx.createBufferSource(), g = ctx.createGain(), t0 = ctx.currentTime + .02, mine = { src, g };
-    let i = 0, done = false, tick = null, guard = null;
-    const end = ok => { if (done) return; done = true; clearInterval(tick); clearTimeout(guard); res(ok); };
-    src.buffer = clip.buffer; g.gain.value = clip.gain * p.vol; src.connect(g); g.connect(busIn('voice'));
-    src.onended = () => { live.delete(mine); try { g.disconnect(); } catch { /* gone */ } end(true); };
-    live.add(mine); shapedOk = true;
-    const words = typeof onWord === 'function';
+    const { ctx } = a, words = typeof onWord === 'function', marks = [];
+    let i = 0, done = false, tick = null, guard = null, end = Infinity, at = ctx.currentTime + .02;
+    const finish = ok => { if (done) return; done = true; clearInterval(tick); clearTimeout(guard); res(ok); };
+    const hold = secs => { clearTimeout(guard); guard = setTimeout(() => finish(true), (secs + 1.5) * 1000); };   // (sound that isn't running, say before the first touch, must not hold the line up)
+    const play = c => {
+      if (done || gen !== talkGen) return;
+      const src = ctx.createBufferSource(), g = ctx.createGain(), mine = { src, g }, t0 = Math.max(at, ctx.currentTime + .01);
+      src.buffer = c.buffer; g.gain.value = c.gain * p.vol; src.connect(g); g.connect(busIn('voice'));
+      src.onended = () => { live.delete(mine); try { g.disconnect(); } catch { /* gone */ } };
+      live.add(mine); src.start(t0);
+      for (let k = 0; k < c.marks.length; k += 2) marks.push(c.marks[k], t0 + c.marks[k + 1]);
+      at = t0 + c.seconds;
+      hold(at - ctx.currentTime + c.total - c.seconds);
+      if (!c.more) { end = at; return; }
+      end = Infinity;
+      c.more.then(nx => { if (nx) play(nx); else end = at; }, () => { end = at; });
+    };
+    shapedOk = true;
+    play(clip);
     tick = setInterval(() => {
-      const now = ctx.currentTime - t0;
-      if (words) for (const heard = now - delay(); i < clip.marks.length && clip.marks[i + 1] <= heard; i += 2) if (gen === talkGen) try { onWord(from + clip.marks[i]); } catch { /* the game's */ }
-      if (now >= clip.seconds) end(true);
+      const now = ctx.currentTime;
+      if (words) for (const heard = now - delay(); i < marks.length && marks[i + 1] <= heard; i += 2) if (gen === talkGen) try { onWord(from + marks[i]); } catch { /* the game's */ }
+      if (now >= end) finish(true);
     }, 25);
-    guard = setTimeout(() => end(true), (clip.total + 1.5) * 1000);   // (sound that isn't running, say before the first touch, must not hold the line up)
-    stopped.then(() => end(false));
-    src.start(t0);
+    stopped.then(() => finish(false));
   });
 }
 /** One part of a line, said in the phone's voice or a cast one. Resolves true when it was said. */
@@ -1190,8 +1265,8 @@ async function sayPart(p, gen, from, onWord, stopped) {
     return ok === true || ok === 'late';
   } finally { clearTimeout(timer); }
 }
-export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, onWord = null, size = null, fx = null, respell: names = null, lively = null, fresh = false } = {}) {
-  // the parts of the line: strings (or { text, pitch, rate, volume, voice, lang, size, fx, respell, lively, fresh }) and pauses in seconds
+/** The parts of a line for say() and prepare(): strings (or { text, pitch, ... }) and pauses in seconds. */
+function partsOf(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, size = null, fx = null, respell: names = null, lively = null, fresh = false } = {}) {
   const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false;
   for (const raw of Array.isArray(text) ? text : [text]) {
     if (typeof raw === 'number') { if (raw > 0) parts.push(Math.min(5, raw)); continue; }
@@ -1200,9 +1275,33 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
     if (!t) continue;
     room -= t.length; any = true;
     const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx, rs = respell(t, o.respell || names ? { ...names, ...o.respell } : null), lv = o.lively ?? lively;
-    parts.push({ text: t, said: rs.text, at: rs.at, lively: lv == null ? 0 : clampN(lv, 0, 1, 0), fresh: !!(o.fresh ?? fresh), pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
+    parts.push({ text: t, said: rs.text, at: rs.at, lively: lv == null ? null : clampN(lv, 0, 1, 0), fresh: !!(o.fresh ?? fresh), pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
       size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: OWN || sz != null || (f != null && f !== false) });
   }
+  // a line said in parts through one radio stays keyed up between them: its static comes before the first part and after the last only
+  for (let i = 0, last = null, gap = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (typeof p === 'number') { gap += p; continue; }
+    if (last && p.fx && gap <= 1.2 && p.voice === last.voice && p.size === last.size && JSON.stringify(p.fx) === JSON.stringify(last.fx)) { last.join = gap; p.joined = true; }
+    last = p; gap = 0;
+  }
+  return any ? parts : null;
+}
+/**
+ * Writes a line to sound ahead of time with the built-in voice, so a say() of it later (the same words and options)
+ * starts at once: a cutscene's next lines while this one plays. Resolves true once it is written, false where it
+ * can't be (no built-in voice here, another language, a fresh take). It never stops the line being said now, and lines
+ * wanted now are written first.
+ */
+export function prepare(text, o = {}) {
+  if (!OWN || shapedOk === false || o.fresh) return Promise.resolve(false);
+  const parts = partsOf(text, o); if (!parts) return Promise.resolve(false);
+  const never = new Promise(() => {});
+  return Promise.all(parts.filter(p => typeof p !== 'number').map(p => ownClip(p, -1, never).then(c => c ? c.all || c : null).catch(() => null)))
+    .then(cs => cs.every(Boolean));
+}
+export function say(text, { onWord = null, ...o } = {}) {
+  const parts = partsOf(text, o) || [], any = parts.length > 0;
   stopTalking();
   if (!any || sound.muted || !sound.volume) return Promise.resolve(false);
   const gen = ++talkGen;
@@ -1211,13 +1310,6 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
   if (g) { const t = g.context.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(g.level * .35, t, .05); }
   const done = ok => { if (gen === talkGen) { talkingNow = Math.max(0, talkingNow - 1); cancelTalk = null; if (g) setLevel(g, g.level, .4); } return ok; };
   const stopped = new Promise(res => { cancelTalk = () => res(null); });
-  // a line said in parts through one radio stays keyed up between them: its static comes before the first part and after the last only
-  for (let i = 0, last = null, gap = 0; i < parts.length && shapedOk !== false; i++) {
-    const p = parts[i];
-    if (typeof p === 'number') { gap += p; continue; }
-    if (last && p.fx && gap <= 1.2 && p.voice === last.voice && p.size === last.size && JSON.stringify(p.fx) === JSON.stringify(last.fx)) { last.join = gap; p.joined = true; }
-    last = p; gap = 0;
-  }
   // shaped parts are written to sound one after another from now, so each is ready (or nearly) when its turn comes
   if (shapedOk !== false) { let line = Promise.resolve(); for (const p of parts) if (p.shape) p.clip = line = line.then(() => gen === talkGen ? clipFor(p, gen, stopped) : null).catch(() => null); }
   return (async () => {
@@ -1238,7 +1330,7 @@ export function stopTalking() {
   if (talkingNow) { talkingNow = 0; const g = mix?.buses.get('music'); if (g) setLevel(g, g.level, .3); }
   for (const v of live) hush(v);
   live.clear();
-  try { if (rendering) { if (RENDER) Promise.resolve(RENDER.cancel()).catch(() => {}); ownCancel(); } } catch { /* none */ }
+  try { if (rendering && RENDER) Promise.resolve(RENDER.cancel()).catch(() => {}); if (OWN) ownCancel(); } catch { /* none */ }
   try { if (TTS) TTS.stop(); else globalThis.speechSynthesis?.cancel(); } catch { /* none */ }
 }
 /** True while a line is being spoken. */

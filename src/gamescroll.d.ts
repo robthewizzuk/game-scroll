@@ -302,15 +302,23 @@ export interface SoundPart {
    * With either, the phone writes the line to sound and the kit plays it through the mixer's 'voice' channel, as loud on every phone,
    * with the room's echo, and onWord for every word (the Android and iPhone apps; elsewhere the line is spoken as before, size as a
    * lean of its pitch). It starts a moment later than a plain line: open with a short pause, say([.2, 'Ah. A door.'], { fx: 'tannoy' }).
-   * The Mac, Windows and Linux app speaks every English line with its own built-in voice (Pocket TTS 7M, 19 voices: 9 women, 7 men,
-   * 3 in between that come only by name, like: ['alba'], ['marius'], ['stuart']), shaped or not, through the mixer; other languages,
-   * and lines before its file has downloaded the first time, are said by the computer's voices. It reads numbers, money, times and
+   * The Mac, Windows and Linux app and the phone apps speak every English line with their own built-in voice (Pocket TTS 7M, 23
+   * voices: 11 women, 9 men, with British, Scottish, Canadian, American and French, Spanish, Italian, Dutch accents (lang 'en-FR',
+   * 'en-ES', 'en-IT', 'en-NL'), 3 in between that come only by name, like: ['alba'], ['marius'], ['stuart']; a bigger cast gets
+   * voices made between two), shaped or not, through the mixer, starting once its first sentence is written; other languages,
+   * and lines before its file has downloaded the first time, are said by the device's voices. It reads numbers, money, times and
    * dates as words ('£5.99 at 3:30 pm on 01/02' -> 'five pounds ninety-nine at three thirty p m on the first of February'; lang
-   * 'en-US' reads month first), says a line the same way each time it is said (fresh: true for a new take), and lively (0 to 1)
-   * widens its intonation for an excitable character.
+   * 'en-US' reads month first), says a line the same way each time it is said and keeps it for the next launch (fresh: true for a
+   * new take), and lively (0 to 1) widens its intonation for an excitable character (left out: each voice its own, more on a shout).
    * respell: how made-up names are said, for every voice: { Zorblax: 'zor blacks', "Qa'tik": 'ka teek' } (whole words, any case).
    */
   say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean }): Promise<boolean>;
+  /**
+   * Writes a line to sound ahead of time with the built-in voice, so a say() with the same words and options starts at once (a
+   * cutscene's next lines while this one plays; a Cutscene does its actors' lines itself). Resolves true once written, false
+   * where there is no built-in voice (then say() works as usual). Never stops the line being said, and is written after it.
+   */
+  prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
   voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>;
   stopTalking(): void;

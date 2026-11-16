@@ -104,6 +104,60 @@ export function wordTimes(text, seconds) {
 }
 
 /**
+ * Where each word starts, [place in the text, seconds, ...], from the sound itself (for engines that don't say): the
+ * words are spread over the time the voice is heard, not the pauses, and a pause long enough to be one is where the
+ * word after a full stop or a comma begins, when one is near where it would fall. Within a sentence it is a guess by
+ * word length, as wordTimes(); the pauses keep the guess from drifting a sentence out. x: samples -1..1 at `rate`.
+ */
+export function marksFrom(text, x, rate) {
+  const hop = Math.max(1, Math.round(rate * .01)), n = Math.floor(x.length / hop), words = [], re = /\S+/g;
+  for (let m; (m = re.exec(String(text)));) words.push({ at: m.index, u: m[0].replace(/[^\p{L}\p{N}]/gu, '').length + 1.5, end: /[.!?…]["')\]]?$/.test(m[0]) ? 2 : /[,;:—]["')\]]?$/.test(m[0]) ? 1 : 0 });
+  if (!words.length) return [];
+  if (n < 4) return wordTimes(text, x.length / rate);
+  const e = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let s2 = 0; for (let i = f * hop, j = i + hop; i < j; i++) s2 += x[i] * x[i]; e[f] = Math.sqrt(s2 / hop); }
+  const sorted = Float32Array.from(e).sort(), th = Math.max(1e-4, sorted[Math.floor(n * .9)] * .1);
+  let a = 0, b = n - 1;
+  while (a < n && e[a] < th) a++;
+  while (b > a && e[b] < th) b--;
+  if (b - a < 4) return wordTimes(text, x.length / rate);
+  // pauses: quiet for 120 ms or more, inside the speech; q: how much speech came before each
+  const pauses = []; let spoken = 0;
+  for (let f = a; f <= b;) {
+    if (e[f] >= th) { spoken++; f++; continue; }
+    let g = f; while (g <= b && e[g] < th) g++;
+    if (g - f >= 12) pauses.push({ s: f, e: g, q: spoken }); else spoken += g - f;
+    f = g;
+  }
+  const S = Math.max(1, spoken), cum = [0];
+  for (const w of words) cum.push(cum[cum.length - 1] + w.u);
+  const U = cum[words.length];
+  // each pause to the word boundary it most likely is (a full stop or comma before it, near where the guess puts it), in order
+  const anchors = [{ k: 0, q: 0 }];
+  for (const p of pauses) {
+    let best = -1, cost = Infinity;
+    for (let k = anchors[anchors.length - 1].k + 1; k < words.length; k++) {
+      const d = Math.abs(cum[k] / U * S - p.q) / S, c = d - (words[k - 1].end === 2 ? .15 : words[k - 1].end ? .08 : 0);
+      if (d < .25 && c < cost) { cost = c; best = k; }
+    }
+    if (best > 0) anchors.push({ k: best, q: p.q, pause: p });
+  }
+  anchors.push({ k: words.length, q: S });
+  // speech time to sound time: skip the pauses before it (a word placed right at a pause starts after it)
+  const real = q => { let f = a + q; for (const p of pauses) if (p.q <= q) f += p.e - p.s; return f; };
+  const out = [];
+  for (let i = 0; i + 1 < anchors.length; i++) {
+    const A = anchors[i], B = anchors[i + 1], span = cum[B.k] - cum[A.k] || 1;
+    for (let k = A.k; k < B.k; k++) {
+      const q = A.q + (cum[k] - cum[A.k]) / span * (B.q - A.q);
+      out.push(words[k].at, (k === A.k && A.pause ? A.pause.e : real(q)) * hop / rate);
+    }
+  }
+  for (let i = 3; i < out.length; i += 2) if (out[i] < out[i - 2]) out[i] = out[i - 2];
+  return out;
+}
+
+/**
  * The engine's own word marks if they make sense for this line (in order, inside the text and the
  * sound, and most of the words), else null: then wordTimes() guesses.
  */
@@ -210,12 +264,14 @@ export const canShape = () => !!(globalThis.OfflineAudioContext || globalThis.we
  * faster by that much, so have the phone speak `size` times faster to keep the pace. fx: a recipe from fxOf().
  * A line said in several parts through one radio stays keyed up between them: open: false leaves out the
  * burst of static before this part, close: false the one after it, and hold is the pause (seconds) to the
- * next part, which the static under the words carries on through.
+ * next part, which the static under the words carries on through. A line that comes in pieces (the built-in voice
+ * writes a sentence at a time) keeps the silence between them: trimStart: false on all but the first piece, trimEnd:
+ * false on all but the last.
  */
-export async function shape(samples, rate, { size = 1, fx = null, outRate = 48000, open = true, close = true, hold = 0 } = {}) {
+export async function shape(samples, rate, { size = 1, fx = null, outRate = 48000, open = true, close = true, hold = 0, trimStart = true, trimEnd = true } = {}) {
   const Off = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
   if (!Off) throw new Error('no way to shape sound here');
-  const [a, b] = trim(samples, rate), x = samples.subarray(a, b);
+  const [a0, b0] = trim(samples, rate), a = trimStart ? a0 : 0, b = trimEnd ? b0 : samples.length, x = samples.subarray(a, Math.max(a, b));
   if (x.length < rate * .03) throw new Error('no speech in it');
   const s = fx || {}, k = num(size, .5, 2, 1), body = x.length / rate * k, lead = s.squelch && open ? LEAD : 0, total = lead + body + tailOf(s, close, hold);
   const c = new Off(1, Math.ceil(total * outRate), outRate);

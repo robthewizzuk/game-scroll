@@ -10,7 +10,7 @@ Guide: [feel words: which knob a word moves](../feel-words.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TweakFn`, line 2418), where every option and field is described.
+From `src/gamescroll.d.ts` (`TweakFn`, line 2426), where every option and field is described.
 
 ## From the maker kit
 

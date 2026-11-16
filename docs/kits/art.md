@@ -8,14 +8,14 @@ Seeded art made in code: creatures, faces, items, buildings, sprites, names.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ArtPart`, line 3245), where every option and field is described.
+From `src/gamescroll.d.ts` (`ArtPart`, line 3253), where every option and field is described.
 
-- `creature(seed: number, o?: ArtLook): ArtCreature` (:3246)
-- `face(seed: number, o?: { skin?: string; hair?: string }): ArtFace` (:3246)
-- `item(seed: number, kind?: ArtItem['kind'] | null, o?: ArtLook): ArtItem` (:3247)
-- `building(seed: number, o?: ArtLook): ArtBuilding` (:3247)
-- `sprite(seed: number, w?: number, h?: number, colours?: string[], o?: { fill?: number }): ArtSprite` (:3248)
-- `name(seed: number, kind?: 'person' | 'place' | 'thing'): string` (:3248)
+- `creature(seed: number, o?: ArtLook): ArtCreature` (:3254)
+- `face(seed: number, o?: { skin?: string; hair?: string }): ArtFace` (:3254)
+- `item(seed: number, kind?: ArtItem['kind'] | null, o?: ArtLook): ArtItem` (:3255)
+- `building(seed: number, o?: ArtLook): ArtBuilding` (:3255)
+- `sprite(seed: number, w?: number, h?: number, colours?: string[], o?: { fill?: number }): ArtSprite` (:3256)
+- `name(seed: number, kind?: 'person' | 'place' | 'thing'): string` (:3256)
 
 ## From the maker kit
 

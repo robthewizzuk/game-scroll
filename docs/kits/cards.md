@@ -8,18 +8,18 @@ Card decks, totals, groups, poker hands, winners, stacks.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CardsPart`, line 5490), where every option and field is described.
+From `src/gamescroll.d.ts` (`CardsPart`, line 5498), where every option and field is described.
 
-- `SUITS: string[]` (:5491)
-- `SUIT_SIGN: Record<string, string>` (:5491)
-- `card(suit: string, rank: number): Card` (:5492)
-- `Deck: new (o?: { suits?: string[]; ranks?: number[]; jokers?: number; decks?: number; seed?: number | null; cards?: Card[] | null }) => { cards: Card[]; discards: Card…` (:5493)
-- `sort(cards: Card[], o?: { by?: 'suit' | 'rank'; aceHigh?: boolean; suits?: string[] }): Card[]` (:5498)
-- `total(cards: Card[], o?: { face?: number; limit?: number; aceHigh?: number }): { total: number; soft: boolean; bust: boolean }` (:5499)
-- `groups(cards: Card[], o?: { min?: number; aceHigh?: boolean }): { sets: Card[][]; runs: Card[][] }` (:5500)
-- `poker(cards: Card[]): { name: string; describe: string; rank: number; cards: Card[]; solved: Loose }` (:5501)
-- `winners(hands: Card[][]): number[]` (:5502)
-- `stacks(a: Card, b: Card | null, o?: { down?: boolean; alternate?: boolean; sameSuit?: boolean }): boolean` (:5503)
+- `SUITS: string[]` (:5499)
+- `SUIT_SIGN: Record<string, string>` (:5499)
+- `card(suit: string, rank: number): Card` (:5500)
+- `Deck: new (o?: { suits?: string[]; ranks?: number[]; jokers?: number; decks?: number; seed?: number | null; cards?: Card[] | null }) => { cards: Card[]; discards: Card…` (:5501)
+- `sort(cards: Card[], o?: { by?: 'suit' | 'rank'; aceHigh?: boolean; suits?: string[] }): Card[]` (:5506)
+- `total(cards: Card[], o?: { face?: number; limit?: number; aceHigh?: number }): { total: number; soft: boolean; bust: boolean }` (:5507)
+- `groups(cards: Card[], o?: { min?: number; aceHigh?: boolean }): { sets: Card[][]; runs: Card[][] }` (:5508)
+- `poker(cards: Card[]): { name: string; describe: string; rank: number; cards: Card[]; solved: Loose }` (:5509)
+- `winners(hands: Card[][]): number[]` (:5510)
+- `stacks(a: Card, b: Card | null, o?: { down?: boolean; alternate?: boolean; sameSuit?: boolean }): boolean` (:5511)
 
 ## From the maker kit
 

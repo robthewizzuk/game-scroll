@@ -7,6 +7,7 @@
 // that fails, one that never answers.
 (() => {
   window.CapacitorCustomPlatform = { name: 'fake-speech' };   // a native platform as far as Capacitor can tell
+  window.__gsOwnVoice = false;   // a phone the built-in voice (src/kit/talk.js) isn't used on (saving data, too slow): its own engine
   const S = window.__speech = {
     renders: [], spoken: [], cancels: 0, stops: 0,
     rate: 24000,       // samples a second, as Google's engine writes
