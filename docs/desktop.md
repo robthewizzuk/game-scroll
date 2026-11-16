@@ -154,6 +154,11 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   processor) it takes a hot phone's steps: the first resolution step at once, medium from the next round, Auto's frame
   generation where the screen has room. On its battery a laptop plays 3D games as a phone does (no higher than high,
   near 60 frames a second in Auto; 2D near 120), plugged in as a computer. The frame lab and Settings say why.
+  Electron says neither on Linux, so there (SteamOS on a ROG Ally or a Steam Deck, any Linux PC) `desktop/device.cjs`
+  reads the chips' temperatures from `/sys/class/hwmon` (`amdgpu`, `k10temp`, `coretemp`...) against the line each slows
+  itself at (its own crit, else 100 C) as a headroom on Android's scale: warm at .85 (about 91 C), hot at 1. The heat
+  plan (`src/kit/heat.js`) fits it as a phone's, so a handheld steps down a little before it gets there. The battery
+  comes from `/sys/class/power_supply` (a controller's battery doesn't count).
 - **More room before heat** (`src/kit/hd3d.js`): on a phone 3D games never climb above the high tier, because the Fold
   got hot and throttled on ultra. A computer starts where a phone of its class does, with a tier's pixels as a
   phone draws them, and may climb to ultra only when the chip's own times show room: on a 60 Hz screen, frames

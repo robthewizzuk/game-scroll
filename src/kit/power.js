@@ -6,7 +6,8 @@
 // second while the frame lab is open; none of it leaves the phone. On the web only the battery is known, where
 // the browser says.
 // In the desktop app (src/desktop.js power()) the computer says too: macOS its thermal state (as an iPhone does), macOS
-// and Windows how far they slowed the processor, and whether a laptop is on its battery. A computer has more room than a
+// and Windows how far they slowed the processor, Linux its chips' temperatures (as a headroom, so the heat plan fits it:
+// SteamOS on a ROG Ally or a Steam Deck), and whether a laptop is on its battery. A computer has more room than a
 // phone, but a fanless laptop (a MacBook Air) warms under minutes of 3D and then slows itself: warm, it takes the
 // phone's hot steps (src/kit/hd3d.js hot()); on its battery it plays at most at the high tier and near 60 in Auto.
 //
@@ -46,13 +47,16 @@ export function heatOf(o) {
 
 const THERMAL = { nominal: 0, fair: 1, serious: 2, critical: 3 };
 /**
- * A computer's heat from the desktop app's reading (pure: tests): { thermal, limit, battery } -> { heat, thermal }.
+ * A computer's heat from the desktop app's reading (pure: tests): { thermal, limit, headroom } -> { heat, thermal, headroom }.
  * macOS's thermal state as an iPhone's (fair warm, serious and critical hot); a processor slowed below its full speed
- * warm, below three quarters of it hot (Windows says only this).
+ * warm, below three quarters of it hot (Windows says only this); Linux's chip temperatures as a headroom on Android's
+ * scale (desktop/device.cjs: .85 warm, 1 hot), which the heat plan (src/kit/heat.js) fits as a phone's. The hottest wins.
  */
 export function desktopHeat(d) {
   const t = THERMAL[d?.thermal] ?? null, lim = typeof d?.limit === 'number' && d.limit > 0 ? d.limit : 100;
-  return { heat: t >= 2 || lim < 75 ? 2 : t >= 1 || lim < 100 ? 1 : 0, thermal: t };
+  const h = typeof d?.headroom === 'number' && d.headroom >= 0 ? d.headroom : null;
+  const byT = t >= 2 || lim < 75 ? 2 : t >= 1 || lim < 100 ? 1 : 0, byH = h == null ? 0 : h >= 1 ? 2 : h >= .85 ? 1 : 0;
+  return { heat: Math.max(byT, byH), thermal: t, headroom: h };
 }
 const nounOf = () => (desktop ? 'the computer' : 'the phone');
 
@@ -92,7 +96,7 @@ async function ask() {
     }
     else if (desktop?.power) {
       const d = await desktop.power();
-      if (d) { const h = desktopHeat(d); power.heat = h.heat; power.thermal = h.thermal; power.speedLimit = typeof d.limit === 'number' ? d.limit : null; power.onBattery = !!d.battery; }
+      if (d) { const h = desktopHeat(d); power.heat = h.heat; power.thermal = h.thermal; power.headroom = h.headroom; power.speedLimit = typeof d.limit === 'number' ? d.limit : null; power.onBattery = !!d.battery; }
     }
   } catch (_) { /* an older app without the plugin: heat unknown */ }
   try {

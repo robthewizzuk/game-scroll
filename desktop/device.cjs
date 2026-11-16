@@ -78,4 +78,58 @@ function thisDevice(env = process.env, platform = process.platform) {
   return { handheld: handheldOf(facts), gamescope: gamescopeIn(env), steamos, steam: !!(env.SteamGameId || env.SteamAppId), ignorePads: ignoredPads(env.SDL_GAMECONTROLLER_IGNORE_DEVICES) };
 }
 
-module.exports = { handheldOf, gamescopeIn, ignoredPads, zoomFor, thisDevice, HANDHELDS };
+/* ---------- Linux: heat and battery from the kernel's own files ---------- */
+// Electron says how warm a computer is only on macOS, and how far the processor was slowed only on macOS and Windows.
+// Linux shows its chips' temperatures in /sys/class/hwmon: on an AMD handheld (a ROG Ally, a Steam Deck) "amdgpu" (the
+// graphics side of the chip) and "k10temp" (the processor's Tctl); Intel's "coretemp"; NVIDIA's open driver. Each is
+// read against the temperature it slows itself at: its own crit (or max) where it says one, else 100 C, where AMD's
+// handheld chips are held (Tjmax). The hottest gives a headroom on Android's scale (0 cool, 1 where it slows down):
+// from 40 C up to that line, so warm (.85) is about 91 C on a 100 C chip and hot at the line. The engine reads it as an
+// Android phone's headroom (src/kit/power.js), and fits its heat plan to it (src/kit/heat.js).
+const CHIPS = /^(amdgpu|k10temp|zenpower|coretemp|nouveau|nvidia|i915|xe|cpu_thermal|soc_thermal)$/, COOL = 40, LINE_C = 100;
+/** Headroom from sensor readings (pure: tests): [{ chip, temp, crit }] in degrees C -> { headroom, temp, chip } or null. */
+function headroomOf(list) {
+  let best = null;
+  for (const s of list || []) {
+    if (!CHIPS.test(s.chip) || !(s.temp > 0 && s.temp < 150)) continue;
+    const line = s.crit >= 60 && s.crit <= 125 ? s.crit : LINE_C;
+    const h = Math.max(0, (s.temp - COOL) / (line - COOL));
+    if (!best || h > best.headroom) best = { headroom: Math.round(h * 1000) / 1000, temp: s.temp, chip: s.chip };
+  }
+  return best;
+}
+// the sensors' files, found once (a chip's hwmon number can change between starts, not while running)
+let sensors = null;
+function findSensors(root = '/sys/class/hwmon') {
+  const out = [];
+  let dirs = []; try { dirs = fs.readdirSync(root); } catch (_) { return out; }
+  for (const d of dirs) {
+    const dir = `${root}/${d}`, chip = read(`${dir}/name`); if (!CHIPS.test(chip)) continue;
+    let files = []; try { files = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const f of files) {
+      const m = /^temp(\d+)_input$/.exec(f); if (!m) continue;
+      const crit = +read(`${dir}/temp${m[1]}_crit`) || +read(`${dir}/temp${m[1]}_max`) || 0;
+      out.push({ chip, file: `${dir}/${f}`, crit: crit / 1000 });
+    }
+  }
+  return out;
+}
+/** On a laptop's (or handheld's) battery and not charging, from /sys/class/power_supply (pure over its readings: tests). */
+function onBatteryOf(supplies) {
+  const bats = (supplies || []).filter(p => p.type === 'Battery' && p.scope !== 'Device');   // (not a controller's or a mouse's)
+  if (!bats.length) return false;
+  if ((supplies || []).some(p => p.type === 'Mains' && p.online === '1')) return false;
+  return bats.some(b => b.status === 'Discharging');
+}
+/** Linux heat and battery now: { headroom, temp, chip, battery } (headroom null where no chip says). */
+async function linuxPower(root = '/sys/class') {
+  if (!sensors) sensors = findSensors(`${root}/hwmon`);
+  const rd = async f => { try { return (await fs.promises.readFile(f, 'utf8')).trim(); } catch (_) { return ''; } };
+  const temps = await Promise.all(sensors.map(async s => ({ chip: s.chip, crit: s.crit, temp: +(await rd(s.file)) / 1000 })));
+  let ps = []; try { ps = fs.readdirSync(`${root}/power_supply`); } catch (_) { /* none */ }
+  const supplies = await Promise.all(ps.map(async n => { const d = `${root}/power_supply/${n}`; return { type: await rd(`${d}/type`), status: await rd(`${d}/status`), online: await rd(`${d}/online`), scope: await rd(`${d}/scope`) }; }));
+  const h = headroomOf(temps);
+  return { headroom: h ? h.headroom : null, temp: h ? h.temp : null, chip: h ? h.chip : null, battery: onBatteryOf(supplies) };
+}
+
+module.exports = { handheldOf, gamescopeIn, ignoredPads, zoomFor, thisDevice, HANDHELDS, headroomOf, onBatteryOf, linuxPower };

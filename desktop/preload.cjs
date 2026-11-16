@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('gsDesktop', Object.freeze({
   electron: process.versions.electron,
   /** The graphics chip in use and its driver: a promise of { vendorId, deviceId, driverVendor, driverVersion, name } or null (src/steer.js). */
   gpuInfo: () => ipcRenderer.invoke('gs:gpu').catch(() => null),
-  /** Heat and battery: a promise of { thermal: 'unknown' | 'nominal' | 'fair' | 'serious' | 'critical' (macOS), limit: the processor's speed limit in per cent after the system lowered it (macOS, Windows) or null, battery: on a laptop's battery } or null (src/kit/power.js). */
+  /** Heat and battery: a promise of { thermal: 'unknown' | 'nominal' | 'fair' | 'serious' | 'critical' (macOS), limit: the processor's speed limit in per cent after the system lowered it (macOS, Windows) or null, battery: on a laptop's or handheld's battery, headroom: Linux, the hottest chip's temperature on Android's headroom scale (0 cool, 1 where it slows itself) or null, temp: that chip's degrees C } or null (src/kit/power.js). */
   power: () => ipcRenderer.invoke('gs:power').catch(() => null),
   /** Closes the app (Settings › Quit, in a console's games mode). */
   quit: () => ipcRenderer.invoke('gs:quit').catch(() => {}),

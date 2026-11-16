@@ -5,8 +5,8 @@
 //   desktop.gpuInfo()  a promise of the graphics chip in use and its driver ({ vendorId, deviceId, driverVendor,
 //                    driverVersion, name }, or null): the steering list's driver ranges (src/steer.js)
 //   desktop.device   where it runs (desktop/device.cjs): { handheld, gamescope, steamos, steam, console, zoom, ignorePads, webgl } or null
-//   desktop.power()  a promise of { thermal, limit, battery } or null: how warm the computer is, how far it slowed the
-//                    processor, on a laptop's battery (src/kit/power.js)
+//   desktop.power()  a promise of { thermal, limit, battery, headroom, temp } or null: how warm the computer is (macOS's
+//                    word, Linux's chip temperatures), how far it slowed the processor, on a battery (src/kit/power.js)
 //   desktop.quit()   closes the app (Settings, in a console's games mode)
 // The engine reads it where a computer differs from a phone (src/kit/speed.js, src/kit/hd3d.js): more room before
 // heat matters (but a fanless laptop warms too: src/kit/power.js), screens of 144 Hz and more, and graphics chips named

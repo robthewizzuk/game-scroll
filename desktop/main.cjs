@@ -13,7 +13,7 @@
 const { app, BrowserWindow, Menu, ipcMain, net, powerMonitor, protocol, screen, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { thisDevice, zoomFor } = require('./device.cjs');
+const { thisDevice, zoomFor, linuxPower } = require('./device.cjs');
 
 const HOST = 'localhost', ORIGIN = `https://${HOST}`, SCHEME = 'gamescroll';
 const mac = process.platform === 'darwin', win32 = process.platform === 'win32';
@@ -213,15 +213,17 @@ const ours = url => { try { return new URL(url).origin === ORIGIN; } catch (_) {
 
 ipcMain.handle('gs:take-links', e => (e.sender === main?.webContents ? links.splice(0) : []));
 // Heat and battery (src/kit/power.js asks every few seconds while a round is played): how warm macOS says the computer
-// is, how far Windows or macOS has slowed the processor (the share of its full speed, after a change), and whether a
+// is (Linux: below), how far Windows or macOS has slowed the processor (the share of its full speed, after a change), and whether a
 // laptop is on its battery. A fanless laptop (a MacBook Air) slows itself after some minutes of 3D; the engine steps
 // down a little before, as it does on a phone.
 let speedLimit = null;
-ipcMain.handle('gs:power', e => {
+// Linux says neither: there the chips' own temperatures are read (desktop/device.cjs linuxPower), as a headroom.
+ipcMain.handle('gs:power', async e => {
   if (e.sender !== main?.webContents) return null;
   let thermal = 'unknown'; try { if (mac) thermal = powerMonitor.getCurrentThermalState(); } catch (_) { /* an older macOS */ }
   let battery = false; try { battery = powerMonitor.isOnBatteryPower(); } catch (_) { /* no battery here */ }
-  return { thermal, limit: speedLimit, battery };
+  if (process.platform !== 'linux') return { thermal, limit: speedLimit, battery, headroom: null, temp: null };
+  try { const l = await linuxPower(); return { thermal, limit: null, battery: battery || l.battery, headroom: l.headroom, temp: l.temp, chip: l.chip }; } catch (_) { return { thermal, limit: null, battery, headroom: null, temp: null }; }
 });
 // Settings › Quit (a console's games mode is full screen with no window to close; the Steam menu's Exit Game works too)
 ipcMain.handle('gs:quit', e => { if (e.sender === main?.webContents) app.quit(); });
