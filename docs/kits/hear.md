@@ -8,10 +8,10 @@ Sounds the mic hears (a dog, whistling...) and spoken words.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HearPart`, line 5489), where every option and field is described.
+From `src/gamescroll.d.ts` (`HearPart`, line 5521), where every option and field is described.
 
-- `Sounds: new (o?: { want?: string[]; sure?: number; every?: number }) => { ready: boolean; running: boolean; failed: unknown; top: { name: string; sure: number } | null…` Hears everyday sounds: 'Dog', 'Whistling', 'Clapping', 'Laughter', 'Knock', 'Bell'... (:5491)
-- `Voice: new (o?: { words?: string[]; also?: Record<string, string[]>; language?: string }) => { available: boolean | null; listening: boolean; heard: string[]; /** Call…` Spoken commands. available is false on phones that can't listen on the phone itself: use touch then. (:5502)
+- `Sounds: new (o?: { want?: string[]; sure?: number; every?: number }) => { ready: boolean; running: boolean; failed: unknown; top: { name: string; sure: number } | null…` Hears everyday sounds: 'Dog', 'Whistling', 'Clapping', 'Laughter', 'Knock', 'Bell'... (:5523)
+- `Voice: new (o?: { words?: string[]; also?: Record<string, string[]>; language?: string }) => { available: boolean | null; listening: boolean; heard: string[]; /** Call…` Spoken commands. available is false on phones that can't listen on the phone itself: use touch then. (:5534)
 
 ## From the maker kit
 

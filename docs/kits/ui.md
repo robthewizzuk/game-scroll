@@ -8,10 +8,10 @@ Flexbox layout and input for menus, with no look of its own.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`UIPart`, line 5475), where every option and field is described.
+From `src/gamescroll.d.ts` (`UIPart`, line 5507), where every option and field is described.
 
-- `UI: new (w: number, h: number, tree?: Loose) => On<UINode> & { root: UINode | null; w: number; h: number; readonly focusable: UINode[]; readonly focused: UINode | null…` Flexbox layout (Yoga) and input with no look: your game draws every box. (:5477)
-- `wrap(c: CanvasRenderingContext2D, text: string, width: number): string[]` Splits text into lines that fit width (with c's current font). (:5485)
+- `UI: new (w: number, h: number, tree?: Loose) => On<UINode> & { root: UINode | null; w: number; h: number; readonly focusable: UINode[]; readonly focused: UINode | null…` Flexbox layout (Yoga) and input with no look: your game draws every box. (:5509)
+- `wrap(c: CanvasRenderingContext2D, text: string, width: number): string[]` Splits text into lines that fit width (with c's current font). (:5517)
 
 ## From the maker kit
 

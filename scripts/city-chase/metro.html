@@ -1,0 +1,144 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// gs.city's police and taking cars across a big city of districts (gs.city Metro), played for scripts/city-chase.cjs metro:
+// a car the page drives from one district along the roads between to another with stars on it; the police come, chase it
+// over the land between and on into the next district, and stay when the first is let go; the cars between the districts
+// pull over for their sirens; a car crashed on a road between; a parked car, a car between the districts and a police car
+// taken; a second lead somewhere else (switchTo). A picture of each, and the numbers; any failure is an error.
+//   node scripts/city-chase.cjs out.png metro [shots=chase,yield,crash,parked,way,police] [secs=40] [--webgpu]
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts(); await gs.physics3d.loadPhysics3D();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  const shots = (Q.get('shots') || 'chase,yield,crash,parked,way,police').split(','), [cw, ch] = (Q.get('cell') || '480x360').split('x').map(Number);
+  window.__hd.force = 2; window.__hd.upscale = false; window.__hd.hold = false;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * Math.min(3, shots.length); sheet.height = ch * Math.ceil(shots.length / 3); const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#8a98b0', fog: .0022, env: .5, amb: .5, fov: 60 });
+  v.cam.near = .2; v.cam.far = 900; v.cam.updateProjectionMatrix();
+  const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
+  const sky = new gs.sky.Sky(v, { time: 15, speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
+  const opts = { seed: +(Q.get('seed') || 7), districts: ['downtown', 'oldtown', 'suburb', 'harbour'], sky, traffic: .7, people: .5, sound: false, live: 300 };
+  await gs.city.Metro.ready?.(opts); await gs.city.Wanted.ready();
+  const fail = [], info = [], need = (ok, what) => { if (!ok) fail.push(what); };
+  const metro = new gs.city.Metro(v, opts), M = metro, T = M.cars;
+  const phys = new gs.physics3d.World3D(); M.solid(phys);
+  const law = new gs.city.Wanted(M, null);
+  const crimes = [], crime0 = law.crime.bind(law); law.crime = (k, at, o) => { crimes.push(k); return crime0(k, at, o); };
+  const counts = {}; for (const k of ['stars', 'seen', 'lost', 'busted', 'escaped', 'call', 'block']) law.on(k, () => { counts[k] = (counts[k] || 0) + 1; });
+  // the player: from the middle of the first district along the road to the one it joins, at a chase's speed
+  const A = M.districts[0], road = M.connectors.find(r => r.a === A || r.b === A), B = road.a === A ? road.b : road.a;
+  const from = { x: (A.rect.x0 + A.rect.x1) / 2, z: (A.rect.z0 + A.rect.z1) / 2 }, to = { x: (B.rect.x0 + B.rect.x1) / 2, z: (B.rect.z0 + B.rect.z1) / 2 };
+  const route = M.route(from, to); need(route && route.legs.some(l => l.road), 'a route between two districts along a road between');
+  M.prepare(from);
+  const me = { x: from.x, z: from.z, y: 0, heading: 0, v: 0, car: true }; let along = 0;
+  const drive = (dt, speed = 15) => {
+    const P = route.path, turn = P.at(Math.min(P.length, along + 9)), now = P.at(along), h = Math.atan2(turn.x - now.x, turn.z - now.z), dh = Math.abs(Math.atan2(Math.sin(h - me.heading), Math.cos(h - me.heading)));
+    const want = along > P.length - 6 ? 0 : dh > .5 ? 7 : speed; me.v += Math.max(-9 * dt, Math.min(5 * dt, want - me.v)); along = Math.min(P.length, along + me.v * dt);
+    const p = P.at(along), q = P.at(Math.min(P.length, along + 2)); me.x = p.x; me.z = p.z; if (Math.hypot(q.x - p.x, q.z - p.z) > .1) me.heading = Math.atan2(q.x - p.x, q.z - p.z); me.y = M.carY(me.x, me.z, me.y);
+  };
+  let driving = true;
+  const step = dt => { if (driving) drive(dt); M.avoid(me, 1.2); M.update(dt, me); phys.step(dt); law.update(dt, me); sky.update(dt); };
+  const H = window.__hd.info, shoot = async (name, at, look, n = 4) => {
+    v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld(); sun.follow(at[0], 0, at[2]); v.cut?.();
+    for (let i = 0; i < n; i++) { step(1 / 60); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld(); H.shCalls = 0; v.render(cx, cw, ch); await frame(); }
+    const k = shots.indexOf(name); sx.drawImage(cell, (k % 3) * cw, (k / 3 | 0) * ch);
+    sx.font = '13px sans-serif'; sx.fillStyle = '#fff'; sx.fillText(name, (k % 3) * cw + 6, (k / 3 | 0) * ch + 16);
+  };
+  const near = (list, p) => list.slice().sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];
+  for (let i = 0; i < 60; i++) step(1 / 30);
+  // the stars, and the chase: out of the first district, along the road between, into the next
+  law.set(3); law.seenNow(me);
+  const secs = +(Q.get('secs') || 75);
+  let between = 0, seenBetween = 0, aMadeLeft = false, units0 = 0, yields0 = T.stats.yields, crossed = 0;
+  for (let i = 0; i < secs * 30; i++) {
+    step(1 / 30); if (i % 30 === 0 && !law.seen) law.seenNow(me);   // (seen now and then: called in)
+    if (i % 15 === 0) { v.cam.position.set(me.x, me.y + 30, me.z - 20); v.cam.lookAt(me.x, me.y, me.z); }
+    const off = !M.districtAt(me.x, me.z, 0); if (off) { between++; if (law.units.some(u => !M.districtAt(u.car.x, u.car.z, 0) && Math.hypot(u.car.x - me.x, u.car.z - me.z) < 120)) seenBetween++; }
+    for (const u of law.units) if (!u.inA && M.districtAt(u.car.x, u.car.z, 0) === B) { u.inA = true; crossed++; }
+    if (!A.city && !aMadeLeft) { aMadeLeft = true; units0 = law.units.length; }
+    if (Q.has('trace') && i % 60 === 0) info.push(`${(i / 30).toFixed(0)}s me ${me.v.toFixed(0)} m/s in ${M.districtAt(me.x, me.z, 0)?.name || 'between'} y ${me.y.toFixed(1)} | made ${M.cities.length} | ` + law.units.map(u => `${Math.hypot(u.car.x - me.x, u.car.z - me.z).toFixed(0)}m ${u.car.mode}/${u.car.chase?.how} ${u.car.v.toFixed(0)}m/s y ${(u.car.y || 0).toFixed(1)} ${u.tactic}`).join(' | '));
+  }
+  info.push(`chase ${secs} s: ${between} frames between districts, police near on the road between in ${seenBetween}; ${crossed} police cars into ${B.name}; ${law.units.length} units now (${law.units.map(u => u.tactic).join(',')}); first district ${A.city ? 'still made' : 'let go (' + units0 + ' units then)'}; stars ${law.stars}`);
+  need(between > 30, 'the player drove the road between districts');
+  need(seenBetween > 0, 'police followed onto the road between the districts');
+  need(law.units.length > 0 && law.units.every(u => T.roam.list.includes(u.car)), 'the police are the big city\'s own cars (they go anywhere)');
+  need(law.units.every(u => T.has(u.car)), 'every unit\'s car is one of the big city\'s');
+  if (shots.includes('chase')) {
+    const u = near(law.units.map(u => u.car), me) || me, c = u, fx = Math.sin(c.heading), fz = Math.cos(c.heading);
+    await shoot('chase', [c.x - fx * 9 + fz * 3, (c.y || 0) + 3.4, c.z - fz * 9 - fx * 3], [c.x + fx * 8, (c.y || 0) + 1, c.z + fz * 8]);
+  }
+  // the cars between the districts pull over for a siren behind them
+  const W = M.ways.traffic;
+  if (W) {
+    // (the player stopped beside the road between, near one of its cars: the big city's own cars far from the player go)
+    driving = false; law.set(0); const w = near(W.list.filter(c => !c.r.ring), me); Object.assign(me, { x: w.x - Math.cos(w.heading) * 9, z: w.z + Math.sin(w.heading) * 9, y: w.y, v: 0 });
+    for (let i = 0; i < 10; i++) step(1 / 30);
+    const cop = T.add({ x: w.x - Math.sin(w.heading) * 20, z: w.z - Math.cos(w.heading) * 20, y: w.y, heading: w.heading, police: true, keep: true });
+    need(!!cop, 'a police car of the game\'s own on a road between districts');
+    if (cop) { T.chase(cop, w, { how: 'pursue', top: 14, keep: 9, siren: true }); for (let i = 0; i < 90; i++) step(1 / 30); }
+    info.push(`yield: ${W.yields - yields0} times a car between the districts pulled over; that one pull ${w.pull.toFixed(2)} v ${w.v.toFixed(1)}`);
+    need((W.yields || 0) > yields0, 'cars between the districts pull over for a siren');
+    if (shots.includes('yield')) { const fx = Math.sin(w.heading), fz = Math.cos(w.heading); await shoot('yield', [w.x - fx * 14 - fz * 3, w.y + 4, w.z - fz * 14 + fx * 3], [w.x + fx * 3, w.y, w.z + fz * 3]); }
+    if (cop) T.remove(cop);
+    // one crashed into on the road between: it slides as one of the big city's own, a body in the World3D
+    const x = near(W.list.filter(c => c !== w && c.v > 4 && !c.r.ring), me);
+    need(!!x, 'a car moving on a road between districts');
+    if (x) {
+      Object.assign(me, { x: x.x - Math.cos(x.heading) * 12, z: x.z + Math.sin(x.heading) * 12, y: x.y }); M.update(0, me);
+      const fx = Math.sin(x.heading), fz = Math.cos(x.heading), at = [x.x + fz * 9 - fx * 6, x.y + 3.4, x.z - fx * 9 - fz * 6];
+      const c = T.crash(x, { x: fz * 11, z: -fx * 11 }, { at: { x: x.x + fx * 1.5, z: x.z + fz * 1.5 }, spin: 2 });
+      need(c && c !== x && T.roam.list.includes(c) && c.mode === 'loose', 'a car crashed on a road between is the big city\'s own, sliding');
+      for (let i = 0; i < 30; i++) step(1 / 60);
+      if (shots.includes('crash')) await shoot('crash', at, [c.x, (c.y || 0) + .6, c.z], 3);
+      info.push(`crash between: ${c?.body ? 'a body in the World3D' : 'a slide'}, ${c?.mode}, y ${(c?.y || 0).toFixed(1)} (was ${x.y.toFixed(1)}), moved ${Math.hypot(c.x - at[0], c.z - at[2]).toFixed(1)} m from the camera; ${T.roam.loose} loose, solid ${!!T.phys}, bodies ${!!T.roam.city.bodies} ${!!T.roam.city.bodies?.world?.world}`);
+    }
+  }
+  // taking cars: one parked along a kerb, one on a road between, a police car
+  law.set(0); driving = false;
+  for (let i = 0; i < 30; i++) step(1 / 30);
+  const city = M.city || M.cities[0];
+  const jacks = () => M.events.filter(e => e.kind === 'carjack').length;
+  let seenJacks = 0; const watch = n => { for (let i = 0; i < n; i++) { step(1 / 30); seenJacks += jacks(); } };
+  const pk = city.parked[0];
+  if (pk) {
+    const list = T.near(pk, 3, { parked: true }); need(list.includes(pk), 'cars.near(p, r, { parked: true }) finds a parked car');
+    const n0 = city.parked.length, car = T.take(pk, { by: me });
+    need(car && car.isObject3D && !city.parked.includes(pk) && city.parked.length === n0 - 1, 'a parked car taken: a vehicle, gone from the kerb');
+    need(!city.parkedNear(pk.x, pk.z, .5).includes(pk), 'a parked car taken: no longer solid at the kerb');
+    watch(4);
+    if (shots.includes('parked')) { const fx = Math.sin(pk.heading), fz = Math.cos(pk.heading); await shoot('parked', [pk.x + fz * 6 - fx * 5, 2.6, pk.z - fx * 6 - fz * 5], [pk.x, .7, pk.z]); }
+  } else info.push('no parked cars (not a Next Gen view?)');
+  if (W) {
+    const w = near(W.list, me), car = T.take(w, { by: me });
+    need(car && car.isObject3D && !W.list.some(c => c === w && Math.hypot(c.x - car.position.x, c.z - car.position.z) < 1), 'a car between the districts taken: a vehicle, and gone from the road');
+    watch(4);
+    if (shots.includes('way')) { const p = car.position, h = car.rotation.y - Math.PI, fx = Math.sin(h), fz = Math.cos(h); await shoot('way', [p.x + fz * 7 - fx * 6, p.y + 2.8, p.z - fx * 7 - fz * 6], [p.x, p.y + .7, p.z]); }
+  }
+  const pc = T.add({ x: me.x + 8, z: me.z + 8, police: true, keep: true });
+  if (pc) {
+    T.chase(pc, me, { how: 'pursue', top: 0, siren: true }); step(1 / 30);
+    const car = T.take(pc, { by: me });
+    need(car && typeof car.siren === 'function' && car.sirenOn, 'a police car taken: a police car of gs.models, its siren on');
+    watch(4);
+    need(crimes.includes('cop') && crimes.includes('theft'), 'taking cars is a crime to the police: ' + crimes.join(','));
+    if (shots.includes('police')) { const p = car.position, h = car.rotation.y - Math.PI, fx = Math.sin(h), fz = Math.cos(h); await shoot('police', [p.x + fz * 6 - fx * 5, p.y + 2.6, p.z - fx * 6 - fz * 5], [p.x, p.y + .9, p.z]); }
+  }
+  need(seenJacks >= 2, 'carjacks are told in metro.events (' + seenJacks + ')');
+  // a second lead somewhere else: the far districts let go first, then the new one made
+  const far = M.districts.slice().sort((a, b) => Math.hypot((b.rect.x0 + b.rect.x1) / 2 - me.x, (b.rect.z0 + b.rect.z1) / 2 - me.z) - Math.hypot((a.rect.x0 + a.rect.x1) / 2 - me.x, (a.rect.z0 + a.rect.z1) / 2 - me.z))[0];
+  const there = { x: (far.rect.x0 + far.rect.x1) / 2, z: (far.rect.z0 + far.rect.z1) / 2 }, was = M.cities.length;
+  let most = 0; const orig = M.prepare.bind(M); M.prepare = at => { most = Math.max(most, M.cities.length); return orig(at); };
+  M.switchTo(there); M.prepare = orig;
+  need(!!far.city, 'switchTo makes the district there');
+  need(most <= Math.max(1, M.cities.length), 'switchTo lets go before it makes (' + most + ' made while switching, ' + M.cities.length + ' after)');
+  info.push(`switchTo ${far.name}: ${was} made before, ${most} while letting go, ${M.cities.length} after (${M.cities.map(c => M.districts.find(d => d.city === c).name).join(', ')})`);
+  info.push(`traffic: ${Object.entries(T.stats).map(([k, n]) => `${n} ${k}`).join(', ')}`);
+  info.push(`police: ${Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend, error: fail.length ? 'failed: ' + fail.join('; ') : null };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

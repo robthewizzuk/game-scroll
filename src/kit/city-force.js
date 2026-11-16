@@ -78,7 +78,7 @@ export class Force {
 
   update(dt, player) {
     const law = this.law, me = law.me; this.t += dt;
-    me.y = player.y ?? me.y ?? this.city.ground?.(me.x, me.z) ?? 0;
+    me.y = player.y ?? this.city.ground?.(me.x, me.z, (me.y ?? 0) + 1) ?? 0;
     const w = this.waterOf.waterAt(me.x, me.z, me.y);
     this.wet = w.y > -Infinity && (player.boat || player.swim || me.y < w.y + 1.2);
     this.dryT = this.wet ? 0 : this.dryT + dt;
@@ -105,7 +105,7 @@ export class Force {
     o.health = new Health({ max: 80 + 10 * this.law.stars, downed: true, bleed: 9999 });
     o.gun = arm(kind); o.kind = kind; o.armed = true; o.aim = 0; o.fireT = .8 + Math.random(); o.burst = 0;
     if (this.guns) { const m = weapon(kind); o.wield = m.wield(o.body); }
-    Object.defineProperties(o, { y: { get: () => o.body.position.y, configurable: true }, hp: { get: () => o.health.hp, configurable: true }, maxHp: { get: () => o.health.max, configurable: true }, alive: { get: () => !o.health.down && !o.health.dead, configurable: true } });
+    Object.defineProperties(o, { y: { get: () => o.body.position.y, set: v => { o.body.position.y = v; }, configurable: true }, hp: { get: () => o.health.hp, configurable: true }, maxHp: { get: () => o.health.max, configurable: true }, alive: { get: () => !o.health.down && !o.health.dead, configurable: true } });
     o.order = { do: 'hold', role: 'idle' };
     this.squadOf = null;   // (the squad is made again with them in it)
     return o;
@@ -149,7 +149,7 @@ export class Force {
     if ((o.seeT = (o.seeT || 0) - dt) <= 0) { o.seeT = .25 + Math.random() * .1; o.sees = this.lineTo(o, me); }   // (a few rays a second, not every frame)
     const sees = o.sees, face = sees && d < 40 ? Math.atan2(me.x - o.x, me.z - o.z) : dd > .2 ? Math.atan2(dx, dz) : B.rotation.y;
     o.heading = face;
-    B.position.set(o.x, city.ground(o.x, o.z) || 0, o.z); B.rotation.y += wrap(face - B.rotation.y) * Math.min(1, dt * 8);
+    B.position.set(o.x, city.ground(o.x, o.z, (o.y || 0) + 1) || 0, o.z); B.rotation.y += wrap(face - B.rotation.y) * Math.min(1, dt * 8);
     const low = ord.spot && ord.spot.low && o.speed < .5 && o.aim < .5;
     if (o.speed < .4 && low) { if (o.move !== 'crouch') { B.rig.play('crouch'); o.move = 'crouch'; } } else { o.move = null; B.rig.blend({ idle: 0, walk: 1.4, run: 4 }, o.speed); }
     B.rig.update(dt, { speed: o.speed, toward: { x: tx, z: tz } }); o.react.update(dt);
@@ -283,7 +283,7 @@ export class Force {
     if (list && !on) { const i = list.indexOf(L); if (i >= 0) list.splice(i, 1); }
     if (this.beam) this.beam.visible = on;
     if (!on) { L.i = 0; return; }
-    const sp = H.model.points.spot || H.model, p = sp.getWorldPosition(new Vector3()), gy = this.city.ground?.(at.x, at.z ?? at.y) || 0;
+    const sp = H.model.points.spot || H.model, p = sp.getWorldPosition(new Vector3()), gy = this.city.ground?.(at.x, at.z ?? at.y, (at === this.law.me ? at.y || 0 : 0) + 1) || 0;
     const dx = at.x - p.x, dy = gy - p.y, dz = (at.z ?? at.y) - p.z, l = Math.hypot(dx, dy, dz) || 1;
     Object.assign(L, { x: p.x, y: p.y - .3, z: p.z, i: 60 * night, reach: l + 25 }); L.dir[0] = dx / l; L.dir[1] = dy / l; L.dir[2] = dz / l;
     if (!(this.city.indoor ||= []).includes(L)) this.city.indoor.push(L);   // (lit with the city's lamps: Interiors gives the city a new list each frame, so it goes in again)
