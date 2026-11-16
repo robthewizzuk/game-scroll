@@ -2,6 +2,7 @@
 // tap a friend to throw it on before the fuse burns down. Each catch scores. The robots throw it back
 // sooner and sooner, and the fuse gets shorter. Holding it when it pops costs a party hat. Lose all three.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds } = gs.sound;
 const { haptic } = gs.device;
 const { Juice } = gs.juice;
@@ -27,8 +28,9 @@ function view3d() {
 }
 
 function make(api) {
+  const ready = new Ready();   // the first touch starts the round and does nothing else
   const fx = new Juice();
-  let kids, nap, holder, fuse, fuseMax, fly, score, hats, t, thinkT, started, ended, msg, ml, passes;
+  let kids, nap, holder, fuse, fuseMax, fly, score, hats, t, thinkT, ended, msg, ml, passes;
   const CX = () => W / 2, CY = () => H / 2 + 8;
   const seat = i => { const a = Math.PI / 2 + i * Math.PI * 2 / 5; return [CX() + Math.cos(a) * 58, CY() + Math.sin(a) * 44]; };
 
@@ -48,11 +50,11 @@ function make(api) {
   }
 
   return {
-    reset() { kids = [0, 1, 2, 3, 4]; nap = []; score = 0; hats = 3; t = 0; started = false; ended = false; msg = ''; ml = 0; passes = 0; newCake(0); fx.clear(); },
+    reset() { kids = [0, 1, 2, 3, 4]; nap = []; score = 0; hats = 3; t = 0; ready.reset(); ended = false; msg = ''; ml = 0; passes = 0; newCake(0); fx.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       fx.update(dt); t += dt; if (ml > 0) ml -= dt;
-      if (!started || ended) return;
+      if (!ready.playing || ended) return;
       fuse -= dt;
       if (fly) { fly.k += dt / .45; if (fly.k >= 1) { if (fly.from === 0 && nap.includes(fly.to)) { fuse *= .6; msg = 'ASLEEP! IT BOUNCED BACK'; ml = 1.2; sounds.hit(); haptic('warning'); fly = { from: fly.to, to: 0, k: 0, back: true }; return; } holder = fly.to; const back = fly.back; fly = null; if (holder === 0) doze(); if (holder === 0 && !back) { score++; api.score(score); sounds.coin(1 + passes * .01); fx.pop(...seat(0).map((v, i) => v - (i ? 26 : 0)), '+1'); } thinkT = holder === 0 ? 0 : rnd(.25, 1.1) * Math.max(.4, 1 - passes * .015); } }
       if (fuse <= 0) { pop(); return; }
@@ -83,19 +85,19 @@ function make(api) {
       c.fillStyle = fuse / fuseMax < .3 ? '#ff5040' : '#ffd040'; c.fillRect(W / 2 - 40, H - 14, 80 * Math.max(0, fuse / fuseMax), 6);
       for (let i = 0; i < 3; i++) { c.fillStyle = i < hats ? '#f080b0' : '#ffffff30'; c.beginPath(); c.moveTo(8 + i * 11, 15); c.lineTo(12 + i * 11, 5); c.lineTo(16 + i * 11, 15); c.fill(); }
       c.textAlign = 'center'; c.fillStyle = '#fff';
-      if (holder === 0 && !fly && started) { c.font = '800 11px Rubik, sans-serif'; c.fillStyle = (t * 6 | 0) % 2 ? '#ffe060' : '#fff'; c.fillText('TAP A FRIEND!', W / 2, H - 22); }
+      if (holder === 0 && !fly && ready.playing) { c.font = '800 11px Rubik, sans-serif'; c.fillStyle = (t * 6 | 0) % 2 ? '#ffe060' : '#fff'; c.fillText('TAP A FRIEND!', W / 2, H - 22); }
       for (const i of nap) { const [x, y] = seat(i); c.font = '800 10px Rubik, sans-serif'; c.fillStyle = '#c0d8ff'; c.fillText('z', x + 6, y - 26 - (t * 8 % 6)); c.fillText('Z', x + 11, y - 32 - (t * 8 % 6)); }
       if (ml > 0) { c.font = '800 14px Rubik, sans-serif'; c.fillStyle = '#fff'; c.fillText(msg, W / 2, Math.max(30, api.scoreArea().bottom + 14)); }
-      if (!started) { c.fillStyle = '#000b'; c.fillRect(0, H / 2 - 20, W, 34); c.fillStyle = '#fff'; c.font = '700 10px Rubik, sans-serif'; c.fillText('You are at the front with the cake.', W / 2, H / 2 - 6); c.fillText('Tap a friend to throw it. Tap to start', W / 2, H / 2 + 8); }
+      if (!ready.playing) { c.fillStyle = '#000b'; c.fillRect(0, H / 2 - 20, W, 34); c.fillStyle = '#fff'; c.font = '700 10px Rubik, sans-serif'; c.fillText('You are at the front with the cake.', W / 2, H / 2 - 6); c.fillText('Tap a friend to throw it. Tap to start', W / 2, H / 2 + 8); }
     },
     down(x, y) {
-      if (!started) { started = true; return; }
+      if (ready.go()) return;
       if (holder !== 0 || fly || ended) return;
       let best = -1, bd = 34;
       for (let i = 1; i < 5; i++) { const [sx, sy] = seat(i), d = Math.hypot(sx - x, sy - 10 - y); if (d < bd) { bd = d; best = i; } }
       if (best > 0) throwTo(0, best);
     },
-    key(k, d) { if (!d) return; if (!started) { started = true; return; } if (holder === 0 && !fly && '1234'.includes(k)) throwTo(0, +k); },
+    key(k, d) { if (!d) return; if (ready.go()) return; if (holder === 0 && !fly && '1234'.includes(k)) throwTo(0, +k); },
   };
 }
 

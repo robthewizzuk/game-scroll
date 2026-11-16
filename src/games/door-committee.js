@@ -25,6 +25,8 @@ const { Keys } = gs.controls;
 const { Ready } = gs.rounds;
 const { NavGrid } = gs.ai;
 const { HDView, Particles, pbr, rbox, surface, speckle, spot, THREE } = gs.hd;
+const { icon } = gs.icons;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 let W = 300, H = 300;
 const COLS = 11, ROWS = 9, MAXD = 6;
@@ -412,7 +414,6 @@ function parts(s) {
   }
   return out;
 }
-const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 function make(api) {
   const fx = new Juice(), keys = new Keys(), ready = new Ready({ eat: false });   // the clock waits for the first touch, which also acts
@@ -539,7 +540,7 @@ function make(api) {
     let gi = 0, di = 0;
     langPick = null;
     if (room.loc) {
-      const pool = LANGS.slice().sort(() => Math.random() - .5).slice(0, 4);
+      const pool = shuffle(LANGS.slice()).slice(0, 4);
       langPick = (Math.random() * 4) | 0;
       'ABCD'.split('').forEach((L, i) => { room.doors[L].word = pool[i][1]; room.doors[L].lang = pool[i][0]; room.doors[L].real = i === langPick; });
       langPick = pool[langPick][0];
@@ -1244,7 +1245,7 @@ function make(api) {
       if (doors.some(d => d.qa)) {
         const items2 = [['Walk through the test door', qa.cross >= 1], ['Walk back through it', qa.cross >= 2], ['Stand in it until it gets upset', qa.stood >= 2.2]];
         c.font = font(600, 11); c.textAlign = 'left';
-        items2.forEach(([s, ok], i) => { const y = H - 50 + i * 16; c.fillStyle = '#0d1115bb'; c.fillRect(8, y - 11, c.measureText('☐ ' + s).width + 10, 15); c.fillStyle = ok ? MINT : '#e9fff7'; c.fillText((ok ? '☑ ' : '☐ ') + s, 13, y); });
+        items2.forEach(([s, ok], i) => { const y = H - 50 + i * 16; c.fillStyle = '#0d1115bb'; c.fillRect(8, y - 11, c.measureText(s).width + 24, 15); c.fillStyle = ok ? MINT : '#e9fff7'; icon(c, ok ? 'check-mark' : 'square', 19, y - 4, 10, { color: c.fillStyle }); c.fillText(s, 27, y); });
       }
       if (room.doors.E && room.doors.E.type === 'pay') { c.font = font(700, 13); c.textAlign = 'left'; c.fillStyle = PINK; c.fillText('◆ ' + gemsGot + ' / 5', 12, H - 16); }
       if (!ended && !fin) ready.draw(c, W, H, { text: 'The clock starts when you do', size: 13, y: H * .7 });

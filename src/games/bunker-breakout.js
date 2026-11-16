@@ -4,6 +4,8 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { HDView, Particles, pbr, rbox, surface, speckle, spot, THREE } = gs.hd;
+const { approach } = gs.juice;
+const { icon } = gs.icons;
 const {
   Group, Mesh, InstancedMesh, BoxGeometry, SphereGeometry, CylinderGeometry, CapsuleGeometry, ConeGeometry, TorusGeometry,
   PlaneGeometry, OctahedronGeometry, BufferGeometry, BufferAttribute, MeshBasicMaterial, PointLight, Object3D, CanvasTexture,
@@ -687,7 +689,7 @@ function make(api) {
     if (keys.has('ArrowLeft') || keys.has('a')) turn = -1; if (keys.has('ArrowRight') || keys.has('d')) turn = 1;
     if (keys.has('q')) strafe = -1; if (keys.has('e')) strafe = 1;
     pl.a -= turn * 2.5 * dt;
-    pl.roll += (-turn * .03 - pl.roll) * Math.min(1, dt * 6);
+    pl.roll = approach(pl.roll, -turn * .03, 6, dt);
     const sp = 3.6 * (fwd < 0 ? .7 : 1), fx = -Math.sin(pl.a), fz = -Math.cos(pl.a);
     const vx = (fx * fwd + -fz * strafe) * sp, vz = (fz * fwd + fx * strafe) * sp;
     const ox = pl.x, oz = pl.z; moveBody(pl, vx * dt, vz * dt, .32);
@@ -803,7 +805,7 @@ function make(api) {
     // health (bottom left)
     const by = H - 18 * u, glass = (x, y, w, h) => { c.fillStyle = '#05070cb0'; rr(c, x, y, w, h, h / 2); c.fill(); c.strokeStyle = '#ffffff22'; c.lineWidth = 1; c.stroke(); };
     glass(10 * u, by - 11 * u, 108 * u, 22 * u);
-    c.fillStyle = pl.hp < 30 ? '#ff4a3a' : '#f2f5fb'; c.font = `800 ${13 * u}px Rubik, sans-serif`; c.textAlign = 'left'; c.fillText('✚', 18 * u, by + .5);
+    c.fillStyle = pl.hp < 30 ? '#ff4a3a' : '#f2f5fb'; c.font = `800 ${13 * u}px Rubik, sans-serif`; c.textAlign = 'left'; icon(c, 'heart-plus', 23 * u, by - 4 * u, 12 * u, { color: c.fillStyle });
     c.fillText(Math.ceil(pl.hp), 32 * u, by + .5);
     const hw = 52 * u, hg = c.createLinearGradient(58 * u, 0, 58 * u + hw, 0); hg.addColorStop(0, pl.hp < 30 ? '#ff3a2a' : '#2a8cff'); hg.addColorStop(1, pl.hp < 30 ? '#ff8a4a' : '#7cc4ff');
     c.fillStyle = '#ffffff1a'; rr(c, 58 * u, by - 3 * u, hw, 6 * u, 3 * u); c.fill(); c.fillStyle = hg; rr(c, 58 * u, by - 3 * u, hw * pl.hp / 100, 6 * u, 3 * u); c.fill();

@@ -4,6 +4,7 @@ const { startMic, stopMic, haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { text } = gs.pixel;
 
 // Sneak through the castle. Hold to creep forward; the longer you hold, the faster and noisier
 // your footsteps. Guards wake if the noise gets too loud near them, and that includes the real
@@ -50,7 +51,7 @@ function make(api) {
         c.fillStyle = P[3]; if (awake) { c.fillRect(gx - 3, FLOOR - 25, 2, 2); c.fillRect(gx + 1, FLOOR - 25, 2, 2); } else { c.fillRect(gx - 3, FLOOR - 24, 2, 1); c.fillRect(gx + 1, FLOOR - 24, 2, 1); }
         if (!awake && g.wake < .2) { c.fillStyle = P[0]; c.font = '6px "Press Start 2P", monospace'; c.fillText('z', gx + 6, FLOOR - 32 - (t * 8 + gx) % 8); }
         if (g.wake > 0 && !awake) { c.fillStyle = P[0]; c.fillRect(gx - 6, FLOOR - 36, 12, 2); c.fillStyle = P[3]; c.fillRect(gx - 6, FLOOR - 36, Math.round(12 * g.wake), 2); }
-        if (awake) { c.fillStyle = P[0]; c.font = '8px "Press Start 2P", monospace'; c.fillText('!', gx - 2, FLOOR - 32); }
+        if (awake) { c.fillStyle = P[0]; c.font = '8px "Press Start 2P", monospace'; text(c, '!', gx - 2, FLOOR - 32 - 8, { color: P[0], font: 'big' }); }
       }
       const nx = Math.round(x), step = speed > 2 ? Math.sin(t * speed * .4) * 2 : 0;
       c.fillStyle = P[0]; c.fillRect(nx - 3, FLOOR - 14 + Math.abs(step) * .5, 7, 9); c.fillRect(nx - 2, FLOOR - 19, 6, 5); c.fillStyle = P[3]; c.fillRect(nx, FLOOR - 17, 3, 1);

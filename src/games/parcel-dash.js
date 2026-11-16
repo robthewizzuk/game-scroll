@@ -131,7 +131,7 @@ function make(api) {
           const bonus = Math.round(10 + Math.min(14, trip / 30)); time += bonus;
           say(`Delivered! +${bonus}s`, '#60ffb8'); sounds.coin(1.2); sounds.powerup(); haptic('success');
           if (delivered % 3 === 0) tellRadio(`the orange parcel van has dropped off ${delivered} parcels already this evening`);
-          const [x, y] = v.toScreen(target.x, 2, target.z); fx.pop(x, y, '📦', { color: '#fff' });
+          const [x, y] = v.toScreen(target.x, 2, target.z); fx.pop(x, y, '+1', { color: '#fff' });
           pickTarget();
         } else if (msgT <= 0) say('Slow down to drop it off', '#fff');
       }
@@ -158,7 +158,7 @@ function make(api) {
       // the HUD: time, parcels, how far, a little map with the way
       c.font = '700 18px Rubik, sans-serif'; c.textAlign = 'left'; c.fillStyle = time < 10 && (t * 4 | 0) % 2 ? '#ff6070' : '#fff';
       c.fillText(Math.ceil(Math.max(0, time)) + 's', 12, 26);
-      c.font = '600 13px Rubik, sans-serif'; c.fillStyle = '#e8f0ff'; c.fillText('📦 ' + delivered + '   ' + Math.round(Math.hypot(target.x - car.x, target.z - car.y)) + ' m', 12, 46);
+      c.font = '600 13px Rubik, sans-serif'; c.fillStyle = '#e8f0ff'; icon(c, 'cardboard-box', 20, 41, 16, { color: '#e8f0ff' }); c.fillText(delivered + '   ' + Math.round(Math.hypot(target.x - car.x, target.z - car.y)) + ' m', 32, 46);
       const ms = Math.min(86, W * .28), mx = W - ms - 10, my = 10;
       c.globalAlpha = .92; gps.mini(c, mx, my, ms, ms, { range: 140 }); c.globalAlpha = 1;
       // the next turn, under the map
