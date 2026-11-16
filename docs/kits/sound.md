@@ -6,6 +6,8 @@ Sound effects, 98 ready-made sounds, music and tunes made in code, the mixer, wo
 
 `gs.sound.Ears` (3D sound; `new Ears({ level: world })` muffles sounds behind walls and gives each place its own echo by itself) and `music({ layers }).intensity()` + `follow(song)` (living music)
 
+On the Mac, Windows and Linux app every English `say()` line is spoken by the app's own built-in voice (Pocket TTS 7M by Kyutai, run in a background worker; `src/kit/talk.js`), so a cast sounds the same on every computer and a SteamOS handheld doesn't fall back to espeak. Its 19 voices: 9 women and 7 men cast by `voice: 'woman' | 'man'` (British first, then Scottish, Canadian, American; `lang: 'en-US'` puts American first), and 3 in between that come only by name (`like: ['alba']`). Every line goes through the mixer as a shaped one does, so `size` and `fx` work there too. Lines in other languages, and lines before its 12 MB file has downloaded the first time, are said by the computer's own voices.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it

@@ -1,4 +1,5 @@
-// Gets the face, hand and body tracking, object spotting and sound recognition files (gs.vision, gs.hear; MediaPipe, Apache-2.0) ready to serve:
+// Gets the face, hand and body tracking, object spotting and sound recognition files (gs.vision, gs.hear; MediaPipe, Apache-2.0)
+// and the desktop app's built-in voice (src/kit/talk.js; Pocket TTS 7M, made by scripts/talk-pack.mjs) ready to serve:
 //   node scripts/fetch-ml.mjs [outDir]      (default: ml-cache/, which the dev server serves at /ml/)
 // Writes <outDir>/<ML_VERSION>/: the MediaPipe wasm (from node_modules) and the models (from
 // Google's model storage). The games workflow uploads them to assets.game-scroll.com/ml/ once, and
@@ -8,9 +9,10 @@ import { mkdirSync, copyFileSync, existsSync, writeFileSync, statSync } from 'no
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ML_VERSION, ML_FILES } from '../src/kit/vision-files.js';
+import { writeTo as writeVoice } from './talk-pack.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const out = join(resolve(process.argv[2] || join(ROOT, 'ml-cache')), ML_VERSION);
+const root = resolve(process.argv[2] || join(ROOT, 'ml-cache')), out = join(root, ML_VERSION);
 mkdirSync(out, { recursive: true });
 for (const f of ML_FILES) {
   const dest = join(out, f.name);
@@ -19,3 +21,5 @@ for (const f of ML_FILES) {
   const r = await fetch(f.url); if (!r.ok) throw new Error(`${f.url}: ${r.status}`);
   writeFileSync(dest, Buffer.from(await r.arrayBuffer())); console.log('downloaded', f.name);
 }
+// the voice: its own versioned folder beside them (ml/<TALK_VERSION>/), checked against its SHA-256
+await writeVoice(root);

@@ -14,7 +14,7 @@ name: Games (Cloudflare R2)
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'scripts/build-games.mjs', 'scripts/fetch-ml.mjs', 'scripts/sign-catalogue.mjs', 'store/app-update.json', '.env', '.github/workflows/games-r2.yml']
+    paths: ['src/**', 'scripts/build-games.mjs', 'scripts/fetch-ml.mjs', 'scripts/talk-pack.mjs', 'scripts/sign-catalogue.mjs', 'store/app-update.json', '.env', '.github/workflows/games-r2.yml']
   workflow_dispatch:
 
 permissions:
@@ -47,8 +47,9 @@ jobs:
       - name: Build the game files
         run: node scripts/build-games.mjs dist-games
 
-      # Face and hand tracking files (gs.vision): the MediaPipe engine and models, under a versioned folder.
-      - name: Get the face and hand tracking files
+      # Face and hand tracking files (gs.vision): the MediaPipe engine and models, under a versioned folder;
+      # and the desktop app's voice (Pocket TTS 7M, packed from Kyutai's files and checked against its SHA-256).
+      - name: Get the face and hand tracking files and the voice
         run: node scripts/fetch-ml.mjs dist-games/ml
 
       # Signs the catalogue (scripts/sign-catalogue.mjs) so the app can tell it came from this repo.
@@ -98,7 +99,7 @@ jobs:
             put "$f" "$f" "text/javascript; charset=utf-8" "public, max-age=31536000, immutable"
             up=$((up+1))
           done
-          # Face and hand tracking files: big, so only uploaded once per version (the folder name).
+          # Face and hand tracking files and the voice: big, so only uploaded once per version (the folder name).
           for f in ml/*/*; do
             if curl -fsI "$PUBLIC_URL/$f" >/dev/null 2>&1; then continue; fi
             case "$f" in *.wasm) t="application/wasm";; *) t="application/octet-stream";; esac

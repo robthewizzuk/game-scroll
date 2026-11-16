@@ -47,6 +47,7 @@
     "site": "node scripts/build-site.mjs",
     "ml": "node scripts/fetch-ml.mjs",
     "kit-test": "node scripts/kit-test.mjs",
+    "talk-test": "node scripts/talk-test.mjs",
     "ar-floor": "vite build --mode bundled && node scripts/ar-floor.cjs",
     "brains": "node scripts/brain-check.mjs",
     "playtest": "vite build --mode bundled && node scripts/playtest.cjs",

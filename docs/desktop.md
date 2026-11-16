@@ -184,6 +184,18 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   a rule's `driver` range, so a rule can steer one driver of one card (`driver: '<31.0.101.5186'`), as a
   phone rule steers one browser version.
 
+**Its own voice.** Characters who speak (`gs.sound.say`) use a voice built into the app, the same on every
+computer: Kyutai's Pocket TTS 7M (`src/kit/talk.js`, `pocket-tts.js`), a small speech model ported to plain JavaScript
+and WebAssembly and run in a background worker, with 19 voices from speakers who gave them under open licences
+(`src/kit/talk-files.js`; the credits are under Settings › Licence). Its file (12.3 MB of 8-bit numbers, packed from
+Kyutai's own files by `scripts/talk-pack.mjs`) downloads from the games host the first time a character speaks, is
+checked against its SHA-256 and stays in the cache. It writes speech about three to four times faster than it plays
+on one core of a slow server, more on a laptop or a handheld. Every line plays through the mixer, as a shaped line
+does on the phones. Until the file is in, and for languages other than English, the computer's own voices speak: on
+Linux Chromium only lists speech-dispatcher's voices with `--enable-speech-dispatcher`, which `desktop/main.cjs`
+turns on (SteamOS has espeak-ng; of its ~100 variants a language, only the plain voice and its numbered male and
+female ones are cast). `npm run talk-test` checks it (`--browser`: in a page, through the worker and the mixer).
+
 **Where it runs.** The app is served from `https://localhost`, the Android app's own address, read straight
 from the app's files (`protocol.handle` in `desktop/main.cjs`): the games host, the API and the page's security
 policy already allow it, and saves belong to that address, so they stay put between versions. Saves live in

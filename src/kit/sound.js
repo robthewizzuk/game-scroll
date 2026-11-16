@@ -18,6 +18,7 @@ import { register, own } from './cleanup.js';
 import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.js';
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
 import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks } from './voice-fx.js';
+import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, readyNow as ownReady } from './talk.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
 import { linksFor } from './links.js';
 
@@ -1014,12 +1015,17 @@ register('mixer', { stop: () => mixer.reset() });
 // size as a small change of pitch and no fx. shaped() says which: true once a line has played shaped,
 // false where it can't be, null before the first try. A shaped line starts a moment later than a plain
 // one (the phone writes all of it first), so open with a short pause: say([.2, 'Ah. A door.'], ...).
+// The Mac, Windows and Linux app has a voice of its own built in (talk.js: Pocket TTS 7M, 19 voices): there every
+// line is written to sound that way and played through the mixer, shaped or not, and the cast comes from its voices.
+// Until it has loaded (the first line ever, a 12 MB download), and for languages other than English, the computer's
+// own voices say the line.
 const TTS = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TextToSpeech') ? registerPlugin('TextToSpeech') : null;
 const RENDER = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SpeechAudio') ? registerPlugin('SpeechAudio') : null;   // plugins/speech-audio
 let talkingNow = 0, talkGen = 0, cancelTalk = null, voiceList = null;
 // shaped lines: whether this phone can (null: not tried yet), voices that could not be written to sound, lines already
 // made (the last few, so a line said twice starts at once), and the ones playing
-let shapedOk = RENDER && canShape() ? null : false, shapeFails = 0, rendering = 0, clipSecs = 0;
+let OWN = ownVoice() && canShape();   // the desktop app's built-in voice (false once it can't run here)
+let shapedOk = (RENDER || OWN) && canShape() ? null : false, shapeFails = 0, rendering = 0, clipSecs = 0;
 const noShape = new Set(), clips = new Map(), live = new Set();
 const badVoices = new Set();   // voices that failed here (not downloaded, say): not cast again this session
 const clampN = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? +v : d));
@@ -1041,7 +1047,7 @@ function listVoices() {
   })();
 }
 /** What voices this phone has to cast from: [{ name, lang, kind: 'woman' | 'man' | null }] (joke voices left out). */
-export const voices = () => listVoices().then(l => l.map(v => ({ v, d: describeVoice(v) })).filter(x => !x.d.joke).map(({ v, d }) => ({ name: String(v.name || v.voiceURI || ''), lang: String(v.lang || ''), kind: d.sex === 'f' ? 'woman' : d.sex === 'm' ? 'man' : null })));
+export const voices = () => (OWN ? Promise.resolve(ownVoices()) : listVoices()).then(l => l.map(v => ({ v, d: describeVoice(v) })).filter(x => !x.d.joke).map(({ v, d }) => ({ name: String(v.name || v.voiceURI || ''), lang: String(v.lang || ''), kind: d.sex === 'f' ? 'woman' : d.sex === 'm' ? 'man' : null })));
 /** A voice or the phone that could not write a line to sound: three in a row with none working, and no more are tried. */
 function shapeFailed(who) { noShape.add(who); if (++shapeFails >= 3 && shapedOk !== true) shapedOk = false; }
 /**
@@ -1049,6 +1055,7 @@ function shapeFailed(who) { noShape.add(who); if (++shapeFails >= 3 && shapedOk 
  * marks } to play, or null where it can't be (then the phone says it itself).
  */
 async function clipFor(p, gen, stopped) {
+  if (OWN) return ownClip(p, gen, stopped);
   if (!RENDER || shapedOk === false) return null;
   const a = audio(); if (!a) return null;
   let list = null, pick = null;
@@ -1077,11 +1084,44 @@ async function clipFor(p, gen, stopped) {
     const said = made2.seconds - made2.lead, own = Array.isArray(r.marks) ? r.marks.map((v, i) => i % 2 ? Math.max(0, (v - made2.cut) * p.size) : v) : null;
     const marks = goodMarks(own, p.text, said) || wordTimes(p.text, said);
     for (let i = 1; i < marks.length; i += 2) marks[i] += made2.lead;
-    const clip = { buffer: made2.buffer, gain: made2.gain, seconds: made2.seconds, total: made2.total, marks };
-    clips.set(key, clip); clipSecs += clip.total; shapeFails = 0;
-    while (clips.size > 1 && (clips.size > 32 || clipSecs > 45)) { const [k0, c0] = clips.entries().next().value; clips.delete(k0); clipSecs -= c0.total; }
-    return clip;
+    return keepClip(key, { buffer: made2.buffer, gain: made2.gain, seconds: made2.seconds, total: made2.total, marks });
   } catch { shapeFailed(who); return null; } finally { clearTimeout(timer); rendering--; }
+}
+/**
+ * clipFor() with the desktop app's built-in voice: cast from its own voices (none for a language it doesn't speak:
+ * then null, and the computer's voice says it). A line that comes while the voice is still loading is said by the
+ * computer's voice too, without counting as a failure.
+ */
+async function ownClip(p, gen, stopped) {
+  const a = audio(); if (!a) return null;
+  const list = ownVoices(), pick = castOwn(wantOf(p.voice || 'any', p.lang));
+  if (!pick) return null;
+  const uri = list[pick.at].voiceURI, pitch = clampN(p.pitch * pick.pitch, .5, 2, 1), rate = clampN(p.rate * p.size, .3, 3, 1);
+  const key = JSON.stringify([p.text, uri, p.rate, pitch, p.size, p.fx, p.joined, p.join]), have = clips.get(key);
+  if (have) { clips.delete(key); clips.set(key, have); return have; }
+  let timer = null;
+  const late = ms => new Promise(res => { clearTimeout(timer); timer = setTimeout(res, ms, 'late'); });
+  rendering++;
+  try {
+    const up = await Promise.race([ownReady(), stopped, late(Math.min(4000, 1500 + p.text.length * 20))]);
+    if (gen !== talkGen) return null;
+    if (up === false) { OWN = false; if (!RENDER) shapedOk = false; return null; }   // it can't run here: the computer's voices from now on
+    if (up !== true) return null;   // still loading: this line in the computer's voice
+    const r = await Promise.race([ownSpeak({ text: p.text, voiceURI: uri, rate, pitch }), stopped, late(3000 + p.text.length * 40)]);
+    if (gen !== talkGen) return null;
+    if (r === 'late') ownCancel();
+    if (!r || r === 'late' || !r.ok) { shapeFailed(uri); return null; }
+    const made = await shape(r.samples, r.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: !p.joined, close: p.join == null, hold: p.join == null ? 0 : p.join + .06 });
+    const marks = wordTimes(p.text, made.seconds - made.lead);
+    for (let i = 1; i < marks.length; i += 2) marks[i] += made.lead;
+    return keepClip(key, { buffer: made.buffer, gain: made.gain, seconds: made.seconds, total: made.total, marks });
+  } catch { shapeFailed(uri); return null; } finally { clearTimeout(timer); rendering--; }
+}
+/** Keeps a made line for a while (the last few, so one said twice starts at once). */
+function keepClip(key, clip) {
+  clips.set(key, clip); clipSecs += clip.total; shapeFails = 0;
+  while (clips.size > 1 && (clips.size > 32 || clipSecs > 45)) { const [k0, c0] = clips.entries().next().value; clips.delete(k0); clipSecs -= c0.total; }
+  return clip;
 }
 /** Fades a playing line out in a few thousandths of a second (a cut dead would click). */
 function hush(v) { try { const t = v.g.context.currentTime; v.g.gain.cancelScheduledValues(t); v.g.gain.setTargetAtTime(0, t, .008); v.src.stop(t + .06); } catch { /* ended already */ } }
@@ -1159,7 +1199,7 @@ export function say(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voi
     room -= t.length; any = true;
     const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx;
     parts.push({ text: t, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
-      size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: sz != null || (f != null && f !== false) });
+      size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: OWN || sz != null || (f != null && f !== false) });
   }
   stopTalking();
   if (!any || sound.muted || !sound.volume) return Promise.resolve(false);
@@ -1196,7 +1236,7 @@ export function stopTalking() {
   if (talkingNow) { talkingNow = 0; const g = mix?.buses.get('music'); if (g) setLevel(g, g.level, .3); }
   for (const v of live) hush(v);
   live.clear();
-  try { if (rendering) Promise.resolve(RENDER.cancel()).catch(() => {}); } catch { /* none */ }
+  try { if (rendering) { if (RENDER) Promise.resolve(RENDER.cancel()).catch(() => {}); ownCancel(); } } catch { /* none */ }
   try { if (TTS) TTS.stop(); else globalThis.speechSynthesis?.cancel(); } catch { /* none */ }
 }
 /** True while a line is being spoken. */
