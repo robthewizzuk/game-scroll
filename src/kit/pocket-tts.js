@@ -338,11 +338,9 @@ export function makeFlow(pack, { plain = false } = {}) {
   let busy = null;
 
   /** One line in a voice (one at a time: a new one ends the last). Options as makeTTS's line(). */
-  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, lively = 0, quick = false } = {}) {
-    // lively: each latent moved away from the part's average so far (1 + 0.6 lively times as far): a wider pitch range,
-    // the words as clear (temperature, by contrast, changes the intonation hardly at all in this model). Only what Mimi
-    // hears: the flow goes on from the latent it made.
-    const wide = 1 + .6 * Math.max(0, Math.min(1, +lively || 0)), avg = new Float64Array(LAT);
+  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, quick = false } = {}) {
+    // (a livelier delivery is made after, from the sound: voice-pitch.js. Moving the latents apart here widened the
+    // pitch too, but measured as a worse voice: 4.44 to 3.75 on a speech-quality model at its widest.)
     if (busy) busy.stop();
     const V = voiceOf(voice);
     const parts = chunks(tok, text, 50, quick);
@@ -364,7 +362,7 @@ export function makeFlow(pack, { plain = false } = {}) {
     };
     const next = () => {
       while (!stopped) {
-        if (!cur) { if (++pi >= parts.length) { busy = null; return null; } cur = start(); me.first = true; me.part = pi; avg.fill(0); }
+        if (!cur) { if (++pi >= parts.length) { busy = null; return null; } cur = start(); me.first = true; me.part = pi; }
         const s = cur;
         if (s.step >= s.maxLen) { cur = null; continue; }
         lin(inLin, lB, xB, LAT, D);
@@ -376,9 +374,7 @@ export function makeFlow(pack, { plain = false } = {}) {
         if (s.eosAt >= 0 && s.step >= s.eosAt + s.after) { cur = null; continue; }
         draw(); head();
         if (s.step++) me.first = false;
-        const out = F.slice(lB, lB + LAT);
-        if (wide !== 1) for (let i = 0; i < LAT; i++) { avg[i] += (out[i] - avg[i]) / s.step; out[i] = avg[i] + wide * (out[i] - avg[i]); }
-        return out;
+        return F.slice(lB, lB + LAT);
       }
       return null;
     };
@@ -495,7 +491,7 @@ export function makeTTS(pack, { plain = false } = {}) {
   /**
    * One line in a voice: { next() -> Float32Array of 1920 samples (24 kHz, 80 ms) or null at the end, stop() }.
    * One line at a time (a new one ends the last). temp: how varied (Kyutai's 0.3), rnd: () => 0..1 for the noise,
-   * noise: () => Float32Array(32) to use instead (tests). lively: 0..1, a wider pitch range. quick: the first sentence
+   * noise: () => Float32Array(32) to use instead (tests). quick: the first sentence
    * a part of its own. line.part: which of line.parts the last frame belongs to.
    */
   function line(text, voice, opts = {}) {
