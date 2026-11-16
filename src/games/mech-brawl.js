@@ -100,6 +100,8 @@ function make(api) {
   function setup() {
     v = new HDView({ bg: '#05070c', fog: .02, env: .45, sky: '#8090c0', ground: '#201820', amb: .4, fov: 55 }).lampLights(20);
     v.bloom = .75;
+    // a stadium broadcast: anamorphic streaks off the floodlights, grain, flare
+    v.film = 'anamorphic'; v.flare = { strength: .45, threshold: .45, dirt: .35 };
     sunL = sun('#fff0e0', 2.4, 10, [-.3, 1, .2]); v.scene.add(sunL, sunL.target); v.onTier(T => sunL.setTier(T)); sunL.follow(0, 0, 2);
     const m = looks();
     const deck = new Mesh(new CircleGeometry(9, 48), m.deck); deck.rotation.x = -Math.PI / 2; deck.receiveShadow = true; v.scene.add(deck);

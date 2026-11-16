@@ -59,6 +59,8 @@ function make(api) {
   function setup() {
     v = new HDView({ bg: '#8ab8e8', fog: .007, env: .4, sky: '#b8d8ff', ground: '#8090a8', amb: .45, fov: 66 });
     v.exposure = .8; v.bloom = .25;
+    // bright snow through a camera: flare and dirt when the sun is in view, a little grain, the eye closing down on the white
+    v.film = { halation: .2, grain: 1.1, fringe: .012 }; v.flare = { strength: .4, threshold: .6, dirt: .3, tint: [1, .95, .88] }; v.autoExposure = { amount: .3, min: .85, max: 1.2, speed: .8 };
     sunL = sun('#fff2e0', 2.2, 22, [-.5, .8, -.4]); v.scene.add(sunL, sunL.target); v.onTier(T => sunL.setTier(T));
     const m = looks();
     tiles = [0, 1].map(() => { const g = new PlaneGeometry(WID * 2, TILE, 70, 80); g.rotateX(-Math.PI / 2); const ms = new Mesh(g, m.snow); ms.receiveShadow = true; ms.frustumCulled = false; v.scene.add(ms); return ms; });

@@ -75,6 +75,8 @@ function setup() {
   v = new HDView({ bg: '#0c080e', fog: 0.032, env: 0.45, amb: 0.35 });
   v.wantFlashes();
   v.lampLights(12);
+  // a forge: halation round the molten glow, grain, and heat-warm flare
+  v.film = { halation: .5, grain: 1.5, fringe: .02, halationTint: [1, .4, .12] }; v.flare = { strength: .3, threshold: .5, dirt: .4, tint: [1, .75, .5] };
   light = sun('#ffe0bd', 2.4, 10, [-0.45, 1, 0.35]).softShadows(2);
   v.scene.add(light, light.target);
   v.onTier(T => light.setTier(T));

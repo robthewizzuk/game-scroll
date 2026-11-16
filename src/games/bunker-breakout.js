@@ -348,6 +348,8 @@ function make(api) {
     const { m, G } = looks();
     v = new HDView({ bg: '#06080c', fog: .075, env: .14, sky: '#7890b8', ground: '#2a2018', amb: .14, fov: 75 }).lampLights(9);
     v.exposure = 1.05; v.bloom = .8;
+    // a hand-held camera in the dark: grain, halation round the lamps and muzzle flashes, lens dirt, the eye opening up in the dark
+    v.film = { halation: .4, grain: 2, fringe: .02 }; v.flare = { strength: .35, threshold: .4, dirt: .55 }; v.autoExposure = { amount: .35, min: .9, max: 1.5, speed: .9 };
     // frame generation's fresh aim: made frames turn to where the finger has already turned the look
     v.aimNow(cam => { if (pl) cam.rotation.y = pl.a; });
     spt = spot('#fff1dc', 11, 16, .5); v.scene.add(spt, spt.target);

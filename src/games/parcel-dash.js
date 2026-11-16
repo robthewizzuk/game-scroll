@@ -21,7 +21,8 @@ function setup() {
   v = new HDView({ bg: '#8a98b0', fog: .0035, env: .5, amb: .5, fov: 62 });
   v.cam.near = .3; v.cam.far = 900; v.cam.updateProjectionMatrix();
   light = sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(light, light.target); v.onTier(T => light.setTier(T));
-  v.air({ haze: .0016, colour: '#9aa6bc' });
+  v.air({ haze: .0016, colour: '#9aa6bc', wet: .55 });   // (just after a shower: the roads hold the evening light and the traffic's lamps)
+  v.film = { halation: .3, grain: 1.3, fringe: .015 }; v.flare = { strength: .3, threshold: .45, dirt: .35, tint: [1, .86, .7] };
   sky = new Sky(v, { time: 17.9, speed: 0, stars: 200, sun: light, physical: true, fog: true });
   city = new City(v, { seed: 7, blocks: 6, style: 'downtown', sky, traffic: 1, people: 1 });
   // the GPS: the way to the drop, worked out again when you leave it, on the minimap, as the next turn and as arrows on the road

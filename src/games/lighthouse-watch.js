@@ -33,6 +33,8 @@ function setup() {
   beamMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(.5, .45, .3), transparent: true, opacity: .18, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
   beam = new THREE.Mesh(cone, beamMat); beam.position.copy(LAMP); beam.rotation.order = 'YXZ'; v.scene.add(beam);
   beamLight = new THREE.SpotLight('#fff2d0', 900, 60, .16, .4, 1.5); beamLight.position.copy(LAMP); v.scene.add(beamLight, beamLight.target);
+  // the beam lights the rain it passes through (volumetric, high and ultra; the soft cone stands in elsewhere), a flare when it sweeps over you, film grain
+  v.beams = { light: beamLight, density: .05, strength: .5, far: 60, glow: .7 }; v.flare = { strength: .5, threshold: .35, dirt: .5, tint: [1, .9, .75] }; v.film = { halation: .45, grain: 1.8, fringe: .02 };
   // rocks: a pool, placed each round
   rocks = [];
   const rockGeo = new THREE.DodecahedronGeometry(1), ringGeo = new THREE.RingGeometry(1.1, 1.6, 24).rotateX(-Math.PI / 2);
