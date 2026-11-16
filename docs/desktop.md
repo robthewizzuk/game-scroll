@@ -119,7 +119,24 @@ software (`ignore-gpu-blocklist`), draws 2D canvases on the graphics chip, and o
 "is this window covered?" guess that can freeze a window in plain view. It also turns off Chromium's rule that a page gets
 no 3D at all once the graphics process has crashed on it twice (`app.disableDomainBlockingFor3DAPIs()`), so a
 computer whose driver resets more than once comes back each time (docs/webgpu-move.md, When the device is lost). The page keeps compiled code from its
-first run, so later starts are quicker.
+first run, so later starts are quicker, and Chromium keeps the games' WebGPU shaders on disk (measured in the test app:
+the feed came up in 1.3 s instead of 2.1 the second time, Long Shadow loaded in 9 s instead of 22).
+
+Three more since 2026-11-16 (Rob's picks; each measured in `scripts/desktop-test.cjs`):
+
+- **JavaScript's young space** starts at 32 MB (up to 64; `--min-semi-space-size`, `--max-semi-space-size`). V8 sweeps
+  short-lived things out each time it fills, and it only grows where things live on: a 3D game's ~700 KB of garbage
+  a frame was swept 4.6 times a second, now 0.7.
+- **Shaders run without WebGPU's bounds checks** (Dawn's `disable_robustness`): Chromium clamps every read and write
+  in a shader so one web page can't read what another left on the graphics chip; the app runs only its own games.
+  WebGPU's checks of each call stay, as the engine tries a new effect inside them and turns it off if the chip
+  refuses it. The launch option `--gs-safe-gpu` keeps the bounds checks (a game whose shader reads past an array's end).
+- **The app's own files are read whole and kept in memory** (up to 160 MB) instead of streamed through the main
+  process a piece at a time: 3.0 ms a file instead of 5.8, a burst of a game's modules 22% sooner with half the main
+  process's work.
+
+Chromium takes only the last `--enable-features` or `--disable-features` it is given: a new feature joins the list
+already passed rather than adding another switch.
 
 The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs from a phone:
 
@@ -131,7 +148,13 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
   own rate, and 3D games too on a `top` computer (`mid`: the screen's rate divided down to near 60). A 3D game
   that can't keep up steps down a whole number of refreshes at a time (144, 72, 48, 36 on a 144 Hz screen),
   so its frames always land on refreshes; a phone steps 120, 60, 30.
-- **No heat cap** (`src/kit/hd3d.js`): on a phone 3D games never climb above the high tier, because the Fold
+- **Heat and battery** (`src/kit/power.js`, from `gsDesktop.power()`): macOS says how warm the computer is (its thermal
+  state, as an iPhone does), macOS and Windows how far they slowed the processor, and whether a laptop is on its battery.
+  A fanless laptop (a MacBook Air) warms under minutes of 3D and then slows itself; warm ("fair" on a Mac, or a slowed
+  processor) it takes a hot phone's steps: the first resolution step at once, medium from the next round, Auto's frame
+  generation where the screen has room. On its battery a laptop plays 3D games as a phone does (no higher than high,
+  near 60 frames a second in Auto; 2D near 120), plugged in as a computer. The frame lab and Settings say why.
+- **More room before heat** (`src/kit/hd3d.js`): on a phone 3D games never climb above the high tier, because the Fold
   got hot and throttled on ultra. A computer starts where a phone of its class does, with a tier's pixels as a
   phone draws them, and may climb to ultra only when the chip's own times show room: on a 60 Hz screen, frames
   that keep up say nothing about how much more the chip could take. A Mac's chip times can't be used (below), so

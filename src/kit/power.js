@@ -5,18 +5,26 @@
 // app is in front, every 3 s while a round is played (the heat model wants the headroom often: pace()), and every
 // second while the frame lab is open; none of it leaves the phone. On the web only the battery is known, where
 // the browser says.
+// In the desktop app (src/desktop.js power()) the computer says too: macOS its thermal state (as an iPhone does), macOS
+// and Windows how far they slowed the processor, and whether a laptop is on its battery. A computer has more room than a
+// phone, but a fanless laptop (a MacBook Air) warms under minutes of 3D and then slows itself: warm, it takes the
+// phone's hot steps (src/kit/hd3d.js hot()); on its battery it plays at most at the high tier and near 60 in Auto.
 //
 //   power.saving   true while the phone is warm or heating up, in power saving, or under 20% and not charging
-//   power.why      which, in words for Settings ('the phone is warm', 'the phone is heating up', 'battery saver is on', 'the battery is low')
+//   power.why      which, in words for Settings ('the phone is warm', 'the phone is heating up', 'battery saver is on', 'the battery is low';
+//                  'the computer ...' in the desktop app)
 //   power.heat     0 cool, 1 warm, 2 hot
+//   power.onBattery   the desktop app on a laptop running on its battery (false on a phone: it always is)
+//   power.speedLimit  the desktop app: the processor's speed limit in per cent after the system lowered it, or null
 //   power.thermal, power.headroom   the raw readings (null where unknown), for the frame lab
 //   power.thresholds   Android 15+: the headroom at which each thermal status starts ({ 2: .9, ... }), or null
 //   power.watts    what the whole phone draws from its battery now (screen and all), or null (charging, an iPhone, the web)
 //   power.batteryTemp   the battery's temperature (degrees C), or null
 //   power.known    the battery has been read at least once (games see it through gs.real.battery())
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { desktop } from '../desktop.js';
 
-export const power = { heat: 0, saver: false, level: 1, charging: true, known: false, saving: false, why: '', thermal: null, headroom: null, thresholds: null, watts: null, batteryTemp: null, ahead: false };
+export const power = { heat: 0, saver: false, level: 1, charging: true, known: false, saving: false, why: '', thermal: null, headroom: null, thresholds: null, watts: null, batteryTemp: null, ahead: false, onBattery: false, speedLimit: null };
 
 const native = Capacitor.isNativePlatform();
 const plugin = native && Capacitor.isPluginAvailable('PowerState') ? registerPlugin('PowerState') : null;
@@ -36,6 +44,18 @@ export function heatOf(o) {
   return o.thermal >= 3 || h >= 1 ? 2 : o.thermal >= 2 || h >= .85 ? 1 : 0;
 }
 
+const THERMAL = { nominal: 0, fair: 1, serious: 2, critical: 3 };
+/**
+ * A computer's heat from the desktop app's reading (pure: tests): { thermal, limit, battery } -> { heat, thermal }.
+ * macOS's thermal state as an iPhone's (fair warm, serious and critical hot); a processor slowed below its full speed
+ * warm, below three quarters of it hot (Windows says only this).
+ */
+export function desktopHeat(d) {
+  const t = THERMAL[d?.thermal] ?? null, lim = typeof d?.limit === 'number' && d.limit > 0 ? d.limit : 100;
+  return { heat: t >= 2 || lim < 75 ? 2 : t >= 1 || lim < 100 ? 1 : 0, thermal: t };
+}
+const nounOf = () => (desktop ? 'the computer' : 'the phone');
+
 /**
  * What the phone draws from its battery in watts, from the plugin's battery() (pure: tests), or null. Phones give
  * the current in microamps, some (older Samsungs) in milliamps, and with either sign while draining: a phone draws
@@ -52,7 +72,7 @@ export function wattsOf(b) {
 
 /** Works out power.saving from what was read (exported for tests). */
 export function judge(p, now) {
-  const why = p.heat >= 1 ? 'the phone is warm' : p.ahead ? 'the phone is heating up' : p.saver ? 'battery saver is on' : p.level <= .2 && !p.charging ? 'the battery is low' : '';
+  const why = p.heat >= 1 ? `${nounOf()} is warm` : p.ahead ? `${nounOf()} is heating up` : p.saver ? 'battery saver is on' : p.level <= .2 && !p.charging ? 'the battery is low' : '';
   if (why) { lastReason = now; p.why = why; p.saving = true; }
   else if (p.saving && now - lastReason > HOLD) { p.saving = false; p.why = ''; }
   return p.saving;
@@ -69,6 +89,10 @@ async function ask() {
     if (plugin) {
       const o = await plugin.get(); power.heat = heatOf(o); power.saver = !!o.saver; power.thermal = o.thermal ?? null; power.headroom = o.headroom ?? null;
       power.thresholds = o.thresholds || null; took(o.battery);
+    }
+    else if (desktop?.power) {
+      const d = await desktop.power();
+      if (d) { const h = desktopHeat(d); power.heat = h.heat; power.thermal = h.thermal; power.speedLimit = typeof d.limit === 'number' ? d.limit : null; power.onBattery = !!d.battery; }
     }
   } catch (_) { /* an older app without the plugin: heat unknown */ }
   try {

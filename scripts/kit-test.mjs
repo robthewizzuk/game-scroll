@@ -3272,6 +3272,15 @@ console.log('physics ok');
   assert.equal(heatOf({ platform: 'android', thermal: 2, headroom: -1 }), 1, 'Android moderate is warm');
   assert.equal(heatOf({ platform: 'android', thermal: 1, headroom: 1.02 }), 2, 'headroom 1 means throttling soon');
   assert.equal(heatOf({ platform: 'ios', thermal: 2 }), 2, 'iPhone serious is hot');
+  // a computer's (the desktop app: macOS thermal state, the processor's speed limit on macOS and Windows)
+  const { desktopHeat } = await import('../src/kit/power.js');
+  assert.deepEqual(desktopHeat({ thermal: 'nominal', limit: null }), { heat: 0, thermal: 0 }, 'a cool Mac');
+  assert.deepEqual(desktopHeat({ thermal: 'fair', limit: null }), { heat: 1, thermal: 1 }, 'macOS fair is warm, as an iPhone\'s');
+  assert.equal(desktopHeat({ thermal: 'serious' }).heat, 2, 'serious is hot'); assert.equal(desktopHeat({ thermal: 'critical' }).heat, 2);
+  assert.deepEqual(desktopHeat({ thermal: 'unknown', limit: 100 }), { heat: 0, thermal: null }, 'Windows at full speed: cool, no thermal state');
+  assert.equal(desktopHeat({ thermal: 'unknown', limit: 90 }).heat, 1, 'a processor slowed a little: warm');
+  assert.equal(desktopHeat({ thermal: 'unknown', limit: 60 }).heat, 2, 'below three quarters: hot');
+  assert.equal(desktopHeat(null).heat, 0, 'nothing said: cool');
   const p = { heat: 0, saver: false, level: .5, charging: false, saving: false, why: '' };
   assert.equal(judge(p, 0), false, 'nothing to save for');
   p.level = .15; assert.equal(judge(p, 1000), true, 'low battery'); assert.equal(p.why, 'the battery is low');
@@ -3600,6 +3609,18 @@ console.log('physics ok');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
   sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  // a laptop on its battery (src/kit/power.js onBattery, from the desktop app): 3D near 60 and 2D near 120 at most, as a phone
+  {
+    const { power: pw } = await import('../src/kit/power.js');
+    sp.speed.klass = 'top'; pw.onBattery = true;
+    assert.equal(sp.autoFps({ id: 'kt-bat-3d', era: 'nextgen' }), 72, 'on its battery a top laptop\'s 3D game: near 60 (72 on 144 Hz)');
+    assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 144, 'a 2D game keeps a 144 Hz screen (one refresh a frame is the nearest to 120)');
+    for (let i = 0, t = 20000; i < 80; i++) sp.tick(t += 1000 / 240);
+    assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 120, 'and on a 240 Hz screen 120');
+    pw.onBattery = false; assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 240, 'plugged in: the screen\'s rate');
+    for (let i = 0, t = 40000; i < 80; i++) sp.tick(t += 1000 / 144);
+    sp.speed.klass = 'mid';
+  }
   // a games handheld (a ROG Ally, a Steam Deck: desktop/device.cjs) is the desktop app, but plays as a phone: 3D at 60 with
   // nothing made between (30 with GSFG making the rest where it can't hold 60), 2D at the screen's rate, steps 60 -> 30
   {
@@ -7879,6 +7900,12 @@ console.log('physics ok');
   assert.equal(startTier({ tier: 3 }, 'top', false), 2, 'a phone never starts above high');
   assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
   assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
+  // the highest tier between rounds (hd3d.js capFor): a computer warm (a fanless laptop) or on its battery plays as a phone
+  const { capFor } = await import('../src/kit/hd3d.js');
+  assert.equal(capFor(false, false, false), 2, 'a phone: high'); assert.equal(capFor(false, true, false), 1, 'a hot phone: medium');
+  assert.equal(capFor(true, false, false), 3, 'a computer: ultra (with room)');
+  assert.equal(capFor(true, true, false), 1, 'a warm computer (a MacBook Air after minutes of 3D): medium, as a hot phone');
+  assert.equal(capFor(true, false, true), 2, 'a laptop on its battery: high');
   console.log('gs.hd tiers start and climb ok');
   // the sizes a frame is drawn at (hd3d.js frameSizes, pickSize): the final picture follows the 3D's own size, and
   // the 3D has a floor (Rob's Fold unfolded, 2026-11-14: 486 x 311 blown up four times, the upscaler twice the scene's cost)

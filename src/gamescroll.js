@@ -200,7 +200,7 @@ export const HIDDEN = {
   doodle: ['loadDoodle'],
   phoneai: ['phoneAIStatus'],
   brains: ['liveBrains', 'brainStats', 'brainSlot'],   // the debug overlay's list of live brains; where the kits' own learners keep what they learn
-  hd: ['FINAL_EFFECTS', 'gpuFits', 'pickEffect', 'chipFits', 'startTier', 'mayClimb', 'frameSizes', 'pickSize', 'stepsRun'],   // (pickEffect: the effects ladder's choice; chipFits: whether the chip's times fit its frames; startTier, mayClimb: where a tier starts and when it may climb; frameSizes, pickSize, stepsRun: the sizes a frame is drawn at, which of them a slow chip steps, and the steps over made-up windows; for the kit tests)
+  hd: ['FINAL_EFFECTS', 'gpuFits', 'pickEffect', 'chipFits', 'startTier', 'mayClimb', 'capFor', 'frameSizes', 'pickSize', 'stepsRun'],   // (pickEffect: the effects ladder's choice; chipFits: whether the chip's times fit its frames; startTier, mayClimb, capFor: where a tier starts, when it may climb and how high it may go; frameSizes, pickSize, stepsRun: the sizes a frame is drawn at, which of them a slow chip steps, and the steps over made-up windows; for the kit tests)
   toon: ['TOON', 'celReady'],   // test switches, and whether three's toon shader still has the lines the cel look changes
   props: ['simplifyReady'],
   city: ['Traffic', 'People'],   // (the city's own: a game reaches them as city.cars and city.people)
