@@ -96,7 +96,38 @@ function breathe(n, rate, level, rnd) {
   return y;
 }
 
-export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1, first = false, drift: driftAmt = .014, jitter = .0022, driftHz = 1 } = {}) {
+/** Variable-speed WSOLA: speed(i) is how far through x (samples) each output sample goes at x's sample i (1 as it was). */
+function warp(x, rate, speed) {
+  const N = Math.round(rate * .03) & ~1, hop = N >> 1, seek = Math.round(rate * .006), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = .5 - .5 * Math.cos(2 * Math.PI * i / N);
+  let len = 0; for (let p = 0; p < x.length; len += hop) p += hop * speed(Math.min(x.length - 1, Math.round(p)));
+  const out = new Float32Array(len + N), ws = new Float32Array(len + N);
+  let pos = 0, prev = 0;
+  for (let o = 0, k = 0; o < len; o += hop, k++) {
+    const want = Math.round(pos); let at = want;
+    if (k && Math.abs(speed(Math.min(x.length - 1, want)) - 1) > 1e-3) {   // (where the speed is 1 the slices line up as they were)
+      const ref = prev + hop; let best = -Infinity;
+      for (let d = -seek; d <= seek; d += 2) {
+        const s = want + d; if (s < 0 || s + hop > x.length || ref + hop > x.length) continue;
+        let c = 0; for (let i = 0; i < hop; i += 2) c += x[s + i] * x[ref + i];
+        if (c > best) { best = c; at = s; }
+      }
+    }
+    at = Math.max(0, Math.min(x.length - 1, at)); prev = at;
+    for (let i = 0; i < N && at + i < x.length; i++) { out[o + i] += x[at + i] * win[i]; ws[o + i] += win[i]; }
+    pos += hop * speed(Math.min(x.length - 1, want));
+  }
+  const y = new Float32Array(len);
+  for (let i = 0; i < len; i++) y[i] = ws[i] > 1e-3 ? out[i] / ws[i] : out[i];
+  return y;
+}
+
+const WH = /^\W*(who|what|where|when|why|how|which|whose|whom)\b/i;
+/** How a part ends, from its words: '?' a question asking yes or no (the voice rises), '.' anything else (it falls). */
+export const endOf = text => /\?\W*$/.test(String(text || '').trim()) && !WH.test(String(text)) ? '?' : '.';
+
+export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1, first = false, drift: driftAmt = .014, jitter = .0022, driftHz = 1,
+  end = '.', fall = 0, rise = 0, shimmer = 0, endJitter = 0, creak = 0, breathy = 0, lengthen = 1, tone = 0 } = {}) {
   if (!x || x.length < rate * .15) return x;
   const rnd = seeded(seed * 2654435761 + x.length), hopF = rate * .01, f0 = pitchOf(x, rate), F = f0.length;
   // how loud the voice is (for the breaths): the average of its louder 10 ms frames
@@ -104,6 +135,19 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
   for (let f = 0; f < F; f++) { let s = 0; const a = Math.round(f * hopF), b = Math.min(x.length, Math.round((f + 1) * hopF)); for (let i = a; i < b; i++) s += x[i] * x[i]; fr[f] = Math.sqrt(s / Math.max(1, b - a)); if (fr[f] > top) top = fr[f]; }
   let ls = 0, ln = 0; for (let f = 0; f < F; f++) if (fr[f] > top * .1) { ls += fr[f] * fr[f]; ln++; }
   const speech = ln ? Math.sqrt(ls / ln) : 0;
+  // where the speech stops: the end of the part, and each pause of 120 ms or more inside it (a phrase's end); ez: how
+  // near the end of its phrase each 10 ms is (1 at the end, over the last quarter of a second; inside the part, half)
+  const said = top * .06, ends = [], ez = new Float32Array(F);
+  for (let f = 0, last = -1; f <= F; f++) {
+    if (f < F && fr[f] >= said) { last = f; continue; }
+    let g = f; while (g < F && fr[g] < said) g++;
+    if (last >= 0 && (g >= F || g - f >= 12)) ends.push([last, g >= F ? 1 : .5]);
+    f = g - 1; if (g >= F) break;
+  }
+  for (const [e, w] of ends) for (let k = 0; k < 25; k++) if (e - k >= 0) ez[e - k] = Math.max(ez[e - k], w * (1 - k / 25));
+  let vEnd = F - 1; while (vEnd > 0 && !f0[vEnd]) vEnd--;
+  // creak: at the very end of a falling part, sometimes the voice drops to a slow, uneven rattle
+  const creaks = end !== '?' && rnd() < creak, crFrom = vEnd - 12 - Math.floor(rnd() * 6);
 
   // the new pitch: the line the pitch follows over the part (a straight fit of log pitch against time), the pitch moved
   // `wide` times as far from it, then a slow drift and a little jitter on top
@@ -119,8 +163,11 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
       // (the pitch smoothed over 50 ms first, so the tracker's own small errors aren't made bigger too)
       let ys = 0, yn = 0; for (let g = Math.max(0, f - 2); g <= Math.min(F - 1, f + 2); g++) if (f0[g]) { ys += Math.log(f0[g]); yn++; }
       const y = ys / yn, line = icpt + slope * f;
-      const to = line + (y - line) * wide + drift * driftAmt * wobble;
-      ratio[f] = Math.max(.78, Math.min(1.35, Math.exp(to - y)));   // (PSOLA stays clean within about a third either way)
+      // the end of the part: further down (or up, asking), over its last 300 ms of voice
+      const k = (f - (vEnd - 30)) / 30, tail = k > 0 ? k * k * (3 - 2 * k) : 0;
+      const to = line + (y - line) * wide + drift * driftAmt * wobble + tail * (end === '?' ? rise : -fall) * Math.LN2 / 12;
+      ratio[f] = Math.max(.72, Math.min(1.35, Math.exp(to - y)));   // (PSOLA stays clean within about a third either way)
+      if (creaks && f >= crFrom) ratio[f] *= .6;
     }
   }
   const voiced = f => f >= 0 && f < F && f0[f] > 0;
@@ -149,12 +196,12 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
   // laid down again: in voice, a grain from each mark (two of its periods long) at the new periods, the mark taken
   // being the one nearest in time, so with no change each grain lands back where it came from; elsewhere the sound as
   // it was (grains 20 ms long, half overlapping); everything divided by how much window landed on it
-  const out = new Float32Array(x.length), ws = new Float32Array(x.length);
-  const grain = (from, at, left, right) => {
+  const out = new Float32Array(x.length), ws = new Float32Array(x.length), cz = creaks ? Math.round(crFrom * hopF) : x.length;
+  const grain = (from, at, left, right, gain = 1) => {
     for (let k = -left + 1; k < right; k++) {
       const i = at + k, j = from + k; if (i < 0 || i >= x.length || j < 0 || j >= x.length) continue;
       const w = .5 + .5 * Math.cos(Math.PI * k / (k < 0 ? left : right));
-      out[i] += x[j] * w; ws[i] += w;
+      out[i] += x[j] * w * gain; ws[i] += w;
     }
   };
   const M = marks.length, gapOf = i => i + 1 < M && marks[i + 1] < runEnd[i] ? marks[i + 1] - marks[i] : i > 0 && marks[i - 1] >= marks[i] - 2 * rate / MIN_HZ && runEnd[i - 1] === runEnd[i] ? marks[i] - marks[i - 1] : Math.round(rate / 150);
@@ -169,8 +216,10 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
     }
     if (inVoice) {
       const f = Math.min(F - 1, Math.floor(t / hopF)), left = mi > 0 && runEnd[mi - 1] === runEnd[mi] ? marks[mi] - marks[mi - 1] : gapOf(mi), right = gapOf(mi);
-      grain(marks[mi], Math.round(t), left, right);
-      t += Math.max(rate / MAX_HZ, right / ratio[f] * (1 + gauss(rnd) * jitter * wobble));
+      const cr = t >= cz, e = ez[f];
+      // (shimmer: each period a little louder or softer, more so at a phrase's end; creak: short pulses, far apart and uneven)
+      grain(marks[mi], Math.round(t), left, cr ? Math.round(right * .7) : right, Math.max(.2, 1 + gauss(rnd) * shimmer * (1 + 2 * e)) * (cr ? .8 : 1));
+      t += Math.max(rate / MAX_HZ, right / ratio[f] * (1 + gauss(rnd) * (cr ? .1 : jitter * wobble * (1 + endJitter * e))));
     } else {
       grain(Math.round(t), Math.round(t), Math.round(rate * .01), Math.round(rate * .01));
       t += rate * .005;
@@ -178,9 +227,35 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
   }
   // (where less than a whole window landed, at the edges of the voice, the sound as it was makes up the rest: dividing
   // by a thin edge of window there made the tail of a grain many times louder, a click)
-  for (let i = 0; i < x.length; i++) out[i] = ws[i] >= 1 ? out[i] / ws[i] : out[i] + x[i] * (1 - ws[i]);
+  for (let i = 0; i < x.length; i++) out[i] = ws[i] >= 1 ? out[i] / ws[i] : i >= cz ? out[i] : out[i] + x[i] * (1 - ws[i]);
 
-  if (!(breath > 0) || !speech) return out;
+  // breathiness: air through the voice (noise above about 1.5 kHz, as loud as the voice is at each moment), more of it as
+  // a phrase trails off
+  if (breathy > 0 && speech) {
+    const hp = Math.exp(-2 * Math.PI * 1500 / rate); let a1 = 0, a2 = 0, p1 = 0, p2 = 0;
+    for (let i = 0; i < out.length; i++) {
+      const f = Math.min(F - 1, Math.floor(i / hopF)); if (!f0[f] && !ez[f]) { p1 = p2 = 0; continue; }
+      const w = rnd() * 2 - 1; a1 = hp * (a1 + w - p1); p1 = w; a2 = hp * (a2 + a1 - p2); p2 = a1;   // (two high-passes)
+      const g = f + 1 < F ? fr[f] + (fr[f + 1] - fr[f]) * (i / hopF - f) : fr[f];
+      out[i] += a2 * g * breathy * (1 + 2 * ez[f]) * 1.7;
+    }
+  }
+  const finish = y => {
+    // the last syllable before each pause drawn out a little, as people do (lengthen 1: as said)
+    if (lengthen > 1.01) {
+      const zone = new Float32Array(F); for (const [e, w] of ends) for (let k = 0; k < 20; k++) if (e - k >= 0) zone[e - k] = Math.max(zone[e - k], (1 - k / 20) * (w > .9 ? 1 : .8));
+      const at = i => zone[Math.min(F - 1, Math.floor(i / hopF))];
+      y = warp(y, rate, i => 1 / (1 + (lengthen - 1) * at(i)));
+    }
+    // room tone: the faint hiss of a room under the voice, as a microphone hears it, instead of digital silence
+    if (tone > 0 && speech) {
+      const lp = Math.exp(-2 * Math.PI * 2500 / rate); let v = 0; const lv = speech * tone * 3.1;   // (tone: its loudness against the voice's)
+      for (let i = 0; i < y.length; i++) { v = lp * v + (1 - lp) * (rnd() * 2 - 1); y[i] += v * lv; }
+    }
+    return y;
+  };
+
+  if (!(breath > 0) || !speech) return finish(out);
   // breaths: in each pause of a third of a second or more inside the part (ending a little before the voice comes back),
   // and before the part when it isn't the first of its line. A breath is about 30 dB under the voice (quieter cost a speech-quality model less; this is the level of breaths in read speech).
   const level = speech * .03 * Math.min(1, breath), quiet = top * .06, adds = [];
@@ -196,8 +271,10 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
     }
   }
   for (const [at, b] of adds) for (let i = 0; i < b.length; i++) if (at + i >= 0 && at + i < out.length) out[at + i] += b[i];
-  if (first) return out;
-  const len = Math.round(rate * (.3 + .08 * rnd())), gap = Math.round(rate * .07), pre = new Float32Array(len + gap + out.length);
-  pre.set(breathe(len, rate, level, rnd)); pre.set(out, len + gap);
+  const done = finish(out);
+  if (first) return done;
+  const len = Math.round(rate * (.3 + .08 * rnd())), gap = Math.round(rate * .07), pre = new Float32Array(len + gap + done.length);
+  pre.set(breathe(len, rate, level, rnd)); pre.set(done, len + gap);
+  if (tone > 0) { const lp = Math.exp(-2 * Math.PI * 2500 / rate); let v = 0; for (let i = 0; i < len + gap; i++) { v = lp * v + (1 - lp) * (rnd() * 2 - 1); pre[i] += v * speech * tone * 3.1; } }
   return pre;
 }

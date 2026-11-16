@@ -11,9 +11,10 @@ import { createRequire } from 'node:module';
 import { TALK_VOICES, TALK_VERSION, TALK_FILE } from '../src/kit/talk-files.js';
 import { unpack } from '../src/kit/talk-pack.js';
 import { makeTTS, makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from '../src/kit/pocket-tts.js';
-import { spoken, respell } from '../src/kit/say-words.js';
+import { spoken, respell, casual } from '../src/kit/say-words.js';
 import { stretch, marksFrom, resample } from '../src/kit/voice-fx.js';
-import { humanize } from '../src/kit/voice-pitch.js';
+import { humanize, endOf } from '../src/kit/voice-pitch.js';
+import { humanOf } from '../src/kit/voice-human.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,6 +64,16 @@ for (const [text, want, lang] of [
   ["It's 17:00, not 00:00 or 3:30 pm.", "It's seventeen hundred, not midnight or three thirty p m."],
 ]) { const got = spoken(text, { lang }); ok(got === want, `words: "${text}" -> "${got}"`); }
 {
+  { // casual: added words, the same each time, and places in the new text map back to the old
+    const t = 'The bridge is out, so we will have to go round by the old mill. Have you seen my keys?';
+    let added = 0, same = true, back = true;
+    for (let k = 0; k < 60; k++) {
+      const a = casual(t, .7, k), b = casual(t, .7, k); same &&= a.text === b.text;
+      if (a.text !== t) added++;
+      const w = a.text.indexOf('mill'); back &&= t.slice(a.at(w), a.at(w) + 4) === 'mill';
+    }
+    ok(same && back && added > 20 && added < 60 && casual(t, 0, 3).text === t, `casual: ${added} of 60 lines given a "well," "um," or a word twice; the same each time; words map back`);
+  }
   const r = respell("Zorblax's ship. ZORBLAX! notZorblax", { Zorblax: 'zor blacks' });
   ok(r.text === "zor blacks's ship. zor blacks! notZorblax" && r.at(r.text.indexOf('ship')) === 10 && r.at(r.text.indexOf('notZ')) === 25, `respell: "${r.text}", word marks back in place`);
 }
@@ -105,6 +116,18 @@ if (bytes) {
   const a1 = say('Same again.', 'anna', 7), a2 = say('Same again.', 'anna', 7), a3 = say('Same again.', 'anna', 8);
   ok(a1.length === a2.length && a1.every((x, i) => x === a2[i]), 'the same seed says a line the same way');
   ok(a1.length !== a3.length || a1.some((x, i) => x !== a3[i]), 'another seed says it a little differently');
+  { // moods: the voice as its own recording acted that way and heard again (scripts/talk-voices/prompt.py)
+    const ml = 'I told you to wait for me by the gate.', stat = a => { let e = 0; for (const x of a) e += x * x; return { hz: f0(a, tts.rate), rms: Math.sqrt(e / a.length), s: a.length / tts.rate }; };
+    for (const v of ['anna', 'charles']) {
+      const calm = stat(say(ml, v, 3)), got = Object.fromEntries(['angry', 'happy', 'scared', 'sad'].map(m => [m, stat(say(ml, `${v}~${m}`, 3))]));
+      const up = m => got[m].hz / calm.hz;
+      ok(up('angry') > 1.08 && up('happy') > 1.08 && up('scared') > 1.08 && up('sad') < 1.1 && got.angry.rms > calm.rms && got.sad.rms < got.angry.rms
+        && Object.values(got).every(g => g.s > 1.2 && g.s < 5),
+        `moods (${v}): calm ${calm.hz.toFixed(0)} Hz ${calm.rms.toFixed(3)}, ` + Object.entries(got).map(([m, g]) => `${m} ${g.hz.toFixed(0)} Hz ${g.rms.toFixed(3)} ${g.s.toFixed(1)} s`).join(', '));
+    }
+    const plain = say('Same again.', 'anna', 7), odd = say('Same again.', 'anna~sleepy', 7), mix = say('Same again.', 'anna+vera~sad', 7);
+    ok(plain.length === odd.length && plain.every((x, i) => x === odd[i]) && mix.length > tts.rate * .5, 'moods: one it hasn\'t is said calm; a voice between two takes a mood too');
+  }
   for (const n of [2, 3]) { // cut across 2 or 3 workers (pocket-tts.js cutsFor), it says a line exactly as one does
     const text = n === 2 ? 'Two cores, one voice.' : 'Three workers, one voice.', voice = n === 2 ? 'paul' : 'estelle', seed = n === 2 ? 9 : 5;
     const flow = makeFlow(pack), cuts = cutsFor(pack.mimi, n), st = cuts.map((lo, i) => makeMimi(pack, { lo, hi: cuts[i + 1] })), one = say(text, voice, seed);
@@ -137,7 +160,8 @@ if (bytes) {
   }
   { // made more like a person after it is spoken (voice-pitch.js): with no change it gives the sound back; widened,
     // the pitch moves further over the same length of line at the same loudness; a breath before a later sentence
-    const plain = say('Oh, you found it! That is wonderful news.', 'george', 4), R = tts.rate;
+    // (paul: a steady voice whose pitch reads cleanly; one that wanders (a few of george's takes) moves the spread by itself)
+    const plain = say('Oh, you found it! That is wonderful news.', 'paul', 4), R = tts.rate;
     const spread = a => { const hz = pitches(a, R); const st = hz.map(h => 12 * Math.log2(h / 100)), m = st.reduce((x, y) => x + y, 0) / st.length; return Math.sqrt(st.reduce((x, y) => x + (y - m) ** 2, 0) / st.length); };
     const rms = a => Math.sqrt(a.reduce((x, y) => x + y * y, 0) / a.length);
     const same = humanize(plain, R, { wide: 1, wobble: 0, breath: 0, first: true });
@@ -151,13 +175,25 @@ if (bytes) {
     const later = humanize(plain, R, { seed: 3 }), pre = later.length - plain.length, br = rms(later.subarray(0, Math.round(pre * .8)));
     const under = 20 * Math.log10(br / rms(plain));
     ok(pre > R * .3 && pre < R * .5 && under < -20 && under > -45, `voice-pitch: a breath before a later sentence (${(pre / R).toFixed(2)} s, ${under.toFixed(0)} dB under the voice)`);
+    // a person's endings: the last syllable drawn out (longer), the end falling further, air in the voice (more noise above 4 kHz)
+    const fit = { breath: 0, first: true, seed: 3 }, longer = humanize(plain, R, { ...fit, lengthen: 1.4 });
+    ok(longer.length > plain.length + R * .05 && longer.length < plain.length + R * .4, `voice-pitch: the last syllables drawn out (${(plain.length / R).toFixed(2)} -> ${(longer.length / R).toFixed(2)} s)`);
+    const tailHz = a => { const hz = pitches(a.subarray(Math.round(a.length * .55)), R); return hz.length ? hz.slice(-8).reduce((x, y) => x + y, 0) / Math.min(8, hz.length) : 0; };
+    const fell = humanize(plain, R, { ...fit, fall: 3 });
+    ok(tailHz(fell) < tailHz(plain) * .95, `voice-pitch: the end falls further (${tailHz(plain).toFixed(0)} -> ${tailHz(fell).toFixed(0)} Hz)`);
+    const air = a => { let h = 0, y = 0, p = 0; for (let i = 0; i < a.length; i++) { y = .6 * (y + a[i] - p); p = a[i]; h += y * y; } return h / a.reduce((x, v) => x + v * v, 0); };
+    const breathy = humanize(plain, R, { ...fit, breathy: .25 });
+    ok(air(breathy) > air(plain) * 1.15, `voice-pitch: air in the voice (high share ${air(plain).toFixed(3)} -> ${air(breathy).toFixed(3)})`);
+    ok(endOf('Have you seen it?') === '?' && endOf('Where did it go?') === '.' && endOf('Stop.') === '.', 'voice-pitch: a yes-or-no question rises, a "where" question falls');
+    const tuned = humanOf('anna'), mid = humanOf('anna+vera'), b = humanOf('vera');
+    ok(tuned.wide >= 1 && tuned.tempo > .7 && Math.abs(mid.wide - (tuned.wide + b.wide) / 2) < 1e-9 && humanOf('nobody').wide > 0, `voice-human: settings per voice (anna wide ${tuned.wide}, pace ${tuned.tempo}), a blend halfway`);
     let t = performance.now(); for (let k = 0; k < 3; k++) humanize(plain, R, { seed: k }); t = (performance.now() - t) / 3;
     ok(t < plain.length / R * 1000 * .06, `voice-pitch: ${t.toFixed(0)} ms for ${(plain.length / R).toFixed(1)} s of sound`);
   }
   const long = say('This is a longer line. It goes on for a while, in more than one part, so that it is cut into pieces of text the model reads one after another, and each still comes out.', 'george');
   ok(long.length / tts.rate > 7, `a long line in parts: ${(long.length / tts.rate).toFixed(1)} s`);
   // the file the PR check makes is the one talk-files.js pins (writeTo checked its SHA-256)
-  ok(bytes.length > 25e6 && bytes.length < 32e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
+  ok(bytes.length > 19e6 && bytes.length < 26e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
 }
 
 if (bytes) { // the decoder is the 100M model's: no steady whine at 3.6 kHz standing out of the voice

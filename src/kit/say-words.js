@@ -159,3 +159,52 @@ export function respell(text, list) {
   };
   return { text: out, at };
 }
+
+/**
+ * A line said the way a person chats rather than reads (say() casual: 0..1): now and then a "well," or "oh," to start,
+ * an "um," before a word that takes thought, or the first words said twice ("I - I think"). The same line and
+ * amount always get the same ones (seed). Returns { text, at } as respell(): at(i) is where place i of the new text was
+ * in the old (an added word maps to the word after it).
+ */
+export function casual(text, amount, seed = 1) {
+  const t = String(text), a = Math.max(0, Math.min(1, +amount || 0));
+  if (!a || !/\p{L}/u.test(t)) return { text: t, at: i => i };
+  let s = (Math.imul((seed | 0) ^ 0x9e3779b9, 0x85ebca6b) ^ 0x5bd1e995) >>> 0 || 1; const rnd = () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  const adds = [];   // [place in the old text, words put before it]
+  const SMALL = /^(the|a|an|to|of|for|my|your|his|her|their|our|this|that|some|in|on|at|with|about|is|was|be|I'?m?|it'?s?|we|you|they)$/i;
+  // each sentence: [start, end) in t
+  const re = /[^.!?…]+[.!?…]*["')\]]*\s*/g; let m;
+  for (let n = 0; (m = re.exec(t)); n++) {
+    const sent = m[0], at0 = m.index, words = [...sent.matchAll(/[\p{L}\p{N}'’]+/gu)];
+    if (!words.length) continue;
+    const ask = /\?/.test(sent), shout = /!/.test(sent), first = words[0];
+    const opener = /^(well|so|oh|um|uh|right|okay|ok|yes|no|hey|look|listen)$/i.test(first[0]);
+    let done = false;
+    if (!opener && rnd() < a * (n ? .1 : .35)) {   // a word to start
+      const pick = n ? ['So,', 'Well,'] : shout ? ['Oh,', 'Hey,', 'Oh,'] : ask ? ['So,', 'Um,', 'Well,'] : ['Well,', 'So,', 'Right,', 'Um,'];
+      adds.push([at0 + first.index, pick[Math.floor(rnd() * pick.length)] + ' ']); done = true;
+    }
+    if (!done && words.length >= 4 && rnd() < a * .2) {   // the first word said twice
+      const w = first[0]; adds.push([at0 + first.index, `${w} - ${/^I$/.test(w) ? w : w.toLowerCase()} `.replace(/ [^ ]+ $/, ' ')]);
+      done = true;
+    }
+    if (words.length >= 6 && rnd() < a * .35) {   // a pause to think, after a small word, before the word that took thought
+      const cands = [];
+      for (let k = 1; k + 1 < words.length - 1; k++) if (SMALL.test(words[k][0]) && !SMALL.test(words[k + 1][0])) cands.push(k + 1);
+      if (cands.length) { const k = cands[Math.floor(rnd() * cands.length)] - 1; adds.push([at0 + words[k].index + words[k][0].length, rnd() < .5 ? ', um,' : ', uh,']); }
+    }
+  }
+  if (!adds.length) return { text: t, at: i => i };
+  adds.sort((x, y) => x[0] - y[0]);
+  let out = '', last = 0; const marks = [];   // [new start, new end, old place]
+  for (const [o, w] of adds) {
+    out += t.slice(last, o);
+    // (a capital word after an added one keeps its capital only where it is a name or I)
+    marks.push([out.length, out.length + w.length, o]); out += w; last = o;
+  }
+  out += t.slice(last);
+  // "Well, The" -> "Well, the"
+  out = out.replace(/\b(Well|So|Right|Um|Oh|Hey), ([A-Z])([a-z])/g, (q, a1, b, c) => `${a1}, ${b.toLowerCase()}${c}`);
+  const at = i => { let shift = 0; for (const [s0, s1, o0] of marks) { if (i < s0) break; if (i < s1) return o0; shift = o0 - s1; } return i + shift; };
+  return { text: out, at };
+}

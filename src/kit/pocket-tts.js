@@ -322,17 +322,27 @@ export function makeFlow(pack, { plain = false } = {}) {
     lin(fin.w, tB, lB, FD, LAT, fin.b);
   };
 
-  const voices = { ...pack.voices };
-  // 'anna+vera': a voice between two, the speakers' key/value caches averaged where both have them (their positions
-  // line up, so the model hears one speaker between the two). Measured: words as clear, pitch and sound between the two.
+  // A voice: 'anna', 'anna~angry' (a mood it was heard in: 'calm' when left out or it hasn't that one), or 'anna+vera'
+  // (a voice between two, the speakers' key/value caches averaged where both have them: their positions line up, so the
+  // model hears one speaker between the two. Measured: words as clear, pitch and sound between the two). A packed voice
+  // is its prompt, run through the model when first wanted (about as long as a word takes to write); the last few made
+  // are kept (about 1.3 MB each).
+  const voices = pack.voices, made = new Map(), first = Object.keys(voices)[0];
+  const kept = key => { const V = made.get(key); if (V) { made.delete(key); made.set(key, V); } return V; };
+  const keep = (key, V) => { made.set(key, V); if (made.size > 10) made.delete(made.keys().next().value); return V; };
+  const one = (name, mood) => {
+    const e = voices[name]; if (!e || !e.prompts) return e || null;
+    const m = e.prompts[mood] ? mood : 'calm', key = `${name}~${m}`;
+    return kept(key) || keep(key, (rows => prompt(rows, rows.length / D))(e.prompts[m]()));
+  };
   const voiceOf = name => {
-    if (voices[name]) return voices[name];
-    const [a, b] = String(name).split('+').map(x => voices[x]);
-    if (!a || !b) return voices[Object.keys(voices)[0]];
-    const n = Math.min(a.pos, b.pos), kvd = a.k[0].length / a.pos, mix = (x, y) => { const o2 = new Float32Array(n * kvd); for (let i = 0; i < o2.length; i++) o2[i] = (x[i] + y[i]) * .5; return o2; };
-    const made = Object.keys(voices).filter(k => k.includes('+'));   // (the last few blends kept: about 2 MB each)
-    if (made.length >= 8) delete voices[made[0]];
-    return (voices[name] = { ...a, pos: n, k: a.k.map((x, l) => mix(x, b.k[l])), v: a.v.map((x, l) => mix(x, b.v[l])) });
+    const [base, mood = 'calm'] = String(name).split('~'), [x, y] = base.split('+');
+    if (!y) return one(x, mood) || one(first, 'calm');
+    const key = `${base}~${mood}`, have = kept(key); if (have) return have;
+    const a = one(x, mood), b = one(y, mood);
+    if (!a || !b) return a || b || one(first, 'calm');
+    const n = Math.min(a.pos, b.pos), kvd = a.k[0].length / a.pos, mix = (p, q) => { const o2 = new Float32Array(n * kvd); for (let i = 0; i < o2.length; i++) o2[i] = (p[i] + q[i]) * .5; return o2; };
+    return keep(key, { pos: n, k: a.k.map((p, l) => mix(p, b.k[l])), v: a.v.map((p, l) => mix(p, b.v[l])) });
   };
   const gauss = rnd => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
   let busy = null;
@@ -382,7 +392,19 @@ export function makeFlow(pack, { plain = false } = {}) {
     busy = me;
     return me;
   }
-  return { line, tokenizer: tok, voices: Object.keys(pack.voices), simd: mm.simd };
+  /**
+   * A voice made from what the model heard (its prompt: rows of D numbers, the recording's sound as the model takes it in,
+   * after Kyutai's speaker projection), run through the model as it does when it clones: { pos, k, v } as a packed voice.
+   * Nine times smaller to keep than the voice itself, and the same voice to the last bit (checked against Kyutai's).
+   */
+  function prompt(rows, T) {
+    const m = H.mark(), C = lm.cache(T), kvd = 128;
+    for (let at = 0; at < T; at += 64) { const n = Math.min(64, T - at); F.set(rows.subarray(at * D, (at + n) * D), xB); lm.run(xB, n, C); }
+    const V = { pos: T, k: C.k.map(o => F.slice(o, o + T * kvd)), v: C.v.map(o => F.slice(o, o + T * kvd)) };
+    H.reset(m);
+    return V;
+  }
+  return { line, prompt, voiceOf, tokenizer: tok, voices: Object.keys(pack.voices), simd: mm.simd };
 }
 
 /**

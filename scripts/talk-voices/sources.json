@@ -1,0 +1,178 @@
+{
+ "anna": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p228_023_enhanced.wav"
+ },
+ "vera": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p229_023_enhanced.wav"
+ },
+ "fantine": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p244_023_enhanced.wav"
+ },
+ "eponine": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p262_023_enhanced.wav"
+ },
+ "bronwen": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p253_023.wav",
+  "own": true,
+  "level": true
+ },
+ "orla": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p261_023.wav",
+  "own": true,
+  "level": true
+ },
+ "azelma": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p303_023_enhanced.wav"
+ },
+ "mary": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p333_023_enhanced.wav"
+ },
+ "jane": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p339_023_enhanced.wav"
+ },
+ "eve": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p361_023_enhanced.wav"
+ },
+ "ruth": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p301_023.wav",
+  "own": true,
+  "level": true
+ },
+ "june": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p299_023.wav",
+  "own": true,
+  "level": true
+ },
+ "lucy": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p310_023.wav",
+  "own": true,
+  "level": true
+ },
+ "niamh": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p283_023.wav",
+  "own": true,
+  "level": true
+ },
+ "priya": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p248_023.wav",
+  "own": true,
+  "level": true
+ },
+ "thandi": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p314_023.wav",
+  "own": true,
+  "level": true
+ },
+ "kiri": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p335_023.wav",
+  "own": true,
+  "level": true
+ },
+ "caro_davy": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-zero/caro_davy.wav"
+ },
+ "charles": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p254_023_enhanced.wav"
+ },
+ "paul": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p259_023_enhanced.wav"
+ },
+ "oliver": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p243_023.wav",
+  "own": true,
+  "level": true
+ },
+ "harry": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p256_023.wav",
+  "own": true,
+  "level": true
+ },
+ "angus": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p263_023.wav",
+  "own": true,
+  "level": true
+ },
+ "conor": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p292_023.wav",
+  "own": true,
+  "level": true
+ },
+ "george": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p315_023_enhanced.wav"
+ },
+ "michael": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p360_023_enhanced.wav"
+ },
+ "frank": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p334_023.wav",
+  "own": true,
+  "level": true
+ },
+ "walt": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p311_023_enhanced.wav",
+  "own": true,
+  "level": true
+ },
+ "sam": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/Jeffrey.wav",
+  "own": true,
+  "level": true
+ },
+ "hank": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/Jeremy_Q.wav",
+  "own": true,
+  "level": true
+ },
+ "luc": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p302_023.wav",
+  "own": true,
+  "level": true
+ },
+ "declan": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p364_023.wav",
+  "own": true,
+  "level": true
+ },
+ "arjun": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p251_023.wav",
+  "own": true,
+  "level": true
+ },
+ "pieter": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p347_023.wav",
+  "own": true,
+  "level": true
+ },
+ "jack": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/vctk/p374_023.wav",
+  "own": true,
+  "level": true
+ },
+ "alba": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/alba-mackenna/casual.wav"
+ },
+ "marius": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/Selfie.wav"
+ },
+ "javert": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/Butter.wav"
+ },
+ "bill_boerst": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-zero/bill_boerst.wav"
+ },
+ "peter_yearsley": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-zero/peter_yearsley.wav"
+ },
+ "stuart_bell": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/voice-zero/stuart_bell.wav"
+ },
+ "estelle": {
+  "url": "https://huggingface.co/kyutai/tts-voices/resolve/main/unmute-prod-website/developpeuse-3.wav"
+ },
+ "lola": {
+  "url": "https://huggingface.co/kyutai/pocket-tts/resolve/add_lang_not_documented/common_voice_es_19762977-enhanced-v2.mp3"
+ },
+ "giovanni": {
+  "url": "https://huggingface.co/kyutai/pocket-tts/resolve/add_lang_not_documented/common_voice_it_36520747-enhanced-v2.mp3"
+ }
+}

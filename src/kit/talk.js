@@ -2,7 +2,7 @@
 // "robotic twang"), built in, so a character sounds the same on a Mac, a Windows PC, a SteamOS handheld (whose own
 // voice is espeak's) and a phone, and every line goes through the mixer. Kit use (sound.js).
 // It runs in background workers (talk-worker.js): one, or a production line of 2 (4 threads) or 3 (8 threads) that
-// each run part of the model on the same line. The voice file (about 21 MB, talk-files.js) downloads from the games
+// each run part of the model on the same line. The voice file (about 22 MB, talk-files.js) downloads from the games
 // host the first time a character speaks and stays in the cache; the first time, the worker times a line of its own,
 // and a device that can't write speech well ahead of playing it keeps its own voices. A line comes back a piece at a
 // time (the first sentence first) and is kept for the next launch. Until the file is in, or where it can't run (a
@@ -25,7 +25,7 @@ const URL_OF = () => {
 const RATE = 24000;
 
 // the phone apps too (Capacitor sets window.Capacitor), but not on a phone saving data or with little memory: the
-// file is 21 MB and the model wants about 90 MB while it speaks; those keep the phone's own voices
+// file is 22 MB and the model wants about 90 MB while it speaks; those keep the phone's own voices
 const phone = () => {
   const cap = globalThis.Capacitor; if (!cap?.isNativePlatform?.()) return false;
   const nav = globalThis.navigator || {};

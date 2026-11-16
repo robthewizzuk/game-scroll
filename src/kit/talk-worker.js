@@ -19,7 +19,8 @@
 import { unpack } from './talk-pack.js';
 import { makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from './pocket-tts.js';
 import { stretch } from './voice-fx.js';
-import { humanize } from './voice-pitch.js';
+import { humanize, endOf } from './voice-pitch.js';
+import { humanOf } from './voice-human.js';
 import { spoken } from './say-words.js';
 
 let loading = null, flow = null, first = null, next = null;   // next: the port to the next stage, once it is ready
@@ -98,20 +99,21 @@ const piece = (id, pcm, text, last, speed = 0) => {
 };
 
 /**
- * How each part is made more like a person once it is spoken (voice-pitch.js): the pitch moved 1.6 times as far from the
- * line it follows (up to 1.9 with lively 1), a slow wander and a little jitter, and a breath before each sentence after the
- * first and in long pauses. The numbers were tuned against real read speech (voice-pitch.js says how). Change HUMAN with
- * them, so lines kept from before are made again.
+ * How each part is made more like a person once it is spoken (voice-pitch.js), with each voice's own settings, tuned
+ * against the real person it came from (voice-human.js): how far its pitch moves (further with lively, up to 0.3 more),
+ * its unsteadiness, how its sentences end (falling further, rough or breathy, the last syllable drawn out), the air in
+ * its voice, its pace, and a breath before each sentence after the first and in long pauses. Change HUMAN with them, so
+ * lines kept from before are made again.
  */
-const HUMAN = 'h2', WIDE = 1.6, LIVELY_WIDE = .3;
+const HUMAN = 'h3', LIVELY_WIDE = .3;
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
-  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0;
+  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf('');
   const flush = last => {
     if (!frames.length && !last) return;
-    const said = humanize(join(frames), 24000, { wide: WIDE + LIVELY_WIDE * lively, seed: seed + part, first: part === 0 });
+    const said = humanize(join(frames), 24000, { ...fit, wide: fit.wide + LIVELY_WIDE * lively, seed: seed + part, first: part === 0, end: endOf(text) });
     part++;
-    const pcm = stretch(said, 24000, tempo), copy = key ? pcm.slice() : null;
+    const pcm = stretch(said, 24000, tempo * fit.tempo), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much
@@ -119,7 +121,7 @@ function writer() {
     frames = [];
   };
   return {
-    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; lively = m.lively || 0; seed = m.seed ?? (Math.random() * 2 ** 31) | 0; part = 0; },
+    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; lively = m.lively || 0; seed = m.seed ?? (Math.random() * 2 ** 31) | 0; part = 0; fit = humanOf(m.voice); },
     frame(m, pcm, partText) {
       if (m.id !== id || broken) return;
       if (m.first && frames.length) flush(false);
@@ -145,8 +147,8 @@ async function speak(m) {
     if (have?.length) { have.forEach((p, i) => piece(id, p.pcm, p.text, i === have.length - 1, 99)); return; }
   }
   const opts = { quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
-  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe, lively: m.lively || 0, seed: m.seed };
-  const l = flow.line(words, m.voice, opts), out = next || null, w = out ? null : writer();
+  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe, lively: m.lively || 0, seed: m.seed, voice: m.voice };
+  const l = flow.line(pauses(words, humanOf(m.voice).pause, m.seed), m.voice, opts), out = next || null, w = out ? null : writer();
   if (out) out.postMessage({ type: 'line', ...head }); else w.line(head);
   let S = null, lat, t0 = performance.now();
   while ((lat = l.next())) {
@@ -158,6 +160,16 @@ async function speak(m) {
     if (stops.delete(id)) { l.stop(); if (out) out.postMessage({ type: 'stop', id }); else w.stop({ id }); return; }
   }
   if (out) out.postMessage({ type: 'end', id }); else w.end({ id });
+}
+/**
+ * Pauses where a person reading would take one: the model runs straight through a comma, so some commas (each voice
+ * its own share: humanOf().pause, from its real speaker) are given to it as a dash, which it pauses at.
+ */
+function pauses(words, share, seed) {
+  if (!(share > 0)) return words;
+  let s = ((seed ?? (Math.random() * 2 ** 31)) ^ 0x2545f491) >>> 0 || 1;
+  const rnd = () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  return words.replace(/(\p{L}),(?= \p{L})/gu, (q, a) => rnd() < share ? `${a} -` : q);
 }
 const none = id => next ? next.postMessage({ type: 'stop', id }) : piece(id, null);
 
@@ -231,6 +243,7 @@ async function timed() {
   const at = `${fileUrl}#speed`;
   let store = null;
   try { store = await caches.open('gs-talk'); const r = await store.match(at); if (r) { const v = +(await r.text()); if (v > 0) return v; } } catch { /* not kept */ }
+  flow.voiceOf(flow.voices[0]);   // (the voice made from its prompt first: that isn't timed)
   const speed = await new Promise(res => {
     probing = res;
     speak({ id: 0, text: PROBE, voice: flow.voices[0], lang: 'en-GB', tempo: 1, lively: 0, seed: null, probe: true }).catch(() => res(0));
