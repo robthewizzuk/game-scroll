@@ -28,13 +28,14 @@ phone within minutes with no update at all.
 | Android app: the latest Google Play release and the latest build on the "Latest Android build" release | Yes |
 | iOS app: the latest App Store release and the latest "Latest iOS build" | Yes |
 | Mac and Windows app: the latest "Latest Mac and Windows builds" release (`desktop/`) | Yes |
+| Web version at https://robthewizzuk.github.io/game-scroll/ (`npm run build:web`, `src/web.js`) as it runs now | Yes |
 | Games streamed from the current signed catalogue | Yes |
 | `api.game-scroll.com`, `assets.game-scroll.com` and `game-scroll.com` as they run now | Yes |
 | Older app builds | No: please update first and check it still happens |
 
 ## In scope
 
-- **The app** (`src/`, `android/`, `ios/`, `desktop/`, the native plugins in `plugins/`): for example a way for a
+- **The app** (`src/`, `android/`, `ios/`, `desktop/`, the native plugins in `plugins/`, and the web version built from the same code): for example a way for a
   game or a downloaded file to reach the network beyond our two hosts, read another game's saves, run native code,
   get past the Content Security Policy, or read the camera, microphone or location outside a round or off the phone.
 - **Streamed games and the signed catalogue** ([docs/catalogue-signing.md](docs/catalogue-signing.md)): a way to make
