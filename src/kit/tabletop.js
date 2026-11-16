@@ -38,6 +38,7 @@ import { World3D } from './physics3d.js';
 import { faceUp, FACES } from './dice.js';
 import { shatter } from './destruction.js';
 import { haptic, want } from './device.js';
+import { phoneClass, screenHz } from './speed.js';
 import { tone, noise } from './sound.js';
 import { prefs } from './prefs.js';
 import { WEB } from '../web.js';
@@ -135,6 +136,17 @@ function latheMesh(pts, mat, seg = 40) {
 /* ---------- the table ---------- */
 const _v = new Vector3(), _v2 = new Vector2(), _ray = new Raycaster(), _m = new Matrix4(), _q = new Quaternion(), _pl = new Plane(new Vector3(0, 1, 0), 0), _r = new Ray();
 
+/**
+ * Milliseconds a frame a computer player may think (Table.think's slice): a share of the frame, smaller on
+ * a slower phone and at a faster refresh, at most 4. A 60 Hz frame is 16.7 ms and a game's update() has
+ * about half of it (scripts/budget.cjs): 4 ms of thinking on top of a board game's own work went over that
+ * on a mid-range phone. 60 Hz: top 4, mid 3.3, low 2.5; 120 Hz: half that.
+ */
+export function thinkSlice(cls = phoneClass(), hz = screenHz()) {
+  const share = { top: .24, mid: .2, low: .15 }[cls] ?? .15;
+  return Math.min(4, Math.max(.8, 1000 / Math.max(30, hz || 60) * share));
+}
+
 export class Table {
   /**
    * api: the game's api (for the score badge's place). Options:
@@ -174,6 +186,9 @@ export class Table {
     v.scene.add(this.anchor); v.table = this;
     this.va = null;   // the AR view, made the first time AR is tapped
     this.ar = { placed: false, scale: this.arSize / this.span, yaw: 0, placing: false, pos: new Vector3(), table: false, sunKey: '' };
+    // puff()'s dust and sparks are made with the table, not at the first puff: made then, their shader was built
+    // mid-round (a hitch), after the loading screen had built everything else
+    this.dust = this.particles({ max: 220, additive: false }); this.glints = this.particles({ max: 260, additive: true });
   }
 
   /** The view on screen now: a gs.hd HDView (3D) or a gs.ar ARView (AR). */
@@ -245,7 +260,7 @@ export class Table {
     this.shakeAmt = Math.max(0, this.shakeAmt - dt * 3);
     if (this.msg && (this.msg.t -= dt) <= 0) this.msg = null;
     for (const d of this.dice_) d.step(dt);
-    this.dust?.update(dt); this.glints?.update(dt);
+    this.dust.update(dt); this.glints.update(dt);
     for (let i = this.rubble.length - 1; i >= 0; i--) {
       const f = this.rubble[i], u = f.userData; u.age += dt; u.vy -= 16 * dt;
       f.position.x += u.vx * dt; f.position.y += u.vy * dt; f.position.z += u.vz * dt;
@@ -286,10 +301,12 @@ export class Table {
   /**
    * A computer player's move without missed frames: resolves the move gs.solve.Search picks for
    * `state`, thinking a few milliseconds each frame. o: Search.think's options (time, depth, skill,
-   * mode) plus wait (seconds it takes at least, so a reply doesn't land the instant you let go; .5).
+   * mode) plus wait (seconds it takes at least, so a reply doesn't land the instant you let go; .5)
+   * and slice (milliseconds of thinking a frame; by default a share of the frame the phone can spare:
+   * thinkSlice()).
    */
   think(search, state, o = {}) {
-    return new Promise(res => { this.thinking = { job: search.think(state, o), until: this.t + (o.wait ?? .5), slice: o.slice ?? 4, res }; });
+    return new Promise(res => { this.thinking = { job: search.think(state, o), until: this.t + (o.wait ?? .5), slice: o.slice ?? thinkSlice(), res }; });
   }
   /** Hops obj (a piece) to `to` ({ x, z, y }) in an arc. h: height of the arc; time; sound: false for silence; spin: turns on the way. */
   hop(obj, to, { h = .7, time = .28, sound = true, spin = 0, ease = 'inOut' } = {}) {
@@ -347,7 +364,7 @@ export class Table {
    * size, life, up (how much it rises), grav, glow (true: bright sparks that bloom).
    */
   puff(p, { col = '#d8d0c0', n = 10, speed = 1.6, size = .32, life = .7, up = .8, grav = 0, glow = false } = {}) {
-    const set = glow ? (this.glints ||= this.particles({ max: 260, additive: true })) : (this.dust ||= this.particles({ max: 220, additive: false }));
+    const set = glow ? this.glints : this.dust;
     const c = new Color(col), k = glow ? 2.2 : 1, rgb = [c.r * k, c.g * k, c.b * k];
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU, sp = speed * (.35 + Math.random() * .65);
@@ -601,6 +618,7 @@ export class Table {
   particles(o = {}) {
     const self = this, sets = new Map(), p0 = new Vector3();
     const cur = () => { const v = self.v; if (!sets.has(v)) sets.set(v, new Particles(v, o)); return sets.get(v); };
+    cur();   // (made now, for the view on show: made at the first emit, its shader was built mid-round)
     return {
       emit(e) {
         self.board.updateWorldMatrix(true, false); const s = self.mode === 'ar' ? self.ar.scale : 1;
@@ -608,7 +626,7 @@ export class Table {
         const vel = new Vector3(e.vx ?? 0, e.vy ?? 0, e.vz ?? 0).applyQuaternion(self.anchor.getWorldQuaternion(_q)).multiplyScalar(s);
         cur().emit({ ...e, x: p0.x, y: p0.y, z: p0.z, vx: vel.x, vy: vel.y, vz: vel.z, size: (e.size ?? .1) * s, grav: (e.grav ?? 0) * s, floor: e.floor != null ? p0.y + (e.floor - (e.y ?? 0)) * s : undefined });
       },
-      update(dt) { for (const [v, p] of sets) { if (v === self.v || p.list.length) p.update(dt); } },
+      update(dt) { for (const p of sets.values()) { if (p.list.length || p.n) p.update(dt); } },   // (none flying and none drawn: nothing to do)
       clear() { for (const p of sets.values()) p.clear(); },
     };
   }

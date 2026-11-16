@@ -19,18 +19,13 @@ const clampTo = (v, max) => Math.max(max * .03, Math.min(max * .97, v));
 // they are played in turns against an opponent, over more minutes than the bot plays).
 export const THINKING = /\b(puzzle|word|logic|brain|memory|trivia|quiz|riddle|sudoku|maze|merge|sort|match|cards?|chess|board|strategy|tactics?|deduction|spelling|maths?|codes?)/i;
 
-/**
- * playtest(def, baseApi, { budget, maxSec, seed }) -> report.
- * budget: real milliseconds to search (default 20 s). maxSec: longest round in game seconds (180).
- */
-export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, seed = 1, pop = 6 } = {}) {
-  const W = def.w, H = def.h, goal = def.goal || 0, r = makeRng(seed), h = 1 / (tickRate(def) || 60);
+// Plays rounds of a game much faster than real time, each following a plan of inputs (sorted by time) with a
+// seeded Math.random: run(plan, roundSeed, realLimit, stopAt) -> { score, goalAt, ended, sec, win }.
+function runner(def, baseApi, maxSec) {
+  const W = def.w, H = def.h, goal = def.goal || 0, h = 1 / (tickRate(def) || 60);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d'), errors = new Set();
-  const wasMuted = sound.muted; sound.muted = true;
+  const ctx = canvas.getContext('2d'), errors = new Set(), stats = { evals: 0 };
   const realRandom = Math.random;
-  let evals = 0;
-
   // one round following plan (sorted by time); deterministic for a given plan and seed
   function run(plan, roundSeed, realLimit = 4000, stopAt = maxSec) {
     const owner = {}, R = makeRng(roundSeed); let game, score = 0, ended = null, goalAt = null, best = 0;
@@ -43,7 +38,7 @@ export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, see
       away: () => 0,
     };
     let t = 0;
-    Math.random = R; evals++;
+    Math.random = R; stats.evals++;
     const t0 = performance.now();
     // The game's own clock: kits that time touches with performance.now() (holds, swipe speed, double
     // taps) and games that read Date.now() see game time, not the much faster real time of the run.
@@ -62,6 +57,11 @@ export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, see
             const f = { end: t + m.len, x: m.x, y: m.y, m }; f.up = () => game.up?.(f.x, f.y, 0); held = f;
           }
         }
+        if (held && held.m && held.m.kind === 'circle') {   // a finger going round and round (the lazy checks)
+          const m = held.m, a = (t - m.at) / m.period * Math.PI * 2;
+          held.x = m.cx + Math.cos(a) * m.r; held.y = m.cy + Math.sin(a) * m.r;
+          game.move?.(held.x, held.y, true, 0);
+        }
         if (held && held.m && held.m.kind === 'drag') {   // slide the finger towards the end point
           const k = Math.min(1, 1 - (held.end - t) / held.m.len);
           held.x = held.m.x + (held.m.x2 - held.m.x) * k; held.y = held.m.y + (held.m.y2 - held.m.y) * k;
@@ -76,6 +76,17 @@ export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, see
     return { score: best, goalAt, ended, sec: t, win: goalAt != null };
   }
 
+  return { run, errors, stats };
+}
+
+/**
+ * playtest(def, baseApi, { budget, maxSec, seed }) -> report.
+ * budget: real milliseconds to search (default 20 s). maxSec: longest round in game seconds (180).
+ */
+export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, seed = 1, pop = 6 } = {}) {
+  const W = def.w, H = def.h, goal = def.goal || 0, r = makeRng(seed);
+  const wasMuted = sound.muted; sound.muted = true;
+  const R = runner(def, baseApi, maxSec), run = R.run, errors = R.errors;
   // plans
   const pt = () => ({ x: r.range(W * .04, W * .96), y: r.range(H * .04, H * .96) });
   const move = at => {
@@ -125,6 +136,39 @@ export async function playtest(def, baseApi, { budget = 20000, maxSec = 180, see
     reached: top.res.win, goalAt: top.res.win ? +top.res.goalAt.toFixed(1) : null, best: top.res.score,
     idleScore: idle.score, idleWin: idle.win, idleEndsAt: idle.ended ? +idle.sec.toFixed(1) : null,
     randomBest: Math.max(...firstGen.map(x => x.score)), randomWin: firstGen.some(x => x.win),
-    playedTo: +top.res.sec.toFixed(1), looks, evals, ms: Math.round(performance.now() - start), errors: [...errors],
+    playedTo: +top.res.sec.toFixed(1), looks, evals: R.stats.evals, ms: Math.round(performance.now() - start), errors: [...errors],
   };
+}
+
+// The lazy tricks: what a player who doesn't want to play tries first. None of them should reach the goal:
+// a game one of them wins is a game you don't have to play (and doing nothing shouldn't score at all).
+export const TRICKS = ['idle', 'hold the middle', 'mash one spot', 'circles', 'swipe back and forth'];
+/**
+ * lazy(def, baseApi, { maxSec, seed }) -> { id, goal, tricks: [{ trick, best, win, goalAt, ended, sec, share }], errors }.
+ * Each trick is played as one round (several spots for mashing; the best counts), much faster than real time.
+ * share: the trick's best score over the goal.
+ */
+export async function lazy(def, baseApi, { maxSec = 120, seed = 1 } = {}) {
+  const W = def.w, H = def.h, goal = def.goal || 0;
+  const wasMuted = sound.muted; sound.muted = true;
+  const R = runner(def, baseApi, maxSec), out = [];
+  const every = (gap, make) => { const p = []; for (let at = .3; at < maxSec; at += gap) p.push(make(at, p.length)); return p; };
+  const spots = [[W / 2, H / 2], [W / 2, H * .82], [W / 2, H * .2]];
+  const plans = {
+    'idle': [[]],
+    'hold the middle': [[{ at: .3, kind: 'hold', x: W / 2, y: H / 2, len: maxSec }]],
+    'mash one spot': spots.map(([x, y]) => every(.14, at => ({ at, kind: 'tap', x, y, len: .05 }))),
+    'circles': [[{ at: .3, kind: 'circle', x: W / 2 + Math.min(W, H) * .28, y: H / 2, cx: W / 2, cy: H / 2, r: Math.min(W, H) * .28, period: .9, len: maxSec }]],
+    'swipe back and forth': [every(.3, (at, i) => ({ at, kind: 'drag', x: W * (i % 2 ? .8 : .2), y: H / 2, x2: W * (i % 2 ? .2 : .8), y2: H / 2, len: .18 }))],
+  };
+  for (const trick of TRICKS) {
+    let best = null;
+    for (const plan of plans[trick]) {
+      const res = R.run(plan, seed, 5000);
+      if (!best || (res.win && !best.win) || (res.win === best.win && res.score > best.score)) best = res;
+    }
+    out.push({ trick, best: best.score, win: best.win, goalAt: best.win ? +best.goalAt.toFixed(1) : null, ended: best.ended, sec: +best.sec.toFixed(1), share: goal ? +(best.score / goal).toFixed(2) : 0 });
+  }
+  sound.muted = wasMuted;
+  return { id: def.id, goal, thinking: THINKING.test(def.tag || ''), tricks: out, errors: [...R.errors] };
 }

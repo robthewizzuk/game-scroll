@@ -1097,7 +1097,7 @@ export interface TableT {
   until<V>(p: Promise<V> | V): Promise<V>;
   /** Plays a turn written as an async function; busy is true while it runs. */
   run(fn: () => unknown): void;
-  /** A gs.solve.Search opponent's move, thought about a little each frame. wait: seconds it takes at least (.5); slice: milliseconds a frame (4). */
+  /** A gs.solve.Search opponent's move, thought about a little each frame. wait: seconds it takes at least (.5); slice: milliseconds a frame (left out: thinkSlice(), a share of the frame by phone class). */
   think<S = Loose, M = Loose>(search: Loose, state: S, o?: { time?: number; depth?: number; skill?: Skill; mode?: 'minimax' | 'mcts'; rng?: number | string | (() => number); wait?: number; slice?: number }): Promise<M | null>;
   hop(obj: Loose, to: BoardPoint, o?: { h?: number; time?: number; sound?: boolean; spin?: number; ease?: TableEase }): Promise<void>;
   slide(obj: Loose, to: BoardPoint, o?: { time?: number; ease?: TableEase; sound?: boolean }): Promise<void>;
@@ -1160,6 +1160,8 @@ export type PieceLook = string | Loose;
 export interface TabletopPart {
   /** One board, played in a 3D room or in AR: the table, camera, picking, moves, dice. */
   Table: new (api: GameApi, o?: TableOptions) => TableT;
+  /** The milliseconds a frame Table.think() thinks for when no slice is given: a share of the frame by phone class (top .24, mid .2, low .15), 0.8 to 4. */
+  thinkSlice(cls?: 'top' | 'mid' | 'low', hz?: number): number;
   ROOMS: Record<RoomName, RoomLook>;
   /** Table sounds, each with a volume 0..1. */
   sounds: Record<'clack' | 'tick' | 'clink' | 'rattle' | 'slide' | 'thud' | 'flip' | 'chime' | 'gong', (v?: number) => void>;

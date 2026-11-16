@@ -723,6 +723,20 @@ const traceWanted = () => HD.traced !== false && steered().traced !== false && t
 const TEST = typeof window !== 'undefined' && (import.meta.env?.MODE !== 'production' || navigator.webdriver);
 if (TEST) { window.__hd = HD; window.__submit = ONE_SUBMIT; window.__nowait = { NOWAIT, NOWAIT_STATS, queue: () => { const r = webgpu()?.r, Q = r?.gsNoWait; return r ? { building: r.gsBuilding | 0, list: Q?.list.length, running: Q?.running, inflight: Q?.inflight, done: Q?.done, compiling: r._compilationPromises !== null, pre: !!r._precompilationState } : null; } }; window.__gpu = { pick: setGpuPick, ready: prepareGPU, lose: loseGPU, losses: gpuLosses, mending: () => !!gpuMending(), glMade: () => !!R }; }
 
+// how many things are in a scene (to see whether any were added: a loading screen's frames warm them)
+const countAll = scene => { let n = 0; scene.traverse(() => { n++; }); return n; };
+let KEY_RT = null;   // (a picture only for which shader three picks: HDView.inPicture)
+// A warm-up shows the hidden things for a moment so their shaders are built, but not hidden lights: a light
+// counted in changes every lit shader (three writes the number of lights into them), so all of them were built
+// for a light the round doesn't have, and each was built again when it first showed. hidden: [object, was] pairs
+function unhide(scene, hidden) {
+  const lit = new Set(); scene.traverseVisible(o => { if (o.isLight) lit.add(o); });
+  scene.traverse(o => { if (!o.visible) { hidden.push(o, false); o.visible = true; } });
+  scene.traverse(o => { if (o.isLight && o.visible && !lit.has(o)) { hidden.push(o, true); o.visible = false; } });
+  // (a light inside a hidden group: the group shows, the light stays out)
+}
+function rehide(hidden) { for (let i = hidden.length - 2; i >= 0; i -= 2) hidden[i].visible = hidden[i + 1]; }
+
 /* ---------- shared renderer + post chain ---------- */
 let R = null, broken = false, comp = null, P = {}, envTex = null, compKey = '', pmGen = null;
 function renderer() {
@@ -3035,15 +3049,33 @@ export class HDView {
     if (gpuMending()) return;   // (a lost graphics chip being made again: warmed for the new one later, not on WebGL now)
     const r = renderer(); if (!r) return; this.warmed = true; gpuSwap(this, null);
     const hidden = [], tmp = [];
-    this.scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    unhide(this.scene, hidden);
     for (const m of extra) { const ms = new Mesh(new BoxGeometry(.01, .01, .01), m); this.scene.add(ms); tmp.push(ms); }
     this.patchAir(true); this.airUniforms();
     try { this.envMaker?.(); } catch (e) { /* the studio reflections stay */ }
     this.scene.environment = this.envFor(null);
     const was = r.shadowMap.enabled;
-    try { for (const sh of [true, false]) { r.shadowMap.enabled = sh; r.compile(this.scene, this.cam); } } catch (e) { /* compile is only a warm-up */ }
+    this.inPicture(r, () => { try { for (const sh of [true, false]) { r.shadowMap.enabled = sh; r.compile(this.scene, this.cam); } } catch (e) { /* compile is only a warm-up */ } });
     r.shadowMap.enabled = was;
-    for (const o of hidden) o.visible = false; for (const ms of tmp) { this.scene.remove(ms); ms.geometry.dispose(); }
+    rehide(hidden); for (const ms of tmp) { this.scene.remove(ms); ms.geometry.dispose(); }
+  }
+  // WebGL: the shaders of what is in the scene now, hidden things too, with and without shadows (what warmOn
+  // does, without making the reflections again): for things made after the first warm-up
+  warmNew(r) {
+    const hidden = []; unhide(this.scene, hidden);
+    this.patchAir(true);
+    const was = r.shadowMap.enabled;
+    this.inPicture(r, () => { try { for (const sh of [true, false]) { r.shadowMap.enabled = sh; r.compile(this.scene, this.cam); } } catch (e) { /* only a warm-up */ } });
+    r.shadowMap.enabled = was;
+    rehide(hidden);
+  }
+  // WebGL: runs go() with the renderer drawing into the kind of picture the scene is drawn into. three makes a
+  // different shader for a picture of the post chain (no tone mapping, linear colours) than for the screen, so
+  // a warm-up compiled for the screen built shaders no frame used: each hidden thing's real one was built in
+  // the frame it first showed (a victory marker, a burst of drops), mid-round
+  inPicture(r, go) {
+    const rt = this.clearBg ? null : this._holdRT || (KEY_RT ||= new WebGLRenderTarget(1, 1, { depthBuffer: false })), rt0 = r.getRenderTarget();
+    try { r.setRenderTarget(rt); return go(); } finally { r.setRenderTarget(rt0); }
   }
   /**
    * Get ready to draw without a stall, in the background: the shaders compile on the GPU driver's own
@@ -3077,12 +3109,12 @@ export class HDView {
     const r = renderer(); if (!r) return Promise.resolve();
     gpuSwap(this, null);
     const hidden = [], jobs = [], was = r.shadowMap.enabled, sh = tier().shadow > 0;
-    this.scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    unhide(this.scene, hidden);
     this.patchAir(true); this.airUniforms();
     this.scene.environment = this.envFor(null);
-    try { for (const on of [sh, !sh]) { r.shadowMap.enabled = on; jobs.push(r.compileAsync(this.scene, this.cam)); } } catch (e) { /* only a warm-up */ }
+    this.inPicture(r, () => { try { for (const on of [sh, !sh]) { r.shadowMap.enabled = on; jobs.push(r.compileAsync(this.scene, this.cam)); } } catch (e) { /* only a warm-up */ } });
     r.shadowMap.enabled = was;
-    for (const o of hidden) o.visible = false;
+    rehide(hidden);
     this.warmed = true;
     const texs = new Set();
     this.scene.traverse(o => { for (const m of [o.material].flat()) if (m) for (const k in m) if (m[k]?.isTexture) texs.add(m[k]); });
@@ -3833,7 +3865,13 @@ export class HDView {
       P.final.needsSwap = up || !!s2;   // the final pass writes into the next buffer only when SGSR reads it
       for (const p of ex) if (p.cw !== pw || p.ch !== ph) { p.setSize(pw, ph); p.cw = pw; p.ch = ph; }
     }
-    if (!this.warmed && !off) this.warmOn(null);
+    if (!this.warmed && !off) { this.warmOn(null); this.warmCount = countAll(this.scene); }
+    // under the loading screen (getready.js) the round's first update() runs after the first frames: what it made
+    // (a hidden marker, a burst's particles) is warmed too, as the WebGPU path's buildAhead does, or its shader is
+    // built mid-round the first time it shows. And the occlusion pass's own shader (made the first time it wakes,
+    // seconds in: a hitch then)
+    else if (getready.warming && !off) { const n = countAll(this.scene); if (n !== this.warmCount) { this.warmCount = n; this.warmNew(r); } }
+    if (!off && HD.occlude !== false && this.autoOcclude !== false) (P.occ ||= new DepthMeter()).warm(r);
     // shadows: redraw the maps only when a shadow caster or a shadow light moved (or the tier, view or map changed)
     this.scene.updateMatrixWorld();
     if (!baking && !off) { autoLod(this, r.domElement.height); autoBatch(this, now); }

@@ -4,6 +4,10 @@ Real 3D liquid to pour and splash, and sand, snow and mud that behave like the r
 
 `gs.fluid` (3D): `Fluid(view, { box, volume, kind: 'water'|'lava'|'slime'|'honey'|'sand'|'snow'|'mud' })` real liquid to pour, splash and fill things with, and ground that behaves like the real thing (sand piles and slumps, snow packs and keeps footprints, mud oozes and settles; or your own `grain`, `holds`, `packs`) (tens of thousands of drops on WebGPU, a smaller version elsewhere; make it once, `clear()` in `reset()`): `pour({ x, y, z, rate, speed })` taps, `fill({ y1 })`, `splash`, solid `ball`/`box`/`tube` (`hollow` cups and tanks, `set()` or `follow` to move), `ground(fn)`, `drain`, `push` (blast), `update(dt)`; `amount(box)`, `level(x, z)`, `wet(x, y, z)`, `full`. Cups and gaps at least six drops wide (`fluid.dropSize`); try `{ gpu: false, drops: 600 }` once, which is what slow phones run.
 
+Without WebGPU the liquid runs on the CPU with 300 (low), 800 (mid) or 1,400 (top) drops: that keeps a
+game's `update()` inside its budget on a phone of that class (`Fluid.max()` is this phone's number). Its
+foam colours and shader are made with it, so the first splash builds nothing.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it
@@ -20,7 +24,7 @@ From [Real 3D liquids](../maker-kit.md#real-3d-liquids):
 `gs.fluid.Fluid` (3D): a particle fluid in a box of your world. Drops fall, pile up, slosh, run round
 solid things and settle level. On phones with WebGPU the whole fluid runs on the graphics chip (tens
 of thousands of drops, drawn as one smooth body); everywhere else the same maths runs with fewer,
-bigger drops (600 to 2,000, drawn as beads). The game code is the same for both.
+bigger drops (300 to 1,400, drawn as beads). The game code is the same for both.
 
 ```js
 const { Fluid } = gs.fluid;

@@ -1536,7 +1536,7 @@ a particle fluid (MLS-MPM) whose drops fall, pile up, slosh round solid things a
 WebGPU it runs as compute passes on the graphics chip with tens of thousands of drops (40,000 on a top
 phone), drawn from the same buffers as lit round cards that read as one smooth body, with foam where
 the liquid is thin or fast; they cast and take shadows and carry motion for frame generation. On WebGL
-the same steps run in JavaScript with 600 to 2,000 bigger drops drawn as beads, so a game plays the
+the same steps run in JavaScript with 300 to 1,400 bigger drops drawn as beads, so a game plays the
 same on both and only looks finer on WebGPU.
 
 ```js

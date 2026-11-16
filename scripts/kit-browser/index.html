@@ -460,7 +460,7 @@ try {
   // gs.fluid (Real 3D liquids): in a Next Gen view and in a Console view, poured, drawn and counted
   // (kit-test.mjs has the liquid's rules; look-compare.cjs gpu-fluid --webgpu holds the graphics chip's version to this one)
   const { Fluid, KINDS } = gs.fluid, T3 = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r));
-  ok(Object.keys(gs.fluid).sort().join() === 'Fluid,KINDS' && Object.isFrozen(gs.fluid.KINDS.water) && window.__fluid && Fluid.max() >= 600, 'gs.fluid: Fluid and KINDS, test switches under automation only (' + Fluid.max() + ' drops here)');
+  ok(Object.keys(gs.fluid).sort().join() === 'Fluid,KINDS' && Object.isFrozen(gs.fluid.KINDS.water) && window.__fluid && Fluid.max() >= 300, 'gs.fluid: Fluid and KINDS, test switches under automation only (' + Fluid.max() + ' drops here)');
   const blue = d => { let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] > d[i] * 1.5 && d[i + 2] > 90) n++; return n / (d.length / 4); };
   const hv = new gs.hd.HDView({ bg: '#404040', amb: .5 }), hc = document.createElement('canvas'); hc.width = 160; hc.height = 160; const hx = hc.getContext('2d');
   hv.cam.position.set(0, 2.2, 4.2); hv.cam.lookAt(0, .5, 0); hv.cam.updateMatrixWorld();

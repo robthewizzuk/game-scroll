@@ -11,12 +11,12 @@ const { jobs, pool } = require('./lib/pool.cjs');
 (async () => {
   const argv = process.argv.slice(2), n = jobs(argv, 'heavy'), full = argv.includes('--full');
   if (full) argv.splice(argv.indexOf('--full'), 1);
-  const server = await (await import('vite')).preview({ preview: { port: 4185 } });
+  const { server, url } = await require('./lib/serve.cjs').preview();   // (a free port: checks run side by side)
   const open = async () => {
     const b = await chromium.launch();
     const p = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
     const w = { b, p, errs: [] }; p.on('pageerror', e => w.errs.push(e.message));
-    await p.goto('http://localhost:4185/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
+    await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
     return w;
   };
   let spare = await open();

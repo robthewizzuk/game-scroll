@@ -243,6 +243,10 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.changed != '' }}
         run: node scripts/playtest.cjs $CHANGED
 
+      - name: Lazy tricks don't win changed games (doing nothing, holding the middle, mashing one spot, circles, swiping)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.changed != '' }}
+        run: node scripts/lazy-check.cjs $CHANGED
+
       - name: Speed budget for changed games (frame time and memory on a slowed CPU)
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.changed != '' }}
         run: node scripts/budget.cjs $CHANGED

@@ -23,7 +23,8 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); each part of `gs` 
    back to your source line), the code on it and what to do (`--quick`: only the code checks, 2 s; `--no-speed`: without
    the speed report; `--json` for tools). The checks one by one:
    ```bash
-   node scripts/game-lint.mjs <id>          # forbidden code (network, storage, eval...); also kit hints (advice, not failures)
+   node scripts/game-lint.mjs <id>          # forbidden code (network, storage, eval...); also kit hints (advice, not failures),
+                                            # such as letters the 3×5 pixel font hasn't got
    node scripts/game-types.mjs <id>         # gs used the way its types describe (no kit, method, option or field that doesn't exist)
    node scripts/unique.mjs <id>             # the three nearest games and why; a near-copy fails, a near-twin is a warning to act on
    npm run games                             # builds streamed files; fails on bad imports or a missing gs part
@@ -32,7 +33,8 @@ The human-facing guide is [CONTRIBUTING.md](CONTRIBUTING.md); each part of `gs` 
    node scripts/fold.cjs <id>                # survives folding / unfolding the screen
    ```
    For Console, Next Gen and Board games also run `node scripts/sweep.cjs <id>`. `node scripts/playtest.cjs <id>`
-   has a bot try to reach the goal (warnings only). `npm run speed <id>` (`node scripts/budget.cjs <id>`) is the speed
+   has a bot try to reach the goal (warnings only). `node scripts/lazy-check.cjs <id>` plays the lazy tricks (doing
+   nothing, holding the middle, mashing one spot, circles, swiping back and forth): one that wins fails. `npm run speed <id>` (`node scripts/budget.cjs <id>`) is the speed
    report, last in the check: frame time on a slowed CPU against the budget (over it fails, here and in the PR check), the
    slowest lines in your file, garbage made a second and where, memory growth, and for 3D games draw calls, triangles and
    shaders built mid-play against low, mid and top phones, each with what to do. Making a game run well on phones is

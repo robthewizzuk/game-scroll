@@ -19,6 +19,8 @@
 //   fold      fold.cjs          survives folding and unfolding the screen
 //   sweep     sweep.cjs         odd screen sizes and long play (Console, Next Gen, AR and Board games only)
 //   playtest  playtest.cjs      a bot tries to reach the goal (a warning, never a failure)
+//   lazy      lazy-check.cjs    the lazy tricks (doing nothing, holding the middle, mashing one spot, circles,
+//                               swiping back and forth) must not win; one that gets past half the goal is a warning
 //   speed     budget.cjs        the speed report on a slowed CPU: frame time against the budget (fails over it),
 //                               slowest lines, garbage, memory, and for 3D games draw calls, triangles and shaders
 //                               built mid-play against phone budgets (warnings); run alone, after the others
@@ -178,9 +180,10 @@ if (!QUICK) {
       ['fold', node('fold.cjs', id, '--jobs', '1')],
       THREE_D && ['sweep', node('sweep.cjs', id, '--jobs', '1')],
       ['playtest', node('playtest.cjs', id, '--jobs', '1')],
+      ['lazy', node('lazy-check.cjs', id, '--jobs', '1')],
     ].filter(Boolean);
     for (const [name, p] of plays) {
-      const r = await p, script = { smoke: 'smoke.cjs', stream: 'stream-smoke.mjs', fold: 'fold.cjs', sweep: 'sweep.cjs', playtest: 'playtest.cjs', budget: 'budget.cjs' }[name];
+      const r = await p, script = { smoke: 'smoke.cjs', stream: 'stream-smoke.mjs', fold: 'fold.cjs', sweep: 'sweep.cjs', playtest: 'playtest.cjs', lazy: 'lazy-check.cjs', budget: 'budget.cjs' }[name];
       if (name === 'playtest') {
         const line = r.out.split('\n').find(l => new RegExp(`^(PASS|WARN|FAIL|NOTE)\\s+${ID}\\b`).test(l)) || '';
         const status = r.code ? 'fail' : /^WARN/.test(line) ? 'warn' : 'pass';
@@ -194,6 +197,16 @@ if (!QUICK) {
           ? [problem(undefined, why, 'The bot hit the crash reported above: fix that first, then this check means something.')]
           : [...crash, problem(undefined, why || r.out.trim().split('\n').pop(), fix)].slice(0, 4);
         step(name, status, r.ms, probs, status === 'pass' ? [why] : []);
+        continue;
+      }
+      if (name === 'lazy') {
+        const line = r.out.split('\n').find(l => new RegExp(`^(FAIL|WARN| ok )\\s+${ID}\\b`).test(l)) || '';
+        const status = /^FAIL/.test(line) || (r.code && !line) ? 'fail' : /^WARN/.test(line) ? 'warn' : 'pass';
+        const why = line.replace(new RegExp(`^.{4}\\s+${ID}\\s+`), '').trim();
+        const fix = /no input/.test(why) ? 'It scores while nobody touches it: score only from what the player does, and wait for the first tap with gs.rounds.Ready.'
+          : 'A trick that needs no skill gets there: make points depend on timing, aim or choices (a miss or a wrong tap should cost something: a life, time, points) rather than on any touch. See: node scripts/lazy-check.cjs ' + id;
+        const crash = /errors/.test(why) ? crashes(r.out, script) : [];
+        step(name, status, r.ms, status === 'pass' ? [] : [...crash, problem(undefined, why || r.out.trim().split('\n').pop(), fix)].slice(0, 4), status === 'pass' ? [why] : []);
         continue;
       }
       step(name, r.code ? 'fail' : 'pass', r.ms, r.code ? crashes(r.out, script) : []);

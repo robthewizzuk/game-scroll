@@ -4,6 +4,10 @@
 
 `gs.icons`: `icon(c, 'sword', x, y, size, { color, outline, angle, pixel })`: 528 icons that look the same on every phone (use these, not emoji); plain words (`heart`, `coin`, `key`, `star`, `skull`...) or `names`, `find('potion')`.
 
+Drawing an icon that was drawn before makes next to nothing new (about 50 bytes a call), so `icon()` can run
+dozens of times a frame: the options object written in the call is all it costs (about 40 bytes; making it
+once outside `draw()` saves even that, worth it only for a lot of icons a frame).
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it

@@ -5,14 +5,14 @@ const { chromium, devices } = require('playwright');
 const { jobs, pool } = require('./lib/pool.cjs');
 (async () => {
   const argv = process.argv.slice(2), n = jobs(argv);
-  const server = await (await import('vite')).preview({ preview: { port: 4179 } });
+  const { server, url } = await require('./lib/serve.cjs').preview();   // (a free port: checks run side by side)
   // one browser per worker: each has its own GPU process, so 3D games really draw side by side
   const open = async () => {
     const b = await chromium.launch();
     const ctx = await b.newContext({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
     const p = await ctx.newPage(), w = { b, p, errs: [] };
     p.on('pageerror', e => w.errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) w.errs.push(m.text()); });   // the app's own API calls (scores, hearts) can fail offline: not the game's fault
-    await p.goto('http://localhost:4179/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
+    await p.goto(url); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(400);
     return w;
   };
   const first = await open();
