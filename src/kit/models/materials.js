@@ -4,7 +4,7 @@
 // and can be laid on without UVs (solid) or without visible repeats (scatter).
 // Kit use only: games reach it as gs.models.material.
 import { JS } from './ops.js';
-import { RECIPES, NAMES } from './recipes.js';
+import { RECIPES, NAMES, lookK } from './recipes.js';
 import { seeded, paintRecipe } from './recipe-paint.js';
 import * as cache from './cache.js';
 import { pbr, surface } from '../hd3d.js';
@@ -22,7 +22,7 @@ export function bakeSet(name, look, size, seed) {
   const key = `${name}|${size}|${seed}|${Object.values(look).join(',')}|1`;
   let set = sets.get(key); if (set) { if (set.core.wait) later(set.core.wait); return set; }   // (still with a worker: this card waits for it too)
   pause('Textures');   // (while a card loads, a frame may go by before each new recipe: slices.js)
-  const saved = cache.get(key), K = {}; for (const k in look) K[k] = JS.rgb(look[k]);
+  const saved = cache.get(key), K = lookK(RECIPES[name], look, JS);
   set = surface(size, g => {
     if (saved) {   // drawn back from last launch's pictures
       const L = saved.layers; g.col.drawImage(L.col, 0, 0); g.h.drawImage(L.h, 0, 0); g.r.drawImage(L.r, 0, 0); if (L.m) g.m.drawImage(L.m, 0, 0);
@@ -39,9 +39,10 @@ export function bakeSet(name, look, size, seed) {
 }
 
 /**
- * A material made from a recipe: wood, planks, bark, brick, stone, cobbles, tiles, concrete, metal,
- * rust, paint, fabric, leather, marble, dirt, sand, snow. Options: the recipe's colours (colour, dark,
- * mortar, rust, vein...), seed (another pattern), repeat ([u, v] tiles across the mesh's UVs), size
+ * A material made from a recipe (recipes.js NAMES: wood, brick, concrete, metal, rust, paint, hull,
+ * corrugated, asphalt, epoxy, galvanised, diamond, brushed, gunmetal, plastic, tarp, fabric, snow...).
+ * Options: the recipe's colours (colour, dark, mortar, rust, under, vein...), wear (paint, hull and
+ * corrugated: 0..1, chips, stains and rust runs), seed (another pattern), repeat ([u, v] tiles across the mesh's UVs), size
  * (texture pixels, 256), depth (parallax depth on WebGPU), and on WebGPU: closeUp (true: finest detail
  * worked out per pixel near the camera, on the pixels the textures are stretched over), solid (true: laid
  * on by position, no UVs or seams; a number is metres per tile), scatter (true: each tile turned and moved
