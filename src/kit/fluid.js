@@ -92,38 +92,61 @@ export const bulk = mu => Math.min(1, 1.9 - 2 * mu);
 const SN = new Float64Array(4);   // [distance, out x, y, z] (a typed list: a number kept in a plain variable of the file is a new number object at every write)
 // Sim.near() leaves its answer here: how far the nearest solid's skin is, the way out, and how fast that spot moves
 const BN = new Float64Array(7);   // [distance, out x, y, z, the spot's speed x, y, z]
-const twinV = [0, 0, 0];
+const twinV = new Float64Array(3);   // a twin drop's speed (toGrid)
+// A drop (or its twin) as the step's parts work on it, its weights for the 3 cells round it each way, and sums
+// over its 27 cells, all in typed lists: a fractional number picked by a test, summed round a loop or handed to a
+// function is a new number object every time until the browser has optimised the step fully (seconds, on a phone:
+// in that time the fluid made megabytes of garbage a second), but one in a typed list never is.
+// DR: [x, y, z, then for toGrid: vx, vy, vz, c00, c01, c02, c10, c11, c12, c20, c21, c22; for squeeze: t00, t11, t22, t01, t02, t12]
+const DR = new Float64Array(15);
+// WT: the weights (x 0..2, y 3..5, z 6..8), then where the drop sits in its cell (dx, dy, dz at 9..11) and the slopes
+// of the weights (x 12..14, y 15..17, z 18..20); CI: its cell
+const WT = new Float64Array(21), CI = new Int32Array(3), ACC = new Float64Array(12);
+function weights() {
+  const x = DR[0], y = DR[1], z = DR[2], cx = x | 0, cy = y | 0, cz = z | 0, dx = x - cx - .5, dy = y - cy - .5, dz = z - cz - .5;
+  CI[0] = cx; CI[1] = cy; CI[2] = cz; WT[9] = dx; WT[10] = dy; WT[11] = dz;
+  WT[0] = .5 * (.5 - dx) * (.5 - dx); WT[1] = .75 - dx * dx; WT[2] = .5 * (.5 + dx) * (.5 + dx);
+  WT[3] = .5 * (.5 - dy) * (.5 - dy); WT[4] = .75 - dy * dy; WT[5] = .5 * (.5 + dy) * (.5 + dy);
+  WT[6] = .5 * (.5 - dz) * (.5 - dz); WT[7] = .75 - dz * dz; WT[8] = .5 * (.5 + dz) * (.5 + dz);
+  WT[12] = dx - .5; WT[13] = -2 * dx; WT[14] = dx + .5; WT[15] = dy - .5; WT[16] = -2 * dy; WT[17] = dy + .5; WT[18] = dz - .5; WT[19] = -2 * dz; WT[20] = dz + .5;
+}
+// What the shape questions are asked about goes in typed lists too, not in arguments: a fractional number handed
+// to a function the step doesn't fold into itself is a new number object at every call (and Math.hypot makes
+// them as well), which in a fluid's step was thousands a frame, megabytes of garbage a second.
+const SA = new Float64Array(6);   // sdf()'s question: [the point x, y, z in the shape's own axes, its size ax, ay, az]
+const PT = new Float64Array(3);   // Sim.near()'s and solidAt()'s question: the place x, y, z (cells)
 // T: 0 a ball (ax its radius), 1 a box (ax, ay, az half its sides), 2 a tube standing on y (ax its radius, ay half its height)
-function sdf(T, px, py, pz, ax, ay, az) {
-  if (T === 0) { const l = Math.hypot(px, py, pz) || 1e-9; SN[0] = l - ax; SN[1] = px / l; SN[2] = py / l; SN[3] = pz / l; return; }
+function sdf(T) {
+  const px = SA[0], py = SA[1], pz = SA[2], ax = SA[3], ay = SA[4], az = SA[5];
+  if (T === 0) { const l = Math.sqrt(px * px + py * py + pz * pz) || 1e-9; SN[0] = l - ax; SN[1] = px / l; SN[2] = py / l; SN[3] = pz / l; return; }
   if (T === 1) {
     const qx = Math.abs(px) - ax, qy = Math.abs(py) - ay, qz = Math.abs(pz) - az;
     SN[1] = SN[2] = SN[3] = 0;
     if (qx <= 0 && qy <= 0 && qz <= 0) {
       if (qx >= qy && qx >= qz) { SN[0] = qx; SN[1] = px < 0 ? -1 : 1; } else if (qy >= qz) { SN[0] = qy; SN[2] = py < 0 ? -1 : 1; } else { SN[0] = qz; SN[3] = pz < 0 ? -1 : 1; }
     } else {
-      const mx = qx > 0 ? qx : 0, my = qy > 0 ? qy : 0, mz = qz > 0 ? qz : 0, l = Math.hypot(mx, my, mz);
+      const mx = qx > 0 ? qx : 0, my = qy > 0 ? qy : 0, mz = qz > 0 ? qz : 0, l = Math.sqrt(mx * mx + my * my + mz * mz);
       SN[0] = l; SN[1] = (px < 0 ? -mx : mx) / l; SN[2] = (py < 0 ? -my : my) / l; SN[3] = (pz < 0 ? -mz : mz) / l;
     }
     return;
   }
-  const lr = Math.hypot(px, pz) || 1e-9, qr = lr - ax, qy = Math.abs(py) - ay;
+  const lr = Math.sqrt(px * px + pz * pz) || 1e-9, qr = lr - ax, qy = Math.abs(py) - ay;
   if (qr <= 0 && qy <= 0) {
     if (qr >= qy) { SN[0] = qr; SN[1] = px / lr; SN[2] = 0; SN[3] = pz / lr; } else { SN[0] = qy; SN[1] = 0; SN[2] = py < 0 ? -1 : 1; SN[3] = 0; }
   } else {
-    const mr = qr > 0 ? qr : 0, my = qy > 0 ? qy : 0, l = Math.hypot(mr, my);
+    const mr = qr > 0 ? qr : 0, my = qy > 0 ? qy : 0, l = Math.sqrt(mr * mr + my * my);
     SN[0] = l; SN[1] = px / lr * mr / l; SN[2] = (py < 0 ? -my : my) / l; SN[3] = pz / lr * mr / l;
   }
 }
 // a packed solid (Solid.pack) at a point, all in cells: SN[0] and the way out in world axes. A hollow one
-// is its outside with the room inside it taken away (and, for an open one, the way in at the top)
-function solidAt(s, x, y, z) {
-  const dx = x - s.cx, dy = y - s.cy, dz = z - s.cz, m = s.m;
+// is its outside with the room inside it taken away (and, for an open one, the way in at the top). The point: PT
+function solidAt(s) {
+  const dx = PT[0] - s.cx, dy = PT[1] - s.cy, dz = PT[2] - s.cz, m = s.m;
   const px = m[0] * dx + m[1] * dy + m[2] * dz, py = m[3] * dx + m[4] * dy + m[5] * dz, pz = m[6] * dx + m[7] * dy + m[8] * dz;
-  sdf(s.T, px, py, pz, s.ax, s.ay, s.az);
+  SA[0] = px; SA[1] = py; SA[2] = pz; SA[3] = s.ax; SA[4] = s.ay; SA[5] = s.az; sdf(s.T);
   if (s.hol) {
     const d1 = SN[0], ax = SN[1], ay = SN[2], az = SN[3];
-    sdf(s.T, px, py - s.io, pz, s.ix, s.iy, s.iz);
+    SA[0] = px; SA[1] = py - s.io; SA[2] = pz; SA[3] = s.ix; SA[4] = s.iy; SA[5] = s.iz; sdf(s.T);
     if (s.cut - py < SN[0]) { SN[0] = s.cut - py; SN[1] = 0; SN[2] = -1; SN[3] = 0; }   // (an open one: all that is above its rim is room too)
     if (-SN[0] > d1) { SN[0] = -SN[0]; SN[1] = -SN[1]; SN[2] = -SN[2]; SN[3] = -SN[3]; } else { SN[0] = d1; SN[1] = ax; SN[2] = ay; SN[3] = az; }
   }
@@ -134,7 +157,7 @@ function solidAt(s, x, y, z) {
 function roomAt(s, x, y, z) {
   const dx = x - s.cx, dy = y - s.cy, dz = z - s.cz, m = s.m;
   const px = m[0] * dx + m[1] * dy + m[2] * dz, py = m[3] * dx + m[4] * dy + m[5] * dz, pz = m[6] * dx + m[7] * dy + m[8] * dz;
-  sdf(s.T, px, py - s.io, pz, s.ix, s.iy, s.iz); if (py > s.top) SN[0] = Math.max(SN[0], py - s.top);
+  SA[0] = px; SA[1] = py - s.io; SA[2] = pz; SA[3] = s.ix; SA[4] = s.iy; SA[5] = s.iz; sdf(s.T); if (py > s.top) SN[0] = Math.max(SN[0], py - s.top);
   SN[1] = py;
 }
 
@@ -164,7 +187,7 @@ class Solid {
     const k = dt > 1e-6 ? 1 / dt : 0;
     this.v[0] = (this.x - this.px) * k; this.v[1] = (this.y - this.py) * k; this.v[2] = (this.z - this.pz) * k;
     _q.copy(this.pq).invert().premultiply(this.q);   // the turn since last time
-    const s = Math.hypot(_q.x, _q.y, _q.z), a = s > 1e-7 ? 2 * Math.atan2(s, _q.w) : 0, a2 = a > Math.PI ? a - 2 * Math.PI : a, f = s > 1e-7 ? a2 / s * k : 0;
+    const qx = _q.x, qy = _q.y, qz = _q.z, s = Math.sqrt(qx * qx + qy * qy + qz * qz), a = s > 1e-7 ? 2 * Math.atan2(s, _q.w) : 0, a2 = a > Math.PI ? a - 2 * Math.PI : a, f = s > 1e-7 ? a2 / s * k : 0;
     this.w[0] = _q.x * f; this.w[1] = _q.y * f; this.w[2] = _q.z * f;
     this.px = this.x; this.py = this.y; this.pz = this.z; this.pq.copy(this.q);
   }
@@ -185,7 +208,7 @@ class Solid {
     m[6] = 2 * (x * z + y * w); m[7] = 2 * (y * z - x * w); m[8] = 1 - 2 * (x * x + y * y);
     const kv = S.dt / h; out.vx = this.v[0] * kv; out.vy = this.v[1] * kv; out.vz = this.v[2] * kv;
     out.wx = this.w[0] * S.dt; out.wy = this.w[1] * S.dt; out.wz = this.w[2] * S.dt;
-    out.R = Math.hypot(out.ax, out.ay, out.az) + 1.5;
+    const ra = out.ax, rb = out.ay, rc = out.az; out.R = Math.sqrt(ra * ra + rb * rb + rc * rc) + 1.5;
     return out;
   }
   /** A box round the room inside a hollow solid, [x0, y0, z0, x1, y1, z1], for fluid.amount() (right while it stands upright). */
@@ -237,12 +260,12 @@ class Sim {
     const { nx, nz, h } = this, H = this.H = new Float32Array(nx * nz);
     for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) H[k * nx + i] = (fn(this.ox + (i + .5) * h, this.oz + (k + .5) * h) - this.oy) / h;
   }
-  // the ground at a place (cells): its height in SN[0]'s place... returns height, slope in SN[1], SN[3]
-  groundAt(x, z) {
-    const { nx, nz, H } = this, fx = Math.min(nx - 1.001, Math.max(0, x - .5)), fz = Math.min(nz - 1.001, Math.max(0, z - .5)), i = fx | 0, k = fz | 0, u = fx - i, w = fz - k, a = k * nx + i;
+  // the ground at the place in PT (cells; its y is not used): its height in SN[0], its slope in SN[1] (x) and SN[3] (z)
+  groundAt() {
+    const { nx, nz, H } = this, fx = Math.min(nx - 1.001, Math.max(0, PT[0] - .5)), fz = Math.min(nz - 1.001, Math.max(0, PT[2] - .5)), i = fx | 0, k = fz | 0, u = fx - i, w = fz - k, a = k * nx + i;
     const h00 = H[a], h10 = H[a + 1], h01 = H[a + nx], h11 = H[a + nx + 1];
     SN[1] = (h10 - h00) * (1 - w) + (h11 - h01) * w; SN[3] = (h01 - h00) * (1 - u) + (h11 - h10) * u;
-    return h00 * (1 - u) * (1 - w) + h10 * u * (1 - w) + h01 * (1 - u) * w + h11 * u * w;
+    SN[0] = h00 * (1 - u) * (1 - w) + h10 * u * (1 - w) + h01 * (1 - u) * w + h11 * u * w;
   }
   /** A new drop (cells and cells a step). Returns its slot, or -1 when the fluid is full. */
   add(x, y, z, vx, vy, vz) {
@@ -283,15 +306,17 @@ class Sim {
     return nt;
   }
   // the nearest solid thing or ground within REACH of a place: true if there is one, with how far its skin
-  // is in BN[0], the way out of it in BN[1], BN[2], BN[3] and how fast that spot of it moves in BN[4], BN[5], BN[6]
+  // is in BN[0], the way out of it in BN[1], BN[2], BN[3] and how fast that spot of it moves in BN[4], BN[5], BN[6].
+  // The place: x, y, z (cells), or PT when called with none (the step's way: see PT above)
   near(x, y, z) {
-    const solids = this.F.packed; BN[0] = REACH;
+    if (x !== undefined) { PT[0] = x; PT[1] = y; PT[2] = z; }
+    const solids = this.F.packed, px = PT[0], py = PT[1], pz = PT[2]; BN[0] = REACH;
     for (let j = 0; j < solids.length; j++) {
-      const s = solids[j], ex = x - s.cx, ey = y - s.cy, ez = z - s.cz; if (ex * ex + ey * ey + ez * ez > s.R * s.R) continue;
-      solidAt(s, x, y, z); const d = SN[0] - SKIN; if (d >= BN[0]) continue;
+      const s = solids[j], ex = px - s.cx, ey = py - s.cy, ez = pz - s.cz; if (ex * ex + ey * ey + ez * ez > s.R * s.R) continue;
+      solidAt(s); const d = SN[0] - SKIN; if (d >= BN[0]) continue;
       BN[0] = d; BN[1] = SN[1]; BN[2] = SN[2]; BN[3] = SN[3]; BN[4] = s.vx + s.wy * ez - s.wz * ey; BN[5] = s.vy + s.wz * ex - s.wx * ez; BN[6] = s.vz + s.wx * ey - s.wy * ex;
     }
-    if (this.H) { const gh = this.groundAt(x, z), l = Math.hypot(SN[1], 1, SN[3]), d = (y - gh) / l - SKIN; if (d < BN[0]) { BN[0] = d; BN[1] = -SN[1] / l; BN[2] = 1 / l; BN[3] = -SN[3] / l; BN[4] = BN[5] = BN[6] = 0; } }
+    if (this.H) { this.groundAt(); const sx = SN[1], sz = SN[3], l = Math.sqrt(sx * sx + 1 + sz * sz), d = (py - SN[0]) / l - SKIN; if (d < BN[0]) { BN[0] = d; BN[1] = -sx / l; BN[2] = 1 / l; BN[3] = -sz / l; BN[4] = BN[5] = BN[6] = 0; } }
     return BN[0] < REACH;
   }
   // snow packs: squeezed past a little over its resting fullness, that fullness rises (up to 1 + packs), so it stays squeezed. Returns it.
@@ -318,173 +343,211 @@ class Sim {
     E[e] = n00 * k; E[e + 1] = n11 * k; E[e + 2] = n22 * k; E[e + 4] = n01 * k; E[e + 5] = n02 * k; E[e + 6] = n12 * k;
   }
   /** One step, here on the CPU. */
+  // In four parts, each a method of its own: as one function the step was so long that the browser took many
+  // seconds to optimise it fully (a function's turn comes after work in proportion to its length) and threw it
+  // back at every branch it hadn't seen yet; until then its sums in loops were new number objects, megabytes of
+  // garbage a second. Short parts are optimised within a moment, and one part's rare branch costs only that part.
   step() {
-    const F = this.F, { nx, ny, P, V, C, D, lo, hi } = this, nxy = nx * ny, top = this.top;
-    const G = this.G ||= new Float32Array(this.cells * 4), T = this.T ||= new Int32Array(this.cells), M = this.M ||= new Float32Array(this.N * 4);
-    const mu = F.mu, zeta = bulk(mu), open = F.open, hx = hi[0], hy = hi[1], hz = hi[2], bounds = !!this.H || F.packed.length > 0;
-    // (the walls, worked out here, and the clamp to them below without branches: sums and tests met only in a branch a
-    // drop seldom takes had no type feedback when the step was optimised, so a drop at a wall threw it back to the slow
-    // interpreter, dozens of times a minute, where every sum is a new number object)
-    const wLo = LO + IN, wx = hx - IN, wy = hy - IN, wz = hz - IN;
+    this.G ||= new Float32Array(this.cells * 4); this.T ||= new Int32Array(this.cells); this.M ||= new Float32Array(this.N * 4);
+    const open = this.F.open;
+    let nt = this.toGrid();
+    // the walls as mirrors: what went to the cells beyond a wall comes back to the cells this side of it,
+    // turned round; then each cell beyond a wall weighs what its mirror cell does (and pushes nothing yet)
+    if (!open) { nt = this.fold(nt, true); this.mirrorMass(nt); }
+    this.squeeze();
+    if (!open) this.fold(nt, false);   // the pushes given to cells beyond a wall come back too
+    this.cellsMove(nt);
+    // the cells beyond a wall move as their mirror cells do, turned round
+    if (!open) this.mirrorSpeed(nt);
+    this.toDrops();
+    const G = this.G, T = this.T;
+    for (let k = 0; k < nt; k++) { const i = T[k]; G[i] = G[i + 1] = G[i + 2] = G[i + 3] = 0; }
+    while (this.top > 0 && !this.live[this.top - 1]) this.top--;
+    this.steps++; this.stamp++;
+  }
+  // drops to grid: each drop's weight and push go to the 27 cells round it. A drop beside a solid thing or
+  // the ground has a twin in the mirror, just inside it (M: where), which gives its cells the same, turned round.
+  // Returns how many cells were touched (their places in T)
+  toGrid() {
+    const { nx, ny, P, V, C, M } = this, top = this.top, bounds = !!this.H || this.F.packed.length > 0;
     let nt = 0;
-    // drops to grid: each drop's weight and push go to the 27 cells round it. A drop beside a solid thing or
-    // the ground has a twin in the mirror, just inside it (M: where), which gives its cells the same, turned round
     for (let p = 0; p < top; p++) {
       const a = p * 4; if (P[a + 3] <= 0) continue;
-      let x = P[a], y = P[a + 1], z = P[a + 2], vx = V[a], vy = V[a + 1], vz = V[a + 2];
-      const c = p * 12;
-      let c00 = C[c], c01 = C[c + 1], c02 = C[c + 2], c10 = C[c + 4], c11 = C[c + 5], c12 = C[c + 6], c20 = C[c + 8], c21 = C[c + 9], c22 = C[c + 10];
+      const x = P[a], y = P[a + 1], z = P[a + 2], vx = V[a], vy = V[a + 1], vz = V[a + 2];
       let twin = 0;
-      if (bounds && this.near(x, y, z)) {
+      if (bounds && (PT[0] = x, PT[1] = y, PT[2] = z, this.near())) {
         const d = BN[0] > 0 ? BN[0] : 0, rn = (vx - BN[4]) * BN[1] + (vy - BN[5]) * BN[2] + (vz - BN[6]) * BN[3];
         M[a] = x - 2 * d * BN[1]; M[a + 1] = y - 2 * d * BN[2]; M[a + 2] = z - 2 * d * BN[3];
         twin = M[a] > 1.5 && M[a + 1] > 1.5 && M[a + 2] > 1.5 && M[a] < nx - 1.5 && M[a + 1] < ny - 1.5 && M[a + 2] < this.nz - 1.5 ? 1 : 0;
         twinV[0] = vx - 2 * rn * BN[1]; twinV[1] = vy - 2 * rn * BN[2]; twinV[2] = vz - 2 * rn * BN[3];
       }
       M[a + 3] = twin;
-      for (let pass = 0; pass <= twin; pass++) {
-        if (pass) { x = M[a]; y = M[a + 1]; z = M[a + 2]; vx = twinV[0]; vy = twinV[1]; vz = twinV[2]; c00 = c01 = c02 = c10 = c11 = c12 = c20 = c21 = c22 = 0; }
-        const cx = x | 0, cy = y | 0, cz = z | 0, dx = x - cx - .5, dy = y - cy - .5, dz = z - cz - .5;
-        const wx0 = .5 * (.5 - dx) * (.5 - dx), wx1 = .75 - dx * dx, wx2 = .5 * (.5 + dx) * (.5 + dx);
-        const wy0 = .5 * (.5 - dy) * (.5 - dy), wy1 = .75 - dy * dy, wy2 = .5 * (.5 + dy) * (.5 + dy);
-        const wz0 = .5 * (.5 - dz) * (.5 - dz), wz1 = .75 - dz * dz, wz2 = .5 * (.5 + dz) * (.5 + dz);
-        for (let gz = 0; gz < 3; gz++) {
-          const wz = gz === 0 ? wz0 : gz === 1 ? wz1 : wz2, rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
-          for (let gy = 0; gy < 3; gy++) {
-            const wyz = wz * (gy === 0 ? wy0 : gy === 1 ? wy1 : wy2), ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
-            for (let gx = 0; gx < 3; gx++) {
-              const w = wyz * (gx === 0 ? wx0 : gx === 1 ? wx1 : wx2); if (w <= 0) continue;
-              const rx = gx - 1 - dx, i = (by + gx) * 4;
-              if (G[i + 3] === 0) T[nt++] = i;
-              G[i] += w * (vx + c00 * rx + c01 * ry + c02 * rz); G[i + 1] += w * (vy + c10 * rx + c11 * ry + c12 * rz); G[i + 2] += w * (vz + c20 * rx + c21 * ry + c22 * rz); G[i + 3] += w;
-            }
-          }
+      const c = p * 12;
+      DR[0] = x; DR[1] = y; DR[2] = z; DR[3] = vx; DR[4] = vy; DR[5] = vz;
+      DR[6] = C[c]; DR[7] = C[c + 1]; DR[8] = C[c + 2]; DR[9] = C[c + 4]; DR[10] = C[c + 5]; DR[11] = C[c + 6]; DR[12] = C[c + 8]; DR[13] = C[c + 9]; DR[14] = C[c + 10];
+      nt = this.give(nt);
+      if (twin) {   // the twin: where M says, moving as twinV says, and turning nothing
+        DR[0] = M[a]; DR[1] = M[a + 1]; DR[2] = M[a + 2]; DR[3] = twinV[0]; DR[4] = twinV[1]; DR[5] = twinV[2]; DR.fill(0, 6, 15);
+        nt = this.give(nt);
+      }
+    }
+    return nt;
+  }
+  // the drop in DR gives its weight and push to the 27 cells round it (new cells' places go in T); returns how many cells there are now
+  give(nt) {
+    const { nx, ny, G, T } = this, nxy = nx * ny;
+    weights();
+    const vx = DR[3], vy = DR[4], vz = DR[5], c00 = DR[6], c01 = DR[7], c02 = DR[8], c10 = DR[9], c11 = DR[10], c12 = DR[11], c20 = DR[12], c21 = DR[13], c22 = DR[14];
+    const cx = CI[0], cy = CI[1], cz = CI[2], dx = WT[9], dy = WT[10], dz = WT[11];
+    for (let gz = 0; gz < 3; gz++) {
+      const wz = WT[6 + gz], rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
+      for (let gy = 0; gy < 3; gy++) {
+        const wyz = wz * WT[3 + gy], ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
+        for (let gx = 0; gx < 3; gx++) {
+          const w = wyz * WT[gx]; if (w <= 0) continue;
+          const rx = gx - 1 - dx, i = (by + gx) * 4;
+          if (G[i + 3] === 0) T[nt++] = i;
+          G[i] += w * (vx + c00 * rx + c01 * ry + c02 * rz); G[i + 1] += w * (vy + c10 * rx + c11 * ry + c12 * rz); G[i + 2] += w * (vz + c20 * rx + c21 * ry + c22 * rz); G[i + 3] += w;
         }
       }
     }
-    // the walls as mirrors: what went to the cells beyond a wall comes back to the cells this side of it,
-    // turned round; then each cell beyond a wall weighs what its mirror cell does (and pushes nothing yet)
-    if (!open) {
-      nt = this.fold(nt, true);
-      for (let k = 0; k < nt; k++) {
-        const i = T[k], t = this.mirror(i);
-        if (t !== i) { G[i] = G[i + 1] = G[i + 2] = 0; G[i + 3] = G[t + 3]; }
-      }
+    return nt;
+  }
+  mirrorMass(nt) {
+    const { G, T } = this;
+    for (let k = 0; k < nt; k++) {
+      const i = T[k], t = this.mirror(i);
+      if (t !== i) { G[i] = G[i + 1] = G[i + 2] = 0; G[i + 3] = G[t + 3]; }
     }
-    // how squeezed each drop is, and the push that gives its cells (and, for the look, which way the liquid's skin faces)
+  }
+  mirrorSpeed(nt) {
+    const { G, T } = this;
+    for (let k = 0; k < nt; k++) {
+      const i = T[k], t = this.mirror(i); if (t === i) continue;
+      const f = this.flip; G[i] = f & 1 ? -G[t] : G[t]; G[i + 1] = f & 2 ? -G[t + 1] : G[t + 1]; G[i + 2] = f & 4 ? -G[t + 2] : G[t + 2];
+    }
+  }
+  // how squeezed each drop is, and the push that gives its cells (and, for the look, which way the liquid's skin faces)
+  squeeze() {
+    const F = this.F, { nx, ny, P, C, D, G, M } = this, nxy = nx * ny, top = this.top, mu = F.mu, zeta = bulk(mu);
     for (let p = 0; p < top; p++) {
       const a = p * 4; if (P[a + 3] <= 0) continue;
-      let x = P[a], y = P[a + 1], z = P[a + 2], cx = x | 0, cy = y | 0, cz = z | 0, dx = x - cx - .5, dy = y - cy - .5, dz = z - cz - .5;
-      let wx0 = .5 * (.5 - dx) * (.5 - dx), wx1 = .75 - dx * dx, wx2 = .5 * (.5 + dx) * (.5 + dx);
-      let wy0 = .5 * (.5 - dy) * (.5 - dy), wy1 = .75 - dy * dy, wy2 = .5 * (.5 + dy) * (.5 + dy);
-      let wz0 = .5 * (.5 - dz) * (.5 - dz), wz1 = .75 - dz * dz, wz2 = .5 * (.5 + dz) * (.5 + dz);
-      let rho = 0, gx_ = 0, gy_ = 0, gz_ = 0;
+      DR[0] = P[a]; DR[1] = P[a + 1]; DR[2] = P[a + 2]; weights(); ACC.fill(0, 0, 4);
+      const cx = CI[0], cy = CI[1], cz = CI[2];
       for (let gz = 0; gz < 3; gz++) {
-        const wz = gz === 0 ? wz0 : gz === 1 ? wz1 : wz2, ez = gz === 0 ? dz - .5 : gz === 1 ? -2 * dz : dz + .5, bz = (cz + gz - 1) * nxy;
+        const wz = WT[6 + gz], ez = WT[18 + gz], bz = (cz + gz - 1) * nxy;
         for (let gy = 0; gy < 3; gy++) {
-          const wy = gy === 0 ? wy0 : gy === 1 ? wy1 : wy2, ey = gy === 0 ? dy - .5 : gy === 1 ? -2 * dy : dy + .5, by = bz + (cy + gy - 1) * nx + cx - 1;
+          const wy = WT[3 + gy], ey = WT[15 + gy], by = bz + (cy + gy - 1) * nx + cx - 1;
           for (let gx = 0; gx < 3; gx++) {
-            const wx = gx === 0 ? wx0 : gx === 1 ? wx1 : wx2, ex = gx === 0 ? dx - .5 : gx === 1 ? -2 * dx : dx + .5, m = G[(by + gx) * 4 + 3];
-            rho += m * wx * wy * wz; gx_ += m * ex * wy * wz; gy_ += m * wx * ey * wz; gz_ += m * wx * wy * ez;
+            const wx = WT[gx], ex = WT[12 + gx], m = G[(by + gx) * 4 + 3];
+            ACC[0] += m * wx * wy * wz; ACC[1] += m * ex * wy * wz; ACC[2] += m * wx * ey * wz; ACC[3] += m * wx * wy * ez;
           }
         }
       }
-      D[a] = -gx_ / RHO; D[a + 1] = -gy_ / RHO; D[a + 2] = -gz_ / RHO; D[a + 3] = rho / RHO;
+      const rho = ACC[0];
+      D[a] = -ACC[1] / RHO; D[a + 1] = -ACC[2] / RHO; D[a + 2] = -ACC[3] / RHO; D[a + 3] = rho / RHO;
       // the push: squeezed liquid pushes out (kp), and liquid that shears or is squeezed fast drags (kv). A lone
       // drop or a thin sheet has little weight in its cells, so its drag is scaled down with it (thin(): a
       // drag sized for full cells threw lone drops about)
       const E = this.E, e = p * 8, r0 = E ? this.pack(E, e, rho) : 1;
       const q = Math.min(rho / RHO / r0, 3), q2 = q * q, c = p * 12, sp = Math.max(0, K * (q2 * q2 - 1)), kp = 4 / rho * sp, kv = -4 * thin(rho);
       const sq = kv * zeta * (C[c] + C[c + 5] + C[c + 10]) + kp;   // (being squeezed or stretched fast is resisted, which stills the liquid's ringing)
-      let t00 = kv * 2 * mu * C[c] + sq, t11 = kv * 2 * mu * C[c + 5] + sq, t22 = kv * 2 * mu * C[c + 10] + sq;
-      let t01 = kv * mu * (C[c + 1] + C[c + 4]), t02 = kv * mu * (C[c + 2] + C[c + 8]), t12 = kv * mu * (C[c + 6] + C[c + 9]);
+      DR[3] = kv * 2 * mu * C[c] + sq; DR[4] = kv * 2 * mu * C[c + 5] + sq; DR[5] = kv * 2 * mu * C[c + 10] + sq;
+      DR[6] = kv * mu * (C[c + 1] + C[c + 4]); DR[7] = kv * mu * (C[c + 2] + C[c + 8]); DR[8] = kv * mu * (C[c + 6] + C[c + 9]);
       if (E) {   // grains: the shear's spring, as far as friction and what holds it allow
         this.shear(E, e, C, c, sp, r0);
         const k2 = kv * 2 * GRAIN_G;
-        t00 += k2 * E[e]; t11 += k2 * E[e + 1]; t22 += k2 * E[e + 2]; t01 += k2 * E[e + 4]; t02 += k2 * E[e + 5]; t12 += k2 * E[e + 6];
+        DR[3] += k2 * E[e]; DR[4] += k2 * E[e + 1]; DR[5] += k2 * E[e + 2]; DR[6] += k2 * E[e + 4]; DR[7] += k2 * E[e + 5]; DR[8] += k2 * E[e + 6];
       }
-      const twin = M[a + 3];
-      for (let pass = 0; pass <= twin; pass++) {
-        if (pass) {   // the twin in the mirror pushes as hard as its drop
-          x = M[a]; y = M[a + 1]; z = M[a + 2]; cx = x | 0; cy = y | 0; cz = z | 0; dx = x - cx - .5; dy = y - cy - .5; dz = z - cz - .5;
-          wx0 = .5 * (.5 - dx) * (.5 - dx); wx1 = .75 - dx * dx; wx2 = .5 * (.5 + dx) * (.5 + dx);
-          wy0 = .5 * (.5 - dy) * (.5 - dy); wy1 = .75 - dy * dy; wy2 = .5 * (.5 + dy) * (.5 + dy);
-          wz0 = .5 * (.5 - dz) * (.5 - dz); wz1 = .75 - dz * dz; wz2 = .5 * (.5 + dz) * (.5 + dz);
-          t00 = t11 = t22 = kp; t01 = t02 = t12 = 0;
-        }
-        for (let gz = 0; gz < 3; gz++) {
-          const wz = gz === 0 ? wz0 : gz === 1 ? wz1 : wz2, rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
-          for (let gy = 0; gy < 3; gy++) {
-            const wyz = wz * (gy === 0 ? wy0 : gy === 1 ? wy1 : wy2), ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
-            for (let gx = 0; gx < 3; gx++) {
-              const w = wyz * (gx === 0 ? wx0 : gx === 1 ? wx1 : wx2), rx = gx - 1 - dx, i = (by + gx) * 4;
-              G[i] += w * (t00 * rx + t01 * ry + t02 * rz); G[i + 1] += w * (t01 * rx + t11 * ry + t12 * rz); G[i + 2] += w * (t02 * rx + t12 * ry + t22 * rz);
-            }
-          }
+      this.pushOut();   // (weights() still holds this drop's)
+      if (M[a + 3]) {   // the twin in the mirror pushes as hard as its drop
+        DR[0] = M[a]; DR[1] = M[a + 1]; DR[2] = M[a + 2]; weights();
+        DR[3] = DR[4] = DR[5] = kp; DR[6] = DR[7] = DR[8] = 0;
+        this.pushOut();
+      }
+    }
+  }
+  // the push of the drop whose weights() were last worked out (DR: its push t00, t11, t22, t01, t02, t12 at 3..8) goes to its 27 cells
+  pushOut() {
+    const { nx, ny, G } = this, nxy = nx * ny;
+    const t00 = DR[3], t11 = DR[4], t22 = DR[5], t01 = DR[6], t02 = DR[7], t12 = DR[8], cx = CI[0], cy = CI[1], cz = CI[2], dx = WT[9], dy = WT[10], dz = WT[11];
+    for (let gz = 0; gz < 3; gz++) {
+      const wz = WT[6 + gz], rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
+      for (let gy = 0; gy < 3; gy++) {
+        const wyz = wz * WT[3 + gy], ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
+        for (let gx = 0; gx < 3; gx++) {
+          const w = wyz * WT[gx], rx = gx - 1 - dx, i = (by + gx) * 4;
+          G[i] += w * (t00 * rx + t01 * ry + t02 * rz); G[i + 1] += w * (t01 * rx + t11 * ry + t12 * rz); G[i + 2] += w * (t02 * rx + t12 * ry + t22 * rz);
         }
       }
     }
-    if (!open) this.fold(nt, false);   // the pushes given to cells beyond a wall come back too
-    // the grid: each cell's speed, gravity, blasts; a cell inside a solid thing never moves further into it
+  }
+  // the grid: each cell's speed, gravity, blasts; a cell inside a solid thing never moves further into it
+  cellsMove(nt) {
+    const F = this.F, { nx, ny, G, T, hi } = this, nxy = nx * ny, open = F.open, hx = hi[0], hy = hi[1], hz = hi[2], bounds = !!this.H || F.packed.length > 0;
     const grip = this.grain ? GRIP : 0, kg = this.dt * this.dt / this.h, gvx = F.gravity.x * kg, gvy = F.gravity.y * kg, gvz = F.gravity.z * kg, pushes = F.blasts, np = pushes.length;
     for (let k = 0; k < nt; k++) {
       const i = T[k], m = G[i + 3], c = i >> 2, ix = c % nx, iy = ((c / nx) | 0) % ny, iz = (c / nxy) | 0, x = ix + .5, y = iy + .5, z = iz + .5;
       if (!open && (ix < LO || ix >= hx || iy < LO || iy >= hy || iz < LO || iz >= hz)) continue;   // beyond a wall: below
       let vx = G[i] / m + gvx, vy = G[i + 1] / m + gvy, vz = G[i + 2] / m + gvz;
       for (let j = 0; j < np; j++) {
-        const b = pushes[j], ex = x - b.x, ey = y - b.y, ez = z - b.z, l = Math.hypot(ex, ey, ez);
+        const b = pushes[j], ex = x - b.x, ey = y - b.y, ez = z - b.z, l = Math.sqrt(ex * ex + ey * ey + ez * ez);
         if (l < b.r) { const f = b.s * (1 - l / b.r) / (l || 1); vx += ex * f; vy += ey * f + b.up * (1 - l / b.r); vz += ez * f; }
       }
-      if (bounds && this.near(x, y, z)) {
-        if (BN[0] < 0) {
-          let qx = vx - BN[4], qy = vy - BN[5], qz = vz - BN[6]; const vn = qx * BN[1] + qy * BN[2] + qz * BN[3];
-          if (vn < 0) { qx -= vn * BN[1]; qy -= vn * BN[2]; qz -= vn * BN[3]; }
-          vx = BN[4] + qx; vy = BN[5] + qy; vz = BN[6] + qz;
+      if (bounds && (PT[0] = x, PT[1] = y, PT[2] = z, this.near())) {
+        const bd = BN[0], b1 = BN[1], b2 = BN[2], b3 = BN[3], b4 = BN[4], b5 = BN[5], b6 = BN[6];   // (read out before the tests: see toDrops)
+        if (bd < 0) {
+          let qx = vx - b4, qy = vy - b5, qz = vz - b6; const vn = qx * b1 + qy * b2 + qz * b3;
+          if (vn < 0) { qx -= vn * b1; qy -= vn * b2; qz -= vn * b3; }
+          vx = b4 + qx; vy = b5 + qy; vz = b6 + qz;
         }
-        if (grip && BN[0] < .5) {   // grains: a solid thing or the ground grips them (its own way of moving is kept)
-          const qx = vx - BN[4], qy = vy - BN[5], qz = vz - BN[6], vn = qx * BN[1] + qy * BN[2] + qz * BN[3];
-          vx -= grip * (qx - vn * BN[1]); vy -= grip * (qy - vn * BN[2]); vz -= grip * (qz - vn * BN[3]);
+        if (grip && bd < .5) {   // grains: a solid thing or the ground grips them (its own way of moving is kept)
+          const qx = vx - b4, qy = vy - b5, qz = vz - b6, vn = qx * b1 + qy * b2 + qz * b3;
+          vx -= grip * (qx - vn * b1); vy -= grip * (qy - vn * b2); vz -= grip * (qz - vn * b3);
         }
       }
       if (grip && !open && iy === LO) { vx *= 1 - grip; vz *= 1 - grip; }   // (and the box's floor)
       G[i] = vx; G[i + 1] = vy; G[i + 2] = vz;
     }
-    // the cells beyond a wall move as their mirror cells do, turned round
-    if (!open) for (let k = 0; k < nt; k++) {
-      const i = T[k], t = this.mirror(i); if (t === i) continue;
-      const f = this.flip; G[i] = f & 1 ? -G[t] : G[t]; G[i + 1] = f & 2 ? -G[t + 1] : G[t + 1]; G[i + 2] = f & 4 ? -G[t + 2] : G[t + 2];
-    }
-    // grid to drops: each drop takes its cells' speed (and how it shears), moves, and is kept out of solid things
+  }
+  // grid to drops: each drop takes its cells' speed (and how it shears), moves, and is kept out of solid things
+  toDrops() {
+    const F = this.F, { nx, ny, P, V, C, G, lo, hi } = this, nxy = nx * ny, top = this.top, open = F.open, hx = hi[0], hy = hi[1], hz = hi[2], bounds = !!this.H || F.packed.length > 0;
+    // (the walls, worked out here, and the clamp to them below without branches: sums and tests met only in a branch a
+    // drop seldom takes had no type feedback when the step was optimised, so a drop at a wall threw it back to the slow
+    // interpreter, dozens of times a minute, where every sum is a new number object)
+    const wLo = LO + IN, wx = hx - IN, wy = hy - IN, wz = hz - IN;
     const sinks = F.drains, nk = sinks.length;
     for (let p = 0; p < top; p++) {
       const a = p * 4; if (P[a + 3] <= 0) continue;
       let x = P[a], y = P[a + 1], z = P[a + 2];
-      const cx = x | 0, cy = y | 0, cz = z | 0, dx = x - cx - .5, dy = y - cy - .5, dz = z - cz - .5;
-      const wx0 = .5 * (.5 - dx) * (.5 - dx), wx1 = .75 - dx * dx, wx2 = .5 * (.5 + dx) * (.5 + dx);
-      const wy0 = .5 * (.5 - dy) * (.5 - dy), wy1 = .75 - dy * dy, wy2 = .5 * (.5 + dy) * (.5 + dy);
-      const wz0 = .5 * (.5 - dz) * (.5 - dz), wz1 = .75 - dz * dz, wz2 = .5 * (.5 + dz) * (.5 + dz);
-      let vx = 0, vy = 0, vz = 0, b00 = 0, b01 = 0, b02 = 0, b10 = 0, b11 = 0, b12 = 0, b20 = 0, b21 = 0, b22 = 0;
+      DR[0] = x; DR[1] = y; DR[2] = z; weights(); ACC.fill(0);
+      const cx = CI[0], cy = CI[1], cz = CI[2], dx = WT[9], dy = WT[10], dz = WT[11];
       for (let gz = 0; gz < 3; gz++) {
-        const wz = gz === 0 ? wz0 : gz === 1 ? wz1 : wz2, rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
+        const wz = WT[6 + gz], rz = gz - 1 - dz, bz = (cz + gz - 1) * nxy;
         for (let gy = 0; gy < 3; gy++) {
-          const wyz = wz * (gy === 0 ? wy0 : gy === 1 ? wy1 : wy2), ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
+          const wyz = wz * WT[3 + gy], ry = gy - 1 - dy, by = bz + (cy + gy - 1) * nx + cx - 1;
           for (let gx = 0; gx < 3; gx++) {
-            const w = wyz * (gx === 0 ? wx0 : gx === 1 ? wx1 : wx2), rx = gx - 1 - dx, i = (by + gx) * 4;
+            const w = wyz * WT[gx], rx = gx - 1 - dx, i = (by + gx) * 4;
             const ux = G[i] * w, uy = G[i + 1] * w, uz = G[i + 2] * w;
-            vx += ux; vy += uy; vz += uz;
-            b00 += ux * rx; b01 += ux * ry; b02 += ux * rz; b10 += uy * rx; b11 += uy * ry; b12 += uy * rz; b20 += uz * rx; b21 += uz * ry; b22 += uz * rz;
+            ACC[0] += ux; ACC[1] += uy; ACC[2] += uz;
+            ACC[3] += ux * rx; ACC[4] += ux * ry; ACC[5] += ux * rz; ACC[6] += uy * rx; ACC[7] += uy * ry; ACC[8] += uy * rz; ACC[9] += uz * rx; ACC[10] += uz * ry; ACC[11] += uz * rz;
           }
         }
       }
+      let vx = ACC[0], vy = ACC[1], vz = ACC[2];
+      const b00 = ACC[3], b01 = ACC[4], b02 = ACC[5], b10 = ACC[6], b11 = ACC[7], b12 = ACC[8], b20 = ACC[9], b21 = ACC[10], b22 = ACC[11];
       const c = p * 12;
       C[c] = b00 * 4; C[c + 1] = b01 * 4; C[c + 2] = b02 * 4; C[c + 4] = b10 * 4; C[c + 5] = b11 * 4; C[c + 6] = b12 * 4; C[c + 8] = b20 * 4; C[c + 9] = b21 * 4; C[c + 10] = b22 * 4;
-      const sp = Math.hypot(vx, vy, vz); if (!(sp <= VMAX)) { const f = sp > VMAX ? VMAX / sp : 0; vx = vx * f || 0; vy = vy * f || 0; vz = vz * f || 0; if (!f) C.fill(0, c, c + 12); }   // (never faster than a cell a step; a broken number stops dead)
+      const sp = Math.sqrt(vx * vx + vy * vy + vz * vz); if (!(sp <= VMAX)) { const f = sp > VMAX ? VMAX / sp : 0; vx = vx * f || 0; vy = vy * f || 0; vz = vz * f || 0; if (!f) C.fill(0, c, c + 12); }   // (never faster than a cell a step; a broken number stops dead)
       x += vx; y += vy; z += vz;
       let dead = 0;
       // (the mirrors already stop the liquid at solid things and walls: these only catch what gets through, a fast thing sweeping into the liquid most of all)
-      if (bounds && this.near(x, y, z) && BN[0] < IN) {
-        const out = IN - BN[0]; x += BN[1] * out; y += BN[2] * out; z += BN[3] * out;
-        const vn = (vx - BN[4]) * BN[1] + (vy - BN[5]) * BN[2] + (vz - BN[6]) * BN[3]; if (vn < 0) { vx -= vn * BN[1]; vy -= vn * BN[2]; vz -= vn * BN[3]; }
+      // (BN read out before the test: reads met only in a branch a drop seldom takes threw the optimised step back, as above)
+      const hit = bounds && (PT[0] = x, PT[1] = y, PT[2] = z, this.near()), bd = BN[0], b1 = BN[1], b2 = BN[2], b3 = BN[3], b4 = BN[4], b5 = BN[5], b6 = BN[6];
+      if (hit && bd < IN) {
+        const out = IN - bd; x += b1 * out; y += b2 * out; z += b3 * out;
+        const vn = (vx - b4) * b1 + (vy - b5) * b2 + (vz - b6) * b3; if (vn < 0) { vx -= vn * b1; vy -= vn * b2; vz -= vn * b3; }
       }
       if (open) { if (x < lo[0] || x > hx || y < lo[1] || y > hy || z < lo[2] || z > hz) dead = 1; }
       else {
@@ -499,9 +562,6 @@ class Sim {
       if (dead) { this.kill(p); continue; }
       P[a] = x; P[a + 1] = y; P[a + 2] = z; V[a] = vx; V[a + 1] = vy; V[a + 2] = vz;
     }
-    for (let k = 0; k < nt; k++) { const i = T[k]; G[i] = G[i + 1] = G[i + 2] = G[i + 3] = 0; }
-    while (this.top > 0 && !this.live[this.top - 1]) this.top--;
-    this.steps++; this.stamp++;
   }
   // how many drops are in each cell (for level() and wet()), counted when first asked after the drops moved
   counts() {
@@ -737,7 +797,7 @@ export class Fluid {
       const a = p * 4; if (P[a + 3] <= 0) continue;
       const k = n * 16; A.fill(0, k, k + 16); A[k] = A[k + 5] = A[k + 10] = r; A[k + 15] = 1;
       A[k + 12] = S.ox + P[a] * h; A[k + 13] = S.oy + P[a + 1] * h; A[k + 14] = S.oz + P[a + 2] * h;
-      if (col) { const f = foamOf(D[a + 3], Math.hypot(V[a], V[a + 1], V[a + 2]), S.foam0), c = n * 3; col[c] = L.colour.r + (L.foam.r - L.colour.r) * f; col[c + 1] = L.colour.g + (L.foam.g - L.colour.g) * f; col[c + 2] = L.colour.b + (L.foam.b - L.colour.b) * f; }
+      if (col) { const vx = V[a], vy = V[a + 1], vz = V[a + 2], f = foamOf(D[a + 3], Math.sqrt(vx * vx + vy * vy + vz * vz), S.foam0), c = n * 3; col[c] = L.colour.r + (L.foam.r - L.colour.r) * f; col[c + 1] = L.colour.g + (L.foam.g - L.colour.g) * f; col[c + 2] = L.colour.b + (L.foam.b - L.colour.b) * f; }
       n++;
     }
     M.count = n; M.visible = n > 0; sendUsed(M.instanceMatrix, n); if (col) sendUsed(M.instanceColor, n);

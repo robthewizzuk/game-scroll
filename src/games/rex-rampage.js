@@ -16,6 +16,7 @@ const PREY = {
   rock: { w: 10, h: 10, food: 0, sp: -50, col: '#808088', rock: true },
 };
 let W = 192, H = 144;
+const WHIFF = 3;   // belly a snap at nothing costs
 
 function make(api) {
   const feel = new Feel({ pixel: true, sound: false, buzz: false });   // the game has its own sounds and buzzes
@@ -100,9 +101,11 @@ function make(api) {
       sfx(180, .08, 'square', .05, -60); haptic('light');
       for (const o of things) {
         if (o.gone || o.rock || o.x < reach0 - o.w / 2 || o.x > reach1 + o.w / 2 || o.y - o.h < top - 6 || o.y - o.h > rex.y) continue;
-        if (o.bad) { hurt(10, 'SPIKY!'); o.gone = true; burst(o.x, o.y - 6, '#e0e0c8'); break; }
-        o.gone = true; eaten++; hunger = Math.min(100, hunger + o.food); score += o.pts; api.score(score); burst(o.x, o.y - 4, o.col); parts.push({ txt: `+${o.pts}`, x: o.x, y: o.y - 14, l: .7, col: '#f8e040' }); haptic('medium'); sfx(500, .08, 'square', .05, 200); if (eaten % 10 === 0) { msg = { txt: 'BIGGER!', l: 1 }; haptic('success'); } break;
+        if (o.bad) { hurt(10, 'SPIKY!'); o.gone = true; burst(o.x, o.y - 6, '#e0e0c8'); return; }
+        o.gone = true; eaten++; hunger = Math.min(100, hunger + o.food); score += o.pts; api.score(score); burst(o.x, o.y - 4, o.col); parts.push({ txt: `+${o.pts}`, x: o.x, y: o.y - 14, l: .7, col: '#f8e040' }); haptic('medium'); sfx(500, .08, 'square', .05, 200); if (eaten % 10 === 0) { msg = { txt: 'BIGGER!', l: 1 }; haptic('success'); } return;
       }
+      // snapping at thin air tires the jaws: it costs belly and the next snap comes slower (so snapping blindly starves you)
+      hunger -= WHIFF; bite = .45; parts.push({ txt: 'SNAP', x: rex.x + 18 * s, y: rex.y - 30 * s, l: .4, col: '#c0c0b0' });
     },
     key(k, d) { if (!d) return; ready.go(); if (k === ' ') self.snap(); if (k === 'ArrowUp') self.leap(); },
   };
@@ -111,6 +114,6 @@ function make(api) {
 
 export default {
   id: 'rex-rampage', title: 'Rex Rampage', tag: 'Advance · Dinosaur', retro: true, era: 'advance', pal: 'lemon', w: 192, h: 144, maxW: 320, maxH: 220, goal: 120,
-  hint: 'Your tyrant lizard stomps forward on its own. Tap to snap at what\'s in front, swipe up to leap. Grazers, darting lizards and low flyers fill your belly and make you grow. Never bite the spiky shell-backs, and leap over rolling boulders. The belly bar keeps draining.',
+  hint: 'Your tyrant lizard stomps forward on its own. Tap to snap at what\'s in front, swipe up to leap. Grazers, darting lizards and low flyers fill your belly and make you grow. Never bite the spiky shell-backs, and leap over rolling boulders. The belly bar keeps draining, and snapping at nothing drains it too.',
   make,
 };

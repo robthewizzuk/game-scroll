@@ -325,11 +325,11 @@ function make(api) {
     else if (k === me && k.lap > 0) { if (k.lap === LAPS - 1) { say('FINAL LAP!', 1.6, '#f86868'); sfx(660, .15, 'square', .05); later(() => sfx(990, .25, 'square', .05), 140); } else say(`LAP ${k.lap + 1}`, 1.2); haptic('success'); }
   }
   function finish(crossed) {
-    finished = true; endT = 3.6; me.dr = 0; const place = order().indexOf(me) + 1, pts = POINTS[place - 1];
+    finished = true; endT = 3.6; me.dr = 0; const place = order().indexOf(me) + 1, pts = crossed ? POINTS[place - 1] : 0; dnf = !crossed;   // (not over the line when the rest have long finished: no points)
     newBest = false; const was = best[trk.name];
     if (crossed && (!was || raceT < was)) { best[trk.name] = +raceT.toFixed(2); newBest = !!was; api.save({ best }); }
-    say(place === 1 ? 'YOU WIN!' : `${place}${SUFFIX[place - 1]} PLACE`, 3, place <= 3 ? '#f8d838' : '#f8f8f0');
-    haptic(place <= 3 ? 'success' : 'warning'); sfx(place <= 3 ? 1046 : 392, .4, 'square', .05, place <= 3 ? 400 : -100);
+    say(!crossed ? 'DID NOT FINISH' : place === 1 ? 'YOU WIN!' : `${place}${SUFFIX[place - 1]} PLACE`, 3, crossed && place <= 3 ? '#f8d838' : '#f8f8f0');
+    haptic(crossed && place <= 3 ? 'success' : 'warning'); sfx(place <= 3 ? 1046 : 392, .4, 'square', .05, place <= 3 ? 400 : -100);
     if (live) api.score(pts);
   }
   function ai(k, dt) {
@@ -383,7 +383,7 @@ function make(api) {
     k.slip = (k.slip || 0) + ((k.dr || 0) * K.driftAngle - (k.slip || 0)) * Math.min(1, dt * 9);   // the tail swings out, and back after
     drive(k, steer, 999, dt);
   }
-  let live = true, newBest = false;
+  let live = true, newBest = false, dnf = false;
   const clock = s => `${s / 60 | 0}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   function step(dt, auto) {
     raceT += dt;
@@ -419,7 +419,7 @@ function make(api) {
         // every field set from the start, so a kart keeps one shape (and its numbers aren't boxed afresh each frame)
         passLat: 0, doneT: 0, ghost: 0, rough: 0, band: 1, draft: 1, bumpT: 0, dr: 0, drT: 0, tier: 0, slip: 0, hop: 0 }; });
       for (const k of karts) k.d = { ...k.d, bias: k.d === YOU ? 0 : (Math.random() - .5) * 8 };
-      me = karts[5]; best = api.load({ best: {} }).best || {}; draftT = 0; side = 0; holdT = 0; newBest = false; t = 0; raceT = 0; go = 3.2; msg = null; held = null; flash = 0; shake = 0; finished = false; endT = 0; results = null; camA = me.a; parts = []; wrongT = 0; lastPlace = 6; live = true;
+      me = karts[5]; best = api.load({ best: {} }).best || {}; draftT = 0; side = 0; holdT = 0; newBest = false; t = 0; raceT = 0; go = 3.2; msg = null; held = null; flash = 0; shake = 0; finished = false; endT = 0; results = null; camA = me.a; parts = []; wrongT = 0; lastPlace = 6; live = true; dnf = false;
     },
     resize(w, h) { W = w; H = h; img = null; },
     update(dt) { timers.update(dt);
@@ -512,7 +512,7 @@ function make(api) {
     if (wrongT > .6 && (t * 3 | 0) % 2) text(c, 'WRONG WAY', W / 2, H * .45, '#f84848', 8, 'center');
     if (msg) text(c, msg.txt, W / 2, H * .42, msg.col, msg.txt.length > 9 ? 8 : 12, 'center');
     if (finished) { const bw = 104, bh = 86, bx = (W - bw) / 2 | 0, by = Math.min(H * .48, H - bh - 2) | 0; c.fillStyle = '#101018d8'; c.fillRect(bx, by, bw, bh); c.fillStyle = '#f8d838'; c.fillRect(bx, by, bw, 1);
-      ord.forEach((k, i) => { const y = by + 10 + i * 11; text(c, `${i + 1}`, bx + 5, y, i < 3 ? '#f8d838' : '#a8a8b8'); c.fillStyle = k.d.col; c.fillRect(bx + 16, y - 5, 5, 5); text(c, k.d.name, bx + 25, y, k === me ? '#b8f878' : '#f8f8f0'); text(c, `+${POINTS[i]}`, bx + bw - 4, y, k === me ? '#b8f878' : '#a8a8b8', 6, 'right'); });
+      ord.forEach((k, i) => { const y = by + 10 + i * 11; text(c, `${i + 1}`, bx + 5, y, i < 3 ? '#f8d838' : '#a8a8b8'); c.fillStyle = k.d.col; c.fillRect(bx + 16, y - 5, 5, 5); text(c, k.d.name, bx + 25, y, k === me ? '#b8f878' : '#f8f8f0'); text(c, k === me && dnf ? 'DNF' : `+${POINTS[i]}`, bx + bw - 4, y, k === me ? '#b8f878' : '#a8a8b8', 6, 'right'); });
       const b = best[trk.name];
       text(c, newBest ? `NEW BEST ${clock(b)}` : `${clock(me.doneT || raceT)}  BEST ${b ? clock(b) : '--'}`, W / 2, by + bh - 6, newBest && (t * 4 | 0) % 2 ? '#f8d838' : '#f8f8f0', 6, 'center'); }
   }
