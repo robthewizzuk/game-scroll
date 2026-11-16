@@ -41,6 +41,11 @@ export const ownVoices = () => TALK_VOICES.map(v => ({
 }));
 
 const NUDGE = [1, .9, 1.1, .84];
+// How natural each voice sounds (UTMOS, a speech-quality model, over 6 lines each through the app, 11-16): within an accent
+// the most natural is cast first. Measure again when the voices change (a voice not listed goes after the ones that are).
+const NATURAL = { george: 4.37, mary: 4.37, jane: 4.28, bill_boerst: 4.23, michael: 4.23, eponine: 4.21, alba: 4.19, eve: 4.14, paul: 4.14,
+  charles: 4.13, vera: 4.11, caro_davy: 4.10, lola: 4.04, giovanni: 4.03, daan: 4.02, fantine: 3.97, peter_yearsley: 3.97, azelma: 3.96,
+  anna: 3.91, javert: 3.87, stuart_bell: 3.85, estelle: 3.29, marius: 3.01 };
 /**
  * Casts a built-in voice for what a game asked for (voices.js wantOf): { at (in ownVoices()), pitch, voiceURI } or null
  * for a language it doesn't speak. Like voices.js cast(), but a cast bigger than the voices in the accent asked for goes
@@ -53,9 +58,9 @@ export function castOwn(want) {
   const langs = want.langs || ['en-gb'];
   if (!langs.some(l => l.split('-')[0] === 'en')) return null;
   const kind = want.kind === 'woman' || want.kind === 'man' ? want.kind : null;
-  // nearest accent first: the one asked for, its regions (en-gb-scotland for en-gb), then any English, in the list's order
+  // nearest accent first: the one asked for, its regions (en-gb-scotland for en-gb), then any English; the most natural first in each
   const score = v => { const l = low(v.lang); for (let i = 0; i < langs.length; i++) { if (l === langs[i]) return i * 3; if (l.startsWith(langs[i] + '-')) return i * 3 + 1; } return 99; };
-  const pool = TALK_VOICES.map((v, at) => ({ at, v })).filter(c => kind ? c.v.kind === kind : c.v.kind !== 'any').sort((a, b) => score(a.v) - score(b.v) || a.at - b.at);
+  const pool = TALK_VOICES.map((v, at) => ({ at, v })).filter(c => kind ? c.v.kind === kind : c.v.kind !== 'any').sort((a, b) => score(a.v) - score(b.v) || (kind ? 0 : (a.v.kind === 'woman' ? 0 : 1) - (b.v.kind === 'woman' ? 0 : 1)) || (NATURAL[b.v.name] ?? 0) - (NATURAL[a.v.name] ?? 0) || a.at - b.at);   // (no kind asked for: a woman first, as before)
   const take = want.take || 0, n = pool.length, uri = c => list[c.at].voiceURI;
   if (take < n) return { at: pool[take].at, pitch: 1, voiceURI: uri(pool[take]) };
   // then pairs of one kind: neighbours in the list first (the same accent), then two apart, and so on
