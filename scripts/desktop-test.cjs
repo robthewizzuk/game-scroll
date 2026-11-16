@@ -149,7 +149,9 @@ async function handheld() {
     for (let i = 0; i < 3 && await id() === first; i++) { await press('down'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, first, { timeout: 5000 }).catch(() => {}); }
     const second = await id();
     ok(second && second !== first, 'the d-pad moves through the feed', `${first} → ${second}`);
-    await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id === was, first, { timeout: 8000 }).catch(() => {});
+    // (back up: a press while the feed is still settling on the card it scrolled to does nothing, as on the way down, so up
+    // to three; one that moved two games would land past the first, not on it)
+    for (let i = 0; i < 3 && await id() === second; i++) { await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, second, { timeout: 5000 }).catch(() => {}); }
     ok(await id() === first, 'one press is one game, though two pads report it', await id());
     const liked = () => p.evaluate(() => __gs.active.el.querySelector('.like').getAttribute('aria-pressed'));
     const l0 = await liked(); await press('y');
