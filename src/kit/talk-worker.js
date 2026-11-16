@@ -98,12 +98,12 @@ const piece = (id, pcm, text, last, speed = 0) => {
 };
 
 /**
- * How each part is made more like a person once it is spoken (voice-pitch.js): the pitch moved 1.4 times as far from the
- * line it follows (up to 1.7 with lively 1), a little unsteadiness, and a breath before each sentence after the first
- * and in long pauses. Measured on 8 lines: a speech-quality model's score 4.25 (with the old lively) to 4.38, the pitch
- * range 9 to 13 semitones (Tiny Voca's: 15). Change HUMAN with them, so lines kept from before are made again.
+ * How each part is made more like a person once it is spoken (voice-pitch.js): the pitch moved 1.6 times as far from the
+ * line it follows (up to 1.9 with lively 1), a slow wander and a little jitter, and a breath before each sentence after the
+ * first and in long pauses. The numbers were tuned against real read speech (voice-pitch.js says how). Change HUMAN with
+ * them, so lines kept from before are made again.
  */
-const HUMAN = 'h1', WIDE = 1.4, LIVELY_WIDE = .3;
+const HUMAN = 'h2', WIDE = 1.6, LIVELY_WIDE = .3;
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
   let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0;

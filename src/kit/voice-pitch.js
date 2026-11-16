@@ -8,8 +8,12 @@
  * cut at each period of the voice and laid down again at the new period), so the words stay as clear.
  *   humanize(x, rate, { wide, wobble, breath, seed, first }) -> Float32Array (the same length, or longer by the breath
  *   before it: x is not changed)
- * wide: how far the pitch moves from the line it follows over the part (1 as spoken; 1.35 is the default here).
- * wobble: 0..1 the small unsteadiness (1: about half a percent of drift and a quarter of jitter, like a relaxed voice).
+ * wide: how far the pitch moves from the line it follows over the part (1 as spoken).
+ * wobble: 0..1 the small unsteadiness (scales drift, a slow wander of the pitch, about 1.4% at 1 Hz, and jitter, period to
+ * period, about 0.2%).
+ * The defaults were tuned by CMA-ES (scripts/tune.cjs's search) against a speech-quality model (UTMOS) and the pitch of
+ * real read speech (106 VCTK speakers: spread 3.7 semitones, 5-95% range 11.6): on 15 lines the 7M's own 2.4 / 8.0 become
+ * 3.1 / 10.2 for a score 4.35 -> 4.29 (Rob 11-16: "keep going on making them more human like").
  * breath: 0..1 how loud the breaths are (0: none). first: true for the first part of a line, which takes no breath
  * before it (that would hold up the first word). seed: the same part, seed and settings come out the same.
  */
@@ -92,7 +96,7 @@ function breathe(n, rate, level, rnd) {
   return y;
 }
 
-export function humanize(x, rate, { wide = 1.35, wobble = 1, breath = 1, seed = 1, first = false } = {}) {
+export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1, first = false, drift: driftAmt = .014, jitter = .0022, driftHz = 1 } = {}) {
   if (!x || x.length < rate * .15) return x;
   const rnd = seeded(seed * 2654435761 + x.length), hopF = rate * .01, f0 = pitchOf(x, rate), F = f0.length;
   // how loud the voice is (for the breaths): the average of its louder 10 ms frames
@@ -108,14 +112,14 @@ export function humanize(x, rate, { wide = 1.35, wobble = 1, breath = 1, seed = 
   const ratio = new Float32Array(F).fill(1);
   if (nv >= 8) {
     const den = nv * sxx - sx * sx, slope = den ? (nv * sxy - sx * sy) / den : 0, icpt = (sy - slope * sx) / nv;
-    let drift = 0; const keep = Math.exp(-2 * Math.PI * 4 / 100);   // (a drift a few times a second)
+    let drift = 0; const keep = Math.exp(-2 * Math.PI * driftHz / 100);   // (a drift a few times a second)
     for (let f = 0; f < F; f++) {
       drift = drift * keep + gauss(rnd) * Math.sqrt(1 - keep * keep);
       if (!f0[f]) continue;
       // (the pitch smoothed over 50 ms first, so the tracker's own small errors aren't made bigger too)
       let ys = 0, yn = 0; for (let g = Math.max(0, f - 2); g <= Math.min(F - 1, f + 2); g++) if (f0[g]) { ys += Math.log(f0[g]); yn++; }
       const y = ys / yn, line = icpt + slope * f;
-      const to = line + (y - line) * wide + drift * .0065 * wobble;
+      const to = line + (y - line) * wide + drift * driftAmt * wobble;
       ratio[f] = Math.max(.78, Math.min(1.35, Math.exp(to - y)));   // (PSOLA stays clean within about a third either way)
     }
   }
@@ -166,7 +170,7 @@ export function humanize(x, rate, { wide = 1.35, wobble = 1, breath = 1, seed = 
     if (inVoice) {
       const f = Math.min(F - 1, Math.floor(t / hopF)), left = mi > 0 && runEnd[mi - 1] === runEnd[mi] ? marks[mi] - marks[mi - 1] : gapOf(mi), right = gapOf(mi);
       grain(marks[mi], Math.round(t), left, right);
-      t += Math.max(rate / MAX_HZ, right / ratio[f] * (1 + gauss(rnd) * .0028 * wobble));
+      t += Math.max(rate / MAX_HZ, right / ratio[f] * (1 + gauss(rnd) * jitter * wobble));
     } else {
       grain(Math.round(t), Math.round(t), Math.round(rate * .01), Math.round(rate * .01));
       t += rate * .005;
