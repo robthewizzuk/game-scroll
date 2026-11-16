@@ -103,7 +103,7 @@ The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and i
 
 ## 3D on phones
 
-3D games share one renderer: WebGPU where the phone has it, WebGL elsewhere. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60, the quality steps take it to 30 drawn and 30 made by frame generation (GSFG), and back to 60 when the frames show room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. Settings says which and why. On Next Gen, AR and Board games, Play shows a loading screen while the round's first frames and shaders are built. More in [docs/nextgen-3d.md](docs/nextgen-3d.md).
+3D games share one renderer: WebGPU where the phone has it, WebGL elsewhere. On a phone a 3D game aims for a steady 60 frames a second; where it can't hold 60, the quality steps take it to 30 drawn and 30 made by frame generation (GSFG), and back to 60 when the frames show room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. Settings says which and why. In the feed, a Next Gen, AR or Board card is only a picture (its last round on that phone, or a cover); the game is made after Play, under a loading screen that also builds the round's first frames and shaders. More in [docs/nextgen-3d.md](docs/nextgen-3d.md).
 
 ## Testing
 
@@ -123,6 +123,10 @@ The app supports folding and unfolding mid-game (tested at Galaxy Z Fold 8 and i
 ## Roadmap
 
 Launch target is **1000 unique games** (distinct mechanics, not reskins). There are 251 in the feed so far, after weak ones were taken out in play-test reviews ([docs/qa/review.md](docs/qa/review.md)). Games can be fluid: set `maxW`/`maxH` (and optional `step`) and implement `resize(w, h)` to receive the extra space on tall or unfolded screens. The idea list lives in `docs/game-ideas.md`, with built games ticked.
+
+## Security
+
+Please report security problems privately, through GitHub's private vulnerability reporting: see [SECURITY.md](SECURITY.md) for how, what is supported and what is in scope.
 
 ## License
 
