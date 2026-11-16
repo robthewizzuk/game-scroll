@@ -116,7 +116,7 @@ export function humanize(x, rate, { wide = 1.35, wobble = 1, breath = 1, seed = 
       let ys = 0, yn = 0; for (let g = Math.max(0, f - 2); g <= Math.min(F - 1, f + 2); g++) if (f0[g]) { ys += Math.log(f0[g]); yn++; }
       const y = ys / yn, line = icpt + slope * f;
       const to = line + (y - line) * wide + drift * .0065 * wobble;
-      ratio[f] = Math.max(.72, Math.min(1.45, Math.exp(to - y)));
+      ratio[f] = Math.max(.78, Math.min(1.35, Math.exp(to - y)));   // (PSOLA stays clean within about a third either way)
     }
   }
   const voiced = f => f >= 0 && f < F && f0[f] > 0;
@@ -172,7 +172,9 @@ export function humanize(x, rate, { wide = 1.35, wobble = 1, breath = 1, seed = 
       t += rate * .005;
     }
   }
-  for (let i = 0; i < x.length; i++) out[i] = ws[i] > .05 ? out[i] / ws[i] : x[i];
+  // (where less than a whole window landed, at the edges of the voice, the sound as it was makes up the rest: dividing
+  // by a thin edge of window there made the tail of a grain many times louder, a click)
+  for (let i = 0; i < x.length; i++) out[i] = ws[i] >= 1 ? out[i] / ws[i] : out[i] + x[i] * (1 - ws[i]);
 
   if (!(breath > 0) || !speech) return out;
   // breaths: in each pause of a third of a second or more inside the part (ending a little before the voice comes back),
