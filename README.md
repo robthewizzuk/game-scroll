@@ -28,14 +28,17 @@ Every push to `main` builds a debug APK (`.github/workflows/android-apk.yml`) an
 
 There is no paid Apple Developer account yet, so the `iOS IPA (unsigned)` workflow (`.github/workflows/ios-ipa.yml`) builds an unsigned `.ipa` that testers sideload with Sideloadly and a free Apple ID (reinstall every 7 days). Run it by hand from the Actions tab; it publishes to the "Latest iOS build" release. Install steps: [docs/ios-sideload.md](docs/ios-sideload.md).
 
-### Mac and Windows app
+### Mac, Windows and Linux app
 
 The same app runs on Mac and Windows (`desktop/`, Electron, which carries the Chromium engine the Android app runs in, so WebGPU and the engine's tuning behave the same). Every push to `main` builds it (`.github/workflows/desktop.yml`) and publishes the "Latest Mac and Windows builds" release, with download links that never change:
 [Mac (Apple silicon)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-arm64.dmg) ·
 [Mac (Intel)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg) ·
 [Windows](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe) ·
-[Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe).
+[Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe) ·
+[Linux and SteamOS](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-linux-x64.AppImage).
 They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md).
+
+On a games handheld running SteamOS (ROG Ally, Steam Deck, Legion Go), add the AppImage to Steam as a non-Steam game: it opens full screen in Game Mode, plays as a phone does (60, or 30 with GSFG making the other 30) and is used with the handheld's own controls. Steps: [docs/desktop.md, SteamOS](docs/desktop.md#steamos-rog-ally-steam-deck-and-steam).
 
 ### Web version on GitHub Pages
 

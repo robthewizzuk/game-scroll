@@ -26,6 +26,10 @@ export function setHaptics(patch) {
   store.set('gs_haptics', !!hapticSettings.on); store.set('gs_haptic_strength', hapticSettings.strength);
 }
 const VIBE = { tick: 8, light: 12, medium: 22, heavy: 40, success: [15, 60, 25], warning: [30, 50, 30], error: [60, 40, 90] };
+// A computer with a controller (a ROG Ally, a Steam Deck) has no vibration of its own: the controller rumbles instead
+// (src/kit/gamepad.js sets pad(strength 0..1, ms) once loaded; it shakes only while a controller is connected).
+export const hapticHooks = { pad: null };
+const PAD_FEEL = { tick: [.12, 14], light: [.25, 22], medium: [.45, 32], heavy: [.8, 48], success: [.4, 70], warning: [.55, 80], error: [.75, 120] };
 const STEPS = ['tick', 'light', 'medium', 'heavy'];
 const SCALE = { light: .5, normal: 1, strong: 1.7 };
 /** The kind of tap to play once the strength setting is applied (one step softer or harder). */
@@ -47,6 +51,7 @@ export function haptic(kind = 'light') {
     }
     const v = VIBE[kind] ?? 15, k = SCALE[hapticSettings.strength];
     navigator.vibrate?.(Array.isArray(v) ? v.map((ms, j) => j % 2 ? ms : Math.round(ms * k)) : Math.round(v * k));
+    if (hapticHooks.pad) { const [st, ms] = PAD_FEEL[kind] || PAD_FEEL.light; hapticHooks.pad(Math.min(1, st * k), ms); }
   } catch { /* no haptics here */ }
 }
 
@@ -72,6 +77,11 @@ export function buzz(pattern, short = 90, long = 380, gap = 220) {
     at += d + gap;
   }
   if (!native && hapticSettings.on) { const seq = []; pattern.forEach((p, i) => { seq.push(p ? long : short); if (i < pattern.length - 1) seq.push(gap); }); try { navigator.vibrate?.(seq); } catch { /* none */ } }
+  // (a controller: each buzz of the pattern as a rumble of its length)
+  if (!native && hapticSettings.on && hapticHooks.pad) {
+    let t = 0;
+    for (const p of pattern) { const d = p ? long : short, at = t; const h = setTimeout(() => { buzzing.delete(h); if (hapticSettings.on) hapticHooks.pad?.(p ? .7 : .45, d); }, at); buzzing.add(h); t += d + gap; }
+  }
   return at;
 }
 /** Can this device vibrate at all (and has the player left haptics on)? Games show a fallback if not. */

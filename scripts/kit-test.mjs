@@ -3600,6 +3600,52 @@ console.log('physics ok');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
   sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  // a games handheld (a ROG Ally, a Steam Deck: desktop/device.cjs) is the desktop app, but plays as a phone: 3D at 60 with
+  // nothing made between (30 with GSFG making the rest where it can't hold 60), 2D at the screen's rate, steps 60 -> 30
+  {
+    sp.speed.handheld = 'top'; sp.speed.klass = 'top';
+    assert.ok(!sp.computer(), 'a handheld is not played as a computer');
+    const h3 = { id: 'kt-hand-3d', era: 'nextgen' };
+    assert.equal(sp.fpsFor(h3), 60, 'a handheld\'s 3D game: 60, as a top phone\'s');
+    assert.equal(sp.fpsFor({ id: 'kt-hand-2d' }), 120, 'its 2D games: 120, as a phone\'s');
+    assert.equal(sp.stepDown(h3), true); assert.equal(sp.fpsFor(h3), 30, 'stepping down as a phone does: 60 to 30');
+    assert.equal(sp.thirtyFor(h3), true, 'and at 30 Auto has GSFG make the other 30 (Rob, 2026-11-15)');
+    assert.equal(sp.stepUp(h3), true); assert.equal(sp.fpsFor(h3), 60, 'back to 60');
+    sp.speed.handheld = null; sp.speed.klass = 'top';
+    assert.ok(sp.computer() && sp.fpsFor({ id: 'kt-hand-pc', era: 'nextgen' }) === 144, 'the same desktop app on a computer: the screen\'s own rate');
+  }
+  // which computer the desktop app is on (desktop/device.cjs): handhelds by model, Steam's games mode, the pads Steam stands
+  // in for, and how much bigger the app is drawn there
+  {
+    const { createRequire } = await import('node:module');
+    const dv = createRequire(import.meta.url)('../desktop/device.cjs');
+    const HH = [
+      [{ vendor: 'ASUSTeK COMPUTER INC.', product: 'ROG Ally X RC72LA_RC72LA', board: 'RC72LA', cpu: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics' }, 'rog-ally-x', 'top'],
+      [{ vendor: 'ASUSTeK COMPUTER INC.', product: 'ROG Ally RC71L_RC71L', board: 'RC71L', cpu: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics' }, 'rog-ally', 'top'],
+      [{ vendor: 'ASUSTeK COMPUTER INC.', product: 'ROG Ally RC71L_RC71L', board: 'RC71L', cpu: 'AMD Ryzen Z1 w/ Radeon 740M Graphics' }, 'rog-ally', 'mid'],
+      [{ vendor: 'ASUSTeK COMPUTER INC.', product: 'ROG Xbox Ally X RC73XA', board: 'RC73XA', cpu: 'AMD Ryzen AI Z2 Extreme' }, 'rog-xbox-ally-x', 'top'],
+      [{ vendor: 'ASUSTeK COMPUTER INC.', product: 'ROG Xbox Ally RC73YA', board: 'RC73YA', cpu: 'AMD Ryzen Z2 A' }, 'rog-xbox-ally', 'mid'],
+      [{ vendor: 'Valve', product: 'Jupiter', board: 'Jupiter', cpu: 'AMD Custom APU 0405' }, 'steam-deck', 'mid'],
+      [{ vendor: 'Valve', product: 'Galileo', board: 'Galileo', cpu: 'AMD Custom APU 0932' }, 'steam-deck-oled', 'mid'],
+      [{ vendor: 'LENOVO', product: '83E1', board: 'LNVNB161216', cpu: 'AMD Ryzen Z1 Extreme' }, 'legion-go', 'top'],
+      [{ vendor: 'ONE-NETBOOK', product: 'ONEXPLAYER X1', board: 'X1', cpu: 'AMD Ryzen Z1 Extreme' }, 'handheld', 'top'],
+    ];
+    for (const [f, id, k] of HH) { const h = dv.handheldOf(f); assert.ok(h && h.id === id && h.klass === k, `${f.product}: ${id} ${k} (got ${JSON.stringify(h)})`); }
+    for (const f of [{ vendor: 'LENOVO', product: '21KC', cpu: 'AMD Ryzen 7 7840U w/ Radeon 780M Graphics' }, { vendor: 'Dell Inc.', product: 'XPS 13 9340', cpu: 'Intel(R) Core(TM) Ultra 7 155H' }, {}]) assert.equal(dv.handheldOf(f), null, `a laptop is not a handheld: ${f.product || '(nothing)'}`);
+    assert.ok(dv.gamescopeIn({ XDG_CURRENT_DESKTOP: 'gamescope' }) && dv.gamescopeIn({ GAMESCOPE_WAYLAND_DISPLAY: 'gamescope-0' }) && !dv.gamescopeIn({ XDG_CURRENT_DESKTOP: 'KDE' }), 'Steam\'s games mode from the environment');
+    assert.deepEqual(dv.ignoredPads('0x045e/0x028e,0x0b05/0x1abe, junk'), [{ vendor: '045e', product: '028e' }, { vendor: '0b05', product: '1abe' }], 'the pads Steam stands in for');
+    assert.deepEqual([1080, 800, 640, 2160, 0].map(dv.zoomFor), [1.75, 1.25, 1, 3, 1], 'drawn bigger in the games mode: a 1080p handheld 1.75 times, a Steam Deck 1.25');
+    const { keepPads } = await import('../src/kit/gamepad.js');
+    const steam = { id: 'Microsoft X-Box 360 pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)' }, ally = { id: 'ASUS (STANDARD GAMEPAD Vendor: 0b05 Product: 1abe)' };
+    assert.deepEqual(keepPads([steam, ally], ['0b05:1abe']), [steam], 'the handheld\'s own pad is left out where Steam stands in for it');
+    assert.deepEqual(keepPads([ally], ['0b05:1abe']), [ally], 'unless it is all there is');
+    const { nearestIn, stickCurve } = await import('../src/padnav.js');
+    const R = [{ x: 0, y: 100, w: 50, h: 30 }, { x: 100, y: 0, w: 50, h: 30 }, { x: 200, y: 100, w: 50, h: 30 }, { x: 0, y: 200, w: 250, h: 30 }];
+    const at = { x: 100, y: 100, w: 50, h: 30 };
+    assert.deepEqual(['left', 'up', 'right', 'down'].map(d => nearestIn(d, at, R)), [0, 1, 2, 3], 'a controller moves to the button that way');
+    assert.equal(nearestIn('up', R[1], R.slice(0, 1)), -1, 'and nowhere where there is none');
+    assert.ok(stickCurve(1) === 1 && stickCurve(-1) === -1 && Math.abs(stickCurve(.5)) < .35, 'a gentle start on the stick for aiming');
+  }
   sp.speed.desktop = false; sp.speed.klass = null;
   for (let i = 0, t = 20000; i < 60; i++) sp.tick(t += 1000 / 120);
   assert.equal(sp.screenHz(), 120, 'back on a phone\'s 120 Hz screen');

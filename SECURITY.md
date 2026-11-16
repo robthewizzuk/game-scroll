@@ -27,7 +27,8 @@ phone within minutes with no update at all.
 | --- | --- |
 | Android app: the latest Google Play release and the latest build on the "Latest Android build" release | Yes |
 | iOS app: the latest App Store release and the latest "Latest iOS build" | Yes |
-| Mac and Windows app: the latest "Latest Mac and Windows builds" release (`desktop/`) | Yes |
+| Mac and Windows app: the latest "Latest Mac, Windows and Linux builds" release (`desktop/`) | Yes |
+| Linux and SteamOS app: the latest `Game-Scroll-linux-*.AppImage` on the same release (`desktop/`) | Yes |
 | Web version at https://robthewizzuk.github.io/game-scroll/ (`npm run build:web`, `src/web.js`) as it runs now | Yes |
 | Games streamed from the current signed catalogue | Yes |
 | `api.game-scroll.com`, `assets.game-scroll.com` and `game-scroll.com` as they run now | Yes |
