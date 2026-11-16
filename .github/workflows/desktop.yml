@@ -1,7 +1,7 @@
 # Builds Game Scroll for Mac, Windows and Linux (desktop/, Electron; guide docs/desktop.md) and checks each one opens,
 # streams its games and draws. Linux is an AppImage: SteamOS on a ROG Ally or Steam Deck adds it to Steam as a
 # non-Steam game (docs/desktop.md, SteamOS).
-# Every push to main replaces the "Latest Mac and Windows builds" release (tag desktop-latest), so the
+# Every push to main replaces the "Latest Mac, Windows and Linux builds" release (tag desktop-latest), so the
 # download links never change:
 #   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-arm64.dmg    (Apple silicon)
 #   https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg      (Intel Macs)
@@ -134,7 +134,8 @@ jobs:
 
       - name: What the built app needs to open (Linux)
         if: matrix.os == 'linux'
-        run: "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install-deps chromium
+        run: |
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install-deps chromium
 
       - name: The built app opens, streams its games and draws
         env:
