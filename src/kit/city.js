@@ -49,6 +49,7 @@ import { rng, makeNoise } from './math.js';
 import { Props, simplify, simplifyReady } from './props.js';
 import { Path } from './paths.js';
 import { tree } from './outdoors.js';
+import { Sea } from './sea.js';
 import { phoneClass } from './speed.js';
 import { sendUsed } from './gpu.js';
 import { bed, tone, Ears } from './sound.js';
@@ -63,9 +64,11 @@ import { Crowd } from './crowd.js';
 import { GroundPaint } from './ground-paint.js';
 import { Skyline, Standins } from './city-far.js';
 import { memory } from './memory.js';
+import { DECO, NEON, COAST_SHAPES, SAND_COLOUR, WATER_Y, POND_Y, climateOf, treeKind, shorePlan, pondOf, planWater, buildShore, shoreSolid, shoreFrame, CityWater } from './city-coast.js';
 import { wallMarks, wallGeometry, wallMat } from './city-walls.js';
 import { human } from './models/human.js';
 import { vehicle } from './models/vehicles.js';
+import { tree as modelTree } from './models/trees.js';
 
 /* ---------- looks ---------- */
 
@@ -85,6 +88,8 @@ export const FACADES = {
   silver: { kind: 'curtain', glass: '#264664', trim: '#b0bcc8', win: 2.9, floor: 4.1, lit: .58, warm: .48, metal: .6 },
   house: { kind: 'house', wall: '#e8e2d4', trim: '#ffffff', glass: '#22303a', win: 3.4, floor: 2.9, lit: .45, warm: .92 },
   shed: { kind: 'shed', wall: '#7c5444', trim: '#5e4136', glass: '#1d2328', win: 4, floor: 5, lit: .35, warm: .7, bricks: true },
+  // seaside art deco: white walls each building paints a pastel (its colour), sunshade eyebrows over the windows, speed lines
+  deco: { kind: 'punched', wall: '#fbf8f2', trim: '#ffffff', glass: '#1a3440', win: 2.3, floor: 3.3, lit: .62, warm: .8, tint: true, deco: true },
 };
 
 /**
@@ -103,6 +108,15 @@ export const STYLES = {
     facades: { shed: 4, brick: 2, concrete: 2 }, setbacks: 0, tanks: .25, fire: .2, water: 'south', ground: '#3a3c3e', pavement: '#9d9a93' },
   suburb: { block: [56, 80], street: 9, avenue: 12, every: 5, floors: [1, 2], tall: 2, core: 0, gap: 1, shops: .04, parks: .12, plazas: 0, trees: 1.2, houses: true,
     facades: { house: 1 }, setbacks: 0, tanks: 0, fire: 0, ground: '#404244', pavement: '#b8b3a8' },
+  // the seafront: pastel art-deco blocks with neon on their parapets at night, palms, and a beach sloping into the surf
+  beach: { block: [52, 76], street: 11, avenue: 15, every: 3, floors: [2, 6], tall: 11, core: .35, gap: .2, shops: .7, parks: .04, plazas: .04, trees: .75,
+    facades: { deco: 6, plaster: 1, glass: .5 }, colours: DECO, neon: .55, setbacks: 0, tanks: 0, fire: 0, water: 'south', shore: 'beach', climate: 'tropical', ground: '#46484b', pavement: '#d9cfbb' },
+  // boats: towers and deco blocks round a quay with wooden piers and finger jetties out into the water
+  marina: { block: [56, 84], street: 11, avenue: 15, every: 3, floors: [3, 10], tall: 22, core: .6, gap: .15, shops: .55, parks: .04, plazas: .06, trees: .6,
+    facades: { deco: 3, glass: 3, silver: 1, plaster: 1 }, colours: DECO, neon: .25, setbacks: .3, tanks: 0, fire: 0, water: 'south', shore: 'marina', climate: 'tropical', ground: '#404245', pavement: '#cfc8b8' },
+  // the swampy edge: low sheds and yards, cypresses, ponds with reeds
+  glades: { block: [60, 92], street: 9, avenue: 13, every: 4, floors: [1, 2], tall: 3, core: .1, gap: .7, shops: .18, parks: .06, plazas: 0, ponds: .3, trees: .9,
+    facades: { shed: 3, concrete: 2, plaster: 2 }, setbacks: 0, tanks: .1, fire: 0, climate: 'wetland', ground: '#3f3e3a', pavement: '#a39c8a' },
 };
 const HOUSE_COLOURS = ['#e8e2d4', '#d9e4ea', '#efe1c4', '#dcd0e2', '#e6d3c8', '#cfdccb', '#f2efe6'];
 const CAR_COLOURS = ['#e8e8ea', '#202226', '#8a9096', '#5c6670', '#a42a24', '#22408a', '#2e5e48', '#d8cfc0', '#3c3c44', '#7a1e30', '#c46a20', '#4b7fa8'];
@@ -163,6 +177,7 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
     const b = { id: plan.blocks.length, i, j, x0: xs[i] + wx[i] / 2, x1: xs[i + 1] - wx[i + 1] / 2, z0: zs[j] + wz[j] / 2, z1: zs[j + 1] - wz[j + 1] / 2, sw, kind: 'build' };
     const edge = i === 0 || j === 0 || i === nx - 1 || j === nz - 1, r = R();
     if (!edge && r < S.parks) b.kind = 'park'; else if (r < S.parks + S.plazas && !S.houses) b.kind = 'plaza';
+    else if (S.ponds && !edge && R() < S.ponds) { b.kind = 'pond'; b.pond = pondOf(b); }   // (wetland: a pond in a ring of park)
     plan.blocks.push(b);
   }
   // a city always gets at least one park (people need somewhere to sit)
@@ -175,15 +190,24 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
     const sides = [[b.x0 + .9, b.z0 + .9, b.x1 - .9, b.z0 + .9, 0], [b.x1 - .9, b.z0 + .9, b.x1 - .9, b.z1 - .9, 1], [b.x1 - .9, b.z1 - .9, b.x0 + .9, b.z1 - .9, 2], [b.x0 + .9, b.z1 - .9, b.x0 + .9, b.z0 + .9, 3]];
     for (const [x0, z0, x1, z1, k] of sides) {
       const L = Math.hypot(x1 - x0, z1 - z0);
-      for (let s = 7; s < L - 7; s += 9 + R() * 5) if (R() < S.trees * (b.kind === 'park' ? 1.6 : 1)) plan.trees.push({ x: x0 + (x1 - x0) * s / L, z: z0 + (z1 - z0) * s / L, s: .8 + R() * .5, kind: R() < .7 ? 'round' : 'pine' });
+      for (let s = 7; s < L - 7; s += 9 + R() * 5) if (R() < S.trees * (b.kind === 'park' || b.kind === 'pond' ? 1.6 : 1)) plan.trees.push({ x: x0 + (x1 - x0) * s / L, z: z0 + (z1 - z0) * s / L, s: .8 + R() * .5, kind: treeKind(S, R) });
       if ((k + b.i + b.j) % 2 === 0) for (let s = 12; s < L - 6; s += 26) plan.lamps.push({ x: x0 + (x1 - x0) * s / L, z: z0 + (z1 - z0) * s / L, face: [Math.PI / 2, 0, -Math.PI / 2, Math.PI][k] });
     }
     for (const [x, z] of [[b.x0 + sw / 2, b.z0 + sw / 2], [b.x1 - sw / 2, b.z0 + sw / 2], [b.x1 - sw / 2, b.z1 - sw / 2], [b.x0 + sw / 2, b.z1 - sw / 2]]) plan.spots.corner.push({ x, y: KERB, z, block: b.id });
     if (b.kind === 'park') {
       const n = Math.round(w * d / 140);
-      for (let k = 0; k < n; k++) plan.trees.push({ x: ix0 + 3 + R() * (w - 6), z: iz0 + 3 + R() * (d - 6), s: .9 + R() * .8, kind: R() < .6 ? 'round' : 'pine' });
+      for (let k = 0; k < n; k++) plan.trees.push({ x: ix0 + 3 + R() * (w - 6), z: iz0 + 3 + R() * (d - 6), s: .9 + R() * .8, kind: treeKind(S, R, 'park') });
       for (let k = 0; k < 6; k++) plan.spots.park.push({ x: ix0 + 4 + R() * (w - 8), y: KERB, z: iz0 + 4 + R() * (d - 8), block: b.id });
       for (let k = 0; k < 4; k++) plan.benches.push({ x: ix0 + 2 + R() * (w - 4), z: iz0 + 2 + R() * (d - 4), rot: R() * Math.PI });
+      continue;
+    }
+    if (b.kind === 'pond') {   // reeds round the water, a cypress or two at the corners, benches on the grass
+      const p = b.pond; plan.reeds ||= [];
+      for (const [ax, az, bx, bz] of [[p.x0, p.z0, p.x1, p.z0], [p.x1, p.z0, p.x1, p.z1], [p.x1, p.z1, p.x0, p.z1], [p.x0, p.z1, p.x0, p.z0]]) {
+        const L = Math.hypot(bx - ax, bz - az); for (let s = 1 + R() * 2; s < L - 1; s += 1.6 + R() * 2.8) if (R() < .75) plan.reeds.push({ x: ax + (bx - ax) * s / L + (R() - .5) * 1.4, z: az + (bz - az) * s / L + (R() - .5) * 1.4, s: .7 + R() * .6 });
+      }
+      for (const [x, z] of [[ix0 + 5, iz0 + 5], [ix1 - 5, iz0 + 5], [ix1 - 5, iz1 - 5], [ix0 + 5, iz1 - 5]]) if (R() < .7) plan.trees.push({ x, z, s: .8 + R() * .5, kind: treeKind(S, R, 'park') });
+      for (let k = 0; k < 3; k++) { const s = R(), side = R() * 4 | 0, x = side % 2 ? (side === 1 ? ix1 - 1.6 : ix0 + 1.6) : ix0 + 4 + s * (w - 8), z = side % 2 ? iz0 + 4 + s * (d - 8) : (side === 0 ? iz0 + 1.6 : iz1 - 1.6); plan.benches.push({ x, z, rot: side % 2 ? Math.PI / 2 : 0 }); plan.spots.park.push({ x, y: KERB, z, block: b.id }); }
       continue;
     }
     if (b.kind === 'plaza') {
@@ -229,7 +253,7 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
       }
       const roofTop = parts.at(-1);
       const bld = { id: plan.buildings.length, block: b.id, facade: f, floors, shops, face: lot.face, x0, x1, z0, z1, h: top, parts,
-        colour: S.houses ? R.pick(HOUSE_COLOURS) : null, roof: S.houses ? (R() < .8 ? 'gable' : 'flat') : 'flat', u: R() * 8 | 0, v: R() * 8 | 0, bits: [] };
+        colour: S.houses ? R.pick(HOUSE_COLOURS) : FACADES[f].tint && S.colours ? R.pick(S.colours) : null, roof: S.houses ? (R() < .8 ? 'gable' : 'flat') : 'flat', u: R() * 8 | 0, v: R() * 8 | 0, bits: [] };
       // on the roof: water tanks on older blocks, boxes of machinery, a mast on the tallest
       if (!S.houses) {
         const rw = roofTop.x1 - roofTop.x0, rd = roofTop.z1 - roofTop.z0, rx = (roofTop.x0 + roofTop.x1) / 2, rz = (roofTop.z0 + roofTop.z1) / 2;
@@ -238,6 +262,7 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
         if (top > 90 && R() < .6) bld.bits.push({ kind: 'mast', x: rx, y: top, z: rz, s: 1 + top / 150 });
         if (F.kind === 'punched' && floors >= 3 && floors <= 9 && R() < S.fire) bld.fire = true;
       }
+      if (S.neon && !S.houses && R() < S.neon) bld.neon = R.pick(NEON);   // (neon along its parapet at night)
       plan.buildings.push(bld);
       plan.spots.rooftop.push({ x: (roofTop.x0 + roofTop.x1) / 2, y: top + (bld.roof === 'gable' ? 0 : .05), z: (roofTop.z0 + roofTop.z1) / 2, building: bld.id });
       // the front door, on the pavement in front of the building
@@ -247,7 +272,7 @@ export function layout({ seed = 1, blocks = 6, style = 'downtown', side = 'right
       bld.door = door; plan.spots.door.push(door); bld.doorway = doorwayOf(bld);
     }
   }
-  if (S.water === 'south') plan.water = { z: plan.bounds.z1 };
+  shorePlan(plan, S, R);   // (a quay, a beach or a marina on the side S.water names: city-coast.js)
   return plan;
 }
 
@@ -307,6 +332,11 @@ function facadeTex(name) {
     const blind = R() < .3 ? R() * .7 : 0;
     if (blind) { g.fillStyle = mixHex(F.trim || '#ccc', '#d8d0c0', .5); g.globalAlpha = .7; g.fillRect(wx, wy, ww, wh * blind); g.globalAlpha = 1; }
     if (F.kind === 'punched' || F.kind === 'house') { g.fillStyle = F.trim; g.fillRect(wx - c * .04, wy + wh, ww + c * .08, c * .05); g.fillRect(wx - c * .02, wy - c * .04, ww + c * .04, c * .04); g.fillStyle = shade(F.glass, .7); g.fillRect(wx + ww / 2 - .5, wy, 1, wh); }
+    if (F.deco) {   // an eyebrow sunshade over each window and its shadow, and three speed lines at each floor
+      g.fillStyle = 'rgba(70,60,60,.32)'; g.fillRect(wx - c * .12, wy - c * .06, ww + c * .24, c * .1);
+      g.fillStyle = '#ffffff'; g.fillRect(wx - c * .14, wy - c * .13, ww + c * .28, c * .07);
+      g.fillStyle = 'rgba(60,70,80,.22)'; for (let k = 0; k < 3; k++) g.fillRect(x, y + c * (.93 + k * .025), c, Math.max(1, c * .01));
+    }
     r.fillStyle = '#1e1e1e'; r.fillRect(wx, wy, ww, wh);
     if (R() < F.lit) {
       const lw = mixHex('#cfe0ff', '#ffc77a', Math.min(1, warm + (R() - .5) * .4)), k = .45 + R() * .55;
@@ -351,6 +381,7 @@ export function groundTex(kind, base) {
   else if (kind === 'paving') { dots(1200, '#000', .15, 2); g.fillStyle = shade(base, .72); for (let i = 0; i <= S; i += S / 4) { g.fillRect(i - 1, 0, 2, S); g.fillRect(0, i - 1, S, 2); } }
   else if (kind === 'grass') { for (let i = 0; i < 5000; i++) { g.globalAlpha = .25; g.fillStyle = R() < .5 ? shade(base, .7 + R() * .2) : shade(base, 1.15 + R() * .2); g.fillRect(R() * S, R() * S, 1, 2 + R() * 3); } g.globalAlpha = 1; }
   else if (kind === 'gravel') dots(5000, R() < .5 ? '#000' : '#fff', .25, 2);
+  else if (kind === 'sand') { dots(6000, shade(base, .8), .5, 1.5); dots(3000, '#fff', .3, 1); g.globalAlpha = .08; g.fillStyle = shade(base, .85); for (let i = 0; i < 9; i++) { g.beginPath(); g.ellipse(R() * S, R() * S, 20 + R() * 40, 4 + R() * 6, R() * .4, 0, 7); g.fill(); } g.globalAlpha = 1; }
   else if (kind === 'tiles') { g.fillStyle = shade(base, .7); for (let y = 0; y < S; y += 16) { g.fillRect(0, y, S, 2); for (let x = (y / 16 % 2) * 12; x < S; x += 24) g.fillRect(x, y, 2, 16); } dots(800, '#000', .15, 2); }
   const t = texOf(cv); TEX.set(key, t); built(); return t;
 }
@@ -359,7 +390,7 @@ let warmGeo = null;
 const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(true); q.box(0, 0, 0, .01, .01, .01, { r: 1, g: 1, b: 1 }, 1); return q.geometry(); })();
 // the material a chunk mesh of kind k uses (k: 'f:<facade>', 'shop', 'roof', 'tiles', 'plain', 'metal', 'pave', 'plaza', 'grass')
 const chunkMat = (k, S) => k.startsWith('f:') ? facadeMat(k.slice(2)) : k === 'shop' ? shopMat() : k === 'signs' ? signsMat() : k === 'roof' ? roofMat() : k === 'tiles' ? tileMat() : k === 'plain' ? plainMat() : k === 'metal' ? metalMat()
-  : k === 'pave' ? pavingMat(S.pavement) : k === 'plaza' ? pavingMat(shade(S.pavement, .85)) : grassMat();
+  : k === 'pave' ? pavingMat(S.pavement) : k === 'plaza' ? pavingMat(shade(S.pavement, .85)) : k === 'neon' ? neonMat() : k === 'sand' ? sandMat() : grassMat(climateOf(S).grass);
 function mat(key, make) { if (!MATS.has(key)) MATS.set(key, make()); return MATS.get(key); }
 /**
  * Hidden specks of every material the plans' blocks can be built with, for a big city of districts (gs.city Metro): put in
@@ -385,7 +416,7 @@ const ROOM_KINDS = {
   shed: { win: [.1, .68, .9, .9], reveal: .1, depth: 9, see: .6, frame: .02 },
 };
 const facadeMat = name => mat('f:' + name, () => { const T = facadeTex(name), F = FACADES[name], K = ROOM_KINDS[F.kind];
-  const m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' });
+  const m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: 0, roughnessMap: T.rough, roughness: 1, metalness: F.metal || .05, vertexColors: name === 'house' || !!F.tint });
   return rooms(m, { ...K, kind: F.kind, trim: F.kind === 'curtain' ? F.trim : shade(F.trim, .9), glass: shade(F.glass, .45), metal: F.kind === 'curtain' ? (F.metal || .5) * .6 : .05 }); });
 const shopMat = () => mat('shop', () => { const T = shopTex(), m = new MeshStandardMaterial({ map: T.map, emissiveMap: T.light, emissive: new Color('#ffffff'), emissiveIntensity: .25, roughnessMap: T.rough, roughness: 1, metalness: .1 });
   return rooms(m, { win: [.06, .02, .94, .68], cells: [4, 1], reveal: .12, depth: 5.5, kind: 'shop', see: 1, frame: .012, trim: '#26282a', glass: '#080a0c', metal: .05 }); });
@@ -396,7 +427,10 @@ const metalMat = () => mat('metal', () => new MeshStandardMaterial({ color: '#2a
 const roofMat = () => mat('roof', () => new MeshStandardMaterial({ map: groundTex('gravel', '#66625c'), roughness: .95 }));
 const tileMat = () => mat('tiles', () => new MeshStandardMaterial({ map: groundTex('tiles', '#8a4a3a'), roughness: .8, vertexColors: true }));
 const pavingMat = col => mat('pave' + col, () => new MeshStandardMaterial({ map: groundTex('paving', col), roughness: .9 }));
-const grassMat = () => mat('grass', () => new MeshStandardMaterial({ map: groundTex('grass', '#4f7a3a'), roughness: 1 }));
+const grassMat = (col = '#4f7a3a') => mat('grass' + (col === '#4f7a3a' ? '' : col), () => new MeshStandardMaterial({ map: groundTex('grass', col), roughness: 1 }));
+const sandMat = () => mat('sand', () => new MeshStandardMaterial({ map: groundTex('sand', SAND_COLOUR), roughness: .95, vertexColors: true }));
+// neon tubes: their own colour, unlit, dim by day and over-bright at night (the bloom makes them glow)
+const neonMat = () => mat('neon', () => new MeshBasicMaterial({ color: '#ffffff', vertexColors: true, toneMapped: false }));
 export const asphaltMat = col => mat('asph' + col, () => new MeshStandardMaterial({ map: groundTex('asphalt', col), roughness: .85 }));
 export const paintMat = () => mat('paint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .6, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
 const waterMat = () => mat('water', () => new MeshStandardMaterial({ color: '#1b3a4c', roughness: .06, metalness: .2 }));
@@ -469,6 +503,8 @@ export class Quads {
   }
 }
 const C = hex => new Color(hex);
+// the four strips of rect o round the hole h inside it: fn(x0, z0, x1, z1) for each
+function ring(o, h, fn) { fn(o.x0, o.z0, o.x1, h.z0); fn(o.x0, h.z1, o.x1, o.z1); fn(o.x0, h.z0, h.x0, h.z1); fn(h.x1, h.z0, o.x1, h.z1); }
 
 // One building into the chunk's buffers (by material). d: the detail buffers (shops' awnings,
 // cornices, fire escapes), hidden far away.
@@ -486,6 +522,11 @@ function buildBuilding(b, Q, D, { rooms = true, dress = false, doors = false } =
     if (k > 0) Q('roof').top(b.parts[k - 1].x0, b.parts[k - 1].z0, b.parts[k - 1].x1, b.parts[k - 1].z1, p.y0 + .02, 6);   // the ledge each step leaves
   });
   const p0 = b.parts[0], top = b.parts.at(-1);
+  if (b.neon) {   // neon tubes round the parapet, and over the shop fronts (lit at night: City.applyNight)
+    const nq = Q('neon'), col = C(b.neon), o = .07;
+    nq.walls(top.x0 - o, top.z0 - o, top.x1 + o, top.z1 + o, top.y1 - .62, top.y1 - .5, null, col);
+    if (b.shops) nq.walls(p0.x0 - o, p0.z0 - o, p0.x1 + o, p0.z1 + o, base + .25, base + .33, null, col);
+  }
   if (b.shops) {
     const sq = Q('shop'), u = (b.u % 4) / 4;
     sq.walls(p0.x0, p0.z0, p0.x1, p0.z1, KERB, base, (s, L) => { const n = Math.max(1, Math.round(L / 5)); sq.room(L / n, g0, seed + s * 7 + 50, rooms ? 1 : 0); return [u, 0, u + n / 4, 0, u + n / 4, 1, u, 1]; }, null, hole);
@@ -628,8 +669,29 @@ const FURNITURE = {
   pine: [() => tree({ kind: 'pine', height: 7, leaves: '#3a6a3e', trunk: '#5a4632' }), [70, 160]],
   lamp: [SHAPES.lamp, [60]], lamphead: [SHAPES.lamphead, []], tank: [SHAPES.tank, [90]], hvac: [SHAPES.hvac, [90]],
   mast: [SHAPES.mast, []], bench: [SHAPES.bench, [50]], signal: [SHAPES.signal, [80]], hydrant: [SHAPES.hydrant, []],
-  ...DRESS_SHAPES,
+  // warm and wet climates' trees (on a Next Gen view palms, cypresses and reeds are gs.models plants close up: plantKind())
+  palm: [() => tree({ kind: 'palm', height: 8.5, leaves: '#5d8a34', trunk: '#8c7c64' }), [70, 160]],
+  cypress: [() => tree({ kind: 'pine', height: 10, leaves: '#4f6e34', trunk: '#6a5444' }), [70, 160]],
+  bush: [() => tree({ kind: 'bush', height: 2.4, leaves: '#4a7a36', trunk: '#4a7a36' }), [50]],
+  ...DRESS_SHAPES, ...COAST_SHAPES,
 };
+const TREE_PROP = { round: 'tree', pine: 'pine', palm: 'palm', cypress: 'cypress', bush: 'bush' };
+// a gs.models plant (palm, cypress, reeds) as props: a kind for each of its parts (trunk, leaves, moss...), the plain shape
+// of furniture `far` (or nothing) past 70 m; tick: what moves its leaves (called once a frame by the city)
+const NOTHING = (() => { const g = new BufferGeometry(); g.setAttribute('position', new BufferAttribute(new Float32Array(9), 3)); g.setAttribute('normal', new BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), 3)); g.setAttribute('uv', new BufferAttribute(new Float32Array(6), 2)); return g; })();
+function plantKind(props, name, kind, { height, far = null, pm, capacity = 128, seed = 3 }) {
+  const g = modelTree(kind, { height, seed }), names = [];
+  let tick = null;
+  g.children.forEach((m, i) => {
+    if (!m.isMesh) return;
+    const n = i === 0 ? name : name + '~' + m.name, geo = m.geometry.clone();
+    if (geo.attributes.color === undefined && m.material.vertexColors) { const c = new Float32Array(geo.attributes.position.count * 3).fill(1); geo.setAttribute('color', new BufferAttribute(c, 3)); }
+    const lod = i === 0 && far ? [[70, shaped(far).geo.clone(), pm]] : [[70, NOTHING]];
+    props.kind(n, geo, m.material, { capacity, lod, shadows: m.castShadow }); names.push(n);
+    if (m.onBeforeRender && !tick) tick = m.onBeforeRender;
+  });
+  return { names, tick };
+}
 const KEEP = [.45, .15], SHAPED = new Map();
 let canKeep = false; simplifyReady.then(() => { canKeep = true; });   // (before the simplifier is in, a "simpler" copy isn't: not one to keep)
 function shaped(name) {
@@ -1292,18 +1354,19 @@ export class City {
    */
   static *over(view, o = {}) { const c = new City(view, { ...o, steps: true }); yield* c.steps; c.steps = null; return c; }
   *making(view, { seed = 1, blocks = 6, style = 'downtown', side = 'right', traffic = 1, people = 1, night = null, sky = null, lamps = true, sound = true, at = null, detail = 260, occlude = true,
-    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, keep = 600, field = true, link = true, steps = false, doors = true, ...over } = {}) {
+    rooms = true, fleet = !!view.placeLamps, crowd = !!view.placeLamps, dress = true, parked = !!view.placeLamps, paint = !!view.placeLamps, walls = true, far = false, keep = 600, field = true, link = true, steps = false, doors = true, sea = false, shared = false, ...over } = {}) {
     // (links.js: with no night and no sky given, the city follows the Sky the game made, until the game sets city.night itself)
     this.links = linksFor(view, link); this.links?.join('city', this); this.seeksSky = sky == null && night == null && !!this.links; night ??= 0;
     this.view = view; this.seed = seed; this.sky = sky || null; this.lampsOn = lamps; this.soundOn = sound; this.detail = detail; this.keep = keep == null ? Infinity : +keep;
-    this.opts = { rooms, doors: !!doors, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown' };
+    this.opts = { rooms, doors: !!doors, fleet: fleet && traffic > 0, crowd: crowd && people > 0, dress, parked, paint, walls, far: far ? (far === true ? 6000 : +far) : 0, style: typeof style === 'string' ? style : 'downtown', shared };
     this.sharedCrowd = crowd instanceof Crowd ? crowd : null; this.sharedPaint = paint instanceof GroundPaint ? paint : null;   // (a big city's districts share one of each: gs.city Metro)
     if (this.opts.crowd && !this.sharedCrowd) human.need(FOLK);   // (the city's people are sculpted first, in the background: the app makes the game again once they are)
     this.plan = layout({ seed, blocks, style, side, ...over }); const P = this.plan, S = P.style;
     // What a city keeps from one making to the next comes first: its textures and materials, and the
     // street furniture's shapes. While a card loads, a pass of make() can be stopped between these and
     // the next pass has them already (slices.js); the rest is this city's own and is made in one go.
-    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop', ...(dress ? ['signs'] : [])]); for (const b of P.buildings) kinds.add('f:' + b.facade);
+    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop', ...(dress ? ['signs'] : [])]); for (const b of P.buildings) { kinds.add('f:' + b.facade); if (b.neon) kinds.add('neon'); }
+    if (P.water?.kind === 'beach') kinds.add('sand');
     for (const k of kinds) { chunkMat(k, S); if (steps) yield; }
     if (walls) wallMat();
     groundTex('grass', '#4f7a3a'); asphaltMat(S.ground);
@@ -1317,26 +1380,59 @@ export class City {
     const scale = TIER[phoneClass()] ?? .65;
     // the ground: asphalt under the city, grass (or the harbour) round it
     // (the grass is a frame round the asphalt, not a sheet under it, so the two never fight over the same pixels)
-    const B = P.bounds, m = 40, gx0 = B.x0 - m, gx1 = B.x1 + m, gz0 = B.z0 - m, gz1 = B.z1 + m, fr = 3000;
-    const fieldTex = groundTex('grass', '#4f7a3a').clone(); fieldTex.repeat.set(.1, .1); fieldTex.needsUpdate = true;
-    const fieldQ = new Quads(); if (field) for (const [a, b, c, d] of [[gx0 - fr, gz0 - fr, gx1 + fr, gz0], ...(P.water ? [] : [[gx0 - fr, gz1, gx1 + fr, gz1 + fr]]), [gx0 - fr, gz0, gx0, gz1 + (P.water ? fr : 0)], [gx1, gz0, gx1 + fr, gz1 + (P.water ? fr : 0)]]) fieldQ.top(a, b, c, d, 0, 1);
+    const B = P.bounds, m = 40, W = P.water, grassCol = climateOf(S).grass, fr = 3000;
+    // (on the water's side the asphalt stops at the city's edge: the quay, the beach or the marina are the shore's)
+    const gx0 = B.x0 - (W?.side === 'west' ? 2 : m), gx1 = B.x1 + (W?.side === 'east' ? 2 : m), gz0 = B.z0 - (W?.side === 'north' ? 2 : m), gz1 = B.z1 + (W?.side === 'south' ? 2 : m);
+    const fieldTex = groundTex('grass', grassCol).clone(); fieldTex.repeat.set(.1, .1); fieldTex.needsUpdate = true;
+    const fieldQ = new Quads();
+    if (field) {
+      // four strips round the asphalt; none on the water's side, and those beside it run on past the shore
+      const ws = W?.side, X0 = B.x0 - m, X1 = B.x1 + m, Z0 = B.z0 - m, Z1 = B.z1 + m;
+      const rects = this.fieldRects = [];
+      if (ws !== 'north') rects.push([X0 - fr, Z0 - fr, X1 + fr, Z0]);
+      if (ws !== 'south') rects.push([X0 - fr, Z1, X1 + fr, Z1 + fr]);
+      if (ws !== 'west') rects.push([X0 - fr, Z0 - (ws === 'north' ? fr : 0), X0, Z1 + (ws === 'south' ? fr : 0)]);
+      if (ws !== 'east') rects.push([X1, Z0 - (ws === 'north' ? fr : 0), X1 + fr, Z1 + (ws === 'south' ? fr : 0)]);
+      for (const r of rects) fieldQ.top(...r, 0, 1);
+    }
     const ground = field ? new Mesh(fieldQ.geometry(), new MeshStandardMaterial({ map: fieldTex, roughness: 1 })) : null; if (ground) { ground.receiveShadow = true; this.group.add(ground); } this.field = ground;   // (field: false, a big city's land is round it)
     const road = new Mesh(new PlaneGeometry(gx1 - gx0, gz1 - gz0), asphaltMat(S.ground).clone()); road.rotation.x = -Math.PI / 2; road.position.set((gx0 + gx1) / 2, 0, (gz0 + gz1) / 2); road.receiveShadow = true;
     road.material.map = road.material.map.clone(); road.material.map.repeat.set((gx1 - gx0) / 10, (gz1 - gz0) / 10); road.material.map.needsUpdate = true; this.group.add(road); this.asphalt = road;
-    if (P.water) {
-      const q = new Quads(); q.box(B.x0 - m, -2, B.z1 + 2, B.x1 + m, KERB, B.z1 + 10, null, 4);
-      const quay = new Mesh(q.geometry(), pavingMat(S.pavement)); quay.receiveShadow = true; this.group.add(quay);
-      const water = new Mesh(new PlaneGeometry(6000, 3000), waterMat()); water.rotation.x = -Math.PI / 2; water.position.set((B.x0 + B.x1) / 2, -.6, B.z1 + 10 + 1500); this.group.add(water);
-      view.reflect?.(water); this.water = water; this.quay = quay;
+    this.groundRect = { x0: gx0, x1: gx1, z0: gz0, z1: gz1 };
+    // the shore (a quay, a beach, a marina's piers) and the ponds' banks (city-coast.js), and the water
+    const ponds = P.blocks.filter(b => b.pond);
+    if (W || ponds.length) {
+      const sq = new Map(), SQ = k => { k = k === 'bank' ? 'plain' : k; if (!sq.has(k)) sq.set(k, new Quads()); return sq.get(k); };
+      buildShore(P, SQ, { margin: m });
+      const shore = this.shore = new Group(); shore.name = 'city shore'; this.group.add(shore);
+      for (const [k, q] of sq) if (!q.empty) { const mesh = new Mesh(q.geometry(), k === 'pave' ? pavingMat(S.pavement) : k === 'sand' ? sandMat() : plainMat()); mesh.name = 'city shore ' + k; mesh.receiveShadow = true; mesh.castShadow = k === 'plain'; shore.add(mesh); if (k === 'pave') this.quay = mesh; if (k === 'sand') this.sand = mesh; }
+      if (W) {
+        const F = shoreFrame(B, W.side, m), u0 = W.kind === 'beach' ? 30 : 10, alongMid = (F.a0 + F.a1) / 2, [cx, cz] = F.at(u0 + 1500, alongMid);
+        const water = new Mesh(new PlaneGeometry(F.alongX ? 6000 : 3000, F.alongX ? 3000 : 6000), waterMat()); water.rotation.x = -Math.PI / 2; water.position.set(cx, WATER_Y, cz); water.name = 'city water';
+        this.group.add(water); view.reflect?.(water); this.waterMesh = water;
+      }
+      if (ponds.length) {
+        const q = new Quads(); for (const b of ponds) q.top(b.pond.x0, b.pond.z0, b.pond.x1, b.pond.z1, POND_Y);
+        const pm = new Mesh(q.geometry(), mat('pond', () => new MeshStandardMaterial({ color: '#1e3428', roughness: .05, metalness: .2 }))); pm.name = 'city ponds'; pm.receiveShadow = true; this.group.add(pm); view.reflect?.(pm); this.pondMesh = pm;
+      }
+      // the water as numbers, found by swimmers, boats, the rain and splashes (a Metro's districts share the Metro's)
+      if (!shared) {
+        // with { sea }: drawn as a gs.outdoors Sea (its swell, surf up the beach, wet sand) in place of the flat water
+        const water = this.water = new CityWater([planWater(P)], { view, link });
+        this.sea = sea && W ? new Sea({ level: WATER_Y, waves: .5, far: 4000, ...(typeof sea === 'object' ? sea : {}), bed: (x, z) => water.bed(x, z), view, link: false }) : null;
+        if (this.sea) { this.group.add(this.sea.mesh); this.waterMesh.visible = false; water.sea = this.sea; }
+        if (this.sea?.wetMesh) this.group.add(this.sea.wetMesh);   // (the sand the waves leave dark and wet)
+      }
     }
+    if (!this.water) this.water = null;
     // the ground with no repeats: painted round the camera from what each piece is, read in place of the tiled pictures
     this.groundPaint = this.sharedPaint || (paint ? new GroundPaint(view) : null);
     if (this.groundPaint) {
-      this.groundPaint.add(road, 'asphalt', { base: S.ground }); if (ground) this.groundPaint.add(ground, 'grass', { base: '#4f7a3a' });
+      this.groundPaint.add(road, 'asphalt', { base: S.ground }); if (ground) this.groundPaint.add(ground, 'grass', { base: grassCol });
       if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });
     }
     // past the streets, out to the horizon: a made-up city of stand-ins in this one's colours, its lights, and hills (city-far.js)
-    this.far = this.opts.far ? new Skyline(view, P, { seed, colours: farColours(S), street: S.ground, reach: this.opts.far, floors: S.floors, tall: S.tall, water: !!P.water, scale }) : null;
+    this.far = this.opts.far ? new Skyline(view, P, { seed, colours: farColours(S), street: S.ground, reach: this.opts.far, floors: S.floors, tall: S.tall, water: P.water?.side || false, scale }) : null;
     // chunks of 2 x 2 blocks, built a few at a time, nearest first
     const cs = P.nx * P.nz > 9 ? 2 : 1; this.chunks = new Map();
     for (const b of P.blocks) {
@@ -1406,7 +1502,27 @@ export class City {
     furniture(props, 'bench', pm, { capacity: 64 });
     furniture(props, 'signal', pm, { capacity: 256 });
     furniture(props, 'hydrant', pm, { shadows: false, capacity: 128 }); yield;
-    for (const t of P.trees) props.add(t.kind === 'pine' ? 'pine' : 'tree', t.x, KERB, t.z, { rot: t.x * 1.7, scale: t.s });
+    // warmer and wetter climates' trees, and the beach's things (only the kinds this city has: each is a draw or two)
+    const has = new Set(P.trees.map(t => t.kind)), hd = !!this.view.placeLamps, plants = this.plants = new Map();
+    // (a bush close up is a gs.models fern: a low-poly ball beside the pavement looks like a rock)
+    for (const k of ['palm', 'cypress', 'bush']) if (has.has(k)) {
+      if (hd) plants.set(k, plantKind(props, k, k === 'bush' ? 'fern' : k, { height: k === 'palm' ? 9 : k === 'bush' ? 1.6 : 13, far: k, pm, capacity: P.trees.filter(t => t.kind === k).length + 8 }));
+      else furniture(props, k, pm, { capacity: 256 });
+      yield;
+    }
+    if (P.reeds?.length) { if (hd) plants.set('reeds', plantKind(props, 'reeds', 'reeds', { height: 1.9, pm, capacity: P.reeds.length + 8 })); else furniture(props, 'bush', pm, { capacity: 256 }); yield; }
+    this.plantTick = [...plants.values()].find(p => p.tick)?.tick || null;
+    if (P.beach) { for (const k of ['parasol', 'lounger', 'towel', 'tower']) furniture(props, k, pm, { capacity: Math.max(8, (P.beach[k + 's'] || []).length + 4), shadows: k !== 'towel' }); yield; }
+    // (a plant is a kind for each of its parts: its branches, leaves, moss, cattails... each copy goes in each)
+    const partsOf = k => plants.get(k)?.names || [TREE_PROP[k] || 'tree'];
+    for (const t of P.trees) for (const n of partsOf(t.kind)) props.add(n, t.x, t.y ?? KERB, t.z, { rot: t.x * 1.7, scale: t.s });
+    for (const r of P.reeds || []) for (const n of hd ? partsOf('reeds') : ['bush']) props.add(n, r.x, KERB, r.z, { rot: r.x * 2.3 + r.z, scale: hd ? r.s : r.s * .45 });
+    if (P.beach) {
+      for (const p of P.beach.parasols) props.add('parasol', p.x, p.y, p.z, { rot: { y: p.rot, x: p.tilt, z: 0 }, color: p.colour });
+      for (const p of P.beach.loungers) props.add('lounger', p.x, p.y, p.z, { rot: p.rot, color: p.colour });
+      for (const p of P.beach.towels) props.add('towel', p.x, p.y, p.z, { rot: p.rot, color: p.colour });
+      for (const p of P.beach.towers) props.add('tower', p.x, p.y, p.z, { rot: p.rot });
+    }
     this.lampSpots = [];
     for (const l of P.lamps) { props.add('lamp', l.x, KERB, l.z, { rot: l.face }); props.add('lamphead', l.x, KERB, l.z, { rot: l.face }); this.lampSpots.push({ x: l.x + Math.cos(l.face) * 1.35, y: KERB + 5.6, z: l.z - Math.sin(l.face) * 1.35, col: '#ffd8a8', i: 0 }); }
     const Dr = this.dressing, count = {};
@@ -1474,6 +1590,7 @@ export class City {
     ROOMS.gsRmLight.value.set(.11 * (1 - k) + .006, k);   // (rooms: daylight inside, lamps at night)
     for (const name of Object.keys(FACADES)) { const m = MATS.get('f:' + name); if (m) m.emissiveIntensity = k * 1.0; }
     const s = MATS.get('shop'); if (s) s.emissiveIntensity = .3 + k * 1.6;
+    const n = MATS.get('neon'); if (n) n.color.setScalar(.5 + k * 3.5);
     const g = MATS.get('signs'); if (g) g.emissiveIntensity = .15 + k * 2.2;
     if (this.lampGlow) this.lampGlow.emissiveIntensity = k * 5;
     if (this.standins) this.standins.night = k;
@@ -1485,6 +1602,13 @@ export class City {
     const P = this.plan, S = P.style, bufs = new Map(), det = new Map();
     const Q = k => { if (!bufs.has(k)) bufs.set(k, new Quads(k.startsWith('f:') || k === 'shop')); return bufs.get(k); }, D = k => { if (!det.has(k)) det.set(k, new Quads()); return det.get(k); };
     for (const b of c.blocks) {
+      if (b.pond) {   // a ring of pavement and grass round the pond (the pond's banks are the shore's: city-coast.js)
+        const p = b.pond, pv = Q('pave'), gq = Q('grass');
+        ring(b, p, (x0, z0, x1, z1) => pv.box(x0, -.2, z0, x1, KERB, z1, null, 4));
+        ring({ x0: b.x0 + b.sw, z0: b.z0 + b.sw, x1: b.x1 - b.sw, z1: b.z1 - b.sw }, p, (x0, z0, x1, z1) => gq.top(x0, z0, x1, z1, KERB + .01, 4));
+        if (this.dressing) { kerbs(D('plain'), b); blades(D('signs'), this.dressing.blades[b.id]); }
+        continue;
+      }
       Q('pave').box(b.x0, -.2, b.z0, b.x1, KERB, b.z1, null, 4);
       const inner = b.kind === 'park' || S.houses ? 'grass' : b.kind === 'plaza' ? 'plaza' : null;
       if (inner) Q(inner).top(b.x0 + b.sw, b.z0 + b.sw, b.x1 - b.sw, b.z1 - b.sw, KERB + .01, 4);
@@ -1494,8 +1618,8 @@ export class City {
     const matOf = k => chunkMat(k, S);
     const g = new Group(), d = new Group(); g.name = 'chunk ' + c.key;
     for (const [k, q] of bufs) if (!q.empty) {
-      const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza'; m.receiveShadow = true; m.userData.city = k; g.add(m);
-      if (this.groundPaint && GROUND_KIND[k]) { m.updateMatrixWorld(true); this.groundPaint.add(m, GROUND_KIND[k], { base: k === 'grass' ? '#4f7a3a' : k === 'plaza' ? shade(S.pavement, .85) : S.pavement }); }   // (pavements first: a park or plaza is painted over its block)
+      const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = k !== 'pave' && k !== 'grass' && k !== 'plaza' && k !== 'neon'; m.receiveShadow = k !== 'neon'; m.userData.city = k; g.add(m);
+      if (this.groundPaint && GROUND_KIND[k]) { m.updateMatrixWorld(true); this.groundPaint.add(m, GROUND_KIND[k], { base: k === 'grass' ? climateOf(S).grass : k === 'plaza' ? shade(S.pavement, .85) : S.pavement }); }   // (pavements first: a park or plaza is painted over its block)
     }
     for (const [k, q] of det) if (!q.empty) { const m = new Mesh(q.geometry(), matOf(k)); m.castShadow = true; m.receiveShadow = true; d.add(m); }
     if (this.opts.walls) {   // what the street walls wear: posters, tags, damp and grime (city-walls.js)
@@ -1559,6 +1683,8 @@ export class City {
     if (this.soundOn) this.listen(dt, f); else if (this.hum) { this.hum.stop(); this.hum = null; }
     if (!this.sharedPaint) this.groundPaint?.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
     this.far?.update(this.night);
+    this.sea?.update(dt, this.view.cam.position);
+    this.plantTick?.(null, this.view.scene);   // (the palms' fronds sway on the plants' clock)
     return this;
   }
   // the street lamps near the player and the headlights of the cars drawn whole, lit by the night (for a big city to place)
@@ -1759,8 +1885,24 @@ export class City {
     if (buildings) {
       const q = new Quads(), holes = !!this.doors && !!world.shapes;
       for (const b of this.plan.buildings) b.parts.forEach((p, k) => { q.walls(p.x0, p.z0, p.x1, p.z1, p.y0 - .2, p.y1, null, null, holes && k === 0 ? b.doorway : null); q.top(p.x0, p.z0, p.x1, p.z1, p.y1); });
-      for (const b of this.plan.blocks) q.box(b.x0, -.3, b.z0, b.x1, KERB, b.z1);
-      const m = new Mesh(q.geometry()); made.push(world.ground(m, { sound: 'stone' }), floor ? world.floor?.(0) : null);
+      for (const b of this.plan.blocks) if (b.pond) ring(b, b.pond, (x0, z0, x1, z1) => q.box(x0, -.3, z0, x1, KERB, z1)); else q.box(b.x0, -.3, b.z0, b.x1, KERB, b.z1);
+      const m = new Mesh(q.geometry()); made.push(world.ground(m, { sound: 'stone' }));
+      // the shore and the ponds (the quay or promenade, the marina's decks and piles, the sand down under the sea, ponds' banks)
+      const W = this.plan.water, wet = W || this.plan.blocks.some(b => b.pond);
+      if (wet) {
+        const hard = new Quads(), soft = new Quads(); shoreSolid(this.plan, hard, soft, { bed: floor && this.field ? 3000 : 0 });
+        if (!hard.empty) made.push(world.ground(new Mesh(hard.geometry()), { sound: 'stone' }));
+        if (!soft.empty) made.push(world.ground(new Mesh(soft.geometry()), { sound: 'sand' }));
+      }
+      // the ground: a plane at 0 where the city has no water; with water, its own ground only (asphalt and grass), so
+      // whoever walks or drives off the quay or down the beach goes into the water (gs.climb Swimmer, gs.craft Boat)
+      if (floor && !wet) made.push(world.floor?.(0) ?? null);
+      else if (floor) {
+        const g = new Quads(), R = this.groundRect, tile = (x0, z0, x1, z1) => { const n = Math.ceil((x1 - x0) / 400), k = Math.ceil((z1 - z0) / 400); for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) g.top(x0 + (x1 - x0) * i / n, z0 + (z1 - z0) * j / k, x0 + (x1 - x0) * (i + 1) / n, z0 + (z1 - z0) * (j + 1) / k, 0); };
+        tile(R.x0, R.z0, R.x1, R.z1);
+        for (const r of this.fieldRects || []) tile(...r);
+        made.push(world.ground(new Mesh(g.geometry()), { sound: 'stone' }));
+      }
       // the doors stand in their holes, solid until they open (city.door)
       if (holes) { const plugs = this.plugs = world.shapes([], { tag: 'door', sound: 'wood' }); made.push(plugs); for (const b of this.plan.buildings) if (b.doorway && this.doors.open(b) < .5) plugs.add(this.plugOf(b)); }
     }
@@ -1768,9 +1910,10 @@ export class City {
     if (furniture && this.props) {
       const P = this.props, has = n => P.kinds.has(n) && P.count(n) > 0;
       // (what a car knocks over, and how fast it must be going: lamp posts, signals, signs, benches, bins; trees, bollards and poles stop it)
-      const KNOCK = { lamp: 8, signal: 9, post: 4, psign: 4, bench: 5, hydrant: 6, bin: 2.5 };
-      for (const [n, r] of [['tree', .22], ['pine', .25], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: n === 'tree' || n === 'pine' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'lamp' || n === 'signal' ? .8 : .5 });
-      for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut']) if (has(n)) P.solid(world, n, { sound: n === 'bench' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'bin' ? .15 : .4 });
+      const KNOCK = { lamp: 8, signal: 9, post: 4, psign: 4, bench: 5, hydrant: 6, bin: 2.5, parasol: 2, lounger: 2.5 };
+      const WOODY = new Set(['tree', 'pine', 'palm', 'cypress', 'parasol']);
+      for (const [n, r] of [['tree', .22], ['pine', .25], ['palm', .2], ['cypress', .3], ['parasol', .05], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: WOODY.has(n) ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'lamp' || n === 'signal' ? .8 : .5 });
+      for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut', 'lounger', 'tower']) if (has(n)) P.solid(world, n, { sound: n === 'bench' || n === 'lounger' || n === 'tower' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'bin' ? .15 : .4 });
     }
     if (parked && this.parked.length) made.push(this.parkedBody = world.shapes(this.parked.map(c => ({ box: [c.wid, 1.45, c.len], at: { x: c.x, y: (c.y || 0) + .75, z: c.z }, turn: c.heading, part: c })), { tag: 'parked car', sound: 'metal' }));
     const old = this.bodies, S = this.bodies = { world, within, cars: [], people: [], ncars: cars, npeople: people };
@@ -1880,8 +2023,12 @@ export class City {
     x0 -= M; z0 -= M; x1 += M; z1 += M;
     const k = Math.min(2, 2048 / Math.max(x1 - x0, z1 - z0)), cv = canvas(Math.ceil((x1 - x0) * k), Math.ceil((z1 - z0) * k)), c = cv.getContext('2d');
     c.fillStyle = col.road; c.fillRect(0, 0, cv.width, cv.height); c.scale(k, k); c.translate(-x0, -z0);
-    if (P.water) { c.fillStyle = col.water; c.fillRect(x0, P.water.z + 10, x1 - x0, Math.max(0, z1 - P.water.z - 10)); }
-    for (const b of P.blocks) { c.fillStyle = b.kind === 'park' ? col.park : col.block; c.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0); }
+    if (P.water) {   // (past the shore on its side: the beach's sand first)
+      const W = P.water, F = shoreFrame(P.bounds, W.side), [ax, az] = F.at(W.from, F.a0 - 400), [bx, bz] = F.at(3000, F.a1 + 400);
+      if (W.kind === 'beach') { const [sx, sz] = F.at(2, F.a0), [tx, tz] = F.at(W.from, F.a1); c.fillStyle = col.sand || '#d8c89a'; c.fillRect(Math.min(sx, tx), Math.min(sz, tz), Math.abs(tx - sx), Math.abs(tz - sz)); }
+      c.fillStyle = col.water; c.fillRect(Math.min(ax, bx), Math.min(az, bz), Math.abs(bx - ax), Math.abs(bz - az));
+    }
+    for (const b of P.blocks) { c.fillStyle = b.kind === 'park' || b.kind === 'pond' ? col.park : col.block; c.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0); if (b.pond) { c.fillStyle = col.water; c.fillRect(b.pond.x0, b.pond.z0, b.pond.x1 - b.pond.x0, b.pond.z1 - b.pond.z0); } }
     c.fillStyle = col.building;
     for (const b of P.buildings) c.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
     return this._mapPic = { key, cv, x0, z0, w: cv.width / k, h: cv.height / k };
@@ -1897,7 +2044,7 @@ export class City {
     const hits = this.bodies?.world?.hits, h = hits ? hits.indexOf(this._onHit) : -1; if (h >= 0) hits.splice(h, 1);
     if (this.sharedPaint && this.group) this.group.traverse(o => { if (o.isMesh) this.sharedPaint.remove(o); });
     for (const t of [...(this.solids || []), ...(this.bodies?.cars || []), ...(this.bodies?.people || [])]) t?.remove?.(); this.solids = null; this.bodies = null;
-    this.hum?.stop(); this.hum = null; this.props?.clear(); this.doors?.dispose(); this.cars?.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people?.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people?.members || []) this.people.crowd?.remove(m);
+    this.hum?.stop(); this.hum = null; this.props?.clear(); if (!this.opts?.shared) this.water?.dispose(); this.sea?.dispose(); this.sea = null; this.doors?.dispose(); this.cars?.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people?.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people?.members || []) this.people.crowd?.remove(m);
     if (!this.group) return;   // (one let go before it was made at all: gs.city Metro.switchTo)
     this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });

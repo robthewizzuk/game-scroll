@@ -2796,6 +2796,62 @@ console.log('physics ok');
   T.dispose();
   console.log('the ways between districts: hills, a river bridged, cuttings and tunnels, a highway with slip roads, cars on them ok');
 }
+// coasts, climates and water (city-coast.js): a beach of sand down into the sea, a marina's berths, ponds, the trees of each
+// climate, the water as one thing swimmers and boats find, and a Metro on a bay with an island reached by causeways
+{
+  const { layout } = await import('../src/kit/city.js'), C = await import('../src/kit/city-coast.js');
+  const { together } = await import('../src/kit/links.js'), { Swimmer } = await import('../src/kit/swim.js');
+  const B = layout({ seed: 7, blocks: 5, style: 'beach' }), W = B.water, F = C.shoreFrame(B.bounds, W.side), mid = (F.a0 + F.a1) / 2;
+  assert.ok(W.side === 'south' && W.kind === 'beach' && W.from > 30 && B.beach.parasols.length > 5 && B.beach.towers.length >= 1 && B.spots.beach.length > 5, `a beach on the south side with parasols (${B.beach.parasols.length}) and lifeguard huts`);
+  const kinds = B.trees.reduce((m, t) => (m[t.kind] = (m[t.kind] || 0) + 1, m), {});
+  assert.ok(kinds.palm > B.trees.length * .5 && B.trees.some(t => t.kind === 'palm' && t.y != null && C.shoreFrame(B.bounds, 'south').u(t.x, t.z) > 0), `palms in a tropical town and along the promenade (${JSON.stringify(kinds)})`);
+  const pw = C.planWater(B), at = u => { const [x, z] = F.at(u, mid); return { h: pw.height(x, z), b: pw.bed(x, z) }; };
+  assert.ok(at(5).h === -Infinity && at(20).h === -Infinity && at(20).b >= 0 && at(60).h === C.WATER_Y && at(60).b < C.WATER_Y - .5 && at(400).b === C.SEA_BED, 'dry on the promenade and the sand, then the sea over a bed that slopes down to the sea floor');
+  let down = true; for (let u = 10; u < 120; u += 5) down &&= at(u + 5).b <= at(u).b + 1e-9; assert.ok(down, 'the beach only goes down towards the sea');
+  for (const t of B.beach.parasols.concat(B.beach.loungers)) assert.ok(Math.abs(t.y - pw.bed(t.x, t.z)) < .05 && pw.height(t.x, t.z) === -Infinity, 'parasols and loungers stand on the dry sand');
+  const Q = layout({ seed: 7, blocks: 5, style: 'marina' }), qw = C.planWater(Q);
+  assert.ok(Q.spots.slip.length > 10 && Q.spots.dock.length === Q.spots.slip.length && Q.spots.slip.every(s => qw.height(s.x, s.z) === C.WATER_Y && qw.bed(s.x, s.z) < -2), `a marina's berths (${Q.spots.slip.length}) are on deep water`);
+  for (const d of Q.spots.dock.slice(0, 20)) { const s = Q.spots.slip[d.slip]; assert.ok(Math.hypot(d.x - s.x, d.z - s.z) < s.width + 2 && d.y > 0, 'each dock is on the pier beside its berth'); }
+  const G = layout({ seed: 7, blocks: 5, style: 'glades' }), ponds = G.blocks.filter(b => b.pond), gw = C.planWater(G);
+  assert.ok(ponds.length >= 1 && G.reeds.length > 20 && !G.water && G.trees.some(t => t.kind === 'cypress'), `a wetland town: ponds (${ponds.length}) with reeds (${G.reeds.length}), bald cypresses`);
+  const p = ponds[0].pond, pc = [(p.x0 + p.x1) / 2, (p.z0 + p.z1) / 2];
+  assert.ok(gw.height(...pc) === C.POND_Y && gw.bed(...pc) === C.POND_BED && gw.height(ponds[0].x0 + 1, ponds[0].z0 + 1) == null, 'a pond is shallow water; its banks are the city\'s');
+  assert.ok(layout({ seed: 7, blocks: 5, style: 'downtown' }).trees.every(t => t.kind === 'round' || t.kind === 'pine') && layout({ seed: 7, blocks: 5, style: 'downtown', climate: 'tropical' }).trees.some(t => t.kind === 'palm'), 'temperate towns keep their trees; a climate given changes them');
+  assert.ok(layout({ seed: 7, blocks: 5, style: 'harbour', water: 'east' }).water.side === 'east', 'the water can be on any side');
+  // the water is found: a Swimmer made after it wades on the sand's slope and swims past it, and is on dry land on the promenade
+  together(() => {
+    const water = new C.CityWater([pw]), sw = new Swimmer();
+    const [x5, z5] = F.at(5, mid), [x50, z50] = F.at(50, mid), [x200, z200] = F.at(200, mid);
+    assert.ok(sw.waterAt(x5, z5).y === -Infinity && sw.waterAt(x50, z50).y === C.WATER_Y && sw.waterAt(x200, z200).y === C.WATER_Y && water.wet(x200, z200), 'a swimmer finds the city\'s water with nothing passed');
+    water.dispose(); assert.ok(sw.waterAt(x200, z200).y === -Infinity, 'and not once it is gone');
+  });
+  // a Metro on a bay: the waterfront facing it, the beach on an island across it, causeways over it high enough for boats
+  const { metroPlan, Metro } = await import('../src/kit/city-metro.js'), { Ways } = await import('../src/kit/city-ways.js');
+  const M = metroPlan({ seed: 3, districts: ['downtown', 'oldtown', 'glades', 'marina', 'beach'], coast: 'bay', climate: 'tropical', river: false }), D = M.districts;
+  const dm = D.find(d => d.style === 'marina'), db = D.find(d => d.style === 'beach'), dg = D.find(d => d.style === 'glades'), bay = M.waters.find(w => w.name === 'bay');
+  assert.ok(dm.plan.water.side === 'east' && db.plan.water.side === 'east' && bay.x0 >= dm.rect.x1 && bay.x1 <= db.rect.x0 && db.rect.x0 - dm.rect.x1 > 300 && D.filter(d => !d.harbour).every(d => d.rect.x1 < dm.rect.x0), 'the marina faces the bay, the beach is on the island across it facing the sea');
+  assert.ok(dg.extra.climate === 'wetland' && D[0].extra.climate === 'tropical', 'each district keeps its style\'s climate, else the city\'s');
+  const m = Object.assign(Object.create(Metro.prototype), { districts: D, bounds: M.bounds, side: 'right', seed: 3, waters: M.waters, make: {}, _night: 0 }); m.connectors = m.connect();
+  for (const d of D) { const P = layout(m.cityOptions(d, null)); assert.ok(P.buildings.length === d.plan.buildings.length && P.water?.side === d.plan.water?.side, `${d.name} is made as it was planned`); }
+  const w = new Ways(m, { seed: 3, hills: .1, river: null, highway: true, meshes: false, waters: M.waters });
+  const cause = m.connectors.find(r => r.a === db || r.b === db); assert.ok(cause, 'a road reaches the island');
+  for (let i = 0; i < cause.points.length; i++) { const [x, z] = cause.points[i]; if (x > bay.x0 + 80 && x < bay.x1 - 80) assert.ok(cause.kind[i] === 1 && cause.y[i] > 4, `the causeway crosses the bay on piers ${cause.y[i].toFixed(1)} m up`); }
+  assert.ok(w.ring.points.every(([x]) => x < bay.x0), 'the highway rings the mainland, not the water');
+  const mw = new C.CityWater([...D.map(d => C.planWater(d.plan, { reach: C.shoreReach(d.plan.water?.kind) + 30 })), { height: (x, z) => w.waterAt(x, z), bed: (x, z) => w.waterAt(x, z) == null ? null : w.bedAt(x, z) }]);
+  const bz = (db.rect.z0 + db.rect.z1) / 2, bayMid = [(bay.x0 + bay.x1) / 2, (dm.rect.z0 + dm.rect.z1) / 2];
+  assert.ok(mw.height(db.rect.x1 + 20, bz) === -Infinity && mw.bed(db.rect.x1 + 20, bz) >= 0 && mw.height(db.rect.x1 + 60, bz) === C.WATER_Y && mw.height(...bayMid) === C.WATER_Y && mw.bed(...bayMid) === C.SEA_BED && mw.height(0, 0) === -Infinity, 'the metro\'s water: the island\'s beach is sand, then sea; the bay is deep; downtown is dry');
+  mw.dispose();
+  // made solid (Rapier): the promenade, the sand down under the sea and the sea floor; no plane at 0 over the water
+  { const { World3D, loadPhysics3D } = await import('../src/kit/physics3d.js'), { Mesh } = await import('three'), { Quads } = await import('../src/kit/city.js'); await loadPhysics3D();
+    const wd = new World3D(), hard = new Quads(), soft = new Quads(); C.shoreSolid(B, hard, soft, { bed: 600 }); wd.ground(new Mesh(hard.geometry())); wd.ground(new Mesh(soft.geometry())); wd.step?.(1 / 60);
+    const hit = u => { const [x, z] = F.at(u, mid); return wd.ray({ x, y: 20, z }, { x: 0, y: -1, z: 0 }, 60)?.point.y ?? null; };
+    assert.ok(Math.abs(hit(5) - .15) < .05 && Math.abs(hit(20) - at(20).b) < .05 && Math.abs(hit(70) - at(70).b) < .08 && Math.abs(hit(300) - C.SEA_BED) < .05, `solid: the promenade, the sand, the slope under the sea, the sea floor (${[5, 20, 70, 300].map(u => hit(u)?.toFixed(2))})`);
+    const marinaHard = new Quads(), ms = new Quads(); C.shoreSolid(Q, marinaHard, ms, { bed: 600 }); const wq = new World3D(); wq.ground(new Mesh(marinaHard.geometry())); wq.step?.(1 / 60);
+    const d0 = Q.spots.dock[0], s0 = Q.spots.slip[d0.slip], down = (x, z) => wq.ray({ x, y: 20, z }, { x: 0, y: -1, z: 0 }, 60)?.point.y ?? null;
+    assert.ok(Math.abs(down(d0.x, d0.z) - d0.y) < .1 && down(s0.x, s0.z) < -2, `a dock is solid to stand on (${down(d0.x, d0.z)?.toFixed(2)}), its berth is deep water over the sea floor (${down(s0.x, s0.z)?.toFixed(2)})`);
+    wd.dispose?.(); wq.dispose?.(); }
+  console.log('coasts, climates and water: a beach into the sea, a marina\'s berths, ponds, palms and cypresses, the water found, a bay with an island and causeways ok');
+}
 // finding the way round a city (city-gps.js): a route that follows the player and is worked out again when they leave it, the
 // next turn, arriving, where the route goes (the game's, the player's waypoint, a pinned marker), and the maps' sums
 {

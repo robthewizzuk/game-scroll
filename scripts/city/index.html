@@ -25,14 +25,21 @@ try {
   const off = new Set((Q.get('off') || '').split(',').filter(Boolean)); if (Q.has('old')) for (const k of ['rooms', 'dress', 'fleet', 'crowd', 'parked']) off.add(k);
   const opts = { seed: +(Q.get('seed') || 7), blocks: +(Q.get('blocks') || 6), style: Q.get('style') || 'downtown', sky };
   for (const k of off) opts[k] = false;
+  if (Q.has('sea')) opts.sea = true;   // (a gs.outdoors Sea for the city's water: swell and surf)
+  if (Q.get('climate')) opts.climate = Q.get('climate');
   if (Q.has('horizon')) opts.far = +Q.get('horizon') || true;
   await gs.city.City.ready?.(opts);   // (the far shapes' simplifier, and the people sculpted: not counted)
   const t0 = performance.now();
-  const city = new gs.city.City(v, opts), made = performance.now() - t0;
-  city.warm();
+  // &metro=downtown,marina,beach: a Metro of those districts (&coast=bay), the cameras in the district of &style
+  const metro = Q.get('metro') ? new gs.city.Metro(v, { ...opts, districts: Q.get('metro').split(','), coast: Q.get('coast') || 'south', river: !Q.has('noriver') }) : null;
+  if (metro) { const d = metro.districts.find(x => x.style === opts.style) || metro.districts[0]; metro.prepare({ x: (d.rect.x0 + d.rect.x1) / 2, z: (d.rect.z0 + d.rect.z1) / 2 }); }
+  const city = metro ? Object.assign(metro, { plan: (metro.districts.find(x => x.style === opts.style) || metro.districts[0]).plan }) : new gs.city.City(v, opts), made = performance.now() - t0;
+  city.warm?.();
   // the cameras: on a pavement looking down the street, close to a facade, at a shop front, a corner, over the roofs, far out
   const P = city.plan, b = P.blocks.find(k => k.kind === 'build' && k.i === Math.floor(P.nx / 2) && k.j === Math.floor(P.nz / 2)) || P.blocks[0];
   const bl = P.buildings.filter(x => x.block === b.id), front = bl.find(x => x.face === 0 && x.shops) || bl.find(x => x.face === 0) || bl[0];
+  const shore = (u, a, y) => { const W = P.water, B = P.bounds; if (!W) return [0, y, 0]; const s = W.side, mx = (B.x0 + B.x1) / 2, mz = (B.z0 + B.z1) / 2;
+    return s === 'south' ? [mx + a, y, B.z1 + u] : s === 'north' ? [mx + a, y, B.z0 - u] : s === 'east' ? [B.x1 + u, y, mz + a] : [B.x0 - u, y, mz + a]; };
   const VIEWS = {
     street: () => [[b.x0 + 2, 1.7, b.z0 - 1], [b.x1, 6, b.z0 - 4]],
     close: () => [[(front.x0 + front.x1) / 2 - 4, 6.5, front.z0 - 5], [(front.x0 + front.x1) / 2 + 2, 9, front.z0]],
@@ -61,6 +68,19 @@ try {
     // beside a parked car on the pavement, looking in at its seats
     beside: () => { const c = (city.parked || []).slice().sort((p, q) => Math.hypot(p.x - b.x0, p.z - b.z0) - Math.hypot(q.x - b.x0, q.z - b.z0))[0]; if (!c) return VIEWS.street(); const fx = Math.sin(c.heading), fz = Math.cos(c.heading), sx = fz, sz = -fx, sd = Math.sign((b.x0 + b.x1) / 2 - c.x) * sx + Math.sign((b.z0 + b.z1) / 2 - c.z) * sz > 0 ? 1 : -1;
       return [[c.x + fx * 2.2 + sx * 2.3 * sd, 1.65, c.z + fz * 2.2 + sz * 2.3 * sd], [c.x - fx * .3, .75, c.z - fz * .3]]; },
+    // the shore (style=beach, marina; a City with water): u metres out from the city's edge over the water, a along it from the middle
+    beach: () => [shore(6, -25, 1.7), shore(38, 5, 0)],
+    down: () => [shore(30, -60, 120), shore(30, -59, 0)],
+    surf: () => [shore(46, 10, 1.3), shore(-30, -10, 9)],
+    shore: () => [shore(160, -120, 55), shore(-20, 10, 0)],
+    marina: () => [shore(6, -30, 2.2), shore(45, 20, 0)],
+    // the tree of a kind (&tree=palm) nearest the middle block, from 14 m
+    tree: () => { const k = Q.get('tree') || 'palm', t = (P.trees || []).filter(x => x.kind === k).sort((p, q) => Math.hypot(p.x - b.x0, p.z - b.z0) - Math.hypot(q.x - b.x0, q.z - b.z0))[0]; if (!t) return VIEWS.street(); return [[t.x + 10, 3, t.z + 10], [t.x, 5, t.z]]; },
+    // a Metro on a bay (&metro=...&coast=bay): over the bay from the waterfront to the island, and on a causeway across it
+    bay: () => { const B = P.bounds, mz = (B.z0 + B.z1) / 2; return [[B.x0 - 260, 70, mz + 380], [B.x0 - 120, 0, mz]]; },
+    causeway: () => { const r = (metro?.connectors || []).find(q => q.kind?.some(k => k === 1)); if (!r) return VIEWS.street(); const i = r.points.length >> 1, [x, z] = r.points[i], [x2, z2] = r.points[i + 4]; return [[x - (x2 - x) * 6 + 14, r.y[i] + 9, z - (z2 - z) * 6 + 14], [x2, r.y[i], z2]]; },
+    // a pond (style=glades): from its bank
+    pond: () => { const k = P.blocks.find(x => x.pond); if (!k) return VIEWS.street(); const o = k.pond; return [[o.x0 - 3, 2.4, o.z0 - 3], [(o.x0 + o.x1) / 2 + 6, 0, (o.z0 + o.z1) / 2 + 6]]; },
     roofs: () => { const o = bl.filter(x => x.roof !== 'gable').sort((p, q) => p.h - q.h)[0] || front; return [[o.x0 - 6, o.h + 9, o.z0 - 6], [(o.x0 + o.x1) / 2, o.h, (o.z0 + o.z1) / 2]]; },
   };
   const info = [`city made in ${made.toFixed(0)} ms (${P.buildings.length} buildings${city.parked?.length ? `, ${city.parked.length} parked cars` : ''})`];

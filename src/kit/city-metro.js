@@ -20,8 +20,8 @@
 // The districts share one crowd of people, one ground painter and one set of lamps, so a district made late costs
 // only its own streets and buildings: the 0.5 s a city takes to make is mostly its people being shaped.
 
-import { Group } from 'three';
-import { City, layout, routeOn, roadOn, farColours, cityCrowd, cityFolkNeed, cityWarmers, FACADES, STYLES, LANE, KERB, TIER } from './city.js';
+import { Group, Mesh } from 'three';
+import { City, layout, routeOn, roadOn, farColours, cityCrowd, cityFolkNeed, cityWarmers, FACADES, STYLES, LANE, KERB, TIER, Quads } from './city.js';
 import { MetroCars, MetroPeople } from './city-metro-cars.js';
 import { Ears } from './sound.js';
 import { Skyline, Standins } from './city-far.js';
@@ -30,11 +30,13 @@ import { CITY_CARS, carKit, parkKit } from './city-cars.js';
 import { GroundPaint } from './ground-paint.js';
 import { linksFor } from './links.js';
 import { Path } from './paths.js';
+import { CLIMATES, CityWater, planWater, shoreReach, WATER_Y, SEA_BED } from './city-coast.js';
+import { Sea } from './sea.js';
 import { rng } from './math.js';
 import { phoneClass } from './speed.js';
 
 const ORDER = ['downtown', 'oldtown', 'suburb', 'harbour', 'oldtown', 'suburb', 'downtown', 'suburb'];
-const SIZE = { downtown: 6, oldtown: 5, harbour: [5, 3], suburb: 5 };
+const SIZE = { downtown: 6, oldtown: 5, harbour: [5, 3], suburb: 5, beach: [3, 6], marina: [4, 3], glades: 5 };
 const MARGIN = 40;     // each district's own asphalt reaches this far past its outer roads (as a City's does)
 const LAND = 3040;     // the land round the whole city, from its outer edge (where the far skyline's land begins)
 
@@ -56,12 +58,17 @@ const distToRect = (r, x, z) => Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math
  * The first is the middle; each next one beside one already placed (east, west or north) as near the middle as it fits with
  * `between` metres of land between; harbours along the south edge with the sea past them.
  */
-export function metroPlan({ seed = 1, districts = 4, between = [120, 240], side = 'right', river = true, ...over } = {}) {
+export function metroPlan({ seed = 1, districts = 4, between = [120, 240], side = 'right', river = true, coast = 'south', bay = 420, climate = null, ...over } = {}) {
   // the districts' plans, placed side by side (layout() is plain numbers: all of them now, made into cities later)
   const R = rng(seed * 41 + 5), list = districtList(districts), placed = [], gapAt = () => between[0] + R() * (between[1] - between[0]);
-  const styled = Object.fromEntries(Object.entries(over).filter(([k]) => k in STYLES.downtown || k === 'houses' || k === 'water'));   // (style numbers: tall, parks... for layout)
-  const plan = (d, i, centre) => layout({ seed: d.seed ?? seed * 31 + i * 7 + 1, blocks: d.blocks, style: d.style, side, centre, ...styled, ...d.extra });
-  const land = list.filter(d => !(STYLES[d.style] || {}).water), sea = list.filter(d => (STYLES[d.style] || {}).water);
+  const styled = Object.fromEntries(Object.entries(over).filter(([k]) => k in STYLES.downtown || k === 'houses' || k === 'water' || k === 'kinds' || k === 'parkKinds'));   // (style numbers: tall, parks... for layout)
+  // (a district's climate: its own, else its style's, else the whole city's)
+  const climateOf = d => d.extra.climate ?? (STYLES[d.style] || {}).climate ?? climate;
+  const plan = (d, i, centre, more = {}) => { const c = climateOf(d); return layout({ seed: d.seed ?? seed * 31 + i * 7 + 1, blocks: d.blocks, style: d.style, side, centre, ...styled, ...(c ? { climate: c } : {}), ...d.extra, ...more }); };
+  // (what the district is made with later, as its plan was: its climate, and the side its water is on in a bay)
+  const extraOf = (d, more = {}) => { const c = climateOf(d); return { ...(c ? { climate: c } : {}), ...d.extra, ...more }; };
+  const wet = d => !!(d.extra.water ?? (STYLES[d.style] || {}).water);
+  const land = list.filter(d => !wet(d)), sea = coast === 'bay' ? [] : list.filter(wet);
   // a river down the gap between the middle district and the next (a wide gap: room for its banks and the bridges' ramps)
   let flow = null; const BAND = 125;
   const inBand = r => flow && (flow.axis === 'z' ? r.x1 > flow.c - BAND && r.x0 < flow.c + BAND : r.z1 > flow.c - BAND && r.z0 < flow.c + BAND);
@@ -83,7 +90,7 @@ export function metroPlan({ seed = 1, districts = 4, between = [120, 240], side 
       if (!best) { const far = placed.reduce((m, p) => Math.max(m, p.rect.x1), -Infinity) + g + w / 2; best = [far + (inBand({ x0: far - w / 2, x1: far + w / 2, z0: -h / 2, z1: h / 2 }) ? 2 * BAND : 0), 0, 0]; }
     }
     const P = plan(d, i, [best[0], best[1]]);
-    placed.push({ ...d, index: i, plan: P, rect: rectOf(P) });
+    placed.push({ ...d, index: i, plan: P, rect: rectOf(P), extra: extraOf(d) });
     if (river && placed.length === 2 && best[4]) flow = { axis: best[4], c: best[3], amp: 40 };
   }
   // the harbours along the south edge, the first under the middle district, the sea past them
@@ -93,12 +100,34 @@ export function metroPlan({ seed = 1, districts = 4, between = [120, 240], side 
     let cx = last ? last.rect.x1 + g + w / 2 : 0; const cz = last ? (last.rect.z0 + last.rect.z1) / 2 : (placed.length ? south + g + h / 2 : 0);
     if (inBand({ x0: cx - w / 2, x1: cx + w / 2, z0: cz - h / 2, z1: cz + h / 2 })) cx = flow.c > cx ? flow.c - BAND - w / 2 : flow.c + BAND + w / 2;   // (clear of the river's mouth)
     const P = plan(d, i, [cx, cz]);
-    placed.push({ ...d, index: i, plan: P, rect: rectOf(P), harbour: true });
+    placed.push({ ...d, index: i, plan: P, rect: rectOf(P), harbour: true, extra: extraOf(d) });
+  }
+  // a bay (coast: 'bay'): the waterfront districts (a marina, a harbour) along the mainland's east side facing it, and the
+  // beaches out on an island across it, facing the open sea to the east; roads across the water are causeways
+  let waters = null;
+  if (coast === 'bay') {
+    const M = placed.reduce((u, d) => ({ x0: Math.min(u.x0, d.rect.x0), x1: Math.max(u.x1, d.rect.x1), z0: Math.min(u.z0, d.rect.z0), z1: Math.max(u.z1, d.rect.z1) }), { x0: 0, x1: 0, z0: 0, z1: 0 });
+    const front = list.filter(d => wet(d) && (d.extra.shore ?? (STYLES[d.style] || {}).shore) !== 'beach'), island = list.filter(d => wet(d) && !front.includes(d));
+    const stack = (ds, x0, mid, gap, more) => {
+      const P0 = ds.map(d => plan(d, list.indexOf(d), null, more)), H = P0.reduce((s, P) => s + P.bounds.z1 - P.bounds.z0, 0) + gap * Math.max(0, ds.length - 1);
+      let z = mid - H / 2;
+      ds.forEach((d, k) => { const P = P0[k], w = P.bounds.x1 - P.bounds.x0, h = P.bounds.z1 - P.bounds.z0, Q = plan(d, list.indexOf(d), [x0 + w / 2, z + h / 2], more); placed.push({ ...d, index: list.indexOf(d), plan: Q, rect: rectOf(Q), harbour: true, extra: extraOf(d, more) }); z += h + gap; });
+    };
+    const fx = M.x1 + (front.length ? 250 + R() * 60 : 0);   // (room for the highway between)
+    if (front.length) stack(front, fx, (M.z0 + M.z1) / 2, 140, { water: 'east' });
+    const E = placed.reduce((m, d) => Math.max(m, d.rect.x1), -Infinity);
+    if (island.length) stack(island, E + bay, (M.z0 + M.z1) / 2, 160, { water: 'east' });
+    const isl = placed.filter(d => island.some(i => i.name === d.name)), I = isl.length ? isl.reduce((u, d) => ({ x0: Math.min(u.x0, d.rect.x0), x1: Math.max(u.x1, d.rect.x1), z0: Math.min(u.z0, d.rect.z0), z1: Math.max(u.z1, d.rect.z1) }), { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity }) : null;
+    const fronts = placed.filter(d => front.some(f => f.name === d.name)), F0 = fronts.length ? Math.max(...fronts.map(d => d.rect.x1)) + 2 : M.x1 + 120;
+    // the bay (from the waterfront to the island, opening to the sea south and north of it), and the open sea past the island
+    const ix0 = I ? I.x0 - 40 : F0 + bay, ix1 = I ? I.x1 + 2 : ix0;
+    waters = [{ x0: F0, x1: ix0, z0: M.z0 - 3000, z1: M.z1 + 3000, name: 'bay' }, { x0: ix1, x1: ix1 + 3000, z0: M.z0 - 3000, z1: M.z1 + 3000, name: 'sea' }];
+    if (I) waters.push({ x0: ix0, x1: ix1, z0: I.z1 + 40, z1: M.z1 + 3000, name: 'sea' }, { x0: ix0, x1: ix1, z0: M.z0 - 3000, z1: I.z0 - 40, name: 'sea' });
   }
   const list2 = placed.sort((a, b) => a.index - b.index).map(d => ({ name: d.name, style: d.style, plan: d.plan, rect: d.rect, harbour: !!d.harbour, city: null, making: null, stand: null, extra: d.extra }));
   const bounds = list2.reduce((u, d) => ({ x0: Math.min(u.x0, d.rect.x0), x1: Math.max(u.x1, d.rect.x1), z0: Math.min(u.z0, d.rect.z0), z1: Math.max(u.z1, d.rect.z1) }), { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity });
   if (flow) { const I = grow(bounds, 340); flow.sea = flow.axis === 'z' && list2.some(d => d.harbour); flow.from = flow.axis === 'z' ? I.z0 + 40 : I.x0 + 40; flow.to = flow.axis === 'z' ? (flow.sea ? bounds.z1 + 200 : I.z1 - 40) : I.x1 - 40; }
-  return { districts: list2, bounds, R, river: flow };
+  return { districts: list2, bounds, R, river: flow, waters };
 }
 
 export class Metro {
@@ -115,14 +144,15 @@ export class Metro {
    * options (traffic, people, night, sky, lamps, sound, side, rooms, dress, parked, walls, detail...) go to every district.
    */
   constructor(view, { seed = 1, districts = 4, between = [120, 240], side = 'right', at = null, live = 380, budget = 3, keep = 600, far = false, night = null, sky = null,
-    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = .5, river = true, highway = true, ...over } = {}) {
+    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = null, river = true, highway = true, climate = null, coast = 'south', bay = 420, sea = false, ...over } = {}) {
     this.view = view; this.seed = seed; this.live = live; this.budget = budget; this.t = 0;
     this.links = linksFor(view, link); this.links?.join('city', this);
     this.sky = sky || null; this.seeksSky = sky == null && night == null && !!this.links; this._night = night ?? 0;
     this.lampsOn = lamps; this.soundOn = sound; this.side = side;
     this.group = new Group(); this.group.name = 'metro'; view.scene.add(this.group);
     // the districts' plans, placed side by side (plain numbers: all of them now, made into cities later)
-    const M = metroPlan({ seed, districts, between, side, river, ...over }), U = this.bounds = M.bounds; this.districts = M.districts;
+    const M = metroPlan({ seed, districts, between, side, river, coast, bay, climate, ...over }), U = this.bounds = M.bounds; this.districts = M.districts;
+    const CL = CLIMATES[climate] || CLIMATES.temperate; hills ??= CL.hills; this.waters = M.waters; this.climate = climate || 'temperate';
     // what each district is made with: the options given, and the parts they share (people, the ground painter, lamps)
     if (crowd && people > 0) cityFolkNeed();
     // every district's cars are shaped now, with the first (a new style of car takes a tenth of a second: not in the middle of a drive)
@@ -132,11 +162,23 @@ export class Metro {
     this.next = []; this.events = [];
     // every material the districts can be built with, built with the rest before play (a district made later builds no shaders)
     this.warmers = cityWarmers(this.districts.map(d => d.plan), { dress: over.dress ?? true, walls: over.walls ?? true }); this.group.add(this.warmers);
-    this.make = { side, traffic, people, keep, lamps: lamps ? 'shared' : false, sound: false, occlude: false, field: false, far: false, link: false, night: this._night, crowd: this.crowd || false, paint: this.paint || false, ...over };
+    this.make = { side, traffic, people, keep, lamps: lamps ? 'shared' : false, sound: false, occlude: false, field: false, far: false, link: false, night: this._night, crowd: this.crowd || false, paint: this.paint || false, ...(climate ? { climate } : {}), ...over, shared: true };
     view.occluders?.(this.occluders());
     // the roads between the districts, then the land under everything that is not a district or the sea
     this.connectors = this.connect();
-    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0 });
+    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, grass: CL.grass, waters: M.waters });
+    // the water of the whole city as one thing to find: each district's shore and ponds first, then the river, bay and sea
+    // between (links.js 'water': swimmers, boats, floating things, rain and splashes); a gs.outdoors Sea drawn for it with sea
+    const ws = this.ways;
+    this.wet = !!(M.river || M.waters || this.districts.some(d => d.plan.water || d.plan.blocks.some(b => b.pond)));
+    this.water = this.wet ? new CityWater([...this.districts.map(d => planWater(d.plan, { reach: shoreReach(d.plan.water?.kind) + 30 })), { height: (x, z) => ws.waterAt(x, z), bed: (x, z) => ws.waterAt(x, z) == null ? null : ws.bedAt(x, z) }], { view, link }) : null;
+    if (this.water && sea) {
+      const seaOpts = typeof sea === 'object' ? sea : {};
+      this.sea = new Sea({ level: WATER_Y, waves: .5, far: 4000, ...seaOpts, bed: (x, z) => this.water.bed(x, z), view, link: false });
+      this.group.add(this.sea.mesh); if (this.sea.wetMesh) this.group.add(this.sea.wetMesh);
+      for (const m of ws.water) m.visible = false; ws.seaShown = () => {};
+      this.water.sea = this.sea;
+    }
     this.ring = this.ways.ring; this.ramps = this.ways.ramps;
     // each district stands as boxes until it is made
     for (const d of this.districts) {
@@ -171,13 +213,14 @@ export class Metro {
   made(d, city) {
     d.city = city; d.making = null; d.partial = null; d.stand.group.visible = false;
     city.cars.guests = this.cars.roam.list; this.cars.learn(city.plan);   // (the big city's police and chases are in its roads too: its traffic pulls over and swerves round them)
-    if (d.harbour) this.ways.seaShown(false);
+    city.water = this.water; if (city.waterMesh && (this.sea || this.waters)) city.waterMesh.visible = false;   // (the metro's sea, or its bay, is drawn whole)
+    if (d.harbour && !this.waters) this.ways.seaShown(false);
     if (this.world) city.solid(this.world, { ...this.solidOpts, floor: false });
     this.view.shadowsDirty?.();
   }
   letGo(d) {
     d.city.dispose(); d.city = null; d.stand.group.visible = true; this.view.shadowsDirty?.();
-    if (d.harbour && !this.districts.some(e => e.harbour && e.city)) this.ways.seaShown(true);
+    if (d.harbour && !this.waters && !this.districts.some(e => e.harbour && e.city)) this.ways.seaShown(true);
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
   // one district made a step at a time (the nearest wanted first), and one let go a frame once the player is well past it
@@ -473,7 +516,17 @@ export class Metro {
    * bodies go when it is let go). Options as City.solid's.
    */
   solid(world, opts = {}) {
-    this.world = world; this.solidOpts = opts; this.floorBody ||= world.floor?.(0);
+    this.world = world; this.solidOpts = opts;
+    // the ground: a plane at 0 for a city with no water; with water (a river, a bay, a harbour, ponds), the ground itself (the
+    // districts' streets, the land and the sea's bed) so whoever goes off a quay or down a beach is in the water (gs.climb Swimmer, gs.craft Boat)
+    if (!this.wet) this.floorBody ||= world.floor?.(0);
+    else if (!this.floorBody && world.ground) {
+      const g = new Quads(), tile = (x0, z0, x1, z1, y) => { const n = Math.ceil((x1 - x0) / 400), k = Math.ceil((z1 - z0) / 400); for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) g.top(x0 + (x1 - x0) * i / n, z0 + (z1 - z0) * j / k, x0 + (x1 - x0) * (i + 1) / n, z0 + (z1 - z0) * (j + 1) / k, y); };
+      for (const d of this.districts) { const r = d.rect, sd = d.plan.water?.side; tile(r.x0 - (sd === 'west' ? 2 : 40), r.z0 - (sd === 'north' ? 2 : 40), r.x1 + (sd === 'east' ? 2 : 40), r.z1 + (sd === 'south' ? 2 : 40), 0); }
+      for (const s of this.ways.seas) tile(s.x0, s.z0, s.x1, s.z1, SEA_BED);
+      this.floorBody = [world.ground(new Mesh(g.geometry()), { sound: 'stone' }), world.ground(this.ways.land.far, { sound: 'stone' })];
+      if (this.ways.flat) this.floorBody.push(world.ground(this.ways.land.near, { sound: 'stone' }));
+    }
     if (!this.ways.flat) this.waysBody ||= world.ground(this.ways.solids);   // (the hills, the roads' decks, parapets, piers and tunnels)
     for (const c of this.cities) c.solid(world, { ...opts, floor: false });
     this.cars.solid(world, opts);   // (the nearest cars between the districts and the big city's own: they meet the player's too)
@@ -493,7 +546,9 @@ export class Metro {
     const U = grow(this.bounds, 400), k = Math.min(1.5, 3072 / Math.max(U.x1 - U.x0, U.z1 - U.z0));
     const cv = document.createElement('canvas'); cv.width = Math.ceil((U.x1 - U.x0) * k); cv.height = Math.ceil((U.z1 - U.z0) * k);
     const g = cv.getContext('2d'); g.fillStyle = col.land; g.fillRect(0, 0, cv.width, cv.height); g.scale(k, k); g.translate(-U.x0, -U.z0);
-    for (const d of this.districts) if (d.harbour) { g.fillStyle = col.water; g.fillRect(U.x0, d.rect.z1 + 10, U.x1 - U.x0, U.z1 - d.rect.z1); }
+    g.fillStyle = col.water;
+    if (this.waters) for (const w of this.waters) g.fillRect(w.x0, w.z0, w.x1 - w.x0, w.z1 - w.z0);   // (the bay and the sea round the island)
+    else for (const d of this.districts) if (d.harbour) g.fillRect(U.x0, d.rect.z1 + 10, U.x1 - U.x0, U.z1 - d.rect.z1);
     const R = this.ways.river;
     if (R) { g.fillStyle = col.water; for (let u = R.from; u < R.to; u += 6) { const c = this.ways.riverC(u); if (R.axis === 'z') g.fillRect(c - 16, u, 32, 7); else g.fillRect(u, c - 16, 7, 32); } }
     for (const d of this.districts) { const r = grow(d.rect, 0); g.fillStyle = col.road; g.fillRect(r.x0, r.z0, r.x1 - r.x0, r.z1 - r.z0); }
@@ -504,7 +559,7 @@ export class Metro {
       g.strokeStyle = r.ring ? col.highway || '#3a3f48' : col.road; g.lineWidth = r.width; line();
     }
     for (const d of this.districts) {
-      for (const b of d.plan.blocks) { g.fillStyle = b.kind === 'park' ? col.park : col.block; g.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0); }
+      for (const b of d.plan.blocks) { g.fillStyle = b.kind === 'park' || b.pond ? col.park : col.block; g.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0); if (b.pond) { g.fillStyle = col.water; g.fillRect(b.pond.x0, b.pond.z0, b.pond.x1 - b.pond.x0, b.pond.z1 - b.pond.z0); } }
       g.fillStyle = col.building; for (const b of d.plan.buildings) g.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
     }
     return this._mapPic = { key, cv, x0: U.x0, z0: U.z0, w: cv.width / k, h: cv.height / k };
@@ -519,7 +574,7 @@ export class Metro {
   dispose() {
     for (const d of this.districts) { if (d.city) d.city.dispose(); d.city = null; d.making = null; d.stand.dispose(); }
     this.cars.dispose(); for (const d of this.districts) { d.partial?.dispose(); d.partial = null; }
-    this.making = null; this.floorBody?.remove?.(); this.floorBody = null; this.waysBody?.remove?.(); this.waysBody = null;
+    this.making = null; for (const b of [this.floorBody].flat()) b?.remove?.(); this.floorBody = null; this.water?.dispose(); this.sea?.dispose(); this.waysBody?.remove?.(); this.waysBody = null;
     this.ways.dispose();
     this.paint?.dispose(); this.crowd?.dispose(); this.far?.dispose(); this.group.removeFromParent();
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
