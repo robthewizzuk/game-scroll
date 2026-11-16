@@ -151,6 +151,19 @@ player and keeps their escape rate near a half. A `Predict` learns which way thi
 junctions, so cut-offs and roadblocks go to the road they will take. What it learns is kept in the game's
 brain slot. `brains: false` keeps to the rules alone.
 
+## Taking a car
+
+`city.cars.take(car, { by })` takes any car: one in the traffic (its driver at the wheel, ready for
+`car.pull('driver', player)`), a parked one from `cars.near(me, 6, { parked: true })` (no driver; it leaves the
+kerb and its body goes), or a police car (light bar on, no driver). It is a `gs.models` vehicle where the car was,
+in its style and colour, and the game's from then on. Each take adds a `'carjack'` event (`by`, `parked`,
+`police`), and `Wanted` counts it as a theft (a police car: `'cop'`) seen or phoned in like any other crime.
+
+```js
+const near = city.cars.near(me, 6, { parked: true })[0];
+if (near && tapped) { car = city.cars.take(near, { by: me }); car.pull('driver', me); }
+```
+
 ## One big city: `Metro`
 
 A city of several districts side by side, with open land and roads between them, for a game the player drives
@@ -200,7 +213,20 @@ update(dt) { metro.avoid(player, 1.2); metro.update(dt, player); }
 - `metro.districts` lists them (`name`, `style`, `plan`, `rect`, `city` while made); `metro.city` is the made district the
   player is in, `metro.connectors` the roads between (`points`, `len`, `lanes`; `metro.lanePos(road, lane, s, back)`).
   `gs.city.metroPlan({ seed, districts })` places them without any 3D.
-- A district's own traffic keeps to its streets; the cars between districts are the Metro's own.
+- A district's own traffic keeps to its streets; the cars between districts are the Metro's own. Those pull over for
+  a siren behind them, and after `solid(world)` the ones near the player are bodies in the World3D: one hit hard
+  crashes (`metro.cars.crash`, a `crash` event), slides as a body and, out of sight, comes back further on.
+- `metro.cars` and `metro.people` answer as a city's across every district and the roads between: `near` (with
+  `parked`), `hit`, `take`, `chase`, `crash`, `witness`, `report`... A car keeps its object as it moves between
+  them, and `metro.cars.owner(car)` says whose it is. `metro.events` holds every district's events and the
+  roads between's; `metro.event(e)` adds one.
+- Police (`Wanted(metro, api)`) and any car added with `metro.cars.add({ police })` or `keep` are the big city's
+  own: they chase on across districts, causeways and the highway, slow down and climb the ramps with the road,
+  and are not lost when the district they came from is let go. Each district's traffic and the cars on the
+  roads between pull over for them. Roadblocks and cut-offs work on the roads between too.
+- `metro.switchTo(at)` puts the player somewhere else at once (a second lead, a taxi ride): the districts far from
+  there are let go first, then the ones there are made now, under your fade. The shaders of every district are built
+  when the Metro is made, so a district made in play builds none.
 
 ## Finding the way: `Gps`
 

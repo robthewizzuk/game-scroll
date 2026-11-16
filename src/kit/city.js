@@ -392,6 +392,21 @@ const WARM_GEO = () => warmGeo ||= (() => { const q = new Quads(true); q.box(0, 
 const chunkMat = (k, S) => k.startsWith('f:') ? facadeMat(k.slice(2)) : k === 'shop' ? shopMat() : k === 'signs' ? signsMat() : k === 'roof' ? roofMat() : k === 'tiles' ? tileMat() : k === 'plain' ? plainMat() : k === 'metal' ? metalMat()
   : k === 'pave' ? pavingMat(S.pavement) : k === 'plaza' ? pavingMat(shade(S.pavement, .85)) : k === 'neon' ? neonMat() : k === 'sand' ? sandMat() : grassMat(climateOf(S).grass);
 function mat(key, make) { if (!MATS.has(key)) MATS.set(key, make()); return MATS.get(key); }
+/**
+ * Hidden specks of every material the plans' blocks can be built with, for a big city of districts (gs.city Metro): put in
+ * the scene with the first district, the view builds their shaders with the rest before play, so a district made later in
+ * the round (a step at a time as the player comes near, or at once by Metro.switchTo) builds none.
+ */
+export function cityWarmers(plans, { dress = true, walls = true } = {}) {
+  const g = new Group(), seen = new Set(); g.name = 'city shaders';
+  const add = m => { const w = new Mesh(WARM_GEO(), m); w.castShadow = w.receiveShadow = true; w.visible = false; w.frustumCulled = false; g.add(w); };
+  for (const P of plans) {
+    const kinds = new Set(['pave', 'plaza', 'grass', 'plain', 'metal', 'roof', 'tiles', 'shop', ...(dress ? ['signs'] : [])]); for (const b of P.buildings) kinds.add('f:' + b.facade);
+    for (const k of kinds) { const m = chunkMat(k, P.style); if (!seen.has(m)) { seen.add(m); add(m); } }
+  }
+  if (walls) add(wallMat());
+  return g;
+}
 // the rooms behind each kind of facade (city-rooms.js): where the window is in a cell of the facade picture (as facadeTex
 // paints it), how deep its hole and its rooms are, how much of a room shows through the glass
 const ROOM_KINDS = {
@@ -712,7 +727,7 @@ export class Traffic {
     /** What the traffic did since the city was made: lane changes, swerves, overtakes, yields (to sirens), crashes, wrecks, and people's dodges out of the way. */
     this.stats = { laneChanges: 0, swerves: 0, overtakes: 0, yields: 0, crashes: 0, wrecks: 0, dodges: 0 };
     // real cars (gs.models.vehicle, city-cars.js) on a Next Gen view; two boxes a car elsewhere
-    this.fleet = city.opts.fleet ? new Fleet(city.group, CITY_CARS[city.opts.style] || CITY_CARS.downtown, this.cap, { crowd: () => city.people?.crowd }) : null;   // (its close cars' drivers are the crowd's)
+    this.fleet = city.opts.fleet ? new Fleet(city.group, city.opts.styles || CITY_CARS[city.opts.style] || CITY_CARS.downtown, this.cap, { crowd: () => city.people?.crowd }) : null;   // (its close cars' drivers are the crowd's)
     const paint = mat('carpaint', () => new MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .45 }));
     // (with real cars the boxes stand in for the far ones' lamps, so they are tone mapped as the close cars' lamps are, and
     // a car swapped between the two keeps the same lamps: drawFleet)
@@ -785,6 +800,8 @@ export class Traffic {
     // what isn't in a lane is something in the road for those that are: the game's avoid(), wrecks, cars sliding or chasing
     for (const o of this.avoid) H.push(o);
     for (const c of this.list) if (c.mode !== 'lane') { const h = c.hz ||= { x: 0, z: 0, r: 1, car: c }; h.x = c.x; h.z = c.z; h.vx = c.vx; h.vz = c.vz; H.push(h); if (c.siren) S.push(c); }
+    // (and the cars driving here that are not this city's own: a big city's police and chases, gs.city Metro)
+    if (this.guests) for (const c of this.guests) { const h = c.hz ||= { x: 0, z: 0, r: 1, car: c }; h.x = c.x; h.z = c.z; h.vx = c.vx; h.vz = c.vz; H.push(h); if (c.siren) S.push(c); }
     let noisy = 0;
     for (const c of this.list) {
       if (c.stun > 0) c.stun -= dt;
@@ -845,6 +862,8 @@ export class Traffic {
     if (F && !F.slotFor(c)) return null;
     this.list.push(c); return c;
   }
+  /** Whether car c is still in the traffic (not taken, not removed). */
+  has(c) { return this.list.includes(c); }
   /** Takes a car out (one the game added, or any). */
   remove(c) {
     const i = this.list.indexOf(c); if (i < 0) return this;
@@ -957,6 +976,8 @@ export class Traffic {
   lightBars() {
     if (this.bars) return this.bars;
     const mk = (col, x) => { const m = new InstancedMesh(barGeo(x), new MeshBasicMaterial({ color: col, toneMapped: false }), EXTRA); m.count = 0; m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(EXTRA * 3).fill(1), 3); m.name = 'light bar'; this.city.group.add(m); return m; };
+    // (and a police car as cars.take() gives one, hidden: its shaders built with the rest, so taking one builds none)
+    if (this.fleet && !this.city.group.getObjectByName('police car shaders')) { const w = vehicle('car', { style: 'police', colour: POLICE_PAINT }); w.name = 'police car shaders'; w.visible = false; this.city.group.add(w); }
     return (this.bars = [mk('#ff2a2a', -.27), mk('#2a5cff', .27)]);
   }
   drawBars(night) {
@@ -972,7 +993,16 @@ export class Traffic {
     }
     for (const m of this.bars) { m.count = n; if (n) { sendUsed(m.instanceMatrix, n); sendUsed(m.instanceColor, n); } }
   }
-  near(p, r) { const pz = p.z ?? p.y; return this.list.filter(c => Math.hypot(c.x - p.x, c.z - pz) <= r).sort((a, b) => Math.hypot(a.x - p.x, a.z - pz) - Math.hypot(b.x - p.x, b.z - pz)); }
+  /**
+   * The cars within r of p, nearest first. o: parked (true: the cars parked along the kerbs too, { parked: true, x, z,
+   * heading, len, wid, style, colour }), police (false: none of the police's), moving (false: only the parked ones).
+   * The nearest of cars.near(me, 4, { parked: true }) is the one to get into: cars.take() takes any of them.
+   */
+  near(p, r, { parked = false, police = true, moving = true } = {}) {
+    const pz = p.z ?? p.y, out = moving ? this.list.filter(c => (police || !c.police) && Math.hypot(c.x - p.x, c.z - pz) <= r) : [];
+    if (parked && this.city.parkedNear) for (const c of this.city.parkedNear(p.x, pz, r)) out.push(c);
+    return out.sort((a, b) => Math.hypot(a.x - p.x, a.z - pz) - Math.hypot(b.x - p.x, b.z - pz));
+  }
   /** Whether a circle at x, z of radius r overlaps car c's body. */
   overlaps(c, x, z, r = .5) {
     const rx = x - c.x, rz = z - c.z, fx = Math.sin(c.heading), fz = Math.cos(c.heading), along = rx * fx + rz * fz, lat = rx * fz - rz * fx;
@@ -981,17 +1011,22 @@ export class Traffic {
   /**
    * A car taken out of the traffic: a gs.models vehicle where it was, in its style and colour, with one of the city's people
    * sat at the wheel (driver: false for none), so a game can car.pull('driver', player) or car.enter(player). It is the game's
-   * from then on (give it physics, or drive it by hand); the traffic goes on without it. null if c isn't in it.
+   * from then on (give it physics, or drive it by hand); the traffic goes on without it. c can be any car of near(): one in
+   * the traffic, one parked along the kerb (no one in it; its parked copy and its body in the World3D go), or a police car
+   * (a police car of gs.models with its light bar: siren() works; the police let it go). It is told in city.events as
+   * { kind: 'carjack', at, car: c, vehicle, by, police, parked } (by: who took it, o.by, the player's when not given:
+   * gs.city Wanted counts it as a theft, or a crime against the police). null if c isn't one of the city's.
    */
-  take(c, { driver = true } = {}) {
+  take(c, { driver = true, by = null } = {}) {
+    if (c?.parked) return this.city.unpark?.(c, { by }) ?? null;
     const i = this.list.indexOf(c); if (i < 0) return null;
     this.list.splice(i, 1); for (const o of this.list) if (o.ahead === c) o.ahead = null;
     if (c.body) { c.body.remove(); c.body = null; this.loose--; }
-    const car = this.fleet ? this.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
-    if (!this.fleet) { car.position.set(c.x, 0, c.z); car.rotation.y = c.heading + Math.PI; }
+    const car = takenCar(this, c);
     this.fleet?.freeSlot(c);   // (its far copy's place, for the next car added)
     this.city.group.add(car); car.updateMatrixWorld(true);
-    if (driver) { const who = human(FOLK[(c.id ?? c.slot ?? 0) % FOLK.length]); this.city.group.add(who); car.putIn(who, 'driver'); }
+    if (driver && !c.police && !c.empty) { const who = cityDriver(c.id ?? c.slot ?? 0); this.city.group.add(who); car.putIn(who, 'driver'); }
+    this.city.event({ kind: 'carjack', at: { x: c.x, z: c.z }, car: c, vehicle: car, by, police: !!c.police, parked: false });
     return car;
   }
   /** The first car whose body overlaps a circle at p of radius r (or null). */
@@ -1003,7 +1038,22 @@ export class Traffic {
   /** Knocks a car to a stop for a moment (after a knock; crash() for a real crash). */
   bump(c, seconds = 1.6) { if (c.mode === 'lane') { c.v = 0; c.stun = seconds; } else if (c.mode === 'chase') { c.v *= .3; } return c; }
 }
-const POLICE_PAINT = '#1b2a4c', clampN = (v, a, b) => Math.max(a, Math.min(b, v)), _m2 = new Matrix4(), _qq = new Quaternion();
+/**
+ * A car of a traffic as a gs.models vehicle where it is (its copy among the traffic's taken away): in its style and colour,
+ * a police car as a police car of gs.models (its light bar flashing when the car's siren was on). Kit use (Traffic.take, a big city's).
+ */
+export function takenCar(T, c) {
+  let car;
+  if (c.police) {
+    T.fleet?.real(c);   // (its copies gone; the shape is the police car's own)
+    car = vehicle('car', { style: 'police', colour: '#' + new Color(c.colour ?? POLICE_PAINT).getHexString(), seed: c.id | 0 });
+    car.siren?.(!!c.siren);
+  } else car = T.fleet ? T.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
+  car.position.set(c.x, c.y || 0, c.z); car.rotation.y = c.heading + Math.PI;
+  return car;
+}
+export const POLICE_PAINT = '#1b2a4c';
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v)), _m2 = new Matrix4(), _qq = new Quaternion();
 // a car's place, turn (and tilt, when it has crashed) and size as _m
 function carMatrix(c, scale = _s) {
   if (c.q) _qq.set(c.q.x, c.q.y, c.q.z, c.q.w); else _qq.setFromAxisAngle(_up, c.heading);
@@ -1034,6 +1084,8 @@ const FOLK = [
   { seed: 35, body: '#2a2a30', legs: '#3a3a3a', strands: false },
   { seed: 36, sex: 'f', hairStyle: 'short', body: '#e0b84a', legs: '#24324f', strands: false },
 ];
+/** One of the city's people as a full person (gs.models human), for the wheel of a car taken from the traffic. */
+export const cityDriver = (i = 0) => human(FOLK[Math.abs(i | 0) % FOLK.length]);
 /** The sculpted people a city's pavements are full of, as one gs.props Crowd (a big city's districts share one: gs.city Metro); its folk and sizes are the figures it was made from (city-life.js promote). */
 export function cityCrowd(view) {
   const folk = FOLK.map(o => { const h = human(o); addMoves(h.rig); return h; }), sizes = folk.map(h => h.scale.y || 1);
@@ -1491,7 +1543,7 @@ export class City {
       // parked cars: each style a kind for its paint (coloured car by car) and one for the rest, and the glass of those close by (city-cars.js)
       if (this.parked.length) {
         const kinds = parkKinds(props, this.parkStyles, this.parked); yield;
-        for (const c of this.parked) { const k = kinds[c.style], rot = c.heading + Math.PI; props.add(k.paint, c.x, c.y, c.z, { rot, color: c.colour }); props.add(k.rest, c.x, c.y, c.z, { rot }); }
+        for (const c of this.parked) { const k = kinds[c.style], rot = c.heading + Math.PI; c.copies = [k.paint, props.add(k.paint, c.x, c.y, c.z, { rot, color: c.colour }), k.rest, props.add(k.rest, c.x, c.y, c.z, { rot })]; }   // (its copies: taken away when it is, cars.take)
         this.parkGlass = new ParkedGlass(this.group, this.parkStyles, this.parked);
       }
     }
@@ -1863,7 +1915,7 @@ export class City {
       for (const [n, r] of [['tree', .22], ['pine', .25], ['palm', .2], ['cypress', .3], ['parasol', .05], ['lamp', .12], ['signal', .12], ['post', .06], ['bollard', .12], ['upole', .14], ['psign', .05], ['mast', .1]]) if (has(n)) P.solid(world, n, { shape: 'trunk', r, sound: WOODY.has(n) ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'lamp' || n === 'signal' ? .8 : .5 });
       for (const n of ['bench', 'hydrant', 'bin', 'tank', 'hvac', 'ac', 'hut', 'lounger', 'tower']) if (has(n)) P.solid(world, n, { sound: n === 'bench' || n === 'lounger' || n === 'tower' ? 'wood' : 'metal', knock: knock ? KNOCK[n] : 0, density: n === 'bin' ? .15 : .4 });
     }
-    if (parked && this.parked.length) made.push(world.shapes(this.parked.map(c => ({ box: [c.wid, 1.45, c.len], at: { x: c.x, y: (c.y || 0) + .75, z: c.z }, turn: c.heading, part: c })), { tag: 'parked car', sound: 'metal' }));
+    if (parked && this.parked.length) made.push(this.parkedBody = world.shapes(this.parked.map(c => ({ box: [c.wid, 1.45, c.len], at: { x: c.x, y: (c.y || 0) + .75, z: c.z }, turn: c.heading, part: c })), { tag: 'parked car', sound: 'metal' }));
     const old = this.bodies, S = this.bodies = { world, within, cars: [], people: [], ncars: cars, npeople: people };
     if (old?.world !== world) world.onHit(this._onHit ||= (a, b, speed) => this.solidHit(a, b, speed));
     for (const t of old?.world === world ? [...old.cars, ...old.people] : []) t.remove();
@@ -1882,6 +1934,28 @@ export class City {
     if (this.plugs) { const has = this.plugs.colliders.has(b.id); if (k >= .5 && has) this.plugs.drop(b.id); else if (k < .5 && !has) this.plugs.add(this.plugOf(b)); }
     return this.doors.open(b);
   }
+  /** The cars parked along the kerbs within r of x, z (cars.near(p, r, { parked: true }) has them with the traffic). */
+  parkedNear(x, z, r) {
+    const out = [];
+    for (let gx = Math.floor((x - r) / 32); gx <= Math.floor((x + r) / 32); gx++) for (let gz = Math.floor((z - r) / 32); gz <= Math.floor((z + r) / 32); gz++) for (const c of this.pgrid.get(gx + ',' + gz) || []) if (Math.hypot(c.x - x, c.z - z) <= r) out.push(c);
+    return out;
+  }
+  /**
+   * A parked car (one of city.parked) taken from the kerb: its copy and its body in the World3D go, and a gs.models vehicle
+   * of its style and colour stands there instead, with no one in it, the game's from then on. cars.take(c) does this for a
+   * parked car. Told in city.events as a 'carjack' ({ parked: true }). null if it isn't parked here.
+   */
+  unpark(c, { by = null } = {}) {
+    const i = this.parked.indexOf(c); if (i < 0) return null;
+    this.parked.splice(i, 1);   // (the glass of those close by is drawn from this same list: city-cars.js ParkedGlass)
+    const g = this.pgrid.get(Math.floor(c.x / 32) + ',' + Math.floor(c.z / 32)), j = g ? g.indexOf(c) : -1; if (j >= 0) g.splice(j, 1);
+    if (c.copies) for (let k = 0; k < c.copies.length; k += 2) this.props?.remove(c.copies[k], c.copies[k + 1]);
+    this.parkedBody?.drop(c);
+    const car = vehicle('car', { style: this.parkStyles[c.style] || 'saloon', seed: 3, colour: '#' + new Color(c.colour || '#888888').getHexString() });
+    car.position.set(c.x, c.y || 0, c.z); car.rotation.y = c.heading + Math.PI; this.group.add(car); car.updateMatrixWorld(true);
+    this.event({ kind: 'carjack', at: { x: c.x, z: c.z }, car: c, vehicle: car, by, police: false, parked: true });
+    return car;
+  }
   // the bodies of the nearest cars and people follow them (a few of each, round the player)
   solidSync() {
     const S = this.bodies; if (!S || !S.world.world) return;
@@ -1899,7 +1973,7 @@ export class City {
     };
     const qy = h => ({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) });
     go(S.cars, near(this.cars.list, S.ncars, c => !c.body), (b, c, jump) => {
-      const p = W.inner({ x: c.x, y: .75, z: c.z }), r = qy(c.heading);
+      const p = W.inner({ x: c.x, y: .75 + (c.y || 0), z: c.z }), r = qy(c.heading);   // (y: a big city's cars on its bridges and highway)
       if (jump) { b.collider.setHalfExtents({ x: c.wid / 2, y: .72, z: c.len / 2 }); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(r, false); }
       else { b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(r); }
     });
@@ -1968,9 +2042,11 @@ export class City {
   /** Takes the city out of the scene and frees its meshes (the shared textures stay for the next city). */
   dispose() {
     const hits = this.bodies?.world?.hits, h = hits ? hits.indexOf(this._onHit) : -1; if (h >= 0) hits.splice(h, 1);
-    if (this.sharedPaint) this.group.traverse(o => { if (o.isMesh) this.sharedPaint.remove(o); });
+    if (this.sharedPaint && this.group) this.group.traverse(o => { if (o.isMesh) this.sharedPaint.remove(o); });
     for (const t of [...(this.solids || []), ...(this.bodies?.cars || []), ...(this.bodies?.people || [])]) t?.remove?.(); this.solids = null; this.bodies = null;
-    this.hum?.stop(); this.hum = null; this.props.clear(); if (!this.opts.shared) this.water?.dispose(); this.sea?.dispose(); this.sea = null; this.doors?.dispose(); this.cars.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people.members || []) this.people.crowd?.remove(m); this.group.removeFromParent();
+    this.hum?.stop(); this.hum = null; this.props?.clear(); if (!this.opts?.shared) this.water?.dispose(); this.sea?.dispose(); this.sea = null; this.doors?.dispose(); this.cars?.fleet?.dispose(); this.parkGlass?.dispose(); (this.sharedPaint ? null : this.groundPaint)?.dispose(); this.far?.dispose(); this.standins?.dispose(); if (this.people?.ownCrowd) this.people.crowd?.dispose(); else for (const m of this.people?.members || []) this.people.crowd?.remove(m);
+    if (!this.group) return;   // (one let go before it was made at all: gs.city Metro.switchTo)
+    this.group.removeFromParent();
     this.group.traverse(o => { if (o.isMesh || o.isInstancedMesh) o.geometry?.dispose(); });
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
