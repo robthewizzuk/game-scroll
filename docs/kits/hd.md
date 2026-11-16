@@ -14,6 +14,13 @@ material swapped in later: `v.warm(material)`; a new level made mid-game: `v.pre
 A light switched on or off changes every lit shader (the lamps keep their lights on and go dark instead:
 `v.lampLights`, `v.flash`). `node scripts/budget.cjs <id>` says if a shader was still built in play.
 
+**One line for a mood.** `v.look('rainy dusk' | 'golden hour' | 'overcast' | 'night rain' | 'fog')` sets the sky colour,
+fill light, sun, air (wet, mist, the world's own variation), grade, film look table, glare, shafts, beams, bloom, the eye,
+lens flare and a film finish together; make a `gs.sky.Weather` first and it rains or dries to match. Put used-looking
+marks on things with `v.decal(mesh, point, normal, gs.hd.mark('rust'))` (hazard signs, stencils, stripes, logos, grime,
+rust runs, leaks, oil, scorches, cracks, bullet holes, graffiti, each worn by a distress pass). Why and when:
+[docs/look-rules.md](../look-rules.md).
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it
@@ -33,6 +40,9 @@ From `src/gamescroll.d.ts` (`HdPart`, line 1635), where every option and field i
 - `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1635)
 - `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1635)
 - `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1635)
+- `mark(kind: 'hazard' | 'stencil' | 'number' | 'stripes' | 'arrow' | 'logo' | 'grime' | 'rust' | 'leak' | 'oil' | 'scorch' | 'crack' | 'bullet' | 'graffiti', o?: { size?…` mark(kind, o): a ready-made decal picture for v.decal, painted in code and worn by a distress pass: v.decal(mesh, hit.point, hit.normal, gs.hd.mark('hazard', { sign: 'bolt' })). (:1635)
+- `readonly marks: readonly string[]` The kinds gs.hd.mark makes. (:1635)
+- `distress(c: CanvasRenderingContext2D, s: number, o?: { amount?: number; grime?: number; seed?: number; scale?: number }): void` distress(c, s, { amount, grime, seed, scale }): wears a picture you painted (s x s on c) the way marks are: worn through in patches, broken edges, grime low down. (:1635)
 - `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1635)
 - `Particles: Loose` (:1635)
 - `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1637)

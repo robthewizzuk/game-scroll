@@ -102,6 +102,8 @@ const HINTS = [
     why: 'no haptics. A light buzz on a score and a stronger one on a hit make a phone game feel better: gs.device.haptic(\'light\'), or feel.coin / feel.hit (gs.effects.Feel), which buzz for you' },
   { file: true, unless: /\btweak\s*\(/,
     why: 'no knobs. Keep the numbers that set how it feels (speeds, gravity, gaps between spawns, lives) in one block, const K = gs.tweak(\'Feel\', { speed: [110, 40, 240, \'how fast you slide\'] }), and read K.speed where it is used: then "slower" or "floatier" is one number, sliders tune it in npm run dev and Save to file writes it back (docs/feel-words.md)' },
+  { file: true, only: src => /\bera\s*:\s*['"`]nextgen['"`]/.test(src), unless: /\.\s*look\s*\(|\bWeather\b|\.\s*(beams|film|lut|fog3d)\s*=|\b(wear|material|mark)\s*\(/,
+    why: 'a flat look: no mood, no wear, no weather. One line, v.look(\'rainy dusk\') (or golden hour, overcast, night rain, fog), sets the sky, sun, air, grade, film finish and rain to match; gs.models.material(\'corrugated\', { wear: .6 }) and wear(mesh) age things, gs.hd.mark(\'rust\') puts stains and signs on them (docs/look-rules.md)' },
   { file: true, unless: /\bmusic\b|\bstartMic\b|\bgs\s*\.\s*(hear|rhythm)\b/,
     why: 'no music. music: \'chase\' in the definition (or happy, calm, tense, spooky, heroic, sad, silly, puzzle) gives the rounds an original tune that follows the action, in one line' },
 ];

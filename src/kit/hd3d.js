@@ -73,6 +73,7 @@ import { OCC_BIT, occludeFrame, hideNow, showAll, copiesHidden, occlusionNow, de
 import { DetailMesh, DETAIL, clustersFor, clustersNow, canCluster, partsOf, cutTwin, cutUpdate, headsOf, drawnOf, levelsFor, levelGeometry, frame as detailFrame, tick as detailTick, stats as detailStats, drawnTris } from './detail.js';
 import { own } from './cleanup.js';
 import { linksFor } from './links.js';
+import { LOOKS as MOODS } from './look-presets.js';
 import { reliefOf, reliefNews, noteHeight } from './relief.js';
 import { eachThing, eachShown, thingsOf, BODY_BIT, BODY_LAYER } from './scene-list.js';
 import { stillFrame, stillOff, stillStats } from './still.js';
@@ -890,9 +891,11 @@ const QV = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMat
 const qmat = (fs, uniforms, o = {}) => new ShaderMaterial({ uniforms, vertexShader: QV, fragmentShader: fs, depthTest: false, depthWrite: false, ...o });
 // bright parts only (anything brighter than the threshold keeps its full colour, fading in just under it), 4 taps
 const BRIGHT = `uniform sampler2D tDiffuse; uniform vec2 px; uniform float thr; varying vec2 vUv;
-  vec3 pick(vec2 o){ vec3 c = texture2D(tDiffuse, vUv + o * px).rgb; float l = dot(c, vec3(.2126, .7152, .0722));
-    return c * smoothstep(thr - .05, thr + .05, l); }
-  void main(){ vec3 c = pick(vec2(-1., -1.)) + pick(vec2(1., -1.)) + pick(vec2(-1., 1.)) + pick(vec2(1., 1.)); gl_FragColor = vec4(c * .25, 1.); }`;
+  vec4 pick(vec2 o){ vec3 c = texture2D(tDiffuse, vUv + o * px).rgb; float l = dot(c, vec3(.2126, .7152, .0722)), w = 1. / (1. + l);
+    return vec4(c * smoothstep(thr - .05, thr + .05, l) * w, w); }
+  void main(){ vec4 c = pick(vec2(-1., -1.)) + pick(vec2(1., -1.)) + pick(vec2(-1., 1.)) + pick(vec2(1., 1.)); gl_FragColor = vec4(c.rgb / c.a, 1.); }`;
+// (the four taps weighed by 1 / (1 + brightness), Karis's average: one tiny very bright pixel, a glint on wet ground or a
+// spark, no longer blooms into a square that flickers as it moves; even bright areas come out as before)
 // a quarter the size, each pixel the exact average of a 4 x 4 block (four bilinear reads between texels; px: one source texel)
 const BOX4 = `uniform sampler2D tDiffuse; uniform vec2 px; varying vec2 vUv;
   void main(){ gl_FragColor = vec4(.25 * (texture2D(tDiffuse, vUv + vec2(-px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(px.x, -px.y)).rgb + texture2D(tDiffuse, vUv + vec2(-px.x, px.y)).rgb + texture2D(tDiffuse, vUv + px).rgb), 1.); }`;
@@ -1798,13 +1801,22 @@ vec3 gsAir(vec3 col, vec3 wp){
 // the puddles where drops land. All worked out where they are drawn, no pictures and no pass of their own.
 // hd3d-gpu.js gpuWet is the same sums as nodes.)
 const AIR_WET = `#ifdef USE_FOG
+#ifndef GS_NO_SETTLE
+  if (gsAirOn > .5 && gsRain.z > 0.) {   // the world's own variation (air.macro): a few metres across, tone and roughness drift, so no two walls are alike and a repeat doesn't show
+    vec3 gsMp = gsW + gsOrigin; vec2 gsMq = vec2(gsMp.x + gsMp.y * .6, gsMp.z - gsMp.y * .4);
+    float gsM = (texture2D(gsNoise, gsMq * .09).r * .6 + texture2D(gsNoise, gsMq * .023).a * .4 - .5) * gsRain.z;
+    diffuseColor.rgb *= 1. + gsM * .45; roughnessFactor = clamp(roughnessFactor + gsM * .25, .02, 1.);
+  }
+#endif
   if (gsAirOn > .5 && gsWet + gsWx.x + gsWx.y + gsWx.z + gsRain.x > 0.) {
     mat3 gsVi = transpose(mat3(viewMatrix)); vec3 gn = gsVi * normal, gg = gsVi * nonPerturbedNormal; float gsOpen = 1.;
     vec2 gsT = gsW.xz + gsOrigin.xz;
     if (gsCoverAt.w > 0.) { vec2 gp = gsT + gg.xz * gsWx.w, gd = abs(gp - gsCoverAt.xy);
       if (max(gd.x, gd.y) < gsCoverAt.w) gsOpen = smoothstep(-.7, -.25, gsW.y - texture2D(gsCover, gp * gsCoverAt.z).r); }
     float w = max(gsWet, gsWx.x * gsOpen) * (.3 + .7 * smoothstep(.15, .85, gn.y)), gsR0 = roughnessFactor;
-    roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb *= 1. - w * .3;
+    // (how much water a surface drinks: rough, not metal soaks and goes much darker and richer; metal, glass and paint only get a film)
+    float gsPor = smoothstep(.25, .85, gsR0) * (1. - metalnessFactor), gsL = dot(diffuseColor.rgb, vec3(.299, .587, .114));
+    roughnessFactor = mix(roughnessFactor, .12, w * .8); diffuseColor.rgb = max(mix(vec3(gsL), diffuseColor.rgb, 1. + w * gsPor * .3), 0.) * (1. - w * mix(.1, .45, gsPor));
     if (gsRain.x + gsWx.x > 0.) {
       // a frame along the surface: level across it (ga) and up it (gd), in metres
       vec3 gP = gsW + gsOrigin, ga = abs(gg.y) > .98 ? vec3(1., 0., 0.) : normalize(vec3(gg.z, 0., -gg.x)), gd = cross(gg, ga);
@@ -2203,8 +2215,10 @@ export class HDView {
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
    * thinning by mistFall a metre upwards; patchy 0..1), clouds (cover 0..1) with cloudShade (how
    * dark their shadows are), cloudHeight, cloudSize (metres), wind ([x, z] m/s they drift, or a gs.outdoors Wind), and wet
-   * (0..1: rain darkens things and makes up-facing surfaces shiny, everywhere; a gs.sky.Weather that is
-   * given the level does it only where the sky can see, with puddles and snow: it sets `world` here itself).
+   * (0..1: rain darkens things and makes up-facing surfaces shiny, everywhere; rough things that drink water, like
+   * concrete and cloth, go much darker than metal or glass; a gs.sky.Weather that is given the level does it only where
+   * the sky can see, with puddles and snow: it sets `world` here itself), macro (0..1, .5: tone and roughness drift a
+   * little over a few metres of the world on everything that stays put, so no two walls look alike and repeats don't show).
    * sun: direction towards the sun (default: v.sun, the light from sun()). Returns the settings, which you
    * can change any time; v.air(false) turns it off.
    */
@@ -2212,7 +2226,7 @@ export class HDView {
     if (o === false) { this._air = null; return null; }
     if (!this._air) {
       const fc = this.scene.fog?.color || this.scene.background || new Color('#c8d0d8');
-      this._air = { haze: .0008, colour: new Color(fc.isColor ? fc : '#c8d0d8'), sunColour: null, mist: 0, mistFall: .08, mistY: 0, patchy: .7, clouds: 0, cloudShade: .45, cloudHeight: 400, cloudSize: 620, wind: [6, 2.5], wet: 0, sun: null, world: null };
+      this._air = { haze: .0008, colour: new Color(fc.isColor ? fc : '#c8d0d8'), sunColour: null, mist: 0, mistFall: .08, mistY: 0, patchy: .7, clouds: 0, cloudShade: .45, cloudHeight: 400, cloudSize: 620, wind: [6, 2.5], wet: 0, macro: .5, sun: null, world: null };
       if (!this.scene.fog) this.scene.fog = new FogExp2(this._air.colour, 0);
     }
     const a = this._air;
@@ -2222,6 +2236,32 @@ export class HDView {
       else a[k] = v;
     }
     return a;
+  }
+  /**
+   * A whole mood in one line: 'rainy dusk' | 'golden hour' | 'overcast' | 'night rain' | 'fog' (look-presets.js). Sets
+   * the sky colour and fill light, the sun's colour, strength and height (v.sun, from sun()), the air (haze, mist,
+   * clouds, how wet, the world's variation), grade and a film look table, glare, shafts and beams, bloom, exposure and
+   * the eye adapting, lens flare and dirt, a film camera's finish; a gs.sky.Weather made for
+   * this view is set raining or dry to match. o: anything to change from the preset (the same names: { sun: false }
+   * leaves the sun as it is, { air: { wet: 0 } }, { film: null }, { weather: false } leaves the weather alone). Returns
+   * the settings used. Call again for another mood; v.look(null) forgets it (what it set stays).
+   */
+  look(name, o = {}) {
+    if (name == null || name === false) { this._look = null; return null; }
+    const L = MOODS[name]; if (!L) throw new Error(`v.look: no look '${name}' (${Object.keys(MOODS).join(', ')})`);
+    const P = { ...L, ...o, air: { ...L.air, ...(o.air || {}) } };
+    if (!this.scene.background || this.scene.background.isColor) this.scene.background = new Color(P.bg);
+    this.hemi.color.set(P.sky); this.hemi.groundColor.set(P.ground); this.hemi.intensity = P.amb;
+    if (P.sun && this.sun) { const [c, i, d] = P.sun; this.sun.color.set(c); this.sun.intensity = i; this.sun.aim?.(d[0], d[1], d[2]); }
+    this.air(P.air);
+    this.grade = P.grade ? { ...P.grade } : null; this.glare = P.glare; this.shafts = P.shafts; this.exposure = P.exposure; this.bloom = P.bloom; this.envI = P.env;
+    this.lut = P.lut; this.lutAmount = P.lutAmount; this.flare = P.flare ? { ...P.flare } : null; this.film = P.film ? { ...P.film } : null;
+    this.autoExposure = P.eye ? { ...P.eye } : false; this.eye = null;
+    this.beams = P.beams ? { ...P.beams } : null;
+    const w = P.weather && linksFor(this)?.one('weather');
+    if (w && w.view === this) { w.set(P.weather.kind, P.weather.amount); w.wet = P.weather.wet; w.pools = P.weather.pools; w.snow = 0; }
+    this._look = P;
+    return P;
   }
   /** The direction towards the sun this view uses for air, glare and cloud shadows. */
   /**
@@ -2841,7 +2881,7 @@ export class HDView {
     const w = a.wind; U.gsDrift.value.set((w.x ?? w[0]) * this.t / a.cloudSize, (w.z ?? w[1]) * this.t / a.cloudSize);
     U.gsWet.value = a.wet; U.gsNoise.value = noiseTex();
     const wx = a.world, cv = wx?.cover?.ready !== undefined && wx.cover.ix === wx.cover.ix ? wx.cover : null;   // (a cover that has been placed)
-    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0); U.gsRain.value.set(wx?.rain ?? 0, wx?.runT ?? 0, 0, 0);
+    U.gsWx.value.set(wx ? wx.wet : 0, wx ? wx.snow : 0, wx ? wx.pools : 0, cv ? cv.cell * 1.3 : 0); U.gsRain.value.set(wx?.rain ?? 0, wx?.runT ?? 0, a.macro ?? 0, 0);
     if (cv) { U.gsCover.value = cv.texture; U.gsCoverAt.value.set(cv.cx, cv.cz, 1 / cv.span, cv.reach); } else U.gsCoverAt.value.w = 0;
     U.gsCasc.value.x = U.gsCasc.value.y = -1;
     const cs = this.cascade;
@@ -4594,9 +4634,15 @@ class Eye {
   constructor() { this.e = 0; this.goal = 0; this.busy = false; this.n = 0; this.key = null; }   // log2 of the exposure
   // the 16 x 16 bytes back: mean log brightness (the middle of the screen counts twice)
   take(px, o) {
-    let s = 0, w = 0;
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const i = (y * 16 + x) * 4, l = (px[i] + px[i + 1] / 255) / 255 * 20 - 14, k = x >= 4 && x < 12 && y >= 4 && y < 12 ? 2 : 1; s += l * k; w += k; }
-    const avg = this.avg = s / w, key = o.key ? Math.log2(o.key) : (this.key ??= avg), d = key - avg;   // no key: the game's look as it starts is the target
+    // weighed towards the middle of the screen (a soft centre, as a camera's centre-weighted meter), and the brightest and
+    // darkest twentieth left out: the sun, a lamp or a black doorway in view no longer swing the exposure
+    const L = this.L ||= new Float32Array(256), K = this.K ||= Float32Array.from({ length: 256 }, (_, j) => { const dx = (j % 16) - 7.5, dy = (j >> 4) - 7.5; return .3 + Math.exp(-(dx * dx + dy * dy) / 40); });
+    const ord = this.ord ||= Array.from({ length: 256 }, (_, j) => j);
+    let all = 0; for (let j = 0; j < 256; j++) { L[j] = (px[j * 4] + px[j * 4 + 1] / 255) / 255 * 20 - 14; all += K[j]; }
+    ord.sort((a, b) => L[a] - L[b]);
+    let s = 0, w = 0, run = 0; const lo = all * .05, hi = all * .95;
+    for (const j of ord) { const k0 = run, k1 = run += K[j], k = Math.max(0, Math.min(k1, hi) - Math.max(k0, lo)); s += L[j] * k; w += k; }
+    const avg = this.avg = s / Math.max(w, 1e-6), key = o.key ? Math.log2(o.key) : (this.key ??= avg), d = key - avg;   // no key: the game's look as it starts is the target
     // eyes don't fully make up the difference (amount); a camera's meter (v.lens) does, but only part of it when it's dark (night: night stays night)
     this.goal = Math.min(Math.log2(o.max ?? 2.5), Math.max(Math.log2(o.min ?? .4), (d > 0 ? d * (o.night ?? 1) : d) * (o.amount ?? .7)));
   }
@@ -5376,3 +5422,6 @@ export class ContactShadows {
 
 // per-frame work, timed while the frame lab is open (prof.js)
 timed(HDView.prototype, 'render', '3D render');
+
+// ready-made decal pictures for v.decal (decal-marks.js): signs, stencils, stains and damage, with a distress pass
+export { mark, marks, distress } from './decal-marks.js';
