@@ -315,10 +315,10 @@ export function resample(x, ratio) {
 }
 
 /**
- * Takes steady tones out of x in place: a narrow notch (about 12 Hz wide) at each frequency in Hz, the rest left as it
+ * Takes steady tones out of x in place: a narrow notch (25 Hz wide: the whine wanders a few Hz) at each frequency in Hz, the rest left as it
  * was. For the whine the built-in voice's small decoder puts at the same pitches in every line (pocket-tts.js MIMI_SMALL).
  */
-export function notch(x, rate, freqs, width = 12) {
+export function notch(x, rate, freqs, width = 25) {
   for (const f of freqs) {
     if (!(f > 0 && f < rate / 2)) continue;
     const w = 2 * Math.PI * f / rate, al = Math.sin(w) * width / (2 * f), cs = Math.cos(w), a0 = 1 + al;
