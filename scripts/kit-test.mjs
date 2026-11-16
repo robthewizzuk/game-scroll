@@ -2944,6 +2944,27 @@ console.log('physics ok');
   gp.dispose(); assert.equal(gp.U.gpOn.value, 0, 'disposed: the ground reads its own pictures again');
   console.log('ground paint: painted whole, then only what a move uncovers, pieces over the right world, marks where they fall ok');
 }
+// more marks than one paint takes (a yard's lines, oil under every parked car): the piece is halved until each half takes all of its
+// own, every mark is painted, lanes first in each list (a line in a lane is worn by it); gs.outdoors.Ground's bays and hatching
+{
+  const THREE = await import('three'), { GroundPaint, STAMPS_MAX, STAMP_KINDS } = await import('../src/kit/ground-paint.js');
+  const got = [], fake = { autoClear: true, getRenderTarget: () => null, setRenderTarget() {}, render(scene) { const u = scene.children[0].material.uniforms; got.push({ n: u.gpStampN.value, k: u.gpStampB.value.slice(0, u.gpStampN.value).map(b => b.x), xs: u.gpStampA.value.slice(0, u.gpStampN.value).map(a => a.x) }); } };
+  const gp = new GroundPaint({ scene: new THREE.Scene(), _onGpu: false }); gp.gl = fake;
+  const yard = new THREE.Mesh(new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial()); yard.updateMatrixWorld(true);
+  gp.add(yard, 'yard', { base: '#999' });
+  gp.lane(-60, 0, 60, 0, { width: 3.5 });
+  for (let i = 0; i < 70; i++) gp.line(-14 + i * .4, 4, -14 + i * .4, 9, { colour: i % 2 ? 'yellow' : 'white' });
+  gp.stamp(3, -3, 'hatch', { size: 6, width: 3, colour: 'yellow', dash: .6 });
+  gp.update(new THREE.Vector3(0, 1.6, 0));
+  assert.ok(got.length > 2 && got.every(g => g.n <= STAMPS_MAX), 'no piece takes more marks than one paint can (' + got.map(g => g.n).join(',') + ')');
+  const seen = new Set(got.flatMap(g => g.xs.map(x => x.toFixed(2))));
+  assert.ok(gp.stamps.every(st => seen.has(st.A.x.toFixed(2))), 'every mark painted on some piece');
+  assert.ok(got.every(g => g.k.indexOf(STAMP_KINDS.lane) <= 0 || g.k.slice(0, g.k.indexOf(STAMP_KINDS.lane)).every(k => k === STAMP_KINDS.lane)), 'lanes first in each list');
+  const ln = gp.stamps[1]; assert.ok(Math.abs(ln.A.w - Math.PI / 2) < 1e-9 && Math.abs(ln.A.z - 2.5) < 1e-9 && ln.z0 < 4 && ln.z1 > 9, 'a line along +z: angle, half its length and the box it touches');
+  const marks = gp.stamps.length; gp.unstamp(ln); assert.ok(!gp.stamps.includes(ln) && gp.levels[0].todo.length > 0, 'a mark taken away is painted over');
+  gp.dispose();
+  console.log(`ground paint marks: ${marks} marks in ${got.length} pieces of at most ${STAMPS_MAX}, every one painted, lanes first ok`);
+}
 
 // behaviour trees and wants (gs.ai.Tree, gs.ai.Choose)
 {

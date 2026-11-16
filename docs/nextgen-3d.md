@@ -1625,7 +1625,11 @@ wear(wall, { moss: .7 });                                                    // 
   skips that. The material is copied, so other things sharing it stay clean.
 - **`prop(name, o)`**: everyday things built from simple shapes, dressed in the recipes and aged with
   `wear`: `crate`, `barrel`, `drum`, `pallet`, `table`, `chair`, `bench`, `shelf`, `lamp`, `fence`, `sign`,
-  `bucket`, `sack`, `chest`, `cone`, `bin`, `door`, `pipe` (`gs.models.props` lists them). A Group with one
+  `bucket`, `sack`, `chest`, `cone`, `bin`, `door`, `pipe`, and for a yard, a dock or a building site
+  `container` (`size: 6.06` a twenty-foot box, `12.19` a forty; corrugated walls, castings, locking bars), `crane`
+  (a gantry over a container stack, `size` its height), `barrier` (concrete), `waterbarrier`, `mesh` (chain-link
+  fence with barbed wire), `oildrum`, `pallets`, `reel`, `cable`, `bollard`, `skip` (`gs.models.props` lists them;
+  a container's, drum's, skip's and water barrier's colour comes from its `seed` unless you give one). A Group with one
   mesh per material, its foot at y = 0, facing +z. `seed` (small differences), `size` (its main measure in
   metres), `colour` (its main material), `wear` (options for `wear`, or `false` for new), `lit` (lamp glow).
   Asking again with the same options gives a copy that shares shapes and materials, so a hundred crates

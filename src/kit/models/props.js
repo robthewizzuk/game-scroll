@@ -4,12 +4,13 @@
 // (few draw calls), its foot at y = 0, facing +z, ready to place.
 // Kit use only: games reach it as gs.models.prop.
 import { pause, built, loading } from '../slices.js';
-import { BoxGeometry, CylinderGeometry, SphereGeometry, TorusGeometry, LatheGeometry, Group, Mesh, Matrix4, Euler, Quaternion, Vector3, Vector2, BufferAttribute } from 'three';
+import { BoxGeometry, CylinderGeometry, SphereGeometry, TorusGeometry, LatheGeometry, ExtrudeGeometry, TubeGeometry, CatmullRomCurve3, Shape, Group, Mesh, Matrix4, Euler, Quaternion, Vector3, Vector2, BufferAttribute } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { material } from './materials.js';
 import { wear } from './wear.js';
 import { pbr } from '../hd3d.js';
+import { YARD_PROPS } from './props-yard.js';
 
 export const rngOf = s => { let a = (s * 2654435761) >>> 0 || 1; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 
@@ -44,6 +45,35 @@ export class Build {
   ring(slot, r, tube, at, rot = [Math.PI / 2, 0, 0], arc = Math.PI * 2) { return this.add(slot, new TorusGeometry(r, tube, 6, 24, arc), at, rot); }
   lathe(slot, pts, at, seg = 20) { return this.add(slot, new LatheGeometry(pts.map(([x, y]) => new Vector2(x, y)), seg), at); }
   ball(slot, r, at, scale) { return this.add(slot, new SphereGeometry(r, 16, 10), at, [0, 0, 0], scale); }
+  /** A flat outline (pts: [x, y] in its own plane) pushed depth along its z, its edges bevelled by bevel metres (0: sharp). */
+  extrude(slot, pts, depth, at, rot, bevel = 0) {
+    const sh = new Shape(pts.map(([x, y]) => new Vector2(x, y)));
+    const g = new ExtrudeGeometry(sh, { depth: Math.max(1e-4, depth - bevel * 2), bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: 2, curveSegments: 4 });
+    g.translate(0, 0, -depth / 2 + bevel);
+    return this.add(slot, g, at, rot);
+  }
+  /** A round tube r thick through pts ([x, y, z]), smoothed into a curve. */
+  tube(slot, pts, r, at, seg = 6) {
+    const c = new CatmullRomCurve3(pts.map(([x, y, z]) => new Vector3(x, y, z)));
+    return this.add(slot, new TubeGeometry(c, Math.max(8, pts.length * 6), r, seg, false), at);
+  }
+  /**
+   * Hazard stripes on a face w x h (in its own x, y; at: its middle, rot: its turn; standing d proud of what it is on): bands
+   * width across at 45 degrees, slots a and b by turns, each band cut to the face.
+   */
+  stripes(a, b, w, h, d, width, at, rot) {
+    const span = w + h, n = Math.ceil(span / width) + 1;
+    for (let i = 0; i < n; i++) {
+      const c0 = -span / 2 - width + i * width, poly = clipBand([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]], c0, c0 + width);
+      if (poly.length >= 3) this.extrude(i % 2 ? b : a, poly, d, at, rot);
+    }
+    return this;
+  }
+}
+// a convex polygon cut to the band lo <= x + y <= hi (Sutherland-Hodgman, twice)
+function clipBand(poly, lo, hi) {
+  const cut = (P, f) => { const out = []; for (let i = 0; i < P.length; i++) { const A = P[i], B = P[(i + 1) % P.length], fa = f(A), fb = f(B); if (fa >= 0) out.push(A); if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]); } } return out; };
+  return cut(cut(poly, p => p[0] + p[1] - lo), p => hi - p[0] - p[1]);
 }
 
 // the props: each fills a Build from (b, r: random 0..1, k: options) and names its slots' materials
@@ -206,12 +236,16 @@ const PROPS = {
     b.box('board', .04, w * .7, w, [0, -.14 - w * .35, w / 2 + .1], 0, .01);
   } },
 };
+Object.assign(PROPS, YARD_PROPS);   // a yard, a dock, a building site (props-yard.js)
 export const PROP_NAMES = Object.keys(PROPS);
 
 const shared = new Map();   // materials shared by every prop asking for the same recipe and colours
+const shade = hex => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .88 + 4).toString(16).padStart(2, '0')).join('');
 const matFor = (spec, colour, slot, first) => {
+  if (typeof spec === 'function') { const key = 'own:' + spec.name + (first && colour ? colour : ''); if (!shared.has(key)) shared.set(key, spec(first ? colour : null)); return shared.get(key); }   // (a material of the prop's own: props-yard.js's chain-link)
   const [name, look = {}] = spec, o = { ...look };
   if (first && colour) o.colour = colour;   // the maker's colour goes on the prop's main material
+  if (o.under === 'shade') { o.under = shade(o.colour); o.metal ??= 0; }   // (paint worn to a duller coat of the same colour, and a coat, not metal: big painted steel reads as camouflage when its chips show bare metal; its edges are worn by wear())
   const key = name + JSON.stringify(o);
   if (!shared.has(key)) shared.set(key, material(name, o));
   return shared.get(key);
@@ -220,8 +254,10 @@ const matFor = (spec, colour, slot, first) => {
 /**
  * A prop: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' |
  * 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe', and for a village or a
- * castle 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard'. Options: seed (small
- * differences), size (its main measure in metres), colour (its main material), wear (options for
+ * castle 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard', and for a yard, a dock or a
+ * building site 'container' | 'crane' | 'barrier' | 'waterbarrier' | 'mesh' | 'oildrum' | 'pallets' | 'reel' |
+ * 'cable' | 'bollard' | 'skip' (props-yard.js). Options: seed (small differences, and a container's, drum's, skip's
+ * or water barrier's colour), size (its main measure in metres), colour (its main material), wear (options for
  * gs.models.wear, or false: new), tile (metres per texture repeat, 1), lit (lamp: how bright, 2).
  * The same prop asked for again (same options) is a copy sharing its shapes and materials: no making cost,
  * and copies that keep still merge into one draw.
@@ -230,7 +266,8 @@ const made = new Map();   // finished props by everything that shapes them: copi
 export function prop(name, o = {}) {
   const P = PROPS[name];
   if (!P) throw new Error(`gs.models.prop: no prop '${name}' (try ${PROP_NAMES.join(', ')})`);
-  const { seed = 0, colour = o.color, wear: w = {}, tile = 1, lit = 2 } = o;
+  const { seed = 0, wear: w = {}, tile = 1, lit = 2 } = o;
+  const colour = o.colour ?? o.color ?? (typeof P.colour === 'function' ? P.colour(rngOf(seed + 7)) : undefined);   // (a prop with colours of its own picks one by seed: a container's shipping line)
   const key = JSON.stringify([name, seed, colour, w, tile, lit, o.size]);
   let parts = made.get(key);
   if (!parts) {

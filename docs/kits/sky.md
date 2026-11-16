@@ -146,7 +146,7 @@ weather.set('snow');                                    // it starts to settle; 
   water runs down walls only as a look (it does not drip off eaves or gather at a wall's foot), and nothing
   piles up on things that move.
 
-More in docs/maker-kit.md: "Ground that takes marks", "Towns that live".
+More in docs/maker-kit.md: "Ground that takes marks", "A yard, a street or a square to stand on", "Towns that live".
 
 ## In real games
 

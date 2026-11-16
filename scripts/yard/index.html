@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#222">
+<script type="module">
+// A yard for scripts/yard.cjs: gs.outdoors.Ground's cast concrete slabs with lanes, painted lines, bays and hatching, oil;
+// the yard's props (gs.models.prop); rain coming on so the puddles gather (gs.sky.Weather); the puddle mirror (v.mirror).
+// A row for each camera, a column for each moment of the rain, to judge the ground, the shores and the mirror by eye.
+//   ?views=over,low,down,props,shore (default: over,low,down)   &cols=4   &cell=360x240   &gpu (WebGPU)
+//   &kind=yard (asphalt, paving, plaza)   &time=17.5 (hour)   &rain=0,.3,.6,1 (how far the puddles have spread at each column: weather.pools; 0 dry)   &norain (no streaks)
+//   &mirror (the planar puddle mirror on)   &tier=2 (the quality tier: 0 low .. 3 ultra)   &noprops
+import gs, { loadParts } from '../../src/gamescroll.js';
+import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
+const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
+setGpuPick(GPU ? 'webgpu' : 'webgl');
+try {
+  await loadParts();
+  if (GPU && !await prepareGPU()) throw new Error('WebGPU did not start in this browser');
+  const T = gs.THREE, frame = () => new Promise(r => requestAnimationFrame(r)), M = gs.models, { Ground } = gs.outdoors;
+  const VIEWS = {
+    over: [[-14, 7, 16], [2, 0, 0]],          // the whole yard
+    low: [[-6, 1.4, 9], [6, .2, -2]],         // low across it, into the light: the puddles' shores and sheen
+    down: [[1, 3.2, 3.5], [1, 0, .5]],        // down onto a lane, its lines and a joint
+    props: [[-3, 3.2, 1], [-5, 1, -9]],        // the props along the back
+    props2: [[8, 3, 1], [6, 1, -9]],          // the rest of them
+    crane: [[16, 6, 10], [-2, 6, -14]],       // the gantry and the containers
+    shore: [[-2.5, 1, 2.5], [-1, 0, 0]],      // close to a puddle's edge
+    top: [[-2, 26, .01], [-2, 0, 0]],          // straight down on the markings
+    hatch: [[-8, 5, -1], [-8, 0, -6]],        // the hatched box
+  };
+  const views = (Q.get('views') || 'over,low,down').split(','), rain = (Q.get('rain') || '0,.3,.6,1').split(',').map(Number), cols = rain.length, [cw, ch] = (Q.get('cell') || '360x240').split('x').map(Number);
+  window.__hd.force = +(Q.get('tier') ?? 2); window.__hd.upscale = false; window.__hd.hold = false;
+  const cell = document.createElement('canvas'); cell.width = cw; cell.height = ch; const cx = cell.getContext('2d');
+  const sheet = document.createElement('canvas'); sheet.width = cw * cols; sheet.height = ch * views.length; const sx = sheet.getContext('2d'); document.body.append(sheet);
+  const v = new gs.hd.HDView({ bg: '#7f8a96', fog: 0, env: .6, amb: .45 });
+  const sun = gs.hd.sun('#ffe2c0', 1.5, 30, [-.6, .5, -.7]); v.scene.add(sun, sun.target); v.sun = sun;
+  const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 17.5), env: true, clouds: .7 }); v.air({ haze: .002 });
+  const ground = new Ground(v, { size: 80, kind: Q.get('kind') || 'yard' });
+  // the yard's markings: two lanes where trucks run, lines along them, bays, a hatched box, oil
+  ground.lane(-40, 0, 40, 0, { width: 3.6 }); ground.lane(4, -40, 4, 40, { width: 3.4, strength: .7 });
+  ground.line(-40, -2.2, 40, -2.2, { colour: 'yellow', width: .15 }); ground.line(-40, 2.2, 40, 2.2, { colour: 'yellow', width: .15 });
+  ground.line(-40, 0, 40, 0, { colour: 'white', width: .12, dash: 1.5, strength: .8 });
+  for (let i = 0; i < 6; i++) ground.bay(-14 + i * 2.8, 6.5, 2.6, 5.2, { colour: 'white', width: .1, strength: .7 + (i % 3) * .1 });
+  ground.hatch(-8, -6, 7, 3, { colour: 'yellow', spacing: .7, strength: .8 }); ground.hatch(12, 6, 4, 4, { colour: 'white', angle: .3, strength: .6 });
+  for (const [x, z, s] of [[-3, .5, 1.4], [6, -1, .8], [-11, 7, 1], [9, 1.2, .6]]) ground.stamp(x, z, 'oil', { size: s, strength: .8, seed: x });
+  ground.stamp(-2, -1, 'skid', { size: 9, angle: .05, strength: .5, seed: 3 });
+  // the props along the back
+  if (!Q.has('noprops')) {
+    const put = (o, x, z, turn = 0, y = 0) => { o.position.set(x, y, z); o.rotation.y = turn; v.scene.add(o); return o; };
+    // a stack of containers at the back with the gantry over them; a row of the smaller things in front
+    put(M.prop('container', { seed: 1 }), -10, -16, Math.PI / 2); put(M.prop('container', { seed: 2 }), -10, -13.4, Math.PI / 2); put(M.prop('container', { seed: 3 }), -10, -16, Math.PI / 2, 2.59);
+    put(M.prop('container', { seed: 4, size: 12.19 }), 0, -14.7, Math.PI / 2); put(M.prop('container', { seed: 5 }), 10, -16, -Math.PI / 2);
+    put(M.prop('crane', { seed: 2 }), -2, -14.7, 0);
+    const row = (Q.get('props') || 'barrier,barrier,waterbarrier,waterbarrier,mesh,mesh,oildrum,oildrum,oildrum,pallets,reel,cable,bollard,skip').split(',');
+    let x = -16; row.forEach((n, i) => { const o = M.prop(n, { seed: i }); const bb = new T.Box3().setFromObject(o), w = bb.max.x - bb.min.x; put(o, x - bb.min.x, -8.5); x += w + (n === row[i + 1] ? .05 : 1.2); });
+  }
+  if (Q.has('mirror') && v.mirror) v.mirror(ground.mesh);
+  const weather = new gs.sky.Weather(v, { kind: 'clear', amount: Q.has('norain') ? 0 : .5, area: 30, max: 700, level: true });
+  const info = []; let t = 0;
+  for (let col = 0; col < cols; col++) {
+    const pools = rain[col];   // (each column: how far the puddles have spread, 0 dry; the ground wet through from the first rain on)
+    weather.set(pools > 0 ? 'rain' : 'clear', Q.has('norain') ? .02 : 1); weather.wet = pools > 0 ? 1 : 0; weather.pools = Math.max(0, pools);
+    for (let n = 0; n < 4; n++) { sky.update(1 / 60); weather.update(1 / 600); weather.wet = pools > 0 ? 1 : 0; weather.pools = Math.max(0, pools); t += 1 / 60; }
+    for (let r = 0; r < views.length; r++) {
+      const V = VIEWS[views[r]]; if (!V) throw new Error('no view ' + views[r]);
+      v.cam.fov = 50; v.cam.aspect = cw / ch; v.cam.near = .1; v.cam.far = 400; v.cam.updateProjectionMatrix(); v.cam.position.set(...V[0]); v.cam.lookAt(...V[1]); v.cam.updateMatrixWorld();
+      v.cut?.(); sun.follow?.(V[1][0], 0, V[1][2]);
+      for (let n = 0; n < 6; n++) { ground.update(); weather.update(1 / 600); weather.pools = Math.max(0, pools); t += 1 / 60; v.t = t; v.render(cx, cw, ch); await frame(); }
+      sx.drawImage(cell, col * cw, r * ch);
+      sx.font = '11px sans-serif'; sx.fillStyle = '#000'; sx.fillText(`${views[r]}  puddles ${pools}  wet ${weather.wet.toFixed(2)}`, col * cw + 4, r * ch + 12);
+    }
+  }
+  info.push(`ground paint: ${JSON.stringify(ground.paint.info)}; mirror: ${window.__hd.info.mirror ?? 'none'}`);
+  window.result = { sheet: sheet.toDataURL(), info, backend: window.__hd.info.backend };
+} catch (e) { window.result = { error: String(e && e.stack || e) }; }
+</script>

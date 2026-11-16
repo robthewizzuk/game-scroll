@@ -4545,6 +4545,32 @@ export interface MarksWatch {
   /** What marks.trail() and marks.made call it (the thing itself). */ by?: Loose;
   /** Is it on the ground now? (default: within .3 m of it). */ grounded?: () => boolean; height?: number;
 }
+/** gs.outdoors.Ground: painted ground (yard, asphalt, paving, plaza, grass) with marks on it. */
+export interface GroundOptions { /** a stamp's or line's width in metres (a line .12; a lane 3) */ width?: number; /** 'white' | 'yellow' | 'red' | 'blue' | 'black' | 'green' | 'orange' or any colour */ colour?: string; /** a dash's length in metres (0: solid); a hatch's stripe spacing */ dash?: number; /** 0..1: how fresh the paint is (lower is more worn), how strong a stain or lane */ strength?: number; size?: number; angle?: number; track?: number; seed?: number }
+export interface GroundPart {
+  /** the ground's mesh (in the view's scene): give it to a World3D's ground() to stand on it */
+  mesh: Loose;
+  kind: string;
+  /** the painter underneath (ground-paint.js): info, levels */
+  paint: Loose;
+  /** More ground painted the same way: a kerb's top, a pavement (kind: as the constructor's). */
+  add(mesh: Loose, kind?: 'yard' | 'asphalt' | 'paving' | 'plaza' | 'grass', o?: { base?: string; order?: number }): Loose;
+  /** A mark at x, z: 'oil' (size across), 'skid' (size long, track between the wheels), 'scorch', 'line', 'lane', 'hatch'. Returns it, for unstamp(). */
+  stamp(x: number, z: number, kind?: 'oil' | 'skid' | 'scorch' | 'line' | 'lane' | 'hatch', o?: GroundOptions): Loose;
+  unstamp(mark: Loose): void;
+  /** A painted line from (x0, z0) to (x1, z1), chipped and worn where wheels run. */
+  line(x0: number, z0: number, x1: number, z1: number, o?: GroundOptions): Loose;
+  /** A lane worn by traffic from (x0, z0) to (x1, z1): polished, darker, rubber in its two wheel tracks; lines in it wear through. */
+  lane(x0: number, z0: number, x1: number, z1: number, o?: GroundOptions): Loose;
+  /** A hatched box w x d metres centred at x, z: a border and stripes spacing apart. */
+  hatch(x: number, z: number, w: number, d: number, o?: GroundOptions & { spacing?: number }): Loose;
+  /** A bay w x d metres centred at x, z: lines on three sides (four with open: false). Returns its lines. */
+  bay(x: number, z: number, w: number, d: number, o?: GroundOptions & { open?: boolean }): Loose[];
+  /** Each frame before the view draws (at: the camera's place; the view's camera by default). */
+  update(at?: Loose): GroundPart;
+  readonly busy: boolean;
+  dispose(): void;
+}
 export interface MarksPart {
   /** What the ground at x, z is like now. kind null: firm ground that takes no mark. depth: metres a foot sinks in. */
   kindAt(x: number, z: number, out?: Loose): { kind: 'snow' | 'mud' | 'sand' | 'grass' | null; soft: number; depth: number; y: number };
@@ -4797,6 +4823,14 @@ export interface OutdoorsPart {
    */
   Marks: new (view: Loose | null, o?: MarksOptions) => MarksPart;
   /**
+   * A yard, a street or a square to stand on, painted round the camera with nothing repeating: kind 'yard' (cast concrete slabs with tar in their
+   * joints, cracks, some sealed, pale stones, wear where traffic runs, oil and rust), 'asphalt', 'paving', 'plaza' or 'grass'. Lay painted lines,
+   * bays and hatched boxes on it (chipped, worn where wheels run), lanes polished by traffic, oil, skid marks and scorches. In the rain (gs.sky.Weather)
+   * puddles gather with a soaked band and a damp halo, and water stays in the joints and cracks. Its mesh is put in the view's scene. Make it in make()
+   * or reset(); update() each frame before the view draws. Next Gen views. docs/kits/outdoors.md.
+   */
+  Ground: new (view: Loose, o?: { /** metres across, or [width, depth] (60) */ size?: number | [number, number]; kind?: 'yard' | 'asphalt' | 'paving' | 'plaza' | 'grass'; colour?: string; color?: string; /** [x, z] of its middle */ at?: [number, number]; y?: number; /** how rough its face is up close, 0..1 (.3) */ bumps?: number; /** the two pictures painted round the camera, fine first: [[metres, texels], [metres, texels]] */ levels?: [number, number][] }) => GroundPart;
+  /**
    * Cloth in the wind: flags, banners, awnings, washing lines and sheets of your own that sag, ripple, fly and snap, drape over solid balls and capsules
    * and lie on the ground; and clothes people wear (skirt, cape) that go round their legs and body and fly as they run. All of a view's cloth is one set, run on the graphics chip on WebGPU (finer: 14 points a metre) and here elsewhere (7).
    * Make it and its pieces in make() (a piece added later starts as made); clear() in reset(); update(dt) each frame. wind: a gs.outdoors Wind (gusts
@@ -4968,7 +5002,7 @@ export interface ModelsPart {
   /** Ages a mesh in place (and returns it), from its own shape: outer edges rubbed lighter, creases and the part near the ground grimy, moss or snow on what faces up. Baked once into vertex colours (free to draw). edges, dirt, moss, snow 0..1; ground: metres up from its bottom that get dirty (.4); edgeColour, dirtColour, mossColour; seed; split (false: don't add corners first). */
   wear<M = Loose>(mesh: M, o?: { edges?: number; edgeColour?: string; dirt?: number; dirtColour?: string; ground?: number; moss?: number; mossColour?: string; snow?: number; seed?: number; split?: boolean }): M;
   /** An everyday thing built in code from the recipes and aged with wear(): a Group (one mesh per material), foot at y = 0, facing +z. seed (small differences), size (its main measure, metres), colour (main material), wear (wear() options, or false), tile (metres per texture repeat), lit (lamp brightness). The same options again give a copy sharing shapes and materials. */
-  prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe' | 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard', o?: { seed?: number; size?: number; colour?: string; color?: string; wear?: false | Record<string, Loose>; tile?: number; lit?: number }): Loose;
+  prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | 'door' | 'pipe' | 'stall' | 'well' | 'anvil' | 'torch' | 'lever' | 'bed' | 'hay' | 'signboard' | 'container' | 'crane' | 'barrier' | 'waterbarrier' | 'mesh' | 'oildrum' | 'pallets' | 'reel' | 'cable' | 'bollard' | 'skip', o?: { seed?: number; size?: number; colour?: string; color?: string; wear?: false | Record<string, Loose>; tile?: number; lit?: number }): Loose;
   /** The prop names. */
   readonly props: readonly string[];
   /** A mesh from soft shapes melted together or carved away, made with surface nets: each { ball: r } | { box: [w, h, d], round } | { cylinder: [r, h], round } | { torus: [R, r] } | { cone: [r, h] } | { capsule: [[x, y, z], [x, y, z]], r }, with at, rot, scale, blend (metres), cut, colour (vertex colours: use a material with vertexColors). Or a distance function (x, y, z) => d with o.bounds. Options: blend (.08), res (48, up to 128), colour. Returns a BufferGeometry (shared for the same shapes: clone before changing). */

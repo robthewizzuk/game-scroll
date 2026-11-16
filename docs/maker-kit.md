@@ -75,6 +75,7 @@ const { sounds } = gs.sound, { haptic } = gs.device, { Feel } = gs.effects;
 | Time of day, rain, snow, lightning | `gs.sky` | [Game kits](#game-kits) |
 | Rain that wets the ground and stops at roofs, puddles, snow that settles | `gs.sky` `Weather({ level })` | [Weather that changes the world](#weather-that-changes-the-world) |
 | Footprints and tyre tracks in snow, mud and sand, grass that parts, a trail to follow | `gs.outdoors` `Marks` | [Ground that takes marks](#ground-that-takes-marks) |
+| Concrete yards, asphalt, paving with painted lines, bays, hatched boxes, lanes worn by traffic, oil | `gs.outdoors` `Ground` | [A yard, a street or a square to stand on](#a-yard-a-street-or-a-square-to-stand-on) |
 | Cliffs with ledges and overhangs, caves to walk through, arches, rock of your own shape | `gs.outdoors` `land.rocks()` | [Cliffs, caves and overhangs](#cliffs-caves-and-overhangs) |
 | Flags, banners, awnings and washing lines in the wind, a sheet thrown over something, a skirt or a cape that goes round a person's legs and flies as they run | `gs.outdoors` `Cloth` | [Cloth in the wind](#cloth-in-the-wind) |
 | Guns, recoil, health that comes back, explosions | `gs.combat` | [Action and adventure kits](#action-and-adventure-kits) |
@@ -4126,6 +4127,30 @@ update(dt) {
   deep drifts you wade through and ruts a wheel sinks into are not here), marks do not show beyond
   `reach`, `land.grass()` (the far grass) does not part, things do not get muddy or snowy from
   walking in it, and rock (`land.rocks()`) takes no marks: not on it, and not in a cave under it.
+
+## A yard, a street or a square to stand on
+
+`const { Ground } = gs.outdoors;` (Next Gen.) Flat ground painted round the camera with nothing repeating: cast
+concrete slabs with tar in their joints, cracks (some sealed with tar), pale stones in the mix, wear where traffic
+runs, oil and rust (`kind: 'yard'`), or `'asphalt'`, `'paving'`, `'plaza'`, `'grass'`. On it the game paints its
+own markings:
+
+```js
+make():  ground = new Ground(view, { size: 80, kind: 'yard' });
+         ground.lane(-30, 0, 30, 0, { width: 3.5 });                       // polished by traffic, rubber in its wheel tracks
+         ground.line(-30, 2, 30, 2, { colour: 'yellow', width: .15 });     // dash: .9 for a dashed line
+         ground.bay(10, 8, 2.6, 5.5);  ground.hatch(-8, -8, 6, 3, { colour: 'yellow' });
+         ground.stamp(4, 3, 'oil', { size: 1.2 });                         // 'oil' | 'skid' | 'scorch'
+draw(c) { ground.update(); view.render(c, W, H); }
+```
+
+- Painted lines are chipped by the ground's own noise and wear through where a `lane` runs over them;
+  `strength` below 1 is older paint. Colours by name (`white`, `yellow`, `red`, `blue`, `orange`...) or any colour.
+- **In the rain** (`gs.sky.Weather`), on any ground, puddles gather in the hollows with a noisy shore, a soaked
+  band and a damp halo round them, deep water darker, and on painted ground water stays in the joints and cracks
+  first. Nothing to call.
+- `ground.add(mesh, kind)` paints a kerb's top or a pavement the same way. A `gs.city` lays its own.
+- To look it over: `node scripts/yard.cjs sheet.png [views=over,low,down,props,shore] [rain=0,.3,.6,1] [--webgpu]`.
 
 ## Cloth in the wind
 
