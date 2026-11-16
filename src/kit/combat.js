@@ -358,11 +358,15 @@ const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
  * windscreen (.7); back: metres to the back window (1.4). front, rear: may shoot through those (true, false). side: arc
  * round from straight out of the side window the aim may go (1.3 radians); up, down: how far it may tilt (.6, .5).
  * lean: how far out of the window the gun goes (.3). eye: height of the gun over the seat (.55). shake: how much the
- * car's speed and bumps throw the aim (1).
+ * car's speed and bumps throw the aim (1). open: a seat with no glass round it (a boat's helm or deck, a motorbike's
+ * saddle, a rowing boat's thwart): the aim goes all the way round but for straight back (around: how far either way
+ * from ahead, 2.6 radians), never through a window (glass null). Left out: open for a boat or a motorbike, and for the
+ * seats 'helm', 'seat', 'deck', 'rider' and 'pillion'. A seat name the vehicle hasn't got is its wheel's ('helm', 'rider'...).
  */
 export class DriveBy {
-  constructor(car = null, { seat = 'driver', width = null, screen = .7, back = 1.4, front = true, rear = false, side = 1.3, up = .6, down = .5, lean = .3, eye = .55, shake = 1 } = {}) {
-    Object.assign(this, { car, front, rear, sideArc: side, up, down, leanOut: lean, eye, shake, screen, backTo: back });
+  constructor(car = null, { seat = 'driver', width = null, screen = .7, back = 1.4, front = true, rear = false, side = 1.3, up = .6, down = .5, lean = .3, eye = .55, shake = 1, open = null, around = 2.6 } = {}) {
+    Object.assign(this, { car, front, rear, sideArc: side, up, down, leanOut: lean, eye, shake, screen, backTo: back, around });
+    this.open = open ?? (car?.kind === 'boat' || car?.kind === 'bike' || (typeof seat === 'string' && OPEN_SEATS.has(seat)));
     this.seatName = typeof seat === 'string' ? seat : null; this.seatAt = Array.isArray(seat) ? { x: seat[0], y: seat[1], z: seat[2] } : seat && typeof seat === 'object' ? seat : null;
     this.width = width; this.vel = { x: 0, y: 0, z: 0 }; this.was = null; this.bump = 0; this.dir = { x: 0, y: 0, z: -1 };
     this.from = { x: 0, y: 0, z: 0 }; this.through = 'front'; this.glass = null; this.pose = 'carAimF'; this.turn = 0; this.pitch = 0; this.lean = 0; this.spread = 0;
@@ -370,7 +374,8 @@ export class DriveBy {
   // the car's place, turn and size, whatever it is
   frame() {
     const c = this.car || {}, p = c.position || c.pos || c, q = c.quaternion || (c.angle != null ? yawQ(-c.angle) : c.yaw != null ? yawQ(c.yaw) : { x: 0, y: 0, z: 0, w: 1 });
-    const pt = this.seatName && (c.points?.[this.seatName] || c.userData?.points?.[this.seatName]), sp = pt ? (pt.position || (Array.isArray(pt) ? { x: pt[0], y: pt[1], z: pt[2] } : pt)) : this.seatAt || { x: -.37, y: .6, z: 0 };
+    const pts = c.points || c.userData?.points, name = this.seatName && (pts?.[this.seatName] ? this.seatName : WHEEL_SEATS.find(n => pts?.[n]));
+    const pt = name && pts?.[name], sp = pt ? (pt.position || (Array.isArray(pt) ? { x: pt[0], y: pt[1], z: pt[2] } : pt)) : this.seatAt || { x: -.37, y: .6, z: 0 };
     const w = this.width ?? (c.size?.width > 0 ? c.size.width : 1.8);
     return { p: { x: p.x || 0, y: p.y || 0, z: p.z ?? 0 }, q, seat: sp, w };
   }
@@ -391,6 +396,7 @@ export class DriveBy {
     const { p, q, seat, w } = this.frame(), L = unrot(want, q), sd = seat.x < 0 ? -1 : 1;
     // in the car's own terms: yaw 0 is straight ahead (-z), to the right +; pitch up +
     let yaw = Math.atan2(L.x, -L.z), pitch = Math.atan2(L.y, Math.hypot(L.x, L.z));
+    if (this.open) return this.aimOpen(yaw, pitch, p, q, seat);
     const out = sd * Math.PI / 2;   // straight out of the seat's side window
     const cones = [{ name: sd < 0 ? 'left' : 'right', mid: out, half: this.sideArc }];
     if (this.front) cones.push({ name: 'front', mid: 0, half: .65 });
@@ -418,6 +424,18 @@ export class DriveBy {
     this.turn = clampA(wrapA(-yaw - base), -1, 1);
     return this;
   }
+  // an open seat: all the way round but for straight back, the gun held out in front of the chest, no glass
+  aimOpen(yaw, pitch, p, q, seat) {
+    yaw = clampA(yaw, -this.around, this.around); pitch = clampA(pitch, -this.down, this.up);
+    const D = { x: Math.sin(yaw) * Math.cos(pitch), y: Math.sin(pitch), z: -Math.cos(yaw) * Math.cos(pitch) };
+    const g = { x: seat.x + Math.sin(yaw) * .4, y: seat.y + this.eye + .05, z: seat.z - Math.cos(yaw) * .4 };
+    const r = rot(g, q); this.from = { x: r.x + p.x, y: r.y + p.y, z: r.z + p.z }; this.dir = rot(D, q); this.glass = null; this.lean = 0; this.pitch = pitch;
+    const cone = yaw < -.75 ? 'left' : yaw > .75 ? 'right' : 'front'; this.through = cone;
+    this.pose = cone === 'left' ? 'carAimL' : cone === 'right' ? 'carAimR' : 'carAimF';
+    const base = cone === 'left' ? Math.PI / 2 : cone === 'right' ? -Math.PI / 2 : 0;
+    this.turn = clampA(wrapA(-yaw - base), -1, 1);
+    return this;
+  }
   /** Pulls gun's trigger from where the gun is, along the aim, thrown about by the ride (spread); flying shots carry the car's speed. */
   fire(gun, pressed = true) {
     const shots = gun.pull(this.from, this.dir, pressed);
@@ -426,3 +444,4 @@ export class DriveBy {
   }
 }
 const yawQ = a => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
+const OPEN_SEATS = new Set(['helm', 'seat', 'deck', 'rider', 'pillion']), WHEEL_SEATS = ['driver', 'helm', 'rider', 'pilot', 'seat'];

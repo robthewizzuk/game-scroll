@@ -27,7 +27,7 @@ import { riders } from './vehicle-seats.js';
 import { looksOf } from '../looks.js';
 
 const MAKERS = { ...ROAD, bike, train: o => railcar(o.style, o), boat, plane, helicopter }, KINDS = { ...ROADS, bike: BIKE_KINDS, train: RAIL, ...CRAFT };
-const ROADGOING = new Set(['car', 'truck', 'bus', 'bike']);   // (what wears a car's looks and its wear and tear: dirt, rain, dents, glass that breaks)
+const ROADGOING = new Set(['car', 'truck', 'bus', 'bike']), WRECKS = new Set(['boat', 'helicopter']);   // (what wears a car's looks and its wear and tear: dirt, rain, dents, glass that breaks)
 
 // how each drives on World3D.vehicle (chassis()): density (its weight against what it hits: a bus shoves a car aside), power
 // (metres per second² of pull), top (the speed its pull fades to), steerFade (the speed its wheels turn half as far), brakes, grip
@@ -120,7 +120,7 @@ const LOOKS = {
   train: { colours: ['#1d1e20', '#1f4a2c', '#6e1a1a', '#1f3a66'], finish: 'satin', wear: .6, trim: '#8c8a84',
     by: { diesel: { colours: ['#1f4a2c', '#a8301f', '#1f3a66', '#c9a21a', '#b8500f'], trim: '#d8d2bc' }, coach: { colours: ['#6e1a1a', '#1f4a2c', '#1f3a66', '#5a3a1e'] } } },
   boat: { colours: ['#d6d2c6', '#1f4e79', '#8a1f1a', '#2f5d54', '#c9a21a', '#32373c'], finish: 'satin', wear: .5, trim: '#dedbd0',
-    by: { patrol: { colours: ['#7b8387', '#6a7478', '#8a8f86'], trim: '#5f676b', finish: 'matt' }, motor: { colours: ['#d6d2c6', '#a3231c', '#1d4a86', '#d19c17', '#202428'], finish: 'gloss' } } },
+    by: { patrol: { colours: ['#7b8387', '#6a7478', '#8a8f86'], trim: '#5f676b', finish: 'matt' }, police: { colours: ['#ecebe4'], trim: '#1d3a7e', finish: 'gloss', wear: .15 }, motor: { colours: ['#d6d2c6', '#a3231c', '#1d4a86', '#d19c17', '#202428'], finish: 'gloss' } } },
   plane: { colours: ['#b3b8bc', '#5b6b55', '#27456b', '#b3261e', '#d9b520', '#d8d4c8'], finish: 'satin', wear: .35, trim: '#b3261e',
     by: { jet: { colours: ['#7f878c', '#5d6a72', '#8a8f86'], trim: '#565c62', finish: 'matt' }, biplane: { colours: ['#b3261e', '#d9b520', '#27456b', '#d8d4c8'], trim: '#d8d4c8' }, twin: { trim: '#8d9296' } } },
 };
@@ -293,7 +293,8 @@ function stand(kind, v, k, opts) {
   root.userData.lit = !!k.lit;
   // a road vehicle's own dirt, rain and damage (vehicle-damage.js)
   // (and how it takes a crash: health, smoke, fire, a blast, tyres that burst, doors and bumpers that come off: vehicle-wreck.js)
-  if (ROADGOING.has(kind)) wreckable(root, shell, plan, kind, wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) }));
+  // (a boat and a helicopter take hits too: they smoke, burn and blow up; a boat then sinks and a helicopter falls, gs.craft)
+  if (ROADGOING.has(kind) || WRECKS.has(kind)) wreckable(root, shell, plan, kind, wearAndTear(root, shell, { size: plan.size, clear: plan.clear, lampOf: name => matOf(name, { ...k, lit: true }) }));
   if (plan.beacons?.length) sirens(root, plan, points, opts.seed);
   if (plan.doors?.length) hinges(root, plan, parts);
   seatsOf(root, plan, points);
@@ -344,10 +345,11 @@ function hinges(root, plan, parts) {
 function seatsOf(root, plan, points) {
   const seats = root.seats = {};
   const near = (side, z) => (root.doors || []).filter(d => d.side === side).sort((a, b) => Math.abs(a.at.z + a.length / 2 - z + .35) - Math.abs(b.at.z + b.length / 2 - z + .35))[0]?.name || null;
-  for (const name of ['driver', 'passenger', 'backL', 'backR', 'rider', 'pillion', 'pilot', 'copilot']) {
+  // (a boat's: 'helm' (at its wheel or its tiller), 'seat' (a rowing boat's thwart, at the oars), 'deck' (standing room aft); its 'passenger')
+  for (const name of ['driver', 'passenger', 'backL', 'backR', 'rider', 'pillion', 'pilot', 'copilot', 'helm', 'seat', 'deck']) {
     const p = points[name]; if (!p) continue;
     const side = plan.lean ? -1 : Math.sign(p.position.x) || -1;
-    seats[name] = { name, point: p, side, door: near(side, p.position.z), saddle: !!plan.lean, steer: name === 'driver' || name === 'rider' || name === 'pilot', hold: true, who: null };
+    seats[name] = { name, point: p, side, door: near(side, p.position.z), saddle: !!plan.lean, steer: name === 'driver' || name === 'rider' || name === 'pilot' || name === 'helm' || (name === 'seat' && !points.helm), stand: !!plan.stand?.includes(name), hold: true, who: null };
   }
 }
 

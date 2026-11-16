@@ -1,9 +1,10 @@
-// A road vehicle in a crash (vehicles.js gives every car, lorry, bus and motorbike this, on top of its wear and tear,
+// A vehicle in a crash (vehicles.js gives every car, lorry, bus, motorbike, boat and helicopter this, on top of its wear and tear,
 // vehicle-damage.js): how much more it can take (health), smoke from its engine as that runs low, then fire, then a
 // blast that chars it, blows its glass out and throws its doors off; tyres that burst; doors and bumpers knocked loose
 // by a hard hit and off by the next, to lie in the road (bodies of their own when the game has a gs.physics3d World3D).
 // Its hit() (and so World3D.vehicle's crashes) does all of this by itself. World3D.vehicle reads it back: a flat tyre
-// sits low and grips less, a smoking engine pulls less, a wreck not at all. Kit use only.
+// sits low and grips less, a smoking engine pulls less, a wreck not at all. A boat that has blown up sinks (sinking: gs.craft
+// Boat lets it settle and go under) and a helicopter's rotor is thrown off (gs.craft Hover drops it). Kit use only.
 import { Vector3, Box3, Quaternion, Euler } from 'three';
 import { Particles3D } from '../particles3d.js';
 import { sounds } from '../sound.js';
@@ -11,7 +12,7 @@ import { linksFor, linksOf } from '../links.js';
 
 const { min, max, abs, hypot, sin, random, PI } = Math, clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 // how much a hit takes off (a lorry or a bus takes about twice what a car does; a motorbike less)
-const TOUGH = { car: 1, truck: 1.8, bus: 1.9, bike: .7 };
+const TOUGH = { car: 1, truck: 1.8, bus: 1.9, bike: .7, boat: 1.5, helicopter: .8 };
 // health below which it smokes, smokes black, and burns (and then blows up after its fuse)
 export const SMOKE = .55, DARK = .3, FIRE = .12;
 const V1 = new Vector3(), V2 = new Vector3(), Q1 = new Quaternion(), E1 = new Euler();
@@ -39,6 +40,9 @@ export function wreckable(root, shell, plan, kind, dmg) {
   };
   const engineAt = (v = V1) => {
     const b = bounds(), h = b.max.y - b.min.y;
+    const P = root.points;
+    if (kind === 'boat') { const m = root.parts.motor; if (m) return m.localToWorld(v.set(0, .35, .16)); if (P.exhaust) return P.exhaust.getWorldPosition(v); return shell.localToWorld(v.set(0, b.max.y * .5, b.max.z - 1.2)); }
+    if (kind === 'helicopter') return P.smoke ? P.smoke.getWorldPosition(v) : shell.localToWorld(v.set(0, b.max.y * .85, (b.min.z + b.max.z) / 2 + .6));
     if (kind === 'bike') v.set(0, b.min.y + h * .38, (b.min.z + b.max.z) / 2);
     else if (kind === 'bus') v.set(0, b.min.y + h * .3, b.max.z - .9);
     else v.set(0, b.min.y + h * (kind === 'truck' ? .45 : .58), b.min.z + (kind === 'truck' ? .6 : (b.max.z - b.min.z) * .17));
@@ -54,6 +58,8 @@ export function wreckable(root, shell, plan, kind, dmg) {
   Object.defineProperty(root, 'wrecked', { get: () => S.blown, configurable: true });
   /** How much of its engine's pull is left, 0..1 (World3D.vehicle reads it): less as it smokes, none once it has blown up. */
   Object.defineProperty(root, 'engine', { get: () => S.blown ? 0 : S.health >= SMOKE ? 1 : .45 + S.health, configurable: true });
+  /** A boat: how far it has gone down, 0..1 (blown up it sinks; badly holed it settles and lists; 1: under). gs.craft Boat reads it. */
+  if (kind === 'boat') Object.defineProperty(root, 'sinking', { get: () => S.sink || 0, configurable: true });
   /** True while it is on fire (it blows up when its fuse runs out, unless put out). */
   Object.defineProperty(root, 'burning', { get: () => S.stage >= 3, configurable: true });
   /** Takes some of its health (1: new, 0: done for); what a hit does by itself, here for shots, fire and the game's own rules. */
@@ -142,7 +148,7 @@ export function wreckable(root, shell, plan, kind, dmg) {
         rec.body.twist((random() - .5) * 4, (random() - .5) * 3, (random() - .5) * 4);
       } catch (_) { rec.body = null; }   // (a world not ready yet: it falls by itself, below)
     }
-    if (!rec.body) { rec.v.copy(v); rec.w.set((random() - .5) * 6, (random() - .5) * 4, (random() - .5) * 6); rec.ground = root.getWorldPosition(V2).y; }
+    if (!rec.body) { rec.v.copy(v); rec.w.set((random() - .5) * 6, (random() - .5) * 4, (random() - .5) * 6); rec.ground = kind === 'helicopter' ? 0 : root.getWorldPosition(V2).y; }
     tell('off', { vehicle: root, name, part });
     return root;
   };
@@ -176,9 +182,10 @@ export function wreckable(root, shell, plan, kind, dmg) {
   root.blow = ({ power = 1 } = {}) => {
     if (S.blown) return root;
     S.blown = true; S.health = 0; S.fuse = 0;
-    const at = middle(new Vector3()), r = (kind === 'bike' ? 4 : kind === 'car' ? 6 : 7.5) * power;
+    const at = middle(new Vector3()), r = (kind === 'bike' ? 4 : kind === 'car' || kind === 'helicopter' ? 6 : 7.5) * power;
     if (!fx) fx = particles();
     fx?.boom(at, { size: (kind === 'bike' ? 1.3 : 2.2) * power });
+    if (kind === 'helicopter' && root.parts.rotor) root.detach('rotor', { push: { x: (random() - .5) * 6, y: 5 + random() * 3, z: (random() - .5) * 6 } });   // (its rotor thrown off: it falls)
     sounds.boom?.(.55);
     // charred: its paint black and dull, sooty; its glass gone in a shower of bits; its lamps out
     for (const m of dmg.meshes(new Set(['paint', 'paint2', 'chrome', 'plates', 'plate', 'seat', 'liner']))) { dmg.own(m); const M = m.material; M.color?.set(m.name === 'chrome' ? '#33302c' : m.name === 'seat' || m.name === 'liner' ? '#141210' : m.name === 'plate' ? '#3a3631' : '#1f1c1a'); M.roughness = .95; M.metalness = m.name === 'chrome' ? .5 : .15; if ('clearcoat' in M) M.clearcoat = 0; if ('sheen' in M) M.sheen = 0; }
@@ -235,6 +242,11 @@ export function wreckable(root, shell, plan, kind, dmg) {
     S.t += dt;
     if (S.stage === 3 && !S.blown) { S.fuse -= dt; S.health = max(0, min(S.health, FIRE * clamp(S.fuse / 6, 0, 1))); if (S.fuse <= 0) root.blow(); }
     if (fire2 && S.blown && (S.burnt += dt) > 40) { fire2.stop(); fire2 = null; fire?.stop(); fire = null; }   // (a burnt-out shell smokes on)
+    if (kind === 'boat') {   // a boat blown up goes down in a quarter of a minute; one badly holed settles low and lists, and no further
+      const to = S.blown ? 1 : S.health < DARK ? .3 * (1 - S.health / DARK) : 0;
+      if ((S.sink || 0) < to) S.sink = min(to, (S.sink || 0) + dt / (S.blown ? 14 : 30));
+      if (S.sink > .55 && (fire || fire2 || smoke)) { fire?.stop(); fire2?.stop(); fire = fire2 = null; if (S.sink >= 1) { smoke?.stop(); smoke = null; } }   // (the water puts its fire out)
+    }
     swing(dt); fall(dt); follow(); fx?.update(dt);
     return root;
   };
@@ -247,7 +259,7 @@ export function wreckable(root, shell, plan, kind, dmg) {
     loose.clear();
     for (const t of tyres) { t.flat = false; const w = t.wheel.children[0]; if (w) w.scale.set(1, 1, 1); t.wheel.position.y = t.y; }
     for (const m of hid) m.visible = true; hid.length = 0;
-    S.health = 1; S.blown = false; S.fuse = 0; S.burnt = 0; S.stage = 0;
+    S.health = 1; S.blown = false; S.fuse = 0; S.burnt = 0; S.stage = 0; S.sink = 0;
     smoke?.remove(); fire?.remove(); fire2?.remove(); smoke = fire = fire2 = null; fx?.dispose(); fx = null;
     return mend0 ? mend0() : root;
   };

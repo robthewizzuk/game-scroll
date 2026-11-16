@@ -3553,7 +3553,8 @@ export interface CombatPart {
    * car or a name in car.points ('driver'). width (car.size.width or 1.8), screen (.7), back (1.4), side (1.3 rad arc), up (.6), down (.5),
    * lean (.3 m out of the window), eye (.55 over the seat), shake (1).
    */
-  DriveBy: new (car?: Loose, o?: { seat?: string | number[] | P3; width?: number | null; screen?: number; back?: number; front?: boolean; rear?: boolean; side?: number; up?: number; down?: number; lean?: number; eye?: number; shake?: number }) => {
+  /** Shooting from a seat. A car's window seat aims out through its side (front, back) with the glass in the way; an open seat (a boat's helm, seat or deck, a motorbike's rider or pillion; open: true for any) aims nearly all the way round (around: radians either side of ahead, 2.6), with no glass in the way. */
+  DriveBy: new (car?: Loose, o?: { seat?: string | number[] | P3; width?: number | null; screen?: number; back?: number; front?: boolean; rear?: boolean; side?: number; up?: number; down?: number; lean?: number; eye?: number; shake?: number; open?: boolean | null; around?: number }) => {
     car: Loose; dir: P3; from: P3; through: 'left' | 'right' | 'front' | 'back'; glass: P3 | null; pose: 'carAimL' | 'carAimR' | 'carAimF'; turn: number; pitch: number; lean: number; spread: number; vel: P3; speed: number;
     /** After the car moved: its speed and how much the ride throws the aim. */
     update(dt: number): Loose;
@@ -3823,7 +3824,7 @@ export interface VehicleOptions {
   /**
    * Which one of its kind (the first is what you get with none; vehicle.kinds lists them): a car 'saloon' | 'hatch' | 'estate' | 'sports' | 'van' | 'pickup' | 'jeep' | 'police' | 'taxi' | 'ambulance'; a truck 'flat' | 'canvas' | 'box' | 'fire' (a fire engine with a ladder on a turntable: aim(turn, lift)) | 'tanker';
    * a bus 'city' | 'double' (a double decker) | 'coach'; a motorbike ('bike') 'road' | 'sport' | 'scooter' | 'dirt'; a helicopter 'light' | 'police' (a searchlight) | 'medic';
-   * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'guard' (a guard's van) | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol'; a plane 'prop' | 'biplane' | 'twin' | 'jet'.
+   * a tank 'medium' | 'light' | 'heavy'; a train's engine 'steam' (it brings its tender) | 'diesel', or one wagon 'tender' | 'van' | 'open' | 'flat' | 'tanker' | 'guard' (a guard's van) | 'coach'; a boat 'rowboat' | 'motor' | 'fishing' | 'patrol' | 'police' (a police launch: wheelhouse, light bar, rails); a plane 'prop' | 'biplane' | 'twin' | 'jet'.
    */
   style?: string;
   /** Which of its kind's colours it gets, and where its wear falls: the same on every phone. */
@@ -3931,16 +3932,20 @@ export type VehicleT = Loose & {
   shut?(which?: string | number | (string | number)[], o?: { speed?: number }): VehicleT;
   /** A door by its name or by a seat's, or null. */
   door?(which: string | number): VehicleDoor | null;
-  /** Its seats by name: a car's 'driver', 'passenger', 'backL', 'backR'; a motorbike's 'rider', 'pillion'; a helicopter's 'pilot', 'copilot'... point (where the cushion is), the door beside it, side, saddle (astride), steer (it has the wheel), hold (hands on the wheel or the bars while sat: false frees them, to shoot out of the window) and who sits there. */
-  seats: Record<string, { name: string; point: Loose; door: string | null; side: number; saddle: boolean; steer: boolean; hold: boolean; who: Loose | null }>;
+  /** Its seats by name: a car's 'driver', 'passenger', 'backL', 'backR'; a motorbike's 'rider', 'pillion'; a helicopter's 'pilot', 'copilot'; a boat's 'helm', 'seat', 'passenger', 'deck'... point (where the cushion is), the door beside it, side, saddle (astride), steer (it has the wheel), hold (hands on the wheel or the bars while sat: false frees them, to shoot out of the window), stand (stood there, as at a boat's helm or on its deck) and who sits there. */
+  seats: Record<string, { name: string; point: Loose; door: string | null; side: number; saddle: boolean; steer: boolean; hold: boolean; stand: boolean; who: Loose | null }>;
   /**
    * Someone gets in: walks to the door (round the car if need be, at walk metres a second), opens it with a hand on its handle, steps in and sits, and pulls it shut (shut: false leaves it open); a motorbike is got astride from its left.
    * seat: a seat's name (the one with the wheel when left out). From the start the person is the vehicle's: its update(dt) runs their rig and puts their hands on the wheel, so the game leaves anyone with person.vehicle set alone.
    * Someone already in that seat is pulled out (pull()).
+   * A boat is boarded by stepping over its rail from a dock beside it, or from the water (from: 'water', or anyone below the waterline) by climbing out over the side.
    */
-  enter?(person: Loose, o?: { seat?: string; walk?: number; shut?: boolean }): VehicleTrip;
-  /** Someone gets out (a seat's name, or the person; the wheel's seat when left out): opens the door, steps out, stands clear and shuts it. They are the game's again when the trip is done. null if nobody sits there. */
-  exit?(which?: string | Loose | null, o?: { shut?: boolean }): VehicleTrip | null;
+  enter?(person: Loose, o?: { seat?: string; walk?: number; shut?: boolean; from?: 'land' | 'water' }): VehicleTrip;
+  /**
+   * Someone gets out (a seat's name, or the person; the wheel's seat when left out): opens the door, steps out, stands clear and shuts it. They are the game's again when the trip is done. null if nobody sits there.
+   * Off a boat: over the rail onto `to`, else onto a dock or shore beside it (the World3D's floor), else into the water, treading it (trip.into 'land' | 'water').
+   */
+  exit?(which?: string | Loose | null, o?: { shut?: boolean; to?: P3 }): (VehicleTrip & { into?: 'land' | 'water' }) | null;
   /** by pulls whoever sits in the seat out (thrown down by their gs.characters.Reactions where they have one: made for them or person.react), then gets in and shuts the door. trip.thrown is who came out, from that moment. With nobody there it is enter(). */
   pull?(which: string | null, by: Loose, o?: { walk?: number; throw?: number }): VehicleTrip;
   /** Puts someone in a seat at once (a car that comes with its driver), posed and holding the wheel. */
@@ -3980,8 +3985,10 @@ export type VehicleT = Loose & {
   readonly health?: number;
   /** How much of its engine's pull is left, 0..1: less as it smokes, none once it has blown up (World3D.vehicle reads it). */
   readonly engine?: number;
-  /** True once it has blown up: a burnt-out shell. */
+  /** True once it has blown up: a burnt-out shell. Boats and helicopters wreck too: a helicopter's rotor flies off and it falls; a boat burns and sinks. */
   readonly wrecked?: boolean;
+  /** A boat's: how far it has gone down, 0 afloat .. 1 under (it sinks over some seconds once blown up; low on health it sits lower and lists). gs.craft.Boat follows it. */
+  readonly sinking?: number;
   /** True while it is on fire. */
   readonly burning?: boolean;
   /** Takes health off for the game's own reasons (shots, a fire, a fall): amount as a hit takes it (.16 a hard knock for a car). */
@@ -4840,6 +4847,7 @@ export interface CityRoomPlan {
 export interface CityRoom extends CityRoomPlan {
   name: string; city: CityWorld; door: CityDoorway; /** False once let go of. */ live: boolean; /** Its door is (mostly) shut. */ shut: boolean; group: Loose;
   /** Is p on its floor? */ inside(p: { x: number; z?: number; y?: number }): boolean;
+  /** Its people while made (Interiors people): each a gs.models human with role 'keeper' | 'patron', and the keeper (or null). */ people?: Loose[]; keeper?: Loose | null;
   /** Is there room for a body of radius r at x, z (in it and clear of its walls and furniture)? */ free(x: number, z: number, r?: number): boolean;
 }
 /** A parked car (City option parked): where it is, which way it faces and its box. */
@@ -5138,20 +5146,38 @@ export interface CityPart {
    * Options: max stars (5), cars (most police cars at once), officers (people on foot; Next Gen), brains (false:
    * the rules alone), sight (metres a police car sees by day, 70).
    */
-  Wanted: (new (city: CityWorld | CityMetro, api?: Loose | null, o?: { max?: number; cars?: number | null; officers?: boolean; brains?: boolean; sight?: number }) => {
+  /**
+   * The police. From two stars officers who get out are armed (Health, a gs.combat gun, gs.characters Reactions; a gs.tactics Squad
+   * takes cover and flanks) and fire at the player; from three a helicopter comes (its searchlight on the player by night, keeping
+   * them seen); on the water police launches come after a player in a boat or swimming. Tiny Brains choose how the helicopter and
+   * the launches close in (brains), learning from escapes and busts like the cars' brain.
+   */
+  Wanted: (new (city: CityWorld | CityMetro, api?: Loose | null, o?: { max?: number; cars?: number | null; officers?: boolean; brains?: boolean; sight?: number;
+    /** Officers armed from two stars (true). */ armed?: boolean; /** The police helicopter at three stars and up (true). */ air?: boolean; /** Police launches on the water (true). */ water?: boolean }) => {
     stars: number; heat: number; seen: boolean; /** Seconds the police still know where you are after losing sight (a radio call). */ know: number;
     /** Where they search while you are out of sight ({ x, z, r }), else null. */ search: { x: number; z: number; r: number } | null;
     /** Seconds until you are clear, out of sight. */ left: number; /** 0..1: how close to being caught (stopped near police). */ busting: number;
     units: WantedUnit[]; officers: Loose[]; /** 0..1: the brain's skill dial (follows this player's escape rate). */ readonly skill: number; readonly escapeTime: number;
     /** Back to no stars and no police (in reset(), after city.reset()). */ reset(): Loose;
-    /** 'stars' (stars, was), 'seen' (at), 'lost' (last seen), 'busted', 'escaped', 'call' ({ at, about }), 'block' (unit). */
-    on(name: 'stars' | 'seen' | 'lost' | 'busted' | 'escaped' | 'call' | 'block' | string, fn: (...a: Loose[]) => void): Loose;
+    /**
+     * 'stars' (stars, was), 'seen' (at), 'lost' (last seen), 'busted', 'escaped', 'call' ({ at, about }), 'block' (unit);
+     * 'shot' ({ by, from, to, dir, hit, damage, kind }: an officer or a launch fired at the player; hit: it struck them, damage is the game's to take off),
+     * 'heli' and 'boat' (one arrived), 'officer down' (officer), 'heli down' and 'boat down' (shot down or wrecked).
+     */
+    on(name: 'stars' | 'seen' | 'lost' | 'busted' | 'escaped' | 'call' | 'block' | 'shot' | 'heli' | 'boat' | 'officer down' | 'heli down' | 'boat down' | string, fn: (...a: Loose[]) => void): Loose;
+    /** The player fires: the first officer, helicopter or launch along the line within range (not through walls) is hit (officers: head shots twice), and it counts as shooting at the police. What was hit, or null. */
+    shoot(from: P3, dir: P3, o?: { damage?: number; range?: number }): { kind: 'officer' | 'helicopter' | 'boat'; target: Loose; point: P3; d: number; head?: boolean } | null;
+    /** Hurts one officer (from the game's own blast, car or fists). */ hitOfficer(o: Loose, damage: number, at?: P3 | null, from?: P3 | null): void;
+    /** The police helicopter while it is out: craft (gs.craft Hover), model, tactic, down. */ readonly heli: { craft: Loose; model: VehicleT; tactic: string; down: boolean; arrived: boolean } | null;
+    /** The police launches out now: craft (gs.craft Boat), model, tactic, down. */ readonly boats: { craft: Loose; model: VehicleT; tactic: string; down: boolean }[];
+    /** Its Tiny Brains, to save (brain.save()) or look into: the cars' tactics, the turn guesser, the helicopter's and launches' support brain, the squad's coach. */
+    readonly brains: { cars: Loose | null; turns: Loose | null; support: Loose | null; squad: Loose | null };
     /** The player did something: 'police' (seen by them), 'reported' (a witness will phone it in) or 'unseen'. Weight with o.weight, else CRIMES[kind]. */
     crime(kind: 'speeding' | 'crash' | 'wreck' | 'theft' | 'fight' | 'hit' | 'cop' | 'shots' | string, at: { x: number; z?: number; y?: number }, o?: { weight?: number }): 'police' | 'reported' | 'unseen';
     /** Straight to a number of stars (0 clears them). */ set(stars: number): Loose;
     /** Seen now, at a point (a sighting called in). */ seenNow(at: { x: number; z: number; vx?: number; vz?: number }): void;
     /** Once a frame after city.update(): the player, and their World3D body so the crashes and knocks it causes count by themselves. */
-    update(dt: number, player: { x: number; z: number; heading: number; v: number; car?: boolean; body?: Loose }): Loose;
+    update(dt: number, player: { x: number; z: number; heading: number; v: number; car?: boolean; body?: Loose; /** Height (on foot, for shots and the water). */ y?: number; /** In a boat / in the water: police launches come. */ boat?: boolean; swim?: boolean }): Loose;
     /** Can a police car or officer see this point? */ policeSee(p: { x: number; z?: number; y?: number }, r?: number | null): boolean;
     /** The road out of the player's next junction they are likely to take, d metres along it (on a Metro's roads between, d metres on along the road: road, s). */ ahead(d?: number): { x: number; z: number; y?: number; heading: number; edge?: Loose; road?: CityRoad; s?: number; turn: 'left' | 'straight' | 'right'; node?: Loose } | null;
   }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown> };
@@ -5166,7 +5192,11 @@ export interface CityPart {
    */
   Interiors: new (city: CityWorld | CityMetro, o?: { /** A World3D for the rooms' bodies (the game's own, if left out; false for none). */ world?: Loose | false | null; /** Metres from a door within which the room behind it is made (22). */ reach?: number;
     /** Which room is behind a door: a name from INSIDE_KINDS, or null for a door that stays shut (default roomKind). */ kinds?: ((b: CityBuilding) => string | null) | null;
-    /** The doors open by themselves as the player comes to a made room (true; false: the game opens them with city.door(b, 1)). */ auto?: boolean; /** ms a frame for making a room (2). */ budget?: number; seed?: number; link?: boolean }) => CityInteriors;
+    /** The doors open by themselves as the player comes to a made room (true; false: the game opens them with city.door(b, 1)). */ auto?: boolean; /** ms a frame for making a room (2). */ budget?: number; seed?: number; link?: boolean;
+    /** People in the rooms on a Next Gen view (true, or how many patrons): a keeper behind the counter and patrons sat or stood about, as many as ROOM_PEOPLE for the phone. */ people?: boolean | number;
+    /** Called as the player comes into a room / goes out of it (as on('enter') and on('leave')). */ onEnter?: (room: CityRoom) => void; onLeave?: (room: CityRoom) => void }) => CityInteriors;
+  /** How many patrons a room gets on a top, mid and low phone. */
+  ROOM_PEOPLE: { top: number; mid: number; low: number };
   /** The plan of the room behind building b's door, as plain numbers (no view); the same every time for a building. */
   roomPlan(b: CityBuilding, o?: { kind?: string | null; seed?: number }): CityRoomPlan | null;
   /** The kind of room behind a door when none is chosen: shops a store, a diner or a bar, houses a home, sheds a warehouse, the rest a lobby. */
@@ -5281,6 +5311,8 @@ export interface CityInteriors {
   /** The made room p is in, or null. */ at(p: { x: number; z?: number; y?: number }): CityRoom | null;
   /** Once a frame, after the city's update: makes the room behind the nearest door, opens and shuts the doors, says where the player is. */
   update(dt: number, player: { x: number; z?: number; y?: number }): this;
+  /** 'enter' and 'leave' (room) as the player comes in and goes out; 'made' (room) once a room and its people are made. */
+  on(name: 'enter' | 'leave' | 'made' | string, fn: (room: CityRoom) => void): this;
   dispose(): void;
 }
 export interface CityWorld {
@@ -5376,12 +5408,17 @@ export interface CraftPart {
     update(dt: number, i?: { throttle?: number; pitch?: number; roll?: number; yaw?: number; brake?: boolean }): Loose; reset(at: P3, heading?: number, speed?: number): Loose;
   };
   /** water: anything with height(x, z) (a gs.outdoors Water or Sea, gs.flow level(x, z), a function's object); null, or the options in its place: the newest Water or Sea the game made; world: a World3D, solid: it shoves floating crates and stops at docks; height: its hull's (m). */
-  Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number; /** A World3D, solid. Left out: the one the game made; false: none. */ world?: Loose | false; height?: number; link?: boolean }) => {
+  Boat: new (water?: { height?(x: number, z: number): number; normal?(x: number, z: number): P3; [k: string]: Loose } | null, o?: { at?: P3; heading?: number; power?: number; top?: number; turn?: number; drift?: number; drag?: number; length?: number; width?: number; draft?: number; /** A World3D, solid. Left out: the one the game made; false: none. */ world?: Loose | false; height?: number; link?: boolean;
+    /** A gs.models.vehicle('boat') it moves and floats: its size sets length and width, crashes hit() it, its engine and sinking slow it, it lists and goes down once wrecked. */ vehicle?: VehicleT | Loose | null }) => {
     x: number; y: number; z: number; heading: number; vx: number; vz: number; quat: Loose; wake: Loose[]; air: number; readonly pos: P3; readonly speed: number; readonly forward: P3; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
+    /** True once its vehicle has gone under. */ sunk: boolean;
     update(dt: number, i?: { throttle?: number; steer?: number }): Loose;
   };
-  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; /** a World3D, solid. Left out: the one the game made before this; false: none. */ world?: Loose | false; size?: [number, number, number]; link?: boolean }) => {
-    pos: P3; vel: P3; heading: number; quat: Loose; onGround: boolean; readonly speed: number; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose; update(dt: number, i?: { x?: number; y?: number; up?: number; yaw?: number }): Loose;
+  Hover: new (o?: { at?: P3; heading?: number; climb?: number; speed?: number; accel?: number; turn?: number; tilt?: number; gravity?: number; ground?: ((x: number, z: number) => number) | null; /** a World3D, solid. Left out: the one the game made before this; false: none. */ world?: Loose | false; size?: [number, number, number]; link?: boolean;
+    /** A gs.models.vehicle('helicopter') it flies (pos is its skids): a failing engine sinks it and swings its tail, a wrecked one falls spinning; landing harder than crashSpeed (m/s, 6), or falling, crashes it (harm or blow). */ vehicle?: VehicleT | Loose | null; crashSpeed?: number }) => {
+    pos: P3; vel: P3; heading: number; quat: Loose; onGround: boolean; readonly speed: number; crash: { thing: Loose; normal: P3; point: P3; speed: number } | null; rider?: Loose;
+    /** True once its vehicle came down hard (crashed). */ crashed: boolean;
+    update(dt: number, i?: { x?: number; y?: number; up?: number; yaw?: number }): Loose;
   };
   /** Makes a physics3d body float on Water (or anything with height(x, z)). */
   /** water: null (or the options in its place): the newest Water or Sea the game made. */

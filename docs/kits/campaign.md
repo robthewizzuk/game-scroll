@@ -8,9 +8,9 @@ A campaign of levels with progress.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CampaignPart`, line 3798), where every option and field is described.
+From `src/gamescroll.d.ts` (`CampaignPart`, line 3799), where every option and field is described.
 
-- `Campaign: new (chapters: { id: string; name?: string; needs?: { stars?: number; done?: string }; missions: CampaignMission[]; [k: string]: Loose }[], o?: { extras?: Re…` (:3799)
+- `Campaign: new (chapters: { id: string; name?: string; needs?: { stars?: number; done?: string }; missions: CampaignMission[]; [k: string]: Loose }[], o?: { extras?: Re…` (:3800)
 
 ## From the maker kit
 
