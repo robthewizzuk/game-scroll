@@ -105,7 +105,7 @@ const piece = (id, pcm, text, last, speed = 0) => {
  * its voice, its pace, and a breath before each sentence after the first and in long pauses. Change HUMAN with them, so
  * lines kept from before are made again.
  */
-const HUMAN = 'h3', LIVELY_WIDE = .3;
+const HUMAN = 'h4', LIVELY_WIDE = .3;
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
   let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf('');

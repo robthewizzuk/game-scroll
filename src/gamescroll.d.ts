@@ -317,7 +317,7 @@ export interface SoundPart {
    * ({ text, voice, rate, lively }, as said): the built-in voice drifts a little toward it in liveliness and pace, as people in a
    * conversation do (a Cutscene gives it by itself; left out, a line answers the last one said by another voice in the last 8 s).
    * mood ('angry', 'happy', 'scared', 'sad'): the built-in voice says it as its own speaker sounds in that mood (pitch, range,
-   * pace, loudness and breath as actors move them); the device's voices move pitch, pace and loudness only.
+   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only.
    */
   say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null }): Promise<boolean>;
   /**

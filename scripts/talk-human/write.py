@@ -9,7 +9,7 @@ for f in sorted(glob.glob(f'{WORK}/tuned/*.json')):
     r = json.load(open(f)); p = r['params']; v = r['voice']
     own = REF.get(v); share = min(1, max(.3, (own['npause'] if own else .4) / .36))
     rows[v] = dict(wide=p['wide'], drift=p['drift'], jitter=p['jitter'], fall=p['fall'], shimmer=p['shimmer'], endJitter=p['endJitter'],
-                   creak=p['creak'], breathy=p['breathy'], lengthen=p['lengthen'], tone=p['tone'], tempo=p['tempo'], pause=share)
+                   creak=p['creak'], breathy=0, lengthen=p['lengthen'], tone=0, tempo=p['tempo'], pause=share)
 KEYS = ['wide', 'drift', 'jitter', 'fall', 'shimmer', 'endJitter', 'creak', 'breathy', 'lengthen', 'tone', 'tempo', 'pause']
 RND = dict(wide=2, drift=4, jitter=4, fall=2, shimmer=3, endJitter=2, creak=2, breathy=3, lengthen=2, tone=4, tempo=2, pause=2)
 med = {k: round(float(np.median([r[k] for r in rows.values()])), RND[k]) if rows else None for k in KEYS}
@@ -31,13 +31,14 @@ const MIDDLE = {fmt(med)};
 const of = name => {{ const v = FIT[name] || MIDDLE; const o = {{ rise: 3 }}; KEYS.forEach((k, i) => {{ o[k] = v[i]; }}); return o; }};
 // How a mood moves them: measured in CREMA-D, each of its ten clearest actors acting a mood against the same actor's calm
 // reading (median over 110 pairs), at the share the moods are acted at (0.6). Anger and joy are clearer (less jitter at
-// the ends, less creak, less breath); sadness is breathier and less steady; fear and joy fall further at the end.
+// the ends, less creak); sadness is less steady; fear, joy and sadness fall further at the end. (Breath isn't added:
+// as noise it was heard as hiss.)
 // Each: [times, plus].
 const MOOD = {{
   angry: {{ jitter: [.93, 0], shimmer: [.94, 0], endJitter: [.75, 0], creak: [.85, 0], breathy: [.8, 0] }},
   happy: {{ endJitter: [.8, 0], creak: [.94, 0], breathy: [.75, 0], fall: [1, 1.1] }},
   scared: {{ jitter: [1.04, 0], endJitter: [.9, 0], creak: [.9, 0], breathy: [.7, 0], fall: [1, .5] }},
-  sad: {{ jitter: [1.1, 0], shimmer: [1.04, 0], breathy: [1.3, .02], fall: [1, .9] }},
+  sad: {{ jitter: [1.1, 0], shimmer: [1.04, 0], fall: [1, .9] }},
 }};
 /** A voice's settings: 'anna', 'anna~sad' (in a mood), 'anna+vera' (a voice between two: halfway between theirs). */
 export function humanOf(name) {{

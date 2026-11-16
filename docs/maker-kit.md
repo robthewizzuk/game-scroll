@@ -3303,7 +3303,7 @@ between, and a part can have its own delivery: `say(['Bold.', .3, 'Visionary.', 
 
 **Mood and manner.** `say('Get out of my shop!', { voice: 'man', mood: 'angry' })`: `'angry'`, `'happy'`,
 `'scared'` or `'sad'`. The app's built-in voice says it as its own speaker sounds in that mood (higher or lower,
-faster or slower, louder or softer and breathier, as actors move them); the phone's voices move pitch, pace and
+faster or slower, louder or softer, as actors move them); the phone's voices move pitch, pace and
 loudness only. `casual: .6` makes a character chat rather than read: now and then a "well," or "um," or "I - I",
 the same ones each time the line is said. A line that answers another drifts a little toward its liveliness and
 pace, as people in a conversation do: a `Cutscene` gives each line the one before it, or pass

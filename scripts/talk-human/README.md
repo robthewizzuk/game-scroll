@@ -4,7 +4,7 @@ Every built-in voice is a real person's: a VCTK speaker, a LibriVox reader, a do
 (`src/kit/talk-files.js` credits each). The model says lines in that voice, but more evenly than a person
 does: narrower pitch, quicker, no pauses at commas, endings too clean. `src/kit/voice-pitch.js` `humanize()`
 puts the person back after the model speaks (pitch movement and waver, a falling or rising end, the last
-syllable drawn out, roughness and creak at the ends, breath, a room's quiet, pace), and
+syllable drawn out, roughness and creak at the ends, pace), and
 `src/kit/voice-human.js` holds how much of each for every voice, tuned here against that voice's own real
 recordings. These scripts make that table again (Python 3 with `pip install praat-parselmouth librosa
 soundfile onnxruntime fsspec pyarrow`; work files go to `ml-cache/talk-human/`, or `$WORK`):
@@ -29,6 +29,10 @@ speakers of its kind.
 scores, nor more than 0.35 under the voice as the model speaks it. That model scores real people lower than
 clean synthetic speech (VCTK speakers 3.8 to 4.35, the model's voices about 4.4), so it guards against harm
 (distortion, warble), not against sounding human.
+
+**Not added: breath noise and room tone.** They brought the noise in a voice nearer its speaker's (real
+recordings have air and a room in them), but were heard as hiss and cost the most quality of anything here
+(4.27 to 4.13 over eight voices), so the tuner leaves them out.
 
 **Pace** is set straight from the measured syllable rate (slowing a voice costs no quality), between 0.84 and
 1.08. How often a voice pauses at a comma follows how often its speaker pauses.
