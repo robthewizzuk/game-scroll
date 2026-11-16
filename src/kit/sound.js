@@ -1019,10 +1019,10 @@ register('mixer', { stop: () => mixer.reset() });
 // size as a small change of pitch and no fx. shaped() says which: true once a line has played shaped,
 // false where it can't be, null before the first try. A shaped line starts a moment later than a plain
 // one (the phone writes all of it first), so open with a short pause: say([.2, 'Ah. A door.'], ...).
-// The Mac, Windows and Linux app and the phone apps have a voice of their own built in (talk.js: Pocket TTS 7M, 23 voices
+// The Mac, Windows and Linux app and the phone apps have a voice of their own built in (talk.js: Pocket TTS 7M, 45 voices
 // and blends of two): there every English line is written to sound that way and played through the mixer, shaped or not,
 // a sentence at a time as it is written, and the cast comes from its voices. prepare(line, o) writes one ahead. Until it
-// has loaded (the first line ever, a 13 MB download), and for languages other than English, the device's own voices say it.
+// has loaded (the first line ever, a 28 MB download), and for languages other than English, the device's own voices say it.
 const TTS = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TextToSpeech') ? registerPlugin('TextToSpeech') : null;
 const RENDER = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SpeechAudio') ? registerPlugin('SpeechAudio') : null;   // plugins/speech-audio
 let talkingNow = 0, talkGen = 0, cancelTalk = null, voiceList = null;

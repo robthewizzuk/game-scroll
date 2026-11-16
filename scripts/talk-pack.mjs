@@ -4,6 +4,8 @@
 //                                                instead of downloading them (Hugging Face, at the pinned revision)
 //   --from-big <dir>                             the 100M model's folder, for its decoder (TALK_SOURCE.decoderDir;
 //                                                downloaded, only the decoder's part of its 219 MB file is fetched)
+// Voices marked own: true in talk-files.js are not Kyutai's: Kyutai's voice-cloning model heard them from a licensed
+// recording (scripts/talk-voices/clone.py), and they are kept in scripts/talk-voices/<name>.safetensors.
 // scripts/fetch-ml.mjs runs it too, so the games workflow uploads the file with the face tracking files. The file
 // comes out the same every time; its SHA-256 must match TALK_SHA256 (the app checks it too), or this stops.
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -23,11 +25,18 @@ export function safetensors(buf) {
     if (k === '__metadata__') continue;
     const [a, z] = v.data_offsets, raw = b.buffer.slice(b.byteOffset + base + a, b.byteOffset + base + z);
     const t = v.dtype === 'F32' ? new Float32Array(raw) : v.dtype === 'I64' ? Float32Array.from(new BigInt64Array(raw), Number)
-      : v.dtype === 'BF16' ? new Float32Array(Uint32Array.from(new Uint16Array(raw), h => h << 16).buffer) : null;
+      : v.dtype === 'BF16' ? new Float32Array(Uint32Array.from(new Uint16Array(raw), h => h << 16).buffer)
+      : v.dtype === 'F16' ? Float32Array.from(new Uint16Array(raw), half) : null;
     if (!t) throw new Error(`talk-pack: ${k} is ${v.dtype}`);
     t.shape = v.shape; out[k] = t;
   }
   return out;
+}
+
+/** A 16-bit float as a number. */
+function half(h) {
+  const e = (h >> 10) & 31, m = h & 1023, s = h & 32768 ? -1 : 1;
+  return e === 0 ? s * m * 2 ** -24 : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * 2 ** (e - 15);
 }
 
 const urlOf = (dir, rel) => `https://huggingface.co/${TALK_SOURCE.repo}/resolve/${TALK_SOURCE.revision}/${dir}/${rel}`;
@@ -49,7 +58,7 @@ async function source(from) {
   const weights = safetensors(await read('model.safetensors'));
   const tok = JSON.parse((await read('tokenizer.json')).toString());
   const voices = [];
-  for (const v of TALK_VOICES) voices.push({ ...v, file: safetensors(await read(`embeddings/${v.name}.safetensors`)) });
+  for (const v of TALK_VOICES) voices.push({ ...v, file: safetensors(v.own ? readFileSync(join(ROOT, 'scripts/talk-voices', `${v.name}.safetensors`)) : await read(`embeddings/${v.name}.safetensors`)) });
   return { weights, tok, voices };
 }
 
@@ -64,7 +73,7 @@ export async function build(from = null, fromBig = null) {
   const tensors = {};
   for (const n of [...used].sort()) { if (!weights(n)) throw new Error(`talk-pack: no ${n}`); tensors[n] = weights(n); }
   if (tok.model?.type !== 'Unigram' || !tok.model.byte_fallback) throw new Error('talk-pack: the word pieces are not the kind the engine reads');
-  const cast = voices.map(({ name, kind, hz, lang, credit, file }) => {
+  const cast = voices.map(({ name, kind, hz, lang, credit, own, file }) => {
     const k = [], v = []; let pos = 0;
     for (let l = 0; ; l++) {
       const c = file[`transformer.layers.${l}.self_attn/cache`]; if (!c) break;
@@ -73,7 +82,7 @@ export async function build(from = null, fromBig = null) {
       pos = Math.min(L, at);
       k.push(c.subarray(0, pos * 128)); v.push(c.subarray(n, n + pos * 128));
     }
-    return { name, kind, lang, credit: `${credit}; voice state from Kyutai TTS voices`, hz, pos, k, v };
+    return { name, kind, lang, credit: `${credit}; voice state from ${own ? 'Kyutai\'s voice-cloning model' : 'Kyutai TTS voices'}`, hz, pos, k, v };
   });
   return pack({ tensors, pieces, scores, voices: cast, about: TALK_ABOUT, mimi: MIMI_BIG });
 }

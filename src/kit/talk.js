@@ -45,7 +45,7 @@ const NUDGE = [1, .9, 1.1, .84];
  * Casts a built-in voice for what a game asked for (voices.js wantOf): { at (in ownVoices()), pitch, voiceURI } or null
  * for a language it doesn't speak. Like voices.js cast(), but a cast bigger than the voices in the accent asked for goes
  * on to the other English voices of that kind, then to voices between two of them ('gs-voice:anna+vera', the nearest
- * accents paired first: 55 more women, 36 more men), before any is used twice (with a pitch nudge).
+ * accents paired first: 190 more women, 231 more men), before any is used twice (with a pitch nudge).
  */
 export function castOwn(want) {
   const list = ownVoices(), low = s => String(s || '').toLowerCase();

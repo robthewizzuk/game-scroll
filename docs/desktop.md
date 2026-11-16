@@ -186,9 +186,9 @@ The engine reads `window.gsDesktop` (`src/desktop.js`) where a computer differs 
 
 **Its own voice.** Characters who speak (`gs.sound.say`) use a voice built into the app, the same on every
 computer (and in the phone apps): Kyutai's Pocket TTS 7M with the decoder of their 100M model (`src/kit/talk.js`,
-`pocket-tts.js`), a small speech model ported to plain JavaScript and WebAssembly and run in background workers, with 23 voices from speakers who gave them
-under open licences (`src/kit/talk-files.js`; the credits are under Settings › Licence), and 91 more made between two
-of them when a cast needs more. Its file (21.5 MB of 8-bit numbers, packed from Kyutai's own files by
+`pocket-tts.js`), a small speech model ported to plain JavaScript and WebAssembly and run in background workers, with 45 voices from speakers who gave them
+under open licences (`src/kit/talk-files.js`; the credits are under Settings › Licence), and 421 more made between two
+of them when a cast needs more. Its file (28.3 MB of 8-bit numbers, packed from Kyutai's own files by
 `scripts/talk-pack.mjs`, which fetches only the decoder's part of the 100M model's 219 MB file) downloads from the
 games host the first time a character speaks, is checked against its SHA-256 and stays in the cache. Where the device
 has the threads, workers share each line as a production line (`pocket-tts.js` `cutsFor`; 4 threads: two, the text
