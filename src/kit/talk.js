@@ -1,20 +1,21 @@
-// The app's own voice: Kyutai's Pocket TTS 7M, built in, so a character sounds the same on a Mac, a Windows PC, a
-// SteamOS handheld (whose own voice is espeak's) and a phone, and every line goes through the mixer. Kit use (sound.js).
+// The app's own voice: Kyutai's Pocket TTS 7M with the 100M model's decoder (the 7M's own adds a steady whine, the
+// "robotic twang"), built in, so a character sounds the same on a Mac, a Windows PC, a SteamOS handheld (whose own
+// voice is espeak's) and a phone, and every line goes through the mixer. Kit use (sound.js).
 // It runs in background workers (talk-worker.js): one, or a production line of 2 (4 threads) or 3 (8 threads) that
-// each run part of the model on the same line. The voice file (about 13 MB, talk-files.js) downloads from the games
-// host the first time a character speaks and stays in the cache; a line comes back a piece at a time (the first
-// sentence first) and is kept for the next launch. Until the file is in, or where it can't run (a phone saving data,
-// a computer too slow to speak in time), lines are said by the device's own voices as before.
+// each run part of the model on the same line. The voice file (about 21 MB, talk-files.js) downloads from the games
+// host the first time a character speaks and stays in the cache; the first time, the worker times a line of its own,
+// and a device that can't write speech well ahead of playing it keeps its own voices. A line comes back a piece at a
+// time (the first sentence first) and is kept for the next launch. Until the file is in, or where it can't run (a
+// phone saving data or with under 4 GB, a device too slow), lines are said by the device's own voices as before.
 //   ownVoice()            true where the built-in voice is used (the desktop app and the phone apps; window.__gsOwnVoice = true or false in tests)
 //   ownVoices()           its voices for casting, listed as a phone lists its own: [{ name, voiceURI, lang, localService }]
 //   speak({ text, voiceURI, rate, pitch, lively, fresh, lang, keep })   -> a promise of the first piece
 //                         { ok, samples: Float32Array, rate, text, last, more: promise of the next piece or null }, or null
 //   readyNow()            a promise: true once the voice can speak (it starts loading then), false where it can't
 //   cancel()              ends the lines being written (not those written ahead: keep); hurry(ticket) one of those is wanted now
-//   ownCores()            1, 2 or 3 workers writing it (0 until ready)
+//   ownCores()            1, 2 or 3 workers writing it (0 until ready); ownSpeed() how fast, timed at the start
 import { desktop } from '../desktop.js';
 import { TALK_VERSION, TALK_FILE, TALK_SHA256, TALK_VOICES } from './talk-files.js';
-import { SPLIT, SPLIT3 } from './pocket-tts.js';
 
 const BASE = String((import.meta.env && import.meta.env.VITE_GAMES_URL) || '').replace(/\/+$/, '');
 const URL_OF = () => {
@@ -24,11 +25,11 @@ const URL_OF = () => {
 const RATE = 24000;
 
 // the phone apps too (Capacitor sets window.Capacitor), but not on a phone saving data or with little memory: the
-// file is 13 MB and the model wants about 60 MB while it speaks; those keep the phone's own voices
+// file is 21 MB and the model wants about 90 MB while it speaks; those keep the phone's own voices
 const phone = () => {
   const cap = globalThis.Capacitor; if (!cap?.isNativePlatform?.()) return false;
   const nav = globalThis.navigator || {};
-  return !nav.connection?.saveData && !(nav.deviceMemory && nav.deviceMemory < 3);
+  return !nav.connection?.saveData && !(nav.deviceMemory && nav.deviceMemory < 4);
 };
 /** Whether this app speaks with the built-in voice. */
 export const ownVoice = () => globalThis.__gsOwnVoice !== false && !!(desktop || globalThis.__gsOwnVoice || phone()) && typeof Worker === 'function' && typeof WebAssembly === 'object';
@@ -67,7 +68,9 @@ export function castOwn(want) {
   return { at: c.at, pitch: NUDGE[Math.min(1 + Math.floor((take - n - pairs) / n), NUDGE.length - 1)], voiceURI: uri(c) };
 }
 
-let worker = null, stages = [], failed = false, ready = null, nextId = 1, cores = 0, slow = 0;
+let worker = null, stages = [], failed = false, ready = null, nextId = 1, cores = 0, slow = 0, speed = 0;
+// how fast it must write a line to speak it in time (seconds of speech a second, timed at the start)
+const FAST_ENOUGH = 1.4;
 const waiting = new Map();   // id -> { put(piece), keep }
 function start() {
   if (worker || failed) return worker;
@@ -77,9 +80,13 @@ function start() {
     let res = null; ready = new Promise(r => { res = r; });
     const heard = e => {
       const m = e.data || {};
-      if (m.type === 'ready') { cores = m.cores || 1; res(true); }
+      if (m.type === 'ready') {
+        cores = m.cores || 1; speed = m.speed || 0;
+        if (speed < FAST_ENOUGH) { off(); res(false); } else res(true);   // too slow here: the device's own voices
+      }
       else if (m.type === 'failed') { off(); res(false); }
       else if (m.type === 'piece') {
+        if (m.id === 0) { if (m.last || !m.pcm) worker?.postMessage({ type: 'probed', speed: m.pcm ? m.speed : 0 }); return; }   // the start-up line, timed
         const w = waiting.get(m.id); if (!w) return;
         if (m.last) waiting.delete(m.id);
         if (m.last && m.pcm && m.speed) checkSpeed(m.speed);
@@ -88,22 +95,24 @@ function start() {
     };
     worker.onmessage = heard;
     worker.onerror = () => { off(); res(false); };
-    // a production line where the computer has cores to spare: 2 workers from 4 threads, 3 from 8 (pocket-tts.js SPLIT, SPLIT3)
+    // a production line where the device has cores to spare: 2 workers from 4 threads, 3 from 8; the lead cuts the
+    // decoder between them (pocket-tts.js cutsFor)
     const threads = globalThis.navigator?.hardwareConcurrency || 2, n = threads >= 8 ? 3 : threads >= 4 ? 2 : 1;
-    let port = null, hi = 12;
+    let port = null, used = 1;
     if (n > 1 && typeof MessageChannel === 'function') {
       try {
-        const cuts = n === 3 ? [0, ...SPLIT3] : [0, SPLIT], chans = Array.from({ length: n }, () => new MessageChannel());
-        hi = cuts[1]; port = chans[1].port1;   // chans[i] runs from worker i-1 to worker i
+        const chans = Array.from({ length: n }, () => new MessageChannel());
+        port = chans[1].port1;   // chans[i] runs from worker i-1 to worker i
         for (let i = 1; i < n; i++) {
           const w = make(), last = i === n - 1, to = last ? null : chans[i + 1].port1;
           w.onmessage = heard; w.onerror = () => { off(); res(false); };
-          w.postMessage({ type: 'stage', from: chans[i].port2, to, lo: cuts[i], hi: last ? 12 : cuts[i + 1], convs: last }, to ? [chans[i].port2, to] : [chans[i].port2]);
+          w.postMessage({ type: 'stage', from: chans[i].port2, to, i: i - 1 }, to ? [chans[i].port2, to] : [chans[i].port2]);
           stages.push(w);
         }
-      } catch { for (const w of stages) w.terminate(); stages = []; port = null; hi = 12; }
+        used = n;
+      } catch { for (const w of stages) w.terminate(); stages = []; port = null; }
     }
-    worker.postMessage({ type: 'load', url: URL_OF(), sha: TALK_SHA256, port, hi, cores: n }, port ? [port] : []);
+    worker.postMessage({ type: 'load', url: URL_OF(), sha: TALK_SHA256, port, cores: used }, port ? [port] : []);
   } catch { off(); }
   return worker;
 }
@@ -114,7 +123,7 @@ function off() {
   for (const [, w] of waiting) w.put(null, true);
   waiting.clear();
 }
-// too slow to keep up (an old phone, a busy computer): two lines in a row written slower than they play, and the
+// too slow to keep up after all (a busy or hot device): two lines in a row written slower than they play, and the
 // device's own voices take over until the app is opened again
 function checkSpeed(x) { slow = x < 1.2 ? slow + 1 : 0; if (slow >= 2) off(); }
 // a number from the words and the voice, so a line is said the same way each time (it is written once, then kept)
@@ -133,7 +142,7 @@ export function readyNow() { if (!ownVoice() || failed) return Promise.resolve(f
  * written after the lines wanted now unless hurry(ticket) (ticket: an object speak() puts the line's id on).
  */
 export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively = 0, fresh = false, lang = 'en-GB', keep = false, ticket = null }) {
-  if (!(await readyNow())) return null;
+  if (!(await readyNow()) || !worker) return null;
   const voice = String(voiceURI).replace(/^gs-voice:/, '') || TALK_VOICES[0].name, id = nextId++;
   if (ticket) ticket.id = id;
   lively = Math.round(Math.max(0, Math.min(1, +lively || 0)) * 100) / 100;
@@ -155,6 +164,8 @@ export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively =
 
 /** How many workers write the voice (2 or 3 where the computer has cores to spare), 0 before it is ready. */
 export const ownCores = () => cores;
+/** How fast it writes speech here (seconds of speech a second, timed at the start; 0 before). */
+export const ownSpeed = () => speed;
 
 /** A line written ahead (keep) that is wanted now after all: written before the others waiting. */
 export function hurry(ticket) { if (worker && ticket?.id) worker.postMessage({ type: 'soon', id: ticket.id }); }

@@ -1,16 +1,20 @@
-// The built-in voice of the Mac, Windows and Linux app (src/kit/talk.js): Kyutai's Pocket TTS 7M, its word pieces and
-// the voices, packed into one file of 8-bit numbers by scripts/talk-pack.mjs from Kyutai's own files at the revision
+// The built-in voice of the Mac, Windows and Linux app and the phone apps (src/kit/talk.js): Kyutai's Pocket TTS 7M with
+// the 100M model's decoder, its word pieces and the voices, packed into one file of 8-bit numbers by scripts/talk-pack.mjs from Kyutai's own files at the revision
 // below. The games workflow uploads it to the games host once (ml/<TALK_VERSION>/, beside the face tracking files) and
 // the app downloads it the first time a character speaks, checks it against TALK_SHA256, and keeps it.
 // Bump TALK_VERSION (and the hash: the pack script prints it) whenever the file changes.
 
-export const TALK_VERSION = 'pocket-tts-7m-2';
+export const TALK_VERSION = 'pocket-tts-7m-3';
 export const TALK_FILE = 'english-7m.gsv';
-export const TALK_SHA256 = '3a6eb536f506160c84e59ec329ab050327e430e0b75bb06084de73a4a7e540a1';
+export const TALK_SHA256 = '4624ae04278ad3243013339ba8e0bd84688a338f0a5c4047a7cec0066de9aa92';
 export const TALK_SOURCE = {
   repo: 'kyutai/pocket-tts-without-voice-cloning',
   revision: 'a7056f505a4a8ca72d8b5fb1440071d6f1a35739',
   dir: 'languages/english_7m_refl_2026-10',
+  // the decoder (latents to sound) comes from the 100M model at the same revision: the 7M's own small one adds a steady
+  // 3.6 kHz whine and a faint 200 Hz buzz to every voice (the "robotic twang"); this one reads the 7M's latents just as
+  // well without them, for about 3.5 times the work. Only its weights are packed (the small one is left out).
+  decoderDir: 'languages/english_2026-10',
 };
 
 // The voices packed in, each heard by the model from a recording a speaker gave under a licence that allows this.
@@ -50,4 +54,4 @@ export const TALK_VOICES = [
   { name: 'daan', kind: 'man', hz: 88, lang: 'en-NL', credit: 'CML-TTS dataset, Dutch, speaker 11290 (CC BY 4.0)' },
 ];
 
-export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai (model CC BY 4.0, code MIT), run in the app in plain JavaScript';
+export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai, with the decoder of Pocket TTS 100M (models CC BY 4.0, code MIT), run in the app in plain JavaScript';

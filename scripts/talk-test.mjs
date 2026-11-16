@@ -10,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { TALK_VOICES, TALK_VERSION, TALK_FILE } from '../src/kit/talk-files.js';
 import { unpack } from '../src/kit/talk-pack.js';
-import { makeTTS, makeFlow, makeMimi, seeded, SPLIT3 } from '../src/kit/pocket-tts.js';
+import { makeTTS, makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from '../src/kit/pocket-tts.js';
 import { spoken, respell } from '../src/kit/say-words.js';
-import { stretch, marksFrom } from '../src/kit/voice-fx.js';
+import { stretch, marksFrom, resample } from '../src/kit/voice-fx.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,6 +69,12 @@ for (const [text, want, lang] of [
   for (const t of [.8, 1.25]) { const y = stretch(x, r, t); ok(Math.abs(y.length - r / t) < 2 && Math.abs(f0(y.subarray(2000, y.length - 2000), r) - 180) < 4, `stretch ${t}: ${y.length} samples at ${f0(y.subarray(2000, y.length - 2000), r).toFixed(0)} Hz`); }
 }
 
+{ // the resampler (shape()): 24 kHz to 48 kHz with nothing mirrored above the old top
+  const r = 24000, n = r, tone = f => Float32Array.from({ length: n }, (_, i) => Math.sin(2 * Math.PI * f * i / r));
+  const up = resample(tone(9000), 2), m = 48000, at = f => { let c = 0, q = 0; for (let i = m / 4; i < m * 3 / 4; i++) { c += up[i] * Math.cos(2 * Math.PI * f * i / m); q += up[i] * Math.sin(2 * Math.PI * f * i / m); } return Math.hypot(c, q) / (m / 4); };
+  ok(Math.abs(up.length - m) < 4 && at(9000) > .95 && at(15000) < .001, `resample: 9 kHz kept (${at(9000).toFixed(3)}), its mirror at 15 kHz ${(20 * Math.log10(at(15000) + 1e-9)).toFixed(0)} dB`);
+}
+
 let bytes = null;
 try {
   const { writeTo } = await import('./talk-pack.mjs');
@@ -97,30 +103,18 @@ if (bytes) {
   const a1 = say('Same again.', 'anna', 7), a2 = say('Same again.', 'anna', 7), a3 = say('Same again.', 'anna', 8);
   ok(a1.length === a2.length && a1.every((x, i) => x === a2[i]), 'the same seed says a line the same way');
   ok(a1.length !== a3.length || a1.some((x, i) => x !== a3[i]), 'another seed says it a little differently');
-  { // the two halves (a worker each) say it exactly as one does
-    const flow = makeFlow(pack), front = makeMimi(pack, { part: 'front' }), back = makeMimi(pack, { part: 'back' }), one = say('Two cores, one voice.', 'paul', 9);
-    const l = flow.line('Two cores, one voice.', 'paul', { rnd: seeded(9) }), parts = []; let lat, SA, SB, tf = 0, tb = 0;
-    while ((lat = l.next())) {
-      const first = l.first || !SA; if (first) { SA = front.start(); SB = back.start(); }
-      let t = performance.now(); const rows = front.front(SA, lat); tf += performance.now() - t;
-      t = performance.now(); const out = back.back(SB, rows); tb += performance.now() - t;
-      if (first) for (let i = 0; i < 120; i++) out[i] *= i / 119;
-      parts.push(out);
-    }
-    const two = new Float32Array(parts.length * 1920); parts.forEach((p, i) => two.set(p, i * 1920));
-    ok(two.length === one.length && two.every((x, i) => x === one[i]), `two halves: the same sound as one (text and front ${(tf / parts.length).toFixed(1)} ms a frame, back ${(tb / parts.length).toFixed(1)} ms)`);
-  }
-  { // three stages (a worker each where the computer has 8 threads) say it exactly as one does
-    const flow = makeFlow(pack), [c1, c2] = SPLIT3, st = [makeMimi(pack, { hi: c1, convs: false }), makeMimi(pack, { lo: c1, hi: c2, convs: false }), makeMimi(pack, { lo: c2, hi: 12, convs: true })];
-    const one = say('Three workers, one voice.', 'estelle', 5), l = flow.line('Three workers, one voice.', 'estelle', { rnd: seeded(5) }), parts = []; let lat, S = null;
+  for (const n of [2, 3]) { // cut across 2 or 3 workers (pocket-tts.js cutsFor), it says a line exactly as one does
+    const text = n === 2 ? 'Two cores, one voice.' : 'Three workers, one voice.', voice = n === 2 ? 'paul' : 'estelle', seed = n === 2 ? 9 : 5;
+    const flow = makeFlow(pack), cuts = cutsFor(pack.mimi, n), st = cuts.map((lo, i) => makeMimi(pack, { lo, hi: cuts[i + 1] })), one = say(text, voice, seed);
+    const l = flow.line(text, voice, { rnd: seeded(seed) }), parts = [], ms = cuts.map(() => 0); let lat, S = null;
     while ((lat = l.next())) {
       const first = l.first || !S; if (first) S = st.map(m => m.start());
-      let x = lat; st.forEach((m, i) => { x = m.step(S[i], x); });
+      let x = lat; st.forEach((m, i) => { const t = performance.now(); x = m.step(S[i], x); ms[i] += performance.now() - t; });
       if (first) for (let i = 0; i < 120; i++) x[i] *= i / 119;
       parts.push(x);
     }
-    const three = new Float32Array(parts.length * 1920); parts.forEach((p, i) => three.set(p, i * 1920));
-    ok(three.length === one.length && three.every((x, i) => x === one[i]), 'three stages: the same sound as one');
+    const all = new Float32Array(parts.length * 1920); parts.forEach((p, i) => all.set(p, i * 1920));
+    ok(all.length === one.length && all.every((x, i) => x === one[i]), `${n} stages (cut at ${cuts.join(', ')}): the same sound as one (${ms.map(t => (t / parts.length).toFixed(1)).join(' | ')} ms a frame)`);
   }
   { // the first sentence is a part of its own (quick), so it can be played while the rest is written
     const l = makeFlow(pack).line('Over here. The door at the end of the long hall is open now, so hurry.', 'anna', { rnd: seeded(2), quick: true });
@@ -147,7 +141,17 @@ if (bytes) {
   const long = say('This is a longer line. It goes on for a while, in more than one part, so that it is cut into pieces of text the model reads one after another, and each still comes out.', 'george');
   ok(long.length / tts.rate > 7, `a long line in parts: ${(long.length / tts.rate).toFixed(1)} s`);
   // the file the PR check makes is the one talk-files.js pins (writeTo checked its SHA-256)
-  ok(bytes.length > 8e6 && bytes.length < 16e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
+  ok(bytes.length > 18e6 && bytes.length < 25e6, `file: ${(bytes.length / 1e6).toFixed(1)} MB (${TALK_VERSION}/${TALK_FILE})`);
+}
+
+if (bytes) { // the decoder is the 100M model's: no steady whine at 3.6 kHz standing out of the voice
+  const pack = unpack(bytes), tts = makeTTS(pack);
+  ok(pack.mimi?.d === MIMI_BIG.d && pack.get('mimi.decoder_transformer.transformer.layers.2.linear1.weight') === null, `decoder: the 100M model's (d ${pack.mimi?.d}, ${pack.mimi?.layers} layers), the 7M's own left out`);
+  const stand = x => { const r = 24000, lv = f => { let c = 0, q = 0; for (let i = 0; i < x.length; i++) { const w = .5 - .5 * Math.cos(2 * Math.PI * i / x.length); c += w * x[i] * Math.cos(2 * Math.PI * f * i / r); q += w * x[i] * Math.sin(2 * Math.PI * f * i / r); } return c * c + q * q; };
+    let side = 0; for (const o of [-60, -45, -30, 30, 45, 60]) side += lv(3600 + o); return 10 * Math.log10(lv(3600) / (side / 6)); };
+  let w = 0;
+  for (const [v, sd] of [['anna', 2], ['paul', 3], ['alba', 4]]) { const l = tts.line('There is a lantern by the door, if you want it.', v, { rnd: seeded(sd) }), ps = []; let c; while ((c = l.next())) ps.push(c); const a = new Float32Array(ps.length * 1920); ps.forEach((p, i) => a.set(p, i * 1920)); w += stand(a); }
+  ok(w / 3 < 9, `decoder: the 3.6 kHz line stands ${(w / 3).toFixed(1)} dB above the sound beside it (the 7M's own decoder: about 17)`);
 }
 
 if (bytes && process.argv.includes('--browser')) await inBrowser();
@@ -203,10 +207,10 @@ async function inBrowser() {
       for (let pc = await t.speak(kept); pc && !pc.last; pc = await pc.more);
       const prepared = await s.prepare(ahead, oa); t1 = performance.now();
       const said5 = await s.say(ahead, oa); const ms5 = performance.now() - t1;
-      return { up, said, said2, ms, shaped: s.shaped(), words, n: list.length, first: list[0]?.name, cores: t.ownCores(), threads: navigator.hardwareConcurrency, said3, ms3, again, ms4,
+      return { up, said, said2, ms, shaped: s.shaped(), words, n: list.length, first: list[0]?.name, cores: t.ownCores(), speed: t.ownSpeed(), threads: navigator.hardwareConcurrency, said3, ms3, again, ms4,
         pieces: n, firstMs, lastMs, prepared, said5, ms5 };
     });
-    ok(r.up === true, 'page: the voice file loads in the worker');
+    ok(r.up === true && r.speed >= 1.4, `page: the voice file loads in the worker, timed at ${r.speed.toFixed(1)}x real time at the start`);
     ok(r.said === true && r.shaped === true, `page: say() speaks with the built-in voice through the mixer (${(r.ms / 1000).toFixed(1)} s from the call to the last word)`);
     ok(r.said2 === true && r.words.length === 4, `page: a cast, shaped, faster line speaks with its words timed (${r.words.join(', ')})`);
     ok(r.n === TALK_VOICES.length && /built in/.test(r.first), `page: voices() lists the built-in ones (${r.first})`);
