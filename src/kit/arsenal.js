@@ -155,7 +155,9 @@ export function weaponSound(kind, what = 'fire', at = null, { time = 1.5, vary =
  * for none (the game plays its own).
  */
 export class Loadout {
-  constructor({ pouch = new Pouch(), sounds = true, health = null } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.off = null; this.switching = 0; }
+  constructor({ pouch = new Pouch(), sounds = true, health = null, link } = {}) { this.pouch = pouch; this.sounds = sounds; this.health = health; this.carried = {}; this.kind = null; this.off = null; this.switching = 0; this.links = linksFor(null, link); }
+  // the gun held in first person (a gs.camera GunRig the game made): kicked, brought up and reloaded with the gun's own
+  get heldRig() { return this.links?.one('gunrig') || null; }
   get gun() { return this.carried[this.kind]?.gun || null; }
   get bow() { return this.carried[this.kind]?.bow || null; }
   get info() { return ARSENAL[this.kind] || null; }
@@ -184,7 +186,7 @@ export class Loadout {
     return 1;
   }
   /** Takes out a weapon carried (it takes a moment: switching counts down from .4 s, no firing meanwhile). */
-  use(kind) { if (!this.carried[kind] || kind === this.kind || ARSENAL[kind].slot === 'off') return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); return this; }
+  use(kind) { if (!this.carried[kind] || kind === this.kind || ARSENAL[kind].slot === 'off') return this; this.kind = kind; this.switching = .4; if (this.gun) this.gun.reloadLeft = 0; if (this.sounds) weaponSound(kind, 'draw'); this.heldRig?.draw(); return this; }
   next(step = 1) { const L = this.list.filter(k => ARSENAL[k].slot !== 'off'); if (L.length) this.use(L[(L.indexOf(this.kind) + step + L.length) % L.length]); return this; }
   prev() { return this.next(-1); }
   update(dt) { this.switching = Math.max(0, this.switching - dt); for (const k in this.carried) this.carried[k].gun?.update(dt); return this; }   // (a bow is updated by the game: arms.bow.update(dt, { pull, from, dir, targets }))
@@ -193,9 +195,10 @@ export class Loadout {
     const g = this.gun; if (!g || this.switching > 0) return [];
     const was = g.reloadLeft > 0, shots = g.pull(from, dir, pressed);
     if (this.sounds) { if (shots.length) weaponSound(this.kind, 'fire', at); else if (g.empty) weaponSound(this.kind, 'empty', at); if (!was && g.reloadLeft > 0) weaponSound(this.kind, 'reload', at, { time: g.reload }); }
+    const H = this.heldRig; if (H) { if (shots.length) H.fire(1, this.kind); if (!was && g.reloadLeft > 0) H.reload(g.reload); }
     return shots;
   }
-  reload({ at = null } = {}) { const g = this.gun; if (g?.startReload() && this.sounds) weaponSound(this.kind, 'reload', at, { time: g.reload }); return this; }
+  reload({ at = null } = {}) { const g = this.gun; if (g?.startReload()) { if (this.sounds) weaponSound(this.kind, 'reload', at, { time: g.reload }); this.heldRig?.reload(g.reload); } return this; }
   save() { return { k: this.kind, c: Object.fromEntries(Object.entries(this.carried).map(([k, v]) => [k, v.gun ? v.gun.ammo : 0])), p: this.pouch.save() }; }
   load(d) {
     if (!d) return this;

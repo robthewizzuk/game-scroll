@@ -30,6 +30,7 @@
 //   node scripts/detail-test.cjs --page uploads --webgpu [--shots dir]       what goes to the chip for things that move (gpu.js sendChanged, oneWrite; hd3d-gpu.js frameWide): lists marked as rewritten often sent only when changed, a moving thing's numbers in one call, the air's haze once a render
 //   node scripts/detail-test.cjs --page depth [--webgpu] [--shots dir] [--q depth=forward]   reversed 32-bit depth on WebGPU (gpu.js REVERSED): walls a metre apart at 500 m, 3 km and 8 km and cards 2 mm apart at arm's length, clean reversed and fighting as before; a view with the upscaler on and a camera never changed draws near in front of far; toScreen() the same for a game
 //   node scripts/detail-test.cjs --page pictures --webgpu [--shots dir]      how many pictures a shader reads (WebGPU allows 16): a scene with a sky, a sun in two maps, lamps with shadows, rain, a real person and a clean one, stone with depth; none refused, none over the limit, skin with one to spare
+//   node scripts/detail-test.cjs --page react [--webgpu] [--shots dir]       the screen reacting to play (v.hit, v.health, v.aiming) and a gun held in first person (gs.camera GunRig): a hit pulses and wears off, low health drains and beats, aiming softens the edges; the gun kicks, aims to the middle, keeps its size; no shaders built
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {

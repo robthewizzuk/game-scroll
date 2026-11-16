@@ -321,6 +321,42 @@ console.log('physics ok');
   rig.to('top', .5); for (let i = 0; i < 40; i++) rig.update(1 / 60, hero);
   assert.ok(cam.position.y > 10, 'blended to top ' + cam.position.y);
   rig.kick(10, .3); rig.update(.05, hero); assert.ok(cam.fov > 60, 'fov kick');
+  // first-person feel and the held gun (gunrig.js): springs exact at any frame rate, recoil kept and given back, a gun kicked and aimed
+  {
+    const { Spring, GunRig } = await import('../src/kit/camera.js');
+    const run = (steps, dt) => { const sp = new Spring({ freq: 5, damp: .5 }); sp.shove(.1); let peak = 0; for (let i = 0; i < steps; i++) peak = Math.max(peak, sp.update(dt, 0)); return { at: sp.x, peak }; };
+    const a = run(60, 1 / 60), b = run(240, 1 / 240), c = run(20, 1 / 20);
+    assert.ok(Math.abs(a.at - b.at) < 1e-9 && Math.abs(a.at - c.at) < 1e-9, `a spring lands at the same place at 20, 60 and 240 fps (${a.at}, ${b.at}, ${c.at})`);
+    assert.ok(Math.abs(b.peak - .1) < .005, 'shove(peak) reaches about peak ' + b.peak);
+    const crit = new Spring({ freq: 3, damp: 1, x: 1 }); let over = false; for (let i = 0; i < 200; i++) if (crit.update(1 / 60, 0) < -1e-6) over = true;
+    assert.ok(!over && Math.abs(crit.x) < 1e-4, 'a damped spring settles without overshoot');
+    const fcam = new THREE.PerspectiveCamera(70, 1, .05, 100), scene = new THREE.Scene(); scene.add(fcam);
+    const me = { position: new THREE.Vector3(), yaw: 0 }, fp = new CameraRig(fcam, { mode: 'first' });
+    for (let i = 0; i < 5; i++) fp.update(1 / 60, me);
+    const d0 = fcam.getWorldDirection(new THREE.Vector3()).y;
+    fp.recoil(.05); fp.update(1 / 60, me); const d1 = fcam.getWorldDirection(new THREE.Vector3()).y;
+    assert.ok(d1 - d0 > .04 && fp.pitch === 0, 'a recoil punches the view up and leaves the aim ' + (d1 - d0));
+    for (let i = 0; i < 90; i++) fp.update(1 / 60, me);
+    assert.ok(Math.abs(fcam.getWorldDirection(new THREE.Vector3()).y - d0) < 1e-3, 'then gives it back');
+    fp.recoil(.05, 0, { keep: .4 }); for (let i = 0; i < 120; i++) fp.update(1 / 60, me);
+    assert.ok(Math.abs(fp.pitch - .02) < 1e-9, 'keep stays in the aim ' + fp.pitch);
+    fp.pitch = 0; fp.aiming = true; for (let i = 0; i < 60; i++) fp.update(1 / 60, me); assert.ok(fcam.fov < 52, 'aiming narrows the FOV ' + fcam.fov);
+    fp.aiming = false; fp.sprinting = true; for (let i = 0; i < 90; i++) { me.position.z += 6 / 60; fp.update(1 / 60, me); } assert.ok(fcam.fov > 74, 'running widens it ' + fcam.fov);
+    fp.sprinting = false;
+    const gun = new THREE.Group(), held = new GunRig(fcam, gun, { kind: 'pistol', rig: fp });
+    assert.ok(held.root.parent === fcam, 'the gun is carried by the camera');
+    for (let i = 0; i < 60; i++) { fp.update(1 / 60, me); held.update(1 / 60); }
+    const z0 = held.root.position.z, r0 = held.root.rotation.x; held.fire(); fp.update(1 / 60, me); held.update(1 / 60); held.update(1 / 60);
+    assert.ok(held.root.position.z > z0 + .01 && held.root.rotation.x > r0 + .03, 'a pistol shot kicks it back and up');
+    held.aiming = true; for (let i = 0; i < 90; i++) { fp.update(1 / 60, me); held.update(1 / 60); }
+    assert.ok(Math.abs(held.root.position.x) < .01 && fp.aiming === true, 'aimed: in the middle, and the rig aims too ' + held.root.position.x);
+    const { Loadout } = await import('../src/kit/arsenal.js');
+    const arms = new Loadout({ sounds: false }); arms.links = { one: k => k === 'gunrig' ? held : null }; arms.give('rifle');
+    held.aiming = false; for (let i = 0; i < 90; i++) held.update(1 / 60);
+    arms.update(.5); const zr = held.root.position.z; arms.fire(new THREE.Vector3(), new THREE.Vector3(0, 0, -1)); held.update(1 / 60); held.update(1 / 60);
+    assert.ok(held.root.position.z > zr + .005, 'a Loadout\'s shot kicks the held gun');
+    held.dispose(); assert.ok(!held.root.parent, 'dispose takes it off the camera');
+  }
   const { lookAt, reach, Steps, Wobble } = await import('../src/kit/characters.js');
   const body = new THREE.Group(), head = new THREE.Object3D(); head.position.y = 1.6; body.add(head);
   lookAt(head, new THREE.Vector3(5, 1.6, 0), null, { max: 3 });
@@ -337,7 +373,7 @@ console.log('physics ok');
   assert.ok(landed >= 4 && st.feet.every(x => Math.abs(x.pos.z - mover.position.z) < .8), 'feet step along ' + landed);
   const wb = new Wobble(); wb.hit(1); let peak = 0; for (let i = 0; i < 120; i++) { wb.update(1 / 60); peak = Math.max(peak, Math.abs(wb.value)); }
   assert.ok(peak > .3 && Math.abs(wb.value) < .05, 'wobble settles');
-  console.log('camera + characters ok');
+  console.log('camera + characters ok (first-person feel, recoil, a held gun on springs)');
 }
 // ragdoll (3D physics) and 3D path finding
 {

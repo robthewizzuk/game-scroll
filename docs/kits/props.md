@@ -8,27 +8,27 @@ Thousands of 3D props in few draws (instancing, LOD), areas, chunks, crowds of a
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PropsPart`, line 4434), where every option and field is described.
+From `src/gamescroll.d.ts` (`PropsPart`, line 4464), where every option and field is described.
 
-- `Crowd: new (view: Loose, o: { of: Loose[]; moves?: string[]; far?: number; shadows?: boolean; reach?: number }) => CrowdT` A crowd in a Next Gen view. (:4442)
-  - `readonly list: CrowdMember[]` The members, in the order they were added. (:4411)
-  - `visible: boolean` false: nobody is drawn (their moves still step on). (:4413)
-  - `lod: number | null` 0, 1 or 2: every member at that one of its figure's own levels of detail. (:4415)
-  - `far: number` Metres past which nobody is drawn. (:4417)
-  - `readonly info: { members: number; drawn: number; levels: number[]; draws: number; triangles: number }` What the last update() drew: members, how many were sent to be drawn, how many at each level of detail (finest first), draws and triangles a frame. (:4419)
-  - `add(o?: { x?: number; y?: number; z?: number; turn?: number; kind?: number; move?: string; size?: number; tint?: string | number; phase?: number; data?: Loose }): Crow…` Adds a member. move: one of the crowd's moves (the first by default); phase: where in it to start (by default each starts somewhere else, so the crowd is out of step); tint: a colour its own are multiplied by; data:… (:4421)
-  - `remove(member: CrowdMember): CrowdT` (:4422)
-  - `clear(): CrowdT` Takes everyone out (call in reset()). (:4424)
-  - `near(x: number, z: number, r: number, out?: CrowdMember[]): CrowdMember[]` The members within r metres of (x, z). (:4426)
-  - `ray(origin: XYZ, dir: XYZ, far?: number): { member: CrowdMember; distance: number; height: number } | null` The first member a ray meets (a shot, a tap through the camera). (:4428)
-  - `update(dt?: number): CrowdT` Each frame, after the members and the camera have moved. (:4430)
-  - `dispose(): void` Out of the scene, and what it made freed. (:4432)
-- `simplify(geometry: Loose, keep?: number): Loose` (:4443)
-- `perCopy(instancedMesh: Loose, o?: { renderer?: Loose }): Loose` A finished InstancedMesh of still things, swapped in place for one that skips the copies off screen (same look). (:4445)
-- `freeCopies(root: Loose): void` Frees the perCopy() / Props meshes under root once it's thrown away (a rebuilt level). (:4447)
-- `Props: new (scene: Loose, o?: { renderer?: Loose; shadows?: boolean }) => { /** A kind of prop. lod: distances where simpler shapes made for you take over, [[distance,…` (:4448)
-- `Areas: new (o?: { depth?: number }) => { current: string | null; add(name: string, object: Loose, box?: Loose): Loose; link(a: string, b: string): Loose; at(p: P3): st…` (:4467)
-- `Chunks: new (scene: Loose, o: { size?: number; radius?: number; make: (cx: number, cz: number) => Loose; drop?: (o: Loose, cx: number, cz: number) => void; perFrame?: …` (:4468)
+- `Crowd: new (view: Loose, o: { of: Loose[]; moves?: string[]; far?: number; shadows?: boolean; reach?: number }) => CrowdT` A crowd in a Next Gen view. (:4472)
+  - `readonly list: CrowdMember[]` The members, in the order they were added. (:4441)
+  - `visible: boolean` false: nobody is drawn (their moves still step on). (:4443)
+  - `lod: number | null` 0, 1 or 2: every member at that one of its figure's own levels of detail. (:4445)
+  - `far: number` Metres past which nobody is drawn. (:4447)
+  - `readonly info: { members: number; drawn: number; levels: number[]; draws: number; triangles: number }` What the last update() drew: members, how many were sent to be drawn, how many at each level of detail (finest first), draws and triangles a frame. (:4449)
+  - `add(o?: { x?: number; y?: number; z?: number; turn?: number; kind?: number; move?: string; size?: number; tint?: string | number; phase?: number; data?: Loose }): Crow…` Adds a member. move: one of the crowd's moves (the first by default); phase: where in it to start (by default each starts somewhere else, so the crowd is out of step); tint: a colour its own are multiplied by; data:… (:4451)
+  - `remove(member: CrowdMember): CrowdT` (:4452)
+  - `clear(): CrowdT` Takes everyone out (call in reset()). (:4454)
+  - `near(x: number, z: number, r: number, out?: CrowdMember[]): CrowdMember[]` The members within r metres of (x, z). (:4456)
+  - `ray(origin: XYZ, dir: XYZ, far?: number): { member: CrowdMember; distance: number; height: number } | null` The first member a ray meets (a shot, a tap through the camera). (:4458)
+  - `update(dt?: number): CrowdT` Each frame, after the members and the camera have moved. (:4460)
+  - `dispose(): void` Out of the scene, and what it made freed. (:4462)
+- `simplify(geometry: Loose, keep?: number): Loose` (:4473)
+- `perCopy(instancedMesh: Loose, o?: { renderer?: Loose }): Loose` A finished InstancedMesh of still things, swapped in place for one that skips the copies off screen (same look). (:4475)
+- `freeCopies(root: Loose): void` Frees the perCopy() / Props meshes under root once it's thrown away (a rebuilt level). (:4477)
+- `Props: new (scene: Loose, o?: { renderer?: Loose; shadows?: boolean }) => { /** A kind of prop. lod: distances where simpler shapes made for you take over, [[distance,…` (:4478)
+- `Areas: new (o?: { depth?: number }) => { current: string | null; add(name: string, object: Loose, box?: Loose): Loose; link(a: string, b: string): Loose; at(p: P3): st…` (:4497)
+- `Chunks: new (scene: Loose, o: { size?: number; radius?: number; make: (cx: number, cz: number) => Loose; drop?: (o: Loose, cx: number, cz: number) => void; perFrame?: …` (:4498)
 
 ## From the maker kit
 

@@ -14,6 +14,11 @@ material swapped in later: `v.warm(material)`; a new level made mid-game: `v.pre
 A light switched on or off changes every lit shader (the lamps keep their lights on and go dark instead:
 `v.lampLights`, `v.flash`). `node scripts/budget.cjs <id>` says if a shader was still built in play.
 
+**The screen reacts to play.** `v.hit(damage)` pulses the edges red and splits and drains the colours for a moment (10
+a light hit, 40 a heavy one); `v.health` (0..1) below a half drains the colour and closes the edges in with a heartbeat
+that quickens as it falls; `v.aiming` (0..1) softens the edges round the middle (a `gs.camera.GunRig` sets it as it aims).
+All three are numbers in the finishing pass, the same on WebGPU and WebGL, and build no shader when they change.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it
