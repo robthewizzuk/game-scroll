@@ -30,14 +30,14 @@ const { ownVoices, castOwn } = await import('../src/kit/talk.js');
   for (let take = 0; take < nM; take++) { const m = pick({ kind: 'man', take }); men.add(m.at); ok(kindOf(m.at) === 'man' && m.pitch === 1, `cast: man take ${take} is ${TALK_VOICES[m.at].name} (${TALK_VOICES[m.at].lang})`); }
   ok(women.size === nW && men.size === nM && nW >= 11 && nM >= 9, 'cast: every voice of a kind is a different one before any repeats');
   ok(TALK_VOICES[pick({ kind: 'woman', take: 0 }).at].lang === 'en-GB' && pick({ kind: 'woman', take: nW + nW * (nW - 1) / 2 }).pitch !== 1, 'cast: a British voice first (the default accent), a nudged pitch once all are used');
-  ok(pick({ kind: 'woman', take: nW }).voiceURI === 'gs-voice:vera+fantine' && pick({ kind: 'man', take: nM }).voiceURI.includes('+') && pick({ kind: 'man', take: nM }).pitch === 1, `cast: then voices between two (${pick({ kind: 'woman', take: nW }).voiceURI}, ${pick({ kind: 'man', take: nM }).voiceURI})`);
+  ok(pick({ kind: 'woman', take: nW }).voiceURI === 'gs-voice:vera+anna' && pick({ kind: 'man', take: nM }).voiceURI.includes('+') && pick({ kind: 'man', take: nM }).pitch === 1, `cast: then voices between two (${pick({ kind: 'woman', take: nW }).voiceURI}, ${pick({ kind: 'man', take: nM }).voiceURI})`);
   ok(TALK_VOICES[pick({ kind: 'woman', lang: 'en-US' }).at].lang === 'en-US' && TALK_VOICES[pick({ kind: 'man', lang: ['en-US'], take: 1 }).at].lang === 'en-US', 'cast: American voices when asked for en-US');
   ok(TALK_VOICES[pick({ kind: 'woman', take: 3 }).at].name === 'eponine', 'cast: a Scottish woman next after the English ones (en-GB-scotland is in en-GB)');
   ok(castOwn(wantOf({ kind: 'man', lang: 'fr-FR' })) === null, 'cast: no built-in voice for French (the computer says it)');
   ok(TALK_VOICES[pick({ kind: 'woman', lang: ['en-FR'] }).at].name === 'estelle' && TALK_VOICES[pick({ kind: 'man', lang: ['en-IT'] }).at].name === 'giovanni', 'cast: an English line with a French or Italian accent when asked for');
   ok(list[pick({ like: ['javert'] }).at].voiceURI === 'gs-voice:javert' && TALK_VOICES[pick({ like: ['stuart'] }).at].kind === 'any', 'cast: a voice asked for by name, the in-between ones too');
   ok(TALK_VOICES[pick('any').at].name === 'vera', 'cast: a line with no voice given is said by the most natural British woman');
-  ok(TALK_VOICES[pick({ kind: 'man', lang: 'en-US' }).at].name === 'george' && TALK_VOICES[pick({ kind: 'woman' }).at].name === 'vera', 'cast: the most natural voice of an accent first (measured)');
+  ok(TALK_VOICES[pick({ kind: 'man', lang: 'en-US' }).at].name === 'sam' && TALK_VOICES[pick({ kind: 'woman' }).at].name === 'vera', 'cast: the most natural voice of an accent first (measured)');
 }
 // Linux: espeak-ng's list as Chromium gives it through speech-dispatcher
 {
