@@ -8,21 +8,21 @@ Shaded 2D shapes, glows, backdrops and materials made in code (wood, stone, meta
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`GfxPart`, line 596), where every option and field is described.
+From `src/gamescroll.d.ts` (`GfxPart`, line 601), where every option and field is described.
 
-- `shade(hex: string, amt: number): string` (:597)
-- `shadow(c: Ctx, x: number, y: number, rx: number, ry?: number, a?: number): void` (:598)
-- `box(c: Ctx, x: number, y: number, w: number, h: number, col: string, o?: { r?: number; drop?: boolean; rim?: boolean }): void` (:599)
-- `ball(c: Ctx, x: number, y: number, r: number, col: string, o?: { gloss?: number }): void` (:600)
-- `glow(c: Ctx, x: number, y: number, r: number, col: string, a?: number): void` (:601)
-- `backdrop(c: Ctx, x: number, y: number, w: number, h: number, top: string, bottom: string): void` (:602)
-- `post(c: Ctx, w: number, h: number): void` (:603)
-- `readonly MATERIALS: Readonly<Record<MaterialName, string>>` The materials, and the colour each starts as. (:605)
-- `material(name: MaterialName | Material2D, o?: MaterialOptions): Material2D` A material made in code, to fill shapes with (no image files; worked out once and remembered). (:611)
-- `texture(name: MaterialName, o?: MaterialOptions & { px?: number }): { size: number; data: Uint8ClampedArray }` A material's tile as numbers: a size x size RGBA picture that repeats without a seam (px: its size, 256). (:613)
-- `slab(c: Ctx, x: number, y: number, w: number, h: number, mat?: MaterialName | Material2D, o?: { r?: number; bevel?: number; shadow?: boolean | number; tint?: string | …` A block of a material: rounded corners, lit from the top left, a soft shadow under it. (:619)
-- `water(c: Ctx, x: number, y: number, w: number, h: number, t?: number, o?: { color?: string; deep?: string | null; light?: string; strength?: number; scale?: number; fl…` Water in a rectangle with light moving on it. (:625)
-- `sticker(w: number, h: number, draw: (g: Ctx, w: number, h: number) => void, o?: { outline?: string; width?: number; glow?: string; glowSize?: number; shadow?: boolean …` Keeps a drawing as a picture (one drawImage however much went into it) and adds the looks that are slow to draw every frame: an outline, a glow, a soft shadow. (:630)
+- `shade(hex: string, amt: number): string` (:602)
+- `shadow(c: Ctx, x: number, y: number, rx: number, ry?: number, a?: number): void` (:603)
+- `box(c: Ctx, x: number, y: number, w: number, h: number, col: string, o?: { r?: number; drop?: boolean; rim?: boolean }): void` (:604)
+- `ball(c: Ctx, x: number, y: number, r: number, col: string, o?: { gloss?: number }): void` (:605)
+- `glow(c: Ctx, x: number, y: number, r: number, col: string, a?: number): void` (:606)
+- `backdrop(c: Ctx, x: number, y: number, w: number, h: number, top: string, bottom: string): void` (:607)
+- `post(c: Ctx, w: number, h: number): void` (:608)
+- `readonly MATERIALS: Readonly<Record<MaterialName, string>>` The materials, and the colour each starts as. (:610)
+- `material(name: MaterialName | Material2D, o?: MaterialOptions): Material2D` A material made in code, to fill shapes with (no image files; worked out once and remembered). (:616)
+- `texture(name: MaterialName, o?: MaterialOptions & { px?: number }): { size: number; data: Uint8ClampedArray }` A material's tile as numbers: a size x size RGBA picture that repeats without a seam (px: its size, 256). (:618)
+- `slab(c: Ctx, x: number, y: number, w: number, h: number, mat?: MaterialName | Material2D, o?: { r?: number; bevel?: number; shadow?: boolean | number; tint?: string | …` A block of a material: rounded corners, lit from the top left, a soft shadow under it. (:624)
+- `water(c: Ctx, x: number, y: number, w: number, h: number, t?: number, o?: { color?: string; deep?: string | null; light?: string; strength?: number; scale?: number; fl…` Water in a rectangle with light moving on it. (:630)
+- `sticker(w: number, h: number, draw: (g: Ctx, w: number, h: number) => void, o?: { outline?: string; width?: number; glow?: string; glowSize?: number; shadow?: boolean …` Keeps a drawing as a picture (one drawImage however much went into it) and adds the looks that are slow to draw every frame: an outline, a glow, a soft shadow. (:635)
 
 ## From the maker kit
 
@@ -83,9 +83,9 @@ From [Icons](../maker-kit.md#icons):
 
 ## In real games
 
-10 games use it (`node scripts/examples.mjs gs.gfx` lists them). The shortest:
+11 games use it (`node scripts/examples.mjs gs.gfx` lists them). The shortest:
 
-`src/games/build-rush.js` (Build Rush, Bricks · Speed, 100 lines):
+`src/games/build-rush.js` (Build Rush, Bricks · Speed, 101 lines):
 
 ```js
 const { rnd } = gs.util;

@@ -3,6 +3,8 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const { icon } = gs.icons;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // A colour word in a different colour of ink. The rule at the top says whether to tap the INK
 // or the WORD, and it can flip at any time. The timer shrinks with every right answer.
@@ -17,7 +19,7 @@ function make(api) {
     word = Math.random() * 4 | 0; do ink = Math.random() * 4 | 0; while (ink === word && Math.random() < .8);
     if (score >= 4 && Math.random() < .3) { rule = rule === 'ink' ? 'word' : 'ink'; flip = 1; haptic('warning'); }
     limit = Math.max(1.1, 3 - score * .07); time = limit;
-    if (score >= 10) btnOrder = btnOrder.sort(() => Math.random() - .5);
+    if (score >= 10) btnOrder = shuffle(btnOrder);
   }
   const self = {
     reset() { lives = 3; rule = 'ink'; score = 0; t = 0; flip = 0; shake = 0; btnOrder = [0, 1, 2, 3]; feel.clear(); ready.reset(); next(); },
@@ -29,7 +31,7 @@ function make(api) {
       feel.begin(c);
       c.fillStyle = flip ? `rgba(255,255,255,${flip * .25})` : '#ffffff10'; c.beginPath(); c.roundRect(40, 80, 280, 60, 14); c.fill();
       c.fillStyle = '#fff'; c.font = '400 13px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(rule === 'ink' ? 'TAP THE INK' : 'TAP THE WORD', W / 2, 117);
-      c.font = '20px sans-serif'; for (let i = 0; i < 3; i++) { c.fillStyle = i < lives ? '#ff4d6d' : '#ffffff22'; c.fillText('♥', W / 2 - 28 + i * 28, 60); }
+      for (let i = 0; i < 3; i++) icon(c, 'heart', W / 2 - 28 + i * 28, 53, 20, { color: i < lives ? '#ff4d6d' : '#ffffff22' });
       c.fillStyle = '#ffffff20'; c.fillRect(40, 160, 280, 8); c.fillStyle = time / limit < .3 ? '#ff4d4d' : '#ffffffcc'; c.fillRect(40, 160, 280 * clamp(time / limit, 0, 1), 8);
       c.save(); c.translate(W / 2 + (shake ? Math.sin(t * 80) * 6 * shake : 0), 290);
       c.fillStyle = C[ink][1]; c.font = '800 54px Rubik, sans-serif'; c.fillText(C[word][0], 0, 0); c.restore();

@@ -1,4 +1,5 @@
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp } = gs.util;
@@ -9,8 +10,9 @@ const W = 360, H = 640, N = 6, CS = 52, OX = (W - N * CS) / 2, OY = 170, EXIT_RO
 const HUES = [30, 50, 140, 190, 220, 265, 310, 90];
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
-  let cars, drag, time, score, t, moves, leaving, dead, started;
+  let cars, drag, time, score, t, moves, leaving, dead;
   const occ = (skip) => { const o = new Set(); for (const c of cars) if (c !== skip) for (let i = 0; i < c.len; i++) o.add((c.y + (c.h ? 0 : i)) * N + c.x + (c.h ? i : 0)); return o; };
   const range = c => { const o = occ(c); let lo = c.h ? c.x : c.y, hi = lo; while (lo > 0 && !o.has(c.h ? c.y * N + lo - 1 : (lo - 1) * N + c.x)) lo--; while (hi + c.len < N && !o.has(c.h ? c.y * N + hi + c.len : (hi + c.len) * N + c.x)) hi++; return [lo, hi]; };
   function puzzle(level) {
@@ -28,9 +30,9 @@ function make(api) {
     moves = 0; leaving = 0;
   }
   return {
-    reset() { time = 60; score = 0; t = 0; dead = 0; drag = null; started = false; feel.clear(); puzzle(1); },
+    reset() { time = 60; score = 0; t = 0; dead = 0; drag = null; ready.reset(); feel.clear(); puzzle(1); },
     update(dt) {
-      feel.update(dt); t += dt; if (started) time -= dt;   // the clock waits for the first drag
+      feel.update(dt); t += dt; if (ready.playing) time -= dt;   // the clock waits for the first drag
       if (time <= 0) { haptic('warning'); feel.juice.shake(5); return api.over(); }
       if (leaving) { leaving += dt; if (leaving > .6) { score++; api.score(score); time += 20; feel.juice.pop(W / 2, 150, '+20s', { color: '#7dff9a', size: 18 }); puzzle(score + 1); } }
     },
@@ -56,7 +58,7 @@ function make(api) {
     down(x, y) {
       if (leaving) return; const gx = Math.floor((x - OX) / CS), gy = Math.floor((y - OY) / CS);
       const car = cars.find(c => gx >= c.x && gx < c.x + (c.h ? c.len : 1) && gy >= c.y && gy < c.y + (c.h ? 1 : c.len)); if (!car) return;
-      drag = { car, start: car.h ? x : y, base: car.h ? car.x : car.y, pos: car.h ? car.x : car.y, range: range(car) }; started = true; haptic('tick');
+      drag = { car, start: car.h ? x : y, base: car.h ? car.x : car.y, pos: car.h ? car.x : car.y, range: range(car) }; ready.go(); haptic('tick');
     },
     move(x, y) { if (!drag) return; const d = ((drag.car.h ? x : y) - drag.start) / CS; drag.pos = clamp(drag.base + d, drag.range[0], drag.range[1]); },
     up() {

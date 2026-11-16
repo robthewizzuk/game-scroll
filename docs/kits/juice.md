@@ -91,24 +91,27 @@ then `tl.update(dt)`; `done`, `seek()`, `pause()`, `speed`, `loop: true`. For a 
 
 ## In real games
 
-21 games use it (`node scripts/examples.mjs gs.juice` lists them). The shortest:
+35 games use it (`node scripts/examples.mjs gs.juice` lists them). The shortest:
 
-`src/games/buzz-wire.js` (Buzz Wire, Casual · Skill, 84 lines):
+`src/games/bomb-maze.js` (Bomb Maze, Pocket · Action, 73 lines):
 
 ```js
-const { clamp } = gs.util;
+const { Feel } = gs.effects;
 const { approach } = gs.juice;
 // …
-      dist += speed * dt;
-      if (target != null) x = approach(x, target, 18, dt);
+      if (p.mv > 0) { p.mv -= dt; } else if (held && dir) { const nx = p.x + dir[0], ny = p.y + dir[1]; if (!blocked(nx, ny)) { p.x = nx; p.y = ny; p.
+      const k = Math.max(0, p.mv / .14); p.fx = approach(p.fx, p.x, 19, dt); p.fy = approach(p.fy, p.y, 19, dt);
+// …
+      for (const cr of critters) {
+        cr.mv -= dt; cr.fx = approach(cr.fx, cr.x, 11, dt); cr.fy = approach(cr.fy, cr.y, 11, dt);
 ```
 
-`src/games/whistle-bird.js` (Whistle Bird, Casual · Voice, 106 lines):
+`src/games/stack.js` (Stack Up, Casual · Timing, 75 lines):
 
 ```js
-const { clamp, rnd } = gs.util;
+const { Feel } = gs.effects;
 const { approach } = gs.juice;
 // …
-      if (!started) { bird.y = H / 2 + Math.sin(t * 3) * 10; return; }
-      if (want != null) { bird.y = approach(bird.y, want, 380, dt); bird.vy = 0; flap += dt * 14; }
+  function phys(dt){
+    cam = approach(cam, camT, 6, dt);
 ```

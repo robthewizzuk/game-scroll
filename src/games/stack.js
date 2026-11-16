@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { clamp, rnd } = gs.util;
 const { haptic } = gs.device;
 const { Feel } = gs.effects;
+const { approach } = gs.juice;
 
 function Stack(api){
   const feel=new Feel({sound:false,buzz:false});   // the game has its own sounds and buzzes
@@ -30,7 +31,7 @@ function Stack(api){
     tower.push(nb);api.score(tower.length-1);camT=Math.max(0,tower.length*BH-260);spawn();
   }
   function phys(dt){
-    cam+=(camT-cam)*Math.min(1,dt*6);
+    cam = approach(cam, camT, 6, dt);
     for(const d of debris){d.vy-=1100*dt;d.wy+=d.vy*dt;d.rot+=d.vr*dt}debris=debris.filter(d=>sy(d.wy)<H+200);
     for(const p of pops){p.life-=dt;p.wy+=30*dt}pops=pops.filter(p=>p.life>0);
   }

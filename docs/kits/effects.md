@@ -10,7 +10,7 @@ Feel: coin, hit, boom, jump and more as particles, shake, sound and haptics in o
 
 From `src/gamescroll.d.ts`, where every option and field is described.
 
-- `effects: { Feel: typeof Feel }` (:5503)
+- `effects: { Feel: typeof Feel }` (:5508)
 
 ## From the maker kit
 
@@ -52,7 +52,7 @@ feel.score(x, y, 50); feel.win(x, y); feel.lose(); feel.click(); feel.play(zzfxN
 
 ## In real games
 
-197 games use it (`node scripts/examples.mjs gs.effects` lists them). The shortest:
+191 games use it (`node scripts/examples.mjs gs.effects` lists them). The shortest:
 
 `src/games/colour-flood.js` (Colour Flood, Pocket · Puzzle, 47 lines):
 

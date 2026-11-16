@@ -259,7 +259,9 @@ async function tourGame(driver, g, o, live) {
     await nextFrame(); await nextFrame();   // the card's first picture
 
     const bot = new Bot(sender(s), () => [s.w, s.h], hash(g.id) || 1);
-    const limit = o.seconds * 1000, giveUp = performance.now() + limit * 2 + 15000;
+    // (a Next Gen, AR or Board card is only a picture until Play, src/main.js sleep(): its game is made under the loading
+    // screen after the first Play, so the wait for it to be made, up to LOAD_LIMIT, is given on top, and counted as loading)
+    const limit = o.seconds * 1000, most = performance.now() + LOAD_LIMIT * 1000; let made = !s.asleep, giveUp = performance.now() + limit * 2 + 15000;
     let last = performance.now(), overSince = 0, entered = false;
     const wantFull = o.full && g.era === 'nextgen';
     const play = () => { roundMs = 0; driver.play(); };
@@ -270,6 +272,7 @@ async function tourGame(driver, g, o, live) {
       if (driver.active() !== s) { res.note = 'the card went away'; break; }
       if (s.failed) { if (!res.errors.length) res.errors.push(s.failed); break; }
       if (s.paused) { collecting = false; if (document.visibilityState === 'visible') driver.resume(); continue; }   // the phone went to another app: carry on when it's back
+      if (!made) { if (s.loading || s.asleep) giveUp = Math.max(giveUp, Math.min(most, now) + limit * 2 + 15000); else { made = true; res.loadMs = now - t0; } }
       if (s.state === 'playing') {
         collecting = true; overSince = 0; res.played += dt; res.score = Math.max(res.score, s.score || 0);
         if (res.readyMs == null && s.readyMs) res.readyMs = s.readyMs;   // a 3D game's first round: Play to the round starting, behind its loading screen

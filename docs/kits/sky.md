@@ -8,31 +8,31 @@ Time of day, and weather that changes the world: rain, puddles, snow that settle
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SkyPart`, line 3381), where every option and field is described.
+From `src/gamescroll.d.ts` (`SkyPart`, line 3386), where every option and field is described.
 
-- `DAY: [number, { top: string; horizon: string; sun: string; sunI: number; amb: number }][]` (:3382)
-- `Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham; on WebGPU Hillair…` (:3383)
-- `Weather: new (view: Loose, o?: WeatherOptions) => WeatherPart` Rain, snow or a storm round the camera. (:3395)
-  - `kind: string` (:3418)
-  - `amount: number` (:3418)
-  - `wind: [number, number]` (:3418)
-  - `onFlash: ((far: number) => void) | null` (:3418)
-  - `readonly flashing: boolean` (:3418)
-  - `wet: number` How wet the open world is, how far the puddles have spread and how much snow has settled, each 0..1 (with a level). (:3420)
-  - `pools: number` (:3420)
-  - `snow: number` (:3420)
-  - `readonly rain: number` How hard it is raining and snowing now, 0..1. (:3421)
-  - `readonly snowing: number` (:3421)
-  - `readonly cover: SkyCover | null` The map of what the sky can see (with a level): cover.at(x, z) is the height of the highest solid thing over a spot. (:3422)
-  - `set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): WeatherPart` (:3423)
-  - `flash(): WeatherPart` (:3423)
-  - `update(dt: number): WeatherPart` (:3423)
-  - `dispose(): void` (:3423)
-  - `open(p: Fx3dPos): boolean` Can the sky see this point (is nothing over it)? (:3424)
-  - `wetAt(p: Fx3dPos): number` How wet a spot is now, 0..1: 0 under a roof (slippery floors, footsteps that splash, a dog that shakes itself indoors). (:3425)
-  - `snowAt(p: Fx3dPos): number` How deep the snow lies at a spot, in metres: 0 under a roof (footprints, slower walking). (:3426)
-  - `watch<T>(thing: T, o?: { amount?: number; height?: number; wheels?: number[][] }): T` From now on this vehicle throws spray off its tyres while the road under it is wet (Next Gen): a mist that hangs behind it and drops flung off the tread, from about 4 m/s and all of it by 25. (:3433)
-  - `unwatch(thing: Loose): WeatherPart` Stops watching a vehicle. (:3434)
+- `DAY: [number, { top: string; horizon: string; sun: string; sunI: number; amb: number }][]` (:3387)
+- `Sky: new (view: Loose, o?: { time?: number; speed?: number; day?: SkyPart['DAY']; stars?: number; /** Colours from light scattering in air (Preetham; on WebGPU Hillair…` (:3388)
+- `Weather: new (view: Loose, o?: WeatherOptions) => WeatherPart` Rain, snow or a storm round the camera. (:3400)
+  - `kind: string` (:3423)
+  - `amount: number` (:3423)
+  - `wind: [number, number]` (:3423)
+  - `onFlash: ((far: number) => void) | null` (:3423)
+  - `readonly flashing: boolean` (:3423)
+  - `wet: number` How wet the open world is, how far the puddles have spread and how much snow has settled, each 0..1 (with a level). (:3425)
+  - `pools: number` (:3425)
+  - `snow: number` (:3425)
+  - `readonly rain: number` How hard it is raining and snowing now, 0..1. (:3426)
+  - `readonly snowing: number` (:3426)
+  - `readonly cover: SkyCover | null` The map of what the sky can see (with a level): cover.at(x, z) is the height of the highest solid thing over a spot. (:3427)
+  - `set(kind: 'rain' | 'snow' | 'storm' | 'clear', amount?: number): WeatherPart` (:3428)
+  - `flash(): WeatherPart` (:3428)
+  - `update(dt: number): WeatherPart` (:3428)
+  - `dispose(): void` (:3428)
+  - `open(p: Fx3dPos): boolean` Can the sky see this point (is nothing over it)? (:3429)
+  - `wetAt(p: Fx3dPos): number` How wet a spot is now, 0..1: 0 under a roof (slippery floors, footsteps that splash, a dog that shakes itself indoors). (:3430)
+  - `snowAt(p: Fx3dPos): number` How deep the snow lies at a spot, in metres: 0 under a roof (footprints, slower walking). (:3431)
+  - `watch<T>(thing: T, o?: { amount?: number; height?: number; wheels?: number[][] }): T` From now on this vehicle throws spray off its tyres while the road under it is wet (Next Gen): a mist that hangs behind it and drops flung off the tread, from about 4 m/s and all of it by 25. (:3438)
+  - `unwatch(thing: Loose): WeatherPart` Stops watching a vehicle. (:3439)
 
 ## From the maker kit
 
@@ -152,10 +152,10 @@ More in docs/maker-kit.md: "Ground that takes marks", "Towns that live".
 
 2 games use it (`node scripts/examples.mjs gs.sky` lists them). The shortest:
 
-`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 186 lines):
+`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 199 lines):
 
 ```js
-const { City } = gs.city;
+const { City, Gps } = gs.city;
 const { Sky } = gs.sky;
 // …
   v.air({ haze: .0016, colour: '#9aa6bc' });
@@ -165,7 +165,7 @@ const { Sky } = gs.sky;
       city.update(dt, p); sky.update(dt);
 ```
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Regions } = gs.regions;

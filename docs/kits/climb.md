@@ -8,12 +8,12 @@ Ledges, climbing, ropes and swimming.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ClimbPart`, line 3624), where every option and field is described.
+From `src/gamescroll.d.ts` (`ClimbPart`, line 3629), where every option and field is described.
 
-- `Ledges: { new (): { list: Loose[]; add(a: P3, b: P3, normal: { x: number; z: number }, o?: Loose): Loose; closest(p: P3, filter?: (l: Loose) => boolean): Loose }; from…` (:3625)
-- `Climber: new (ledges: Loose, o?: { height?: number; reach?: number; shimmy?: number; leap?: number; upTime?: number; leapTime?: number; out?: number }) => { state: 'fr…` (:3626)
-- `Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: n…` (:3630)
-- `Swimmer: new (o?: { height?: number; breath?: number; speed?: number; fast?: number; dive?: number; wade?: number; deep?: number | null; hurt?: number; climb?: number;…` Swimming: wading in the shallows (slower the deeper), swimming at the surface, treading water, diving under with a breath that runs out, coming up for air, and climbing out onto an edge up to `climb` metres over the… (:3637)
+- `Ledges: { new (): { list: Loose[]; add(a: P3, b: P3, normal: { x: number; z: number }, o?: Loose): Loose; closest(p: P3, filter?: (l: Loose) => boolean): Loose }; from…` (:3630)
+- `Climber: new (ledges: Loose, o?: { height?: number; reach?: number; shimmy?: number; leap?: number; upTime?: number; leapTime?: number; out?: number }) => { state: 'fr…` (:3631)
+- `Rope: new (anchor: P3, length?: number, o?: { gravity?: number; pump?: number; damping?: number }) => { anchor: P3; length: number; catch(feet: P3, vel: P3, height?: n…` (:3635)
+- `Swimmer: new (o?: { height?: number; breath?: number; speed?: number; fast?: number; dive?: number; wade?: number; deep?: number | null; hurt?: number; climb?: number;…` Swimming: wading in the shallows (slower the deeper), swimming at the surface, treading water, diving under with a breath that runs out, coming up for air, and climbing out onto an edge up to `climb` metres over the… (:3642)
 
 ## From the maker kit
 

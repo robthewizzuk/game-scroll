@@ -8,33 +8,33 @@ Tile levels from text: walls, one-way floors, slopes, marks, moving through them
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TilesPart`, line 1476), where every option and field is described.
+From `src/gamescroll.d.ts` (`TilesPart`, line 1481), where every option and field is described.
 
-- `TileMap: typeof TileMap` (:1476)
-  - `constructor(cols: number, rows: number, o?: { size?: number; legend?: Record<string, TileKind>; /** false: it keeps to itself (it finds nothing else the game made, and…` (:1455)
-  - `static fromText(text: string | string[], o?: { size?: number; legend?: Record<string, TileKind>; link?: boolean }): TileMap` '#' wall, '-' one-way, '/' '\' slopes, '.' empty; other letters are marks. (:1457)
-  - `edges(tx: number, ty: number, same?: string | ((ch: string, tx: number, ty: number) => boolean) | null, o?: { edge?: boolean }): TileEdges` Auto-tiling: which neighbours join (same: characters that join, or a test). (:1459)
-  - `cols: number` (:1460)
-  - `rows: number` (:1460)
-  - `size: number` (:1460)
-  - `readonly w: number` (:1460)
-  - `readonly h: number` (:1460)
-  - `marks: { ch: string; tx: number; ty: number; x: number; y: number }[]` (:1461)
-  - `find(ch: string): { ch: string; tx: number; ty: number; x: number; y: number }[]` (:1462)
-  - `clear(ch: string, to?: string): this` (:1463)
-  - `get(tx: number, ty: number): string` (:1464)
-  - `set(tx: number, ty: number, ch: string): this` (:1464)
-  - `info(tx: number, ty: number): TileKind` (:1465)
-  - `at(x: number, y: number): { tx: number; ty: number; ch: string }` (:1465)
-  - `solid(tx: number, ty: number): boolean` (:1466)
-  - `slopeY(tx: number, ty: number, x: number): number | null` (:1466)
-  - `inside(tx: number, ty: number): boolean` (:1467)
-  - `move(box: Box, dx: number, dy: number, o?: { drop?: boolean; stepDown?: number; stepUp?: number }): TileHit` Moves a box (x, y centre) by dx, dy, stopping at walls. (:1469)
-  - `ray(x0: number, y0: number, x1: number, y1: number): { x: number; y: number; tx: number; ty: number } | null` (:1470)
-  - `sees(x0: number, y0: number, x1: number, y1: number): boolean` (:1471)
-  - `walkable(): boolean[][]` (:1472)
-  - `draw(c: Ctx, draw: (c: Ctx, ch: string, x: number, y: number, size: number, tx: number, ty: number) => void, cam?: Camera2D | null, o?: { empty?: boolean }): this` (:1473)
-- `BLOB_MASKS: number[]` The 47 blob-tile masks in order (piece i's 8-bit mask). (:1476)
+- `TileMap: typeof TileMap` (:1481)
+  - `constructor(cols: number, rows: number, o?: { size?: number; legend?: Record<string, TileKind>; /** false: it keeps to itself (it finds nothing else the game made, and…` (:1460)
+  - `static fromText(text: string | string[], o?: { size?: number; legend?: Record<string, TileKind>; link?: boolean }): TileMap` '#' wall, '-' one-way, '/' '\' slopes, '.' empty; other letters are marks. (:1462)
+  - `edges(tx: number, ty: number, same?: string | ((ch: string, tx: number, ty: number) => boolean) | null, o?: { edge?: boolean }): TileEdges` Auto-tiling: which neighbours join (same: characters that join, or a test). (:1464)
+  - `cols: number` (:1465)
+  - `rows: number` (:1465)
+  - `size: number` (:1465)
+  - `readonly w: number` (:1465)
+  - `readonly h: number` (:1465)
+  - `marks: { ch: string; tx: number; ty: number; x: number; y: number }[]` (:1466)
+  - `find(ch: string): { ch: string; tx: number; ty: number; x: number; y: number }[]` (:1467)
+  - `clear(ch: string, to?: string): this` (:1468)
+  - `get(tx: number, ty: number): string` (:1469)
+  - `set(tx: number, ty: number, ch: string): this` (:1469)
+  - `info(tx: number, ty: number): TileKind` (:1470)
+  - `at(x: number, y: number): { tx: number; ty: number; ch: string }` (:1470)
+  - `solid(tx: number, ty: number): boolean` (:1471)
+  - `slopeY(tx: number, ty: number, x: number): number | null` (:1471)
+  - `inside(tx: number, ty: number): boolean` (:1472)
+  - `move(box: Box, dx: number, dy: number, o?: { drop?: boolean; stepDown?: number; stepUp?: number }): TileHit` Moves a box (x, y centre) by dx, dy, stopping at walls. (:1474)
+  - `ray(x0: number, y0: number, x1: number, y1: number): { x: number; y: number; tx: number; ty: number } | null` (:1475)
+  - `sees(x0: number, y0: number, x1: number, y1: number): boolean` (:1476)
+  - `walkable(): boolean[][]` (:1477)
+  - `draw(c: Ctx, draw: (c: Ctx, ch: string, x: number, y: number, size: number, tx: number, ty: number) => void, cam?: Camera2D | null, o?: { empty?: boolean }): this` (:1478)
+- `BLOB_MASKS: number[]` The 47 blob-tile masks in order (piece i's 8-bit mask). (:1481)
 
 ## From the maker kit
 
@@ -80,11 +80,33 @@ water pick the right edge and corner pieces.
 
 ## In real games
 
-1 game uses it (`node scripts/examples.mjs gs.tiles` lists them). The shortest:
+2 games use it (`node scripts/examples.mjs gs.tiles` lists them). The shortest:
 
 `src/games/echo-loop.js` (Echo Loop, Advance · Time loop, 234 lines):
 
 ```js
 const { Feel } = gs.effects, { Ready } = gs.rounds, { text, sprite } = gs.pixel, { sounds, sfx } = gs.sound;
 const { haptic } = gs.device, { TileMap } = gs.tiles, { Ghost } = gs.replay, { clamp } = gs.util, { mix } = gs.tick;
+```
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { Camera2D } = gs.camera2d;
+const { TileMap } = gs.tiles;
+// …
+  const opp = new Opponent(api, { skill: .5 });    // Tiny Brains: plays turns ahead and learns how this player fights
+  const map = TileMap.fromText(MAP.map(r => r.replace(/[^#]/g, '.')), { size: T });
+// …
+  function setupWorld() {
+    for (let ty = 0; ty < ROWS; ty++) for (let tx = 0; tx < COLS; tx++) map.set(tx, ty, SOLID[MAP[ty][tx]] ? '#' : '.');
+    for (const h of HOUSES) for (let y = 0; y < 3; y++) for (let x = 0; x < h.w; x++) map.set(h.tx + x, h.ty + y, '#');
+    map.set(WELL.tx, WELL.ty, '#');
+// …
+    ];
+    for (const n of npcs) { n.x = n.tx * T + 8; n.y = n.ty * T + 8; n.beaten = false; n.walk = 0; map.set(n.tx, n.ty, '#'); }
+// …
+    gateOpen = false;
+    for (let x = 13; x <= 14; x++) map.set(x, 11, '#');
+    nav = new NavGrid(COLS, ROWS, T, (cx, cy) => map.solid(cx, cy));
 ```

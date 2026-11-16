@@ -5,6 +5,8 @@ const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Ready } = gs.rounds;
 const { HDView, Particles, pbr, rbox, surface, speckle, spot, pulse, THREE } = gs.hd;
+const { approach } = gs.juice;
+const { Stick } = gs.controls;
 const { Group, Mesh, InstancedMesh, Object3D, Vector3, CatmullRomCurve3, TubeGeometry, CylinderGeometry, SphereGeometry, CapsuleGeometry, ConeGeometry, IcosahedronGeometry, BoxGeometry, BackSide, Color } = THREE;
 
 // Deep Pressure: steer a little submarine down a pitch-black ocean trench. Your lamp only shows a
@@ -61,9 +63,10 @@ function makeLurker() {
 }
 
 function make(api) {
+  const stick = new Stick({ floating: true, dead: 0, zone: [0, 0, 1e5, 1e5] });   // the drag stick: where the finger lands (the game picks which finger)
   const timers = new Timers(), later = (fn, ms) => timers.after(ms / 1000, fn);   // game-time delays: they pause with the game
   let v, sub, lurker, lamp, bubbles, snow, spark, curve, LEN, PT, TN, NN, BN, world, spikes, mines, pearls, pearlIM, built;
-  let d, ox, oy, vx, vy, speed, hull, hurtT, pingT, noiseLvl, lurkGap, lurkT, score, pearlsGot, t, msg, fingers, keys, stick, best, beatT;
+  let d, ox, oy, vx, vy, speed, hull, hurtT, pingT, noiseLvl, lurkGap, lurkT, score, pearlsGot, t, msg, fingers, keys, best, beatT;
   const ready = new Ready({ eat: false, text: 'Tap to dive' });         // the sub holds still until the first touch
   let fdt = 1 / 60;
   const mx = new Object3D(), pos = new Vector3(), tmp = new Vector3(), camPos = new Vector3(), look = new Vector3(), camOff = { x: 0, y: 0 };
@@ -134,7 +137,7 @@ function make(api) {
     let sx = stick.x, sy = stick.y;
     if (keys.has('ArrowLeft') || keys.has('a')) sx = -1; if (keys.has('ArrowRight') || keys.has('d')) sx = 1;
     if (keys.has('ArrowUp') || keys.has('w')) sy = -1; if (keys.has('ArrowDown') || keys.has('s')) sy = 1;
-    vx += (sx * 7 - vx) * Math.min(1, dt * 3); vy += (-sy * 7 - vy) * Math.min(1, dt * 3);
+    vx = approach(vx, sx * 7, 3, dt); vy = approach(vy, -sy * 7, 3, dt);
     ox += vx * dt; oy += vy * dt;
     speed = Math.min(15, 6.5 + t * .06); d += speed * dt;
     const rr = Math.hypot(ox, oy);
@@ -189,7 +192,7 @@ function make(api) {
     // ping ready ring
     const pr = clamp(pingT / .5, 0, 1); c.strokeStyle = pr >= 1 ? '#7affd0' : '#ffffff40'; c.lineWidth = 2 * u; c.beginPath(); c.arc(W - 30 * u, H - 30 * u, 16 * u, -Math.PI / 2, -Math.PI / 2 + pr * Math.PI * 2); c.stroke();
     c.fillStyle = pr >= 1 ? '#7affd0' : '#ffffff60'; c.font = `800 ${7 * u}px Rubik, sans-serif`; c.fillText('PING', W - 30 * u, H - 30 * u);
-    if (stick.on) { c.strokeStyle = '#ffffff35'; c.lineWidth = 2 * u; c.beginPath(); c.arc(stick.ax, stick.ay, 34 * u, 0, 7); c.stroke(); c.fillStyle = '#ffffff50'; c.beginPath(); c.arc(stick.ax + stick.x * 34 * u, stick.ay + stick.y * 34 * u, 10 * u, 0, 7); c.fill(); }
+    if (stick.active) { c.strokeStyle = '#ffffff35'; c.lineWidth = 2 * u; c.beginPath(); c.arc(stick.cx, stick.cy, 34 * u, 0, 7); c.stroke(); c.fillStyle = '#ffffff50'; c.beginPath(); c.arc(stick.cx + stick.x * 34 * u, stick.cy + stick.y * 34 * u, 10 * u, 0, 7); c.fill(); }
     if (msg) { c.globalAlpha = clamp(msg.l * 2, 0, 1); c.fillStyle = msg.col; c.font = `800 ${15 * u}px Rubik, sans-serif`; c.fillText(msg.txt, W / 2, H * .28); if (msg.sub) { c.fillStyle = '#fff'; c.font = `600 ${8 * u}px Rubik, sans-serif`; c.fillText(msg.sub, W / 2, H * .28 + 15 * u); } c.globalAlpha = 1; }
     if (ready.playing && t < 4) { c.fillStyle = '#ffffffd8'; c.font = `600 ${8.5 * u}px Rubik, sans-serif`; c.fillText('Drag to steer · tap to PING the dark · pings wake the Lurker', W / 2, H * .62); }
     c.restore();
@@ -199,7 +202,7 @@ function make(api) {
     reset() { timers.clear();
       buildWorld();
       d = 8; ox = 0; oy = 0; vx = 0; vy = 0; speed = 6.5; hull = HULL; hurtT = 0; pingT = 1; noiseLvl = 0; lurkGap = 46; score = 0; pearlsGot = 0; t = 0; msg = null; fingers = {}; keys = new Set(); beatT = 0;
-      stick = { on: false, x: 0, y: 0, ax: 0, ay: 0, id: null }; camPos.set(0, 0, 0); camOff.x = camOff.y = 0; bubbles.clear(); snow.clear(); spark.clear(); PING.a.value = 0; ready.reset();
+      stick.release(); camPos.set(0, 0, 0); camOff.x = camOff.y = 0; bubbles.clear(); snow.clear(); spark.clear(); PING.a.value = 0; ready.reset();
     },
     resize(w, h) { W = w; H = h; },
     update, draw,
@@ -207,13 +210,13 @@ function make(api) {
     down(x, y, id = 0) {
       ready.go();
       const f = { id, x, y, t0: t, moved: 0 }; fingers[id] = f;
-      if (stick.id == null && (x < W * .6 || Object.keys(fingers).length === 1)) { stick.id = id; stick.on = true; stick.ax = x; stick.ay = y; stick.x = stick.y = 0; }
+      if (!stick.active && (x < W * .6 || Object.keys(fingers).length === 1)) { stick.r = Math.min(W, H) * .12; stick.down(x, y, id); }
       else ping();
     },
-    move(x, y, p, id = 0) { const f = fingers[id]; if (!f || !p) return; f.moved = Math.max(f.moved, Math.hypot(x - f.x, y - f.y)); if (stick.id === id) { const R0 = Math.min(W, H) * .12, dx = x - stick.ax, dy = y - stick.ay, l = Math.hypot(dx, dy), k = l > R0 ? R0 / l : 1; stick.x = dx * k / R0; stick.y = dy * k / R0; } },
+    move(x, y, p, id = 0) { const f = fingers[id]; if (!f || !p) return; f.moved = Math.max(f.moved, Math.hypot(x - f.x, y - f.y)); stick.move(x, y, p, id); },
     up(x, y, id = 0) {
       const f = fingers[id]; delete fingers[id]; if (!f) return;
-      if (stick.id === id) { stick.id = null; stick.on = false; stick.x = stick.y = 0; if (t - f.t0 < .25 && f.moved < 10) ping(); }
+      if (stick.up(x, y, id)) { if (t - f.t0 < .25 && f.moved < 10) ping(); }
     },
     key(k, dn) { if (dn) { ready.go(); keys.add(k); } else keys.delete(k); if (dn && k === ' ') ping(); },
   };

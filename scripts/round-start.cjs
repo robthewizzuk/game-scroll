@@ -5,6 +5,8 @@
 //   no ids: every Next Gen, AR and Board game
 //   --webgpu   draw with WebGPU (in software: slow, and its frame times jump about)
 //   --now      the old way, for comparison: the round starts the instant Play is pressed (__gs.start())
+//   --asleep   as a player meets the card: a picture in the feed, its game made only on Play (src/main.js sleep()),
+//              so "ready" includes making the game ("made" says when that was done)
 //   --jobs n   browsers at once (default 2; more is quicker, and makes the frame times noisier)
 //   --strict   exit 1 if a round never started, started with things hidden, or a game threw
 // Env: CPU=4 slows the processor 4 times (like a mid-range phone).
@@ -22,7 +24,7 @@ const { chromium, devices } = require('playwright');
 const path = require('path');
 (async () => {
   const args = process.argv.slice(2), opt = n => { const i = args.indexOf(n); return i >= 0 ? args.splice(i, 2)[1] : null; }, flag = n => { const i = args.indexOf(n); if (i >= 0) args.splice(i, 1); return i >= 0; };
-  const gpu = flag('--webgpu'), old = flag('--now'), strict = flag('--strict'), jobs = +(opt('--jobs') || 2), CPU = +(process.env.CPU || 1);
+  const gpu = flag('--webgpu'), old = flag('--now'), asleep = flag('--asleep'), strict = flag('--strict'), jobs = +(opt('--jobs') || 2), CPU = +(process.env.CPU || 1);
   const server = await (await import('vite')).preview({ preview: { port: 4196 } });
   const icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');
   const open = async () => {
@@ -41,17 +43,17 @@ const path = require('path');
     for (let id; (id = queue.shift());) {
       const { p } = w; w.errs = [];
       try {
-        await p.evaluate(id => __gs.only(id, true), id); await p.waitForTimeout(300);
-        if (gpu && !w.gpu) { w.gpu = await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); return !!(await window.__gpu.ready()); }); await p.evaluate(id => __gs.only(id, true), id); }
+        await p.evaluate(([id, a]) => __gs.only(id, true, a), [id, asleep]); await p.waitForTimeout(300);
+        if (gpu && !w.gpu) { w.gpu = await p.evaluate(async () => { while (!window.__gpu) await new Promise(r => setTimeout(r, 50)); window.__gpu.pick('webgpu'); return !!(await window.__gpu.ready()); }); await p.evaluate(([id, a]) => __gs.only(id, true, a), [id, asleep]); }
         await p.waitForFunction(() => __gs.active && !__gs.active.loading, null, { timeout: 300000 });
         await p.waitForTimeout(2500);   // the card's own first pictures, as a player who reads the hint has had
         await p.evaluate(old => {
-          const L = window.__L = { t0: performance.now(), began: 0, gaps: [], held: [], warm: [], heldWarm: 0, what: '' }; let last = 0, n = 0;
+          const L = window.__L = { t0: performance.now(), began: 0, made: 0, gaps: [], held: [], warm: [], heldWarm: 0, what: '' }; let last = 0, n = 0;
           const f = t => {
             if (n++ > 3000 || L.stop) return; requestAnimationFrame(f);
             const s = __gs.active, h = window.__hdView?.held?.size | 0;
             if (s.state === 'playing') { if (!L.began) L.began = t - L.t0; else L.gaps.push(Math.round(t - last)); L.held.push(h); }
-            else if (s.starting) { if (last) L.warm.push(Math.round(t - last)); L.heldWarm = Math.max(L.heldWarm, h); L.what = s.starting.what || L.what; }
+            else if (s.starting) { if (!L.made && s.starting.phase !== 'load') L.made = t - L.t0; if (last) L.warm.push(Math.round(t - last)); L.heldWarm = Math.max(L.heldWarm, h); L.what = s.starting.what || L.what; }
             last = t;
           };
           requestAnimationFrame(f);
@@ -64,7 +66,7 @@ const path = require('path');
         const long = L.gaps.slice(0, 6).filter(x => x > Math.max(60, med * 2.2));
         const verdict = !L.began ? 'NEVER' : held ? `HIDDEN ${held}` : long.length ? `LONG ${long.join(',')}` : 'ok';
         if (!L.began || held || w.errs.length) bad++;
-        console.log(`${verdict === 'ok' ? 'ok  ' : 'LOOK'} ${id.padEnd(18)} ${String(eras[id]).padEnd(8)} ${String(L.back).padEnd(6)} ready ${String(Math.round(L.began)).padStart(6)} ms · under cover ${String(L.warm.length).padStart(3)} frames, longest ${String(Math.max(0, ...L.warm)).padStart(5)} ms, hidden ${String(L.heldWarm).padStart(3)}${L.what ? ' (' + L.what + ')' : ''} · round: usual ${med} ms, first ${L.gaps.slice(0, 5).join(' ')} · ${verdict}${later ? ` (later ${later})` : ''}${w.errs.length ? '\n     ! ' + w.errs[0].slice(0, 200) : ''}`);
+        console.log(`${verdict === 'ok' ? 'ok  ' : 'LOOK'} ${id.padEnd(18)} ${String(eras[id]).padEnd(8)} ${String(L.back).padEnd(6)} ready ${String(Math.round(L.began)).padStart(6)} ms${asleep ? ` (made ${String(Math.round(L.made)).padStart(5)})` : ''} · under cover ${String(L.warm.length).padStart(3)} frames, longest ${String(Math.max(0, ...L.warm)).padStart(5)} ms, hidden ${String(L.heldWarm).padStart(3)}${L.what ? ' (' + L.what + ')' : ''} · round: usual ${med} ms, first ${L.gaps.slice(0, 5).join(' ')} · ${verdict}${later ? ` (later ${later})` : ''}${w.errs.length ? '\n     ! ' + w.errs[0].slice(0, 200) : ''}`);
       } catch (e) { bad++; console.log(`FAIL ${id} ${String(e.message).split('\n')[0]}`); }
     }
     await w.b.close();

@@ -2582,8 +2582,14 @@ export class HDView {
       for (let p = o.parent; p && p !== this.scene; p = p.parent) if (!p.visible) { p.visible = true; shown.push(p); }
     }
     ops.scene = this.scene; ops.camera = this.cam;
+    // (once the round is under way, the shaders the stand-in draw asks for are written in the background, as the scene pass's
+    // are (nowait.js), not in the frame: drawn as three does, each was 2 to 31 ms on the build machine in the AR games where
+    // things come in mid-round, Floor Golf's worst 31. Under the loading screen (all), at once, as before)
+    const nw = !all && (HD.noWait ?? HD.hold !== false) && r.gsNoWait;
+    if (nw) nw.begin(true);
     try { for (const l of lights) ops.pre(l, PRE_BIT); }
     finally {
+      if (nw) nw.end(true);
       for (let i = 0; i < pick.length; i++) { const o = pick[i]; o.layers.mask = was[i * 3]; o.visible = was[i * 3 + 1]; o.frustumCulled = was[i * 3 + 2]; }
       for (const p of shown) p.visible = false;
       HD.info.shAhead = (HD.info.shAhead || 0) + pick.length;
@@ -3306,7 +3312,13 @@ export class HDView {
     if (pm >= 0) { leave(pm); enter('3D: skinning'); }
     HD.info.skin = SK?.on ? (SK.run(this.cam, shc), SK.info) : null;
     if (pm >= 0) { leave(pm); enter('3D: contact shadows'); }
-    for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); }
+    // (contact shadows draw the scene from below with one material of their own: a kind of thing first seen mid-round had
+    // its shader for them written in the frame, 87 to 410 ms on the build machine in the AR games where things are added
+    // in play (Domino Run, Floor Golf, Laser Mirrors, Treasure Drop). Put off as the scene pass's are (nowait.js): that
+    // thing's contact shadow comes a frame or a few later)
+    const nwc = !baking && !off && !first && (HD.noWait ?? HD.hold !== false) && r.gsNoWait;
+    if (nwc && this.contacts.length) nwc.begin(true);
+    try { for (const cs of this.contacts) { const tw = cs.gpuTwin?.r === r ? cs.gpuTwin : (cs.gpuTwin = { r, ...G.fx.gpuContact(cs) }); tw.update(r, this.scene, T.contact); } } finally { if (nwc && this.contacts.length) nwc.end(true); }
     if (pm >= 0) leave(pm);
     // (WebGPU multisamples 4 times a pixel or not at all: three draws a tier's 2 as 1. So there 2 is none, and the finishing pass's own edge
     // smoothing (FXAA) does the work, as on the tiers without MSAA; it had been left off as if MSAA were on, and its place taken by the lens
@@ -3429,7 +3441,9 @@ export class HDView {
       }
       if (pm >= 0) leave(pm);
       // (the shadow shaders of what these maps have not drawn yet: shadowAhead, after the scene pass below, once this frame's uniforms are set)
-      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || !this.warmed;
+      // (a view first drawn once a round is under way, as a game that makes its view again for the next round does, has its
+      // shadow shaders put off like the rest, a few a frame: all at once there was Floor Golf's 13 ms frame on the build machine)
+      if (!baking && !off && HD.hold !== false) shAhead = getready.warming || (!this.warmed && !speed.playing());
     }
     // the lamps' slots that are due, a few a frame (lamps.js finish), and each lamp's numbers for the lights node
     if (LP?.gpu) {
@@ -3664,7 +3678,7 @@ export class HDView {
     // shaders and textures are ready (drawing would stall the feed while they compile) and the feed is
     // still (a whole frame plus its copy, and the playing card's frame drawn again, landed mid-swipe)
     if (off) {
-      if (!waiting.has(c)) { waiting.add(c); (this.ready ? Promise.resolve() : this.prepare()).then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(this, c); }); }
+      if (speed.feedPics !== false && !waiting.has(c)) { waiting.add(c); (this.ready ? Promise.resolve() : this.prepare()).then(() => { waiting.delete(c); if (c.canvas.isConnected && host?.canvas !== c.canvas) bakeLater(this, c); }); }
       c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.restore();
       return;
     }
@@ -4262,13 +4276,18 @@ onGpuLoss(e => {
   // (lost while reflections were ray traced: the tracing is what the driver would not take, trace-guard.js)
   if (traceLostChip()) { HD.info.traceOff = traceOff(); console.warn('3D: the graphics chip was lost while reflections were ray traced; they come from the screen from now on'); }
 });
+// The app, in the frame a round's last picture was drawn (src/covers.js keeps it as the card's picture in the feed):
+// the canvas that holds the 3D of 2D canvas c's card, readable until the frame is shown, or null if it isn't on c.
+// (Tests copy each frame into c itself, HD.direct off: then c.)
+speed.cardShot = c => !HD.direct ? c : host && host.canvas === c && c.isConnected ? (gpuFor(host.view)?.r ?? R)?.domElement || null : null;
 function mount(cv, c, view) {
   const hc = c.canvas, par = hc.parentNode, prevUnder = host?.under;
   if (host && host.canvas !== hc) {
     const old = host; host = null;
     // (the card it leaves has just gone off screen: a lighter picture, until it's played again, made once
     // the feed is still: drawn here, a whole frame of it plus its copy landed in the middle of the swipe)
-    if (old.canvas.isConnected && !bakes.some(b => b[1] === old.ctx)) bakes.push([old.view, old.ctx]);
+    // (not where the app keeps the feed free of 3D work, speed.feedPics false: it shows the card's saved picture instead, src/main.js)
+    if (speed.feedPics !== false && old.canvas.isConnected && !bakes.some(b => b[1] === old.ctx)) bakes.push([old.view, old.ctx]);
     old.canvas.classList.remove('hd-host');
   }
   // a view that moved between WebGL and WebGPU: take the other renderer's canvas off this card

@@ -8,22 +8,22 @@ Small helpers: clamp, rnd, pix, disc, hash, fmt, letter, flick speed.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`UtilPart`, line 432), where every option and field is described.
+From `src/gamescroll.d.ts` (`UtilPart`, line 436), where every option and field is described.
 
-- `clamp(v: number, a: number, b: number): number` (:433)
-- `rnd(a: number, b: number): number` (:434)
-- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:436)
-- `disc(c: Ctx, x: number, y: number, r: number): void` (:437)
-- `hash(str: string): number` (:438)
-- `fmt(n: number): string` (:439)
-- `flickTracker(): Loose` (:440)
-- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:442)
+- `clamp(v: number, a: number, b: number): number` (:437)
+- `rnd(a: number, b: number): number` (:438)
+- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:440)
+- `disc(c: Ctx, x: number, y: number, r: number): void` (:441)
+- `hash(str: string): number` (:442)
+- `fmt(n: number): string` (:443)
+- `flickTracker(): Loose` (:444)
+- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:446)
 
 ## In real games
 
-184 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
+179 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
 
-`src/games/untangle.js` (Untangle, Casual · Puzzle, 53 lines):
+`src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 
 ```js
 const { haptic } = gs.device;
@@ -36,12 +36,12 @@ const { rnd } = gs.util;
     do { pts = Array.from({ length: n }, (_, i) => { const a = i / n * Math.PI * 2 + rnd(-.2, .2); return { x: W / 2 + Math.cos(a) * 130, y: (TOP + BO
 ```
 
-`src/games/tile-tap.js` (Tile Tap, Casual · Rhythm, 58 lines):
+`src/games/safe-cracker.js` (Safe Cracker, Casual · Haptics, 59 lines):
 
 ```js
 const { haptic } = gs.device;
-const { clamp } = gs.util;
+const { clamp, rnd } = gs.util;
 // …
-      const r = rows.find(r => !r.hit && r.col === col && y >= r.y - 10 && y <= r.y + TH + 10);
-      if (r) { r.hit = true; score++; api.score(score); sfx(NOTES[score % NOTES.length] * 2, .12, 'triangle', .06); haptic('light'); feel.juice.burst(
+  let ang, combo, idx, time, score, t, grab, lastNum, glow, open, wrong, dead;
+  function newSafe() { combo = [0, 0, 0].map(() => rnd(0, NUMS) | 0); idx = 0; open = 0; }
 ```

@@ -8,21 +8,21 @@ Toy bricks in 3D.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BricksPart`, line 1647), where every option and field is described.
+From `src/gamescroll.d.ts` (`BricksPart`, line 1652), where every option and field is described.
 
-- `BRICK: Loose` (:1647)
-- `BRICK_KEYS: Loose` (:1647)
-- `STUD: Loose` (:1647)
-- `brick: Loose` (:1647)
-- `brick3d: Loose` (:1647)
-- `stud: Loose` (:1647)
-- `stud3d: Loose` (:1647)
+- `BRICK: Loose` (:1652)
+- `BRICK_KEYS: Loose` (:1652)
+- `STUD: Loose` (:1652)
+- `brick: Loose` (:1652)
+- `brick3d: Loose` (:1652)
+- `stud: Loose` (:1652)
+- `stud3d: Loose` (:1652)
 
 ## In real games
 
 8 games use it (`node scripts/examples.mjs gs.bricks` lists them). The shortest:
 
-`src/games/build-rush.js` (Build Rush, Bricks · Speed, 100 lines):
+`src/games/build-rush.js` (Build Rush, Bricks · Speed, 101 lines):
 
 ```js
 const { backdrop } = gs.gfx;

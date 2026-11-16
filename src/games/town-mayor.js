@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp } = gs.util;
 const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // You're mayor of a little town. Townsfolk bring requests: swipe left or right to decide.
 // Keep Food, Gold, Mood and Safety balanced: if any runs out OR overflows, your term is over.
@@ -39,7 +40,7 @@ const CARDS = [
 function make(api) {
   const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
   let m, card, deck, days, drag, fly, t, flash, last;
-  function nextCard() { if (!deck.length) deck = CARDS.map((_, i) => i).sort(() => Math.random() - .5); let i; do i = deck.pop(); while (i === last && deck.length); last = i; card = CARDS[i]; }
+  function nextCard() { if (!deck.length) deck = shuffle(CARDS.map((_, i) => i)); let i; do i = deck.pop(); while (i === last && deck.length); last = i; card = CARDS[i]; }
   function choose(right) {
     const ch = right ? card.R : card.L;
     ch[1].forEach((d, i) => { m[i] = clamp(m[i] + d, 0, 10); if (d) feel.juice.pop(51 + i * 80, 58, d > 0 ? `+${d}` : `${d}`, { color: d > 0 ? '#7dff9a' : '#ff8a8a', size: 15 }); });

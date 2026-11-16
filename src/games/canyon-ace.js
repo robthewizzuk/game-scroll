@@ -4,6 +4,8 @@ const { haptic, want, tilt, calibrateTilt } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Ready } = gs.rounds;
 const { HDView, Particles, pbr, rbox, surface, speckle, sun, THREE } = gs.hd;
+const { approach } = gs.juice;
+const { Stick } = gs.controls;
 const { Group, Mesh, InstancedMesh, Object3D, Vector3, BufferGeometry, BufferAttribute, ConeGeometry, CylinderGeometry, TorusGeometry, BoxGeometry, SphereGeometry, PlaneGeometry, MeshBasicMaterial, AdditiveBlending, Color } = THREE;
 
 // Canyon Ace: fly a jet low through a winding desert canyon. Tilt the phone to fly (or drag like a
@@ -48,9 +50,10 @@ function makeJet() {
 }
 
 function make(api) {
+  const stick = new Stick({ floating: true, dead: 0, zone: [0, 0, 1e5, 1e5] });   // drag like a joystick where the finger lands
   want('motion');
   let v, sunL, jet, rings, ringIM, trail, dust, boom, built;
-  let p, yaw, vyaw, climb, speed, shields, hurtT, score, mult, t, msg, fingers, keys, stick, boost, dist, prox, ringsGot;
+  let p, yaw, vyaw, climb, speed, shields, hurtT, score, mult, t, msg, fingers, keys, boost, dist, prox, ringsGot;
   const mx = new Object3D(), camPos = new Vector3(), tmp = new Vector3();
   const ready = new Ready({ eat: false, text: 'Tap to fly' });          // the jet holds its line until the first touch
   let fdt = 1 / 60;
@@ -100,14 +103,14 @@ function make(api) {
     if (t < 1.2) return fx(dt);
     // input: tilt is the stick (left/right banks, forward/back noses down/up); drag fallback
     let ix = stick.x, iy = stick.y; const tl = tilt();
-    if (!stick.on && tl) { ix = clamp(tl.x * 1.3, -1, 1); iy = clamp(tl.y * 1.3, -1, 1); }
+    if (!stick.active && tl) { ix = clamp(tl.x * 1.3, -1, 1); iy = clamp(tl.y * 1.3, -1, 1); }
     if (keys.has('ArrowLeft') || keys.has('a')) ix = -1; if (keys.has('ArrowRight') || keys.has('d')) ix = 1; if (keys.has('ArrowUp') || keys.has('w')) iy = -1; if (keys.has('ArrowDown') || keys.has('s')) iy = 1;
-    vyaw += (-ix * 1.15 - vyaw) * Math.min(1, dt * 4); yaw += vyaw * dt; yaw = clamp(yaw, -1, 1);
-    climb += (iy * 18 - climb) * Math.min(1, dt * 4);
+    vyaw = approach(vyaw, -ix * 1.15, 4, dt); yaw += vyaw * dt; yaw = clamp(yaw, -1, 1);
+    climb = approach(climb, iy * 18, 4, dt);
     speed = Math.min(78, 52 + t * .3) + (boost > 0 ? 25 : 0);
     p.x += Math.sin(yaw) * speed * dt; p.z += Math.cos(yaw) * speed * dt; p.y += climb * dt;
     // the canyon pulls your heading back along its line a little, so it never feels unfair
-    const ahead = cx(p.z + 30) - cx(p.z), want = Math.atan2(ahead, 30); yaw += (want - yaw) * Math.min(1, dt * .4);
+    const ahead = cx(p.z + 30) - cx(p.z), want = Math.atan2(ahead, 30); yaw = approach(yaw, want, .4, dt);
     const c = cx(p.z), hw = half(p.z), fy = floorY(p.z), dl = p.x - (c - hw), dr = c + hw - p.x, df = p.y - fy;
     if (dl < 2.4) { p.x = c - hw + 4; yaw = Math.abs(yaw) * .5 + .2; crash('Hit the canyon wall'); }
     if (dr < 2.4) { p.x = c + hw - 4; yaw = -Math.abs(yaw) * .5 - .2; crash('Hit the canyon wall'); }
@@ -148,7 +151,7 @@ function make(api) {
     for (let k = 0; k < 3; k++) { c.fillStyle = k < shields ? '#8affdc' : '#ffffff30'; c.beginPath(); c.arc(78 * u + k * 9 * u, 21 * u, 3 * u, 0, 7); c.fill(); }
     const m = Math.round(mult); c.textAlign = 'right'; c.fillStyle = m >= 4 ? '#ff5a4a' : m >= 3 ? '#ffcc30' : m >= 2 ? '#fff' : '#ffffff60';
     c.font = `800 ${22 * u}px Rubik, sans-serif`; c.fillText(`x${m}`, W - 14 * u, 24 * u); c.font = `700 ${7 * u}px Rubik, sans-serif`; c.fillText(m > 1 ? 'SKIMMING!' : 'GET CLOSER', W - 14 * u, 40 * u);
-    if (stick.on) { c.strokeStyle = '#ffffff40'; c.lineWidth = 2 * u; c.beginPath(); c.arc(stick.ax, stick.ay, 34 * u, 0, 7); c.stroke(); c.fillStyle = '#ffffff55'; c.beginPath(); c.arc(stick.ax + stick.x * 34 * u, stick.ay + stick.y * 34 * u, 10 * u, 0, 7); c.fill(); }
+    if (stick.active) { c.strokeStyle = '#ffffff40'; c.lineWidth = 2 * u; c.beginPath(); c.arc(stick.cx, stick.cy, 34 * u, 0, 7); c.stroke(); c.fillStyle = '#ffffff55'; c.beginPath(); c.arc(stick.cx + stick.x * 34 * u, stick.cy + stick.y * 34 * u, 10 * u, 0, 7); c.fill(); }
     if (msg) { c.textAlign = 'center'; c.globalAlpha = clamp(msg.l * 2, 0, 1); c.fillStyle = msg.col; c.font = `800 ${16 * u}px Rubik, sans-serif`; c.fillText(msg.txt, W / 2, H * .26); if (msg.sub) { c.font = `700 ${8 * u}px Rubik, sans-serif`; c.fillStyle = '#fff'; c.fillText(msg.sub, W / 2, H * .26 + 15 * u); } c.globalAlpha = 1; }
     if (ready.playing && t < 4) { c.textAlign = 'center'; c.fillStyle = '#fff'; c.font = `600 ${8.5 * u}px Rubik, sans-serif`; c.fillText(tilt() ? 'Tilt to fly · skim the rock for a bigger multiplier' : 'Drag to fly · skim the rock for a bigger multiplier', W / 2, H * .7); }
     c.restore();
@@ -158,14 +161,14 @@ function make(api) {
     reset() {
       if (!v) setup();
       p = new Vector3(cx(20), floorY(20) + 12, 20); yaw = 0; vyaw = 0; climb = 0; speed = 52; shields = 3; hurtT = 0; score = 0; mult = 1; t = 0; msg = null; fingers = {}; keys = new Set(); boost = 0; dist = 2; prox = 20; ringsGot = 0;
-      stick = { on: false, x: 0, y: 0, ax: 0, ay: 0, id: null }; rings.forEach(r => r.got = false); camPos.set(0, 0, 0); trail.clear(); dust.clear(); boom.clear(); calibrateTilt(); built = true; ready.reset();
+      stick.release(); rings.forEach(r => r.got = false); camPos.set(0, 0, 0); trail.clear(); dust.clear(); boom.clear(); calibrateTilt(); built = true; ready.reset();
     },
     resize(w, h) { W = w; H = h; },
     update, draw,
     fx(dt) { if (v) { trail.update(dt); dust.update(dt); boom.update(dt); } },
-    down(x, y, id = 0) { if (ready.waiting) { ready.go(); calibrateTilt(); } if (stick.id != null) return; stick.id = id; stick.on = true; stick.ax = x; stick.ay = y; stick.x = stick.y = 0; },
-    move(x, y, pr, id = 0) { if (stick.id !== id || !pr) return; const R0 = Math.min(W, H) * .13, dx = x - stick.ax, dy = y - stick.ay, l = Math.hypot(dx, dy), k = l > R0 ? R0 / l : 1; stick.x = dx * k / R0; stick.y = dy * k / R0; },
-    up(x, y, id = 0) { if (stick.id === id) { stick.id = null; stick.on = false; stick.x = stick.y = 0; } },
+    down(x, y, id = 0) { if (ready.waiting) { ready.go(); calibrateTilt(); } stick.r = Math.min(W, H) * .13; stick.down(x, y, id); },
+    move(x, y, pr, id = 0) { if (pr) stick.move(x, y, pr, id); },
+    up(x, y, id = 0) { stick.up(x, y, id); },
     key(k, d) { if (d) { ready.go(); keys.add(k); } else keys.delete(k); },
   };
   return self;

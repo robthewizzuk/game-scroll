@@ -8,68 +8,68 @@ Crowds that chase, flee, flock and hunt; grid paths; state machines, behaviour t
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`AiPart`, line 2082), where every option and field is described.
+From `src/gamescroll.d.ts` (`AiPart`, line 2087), where every option and field is described.
 
-- `Crowd: new (...a: Loose[]) => Loose` (:2082)
-- `NavGrid: new (...a: Loose[]) => Loose` (:2082)
-- `Brain: new (...a: Loose[]) => Loose` (:2082)
-- `YUKA: Loose` (:2082)
-- `Swarm: typeof Swarm` (:2082)
-  - `constructor(o?: { count?: number; w?: number; h?: number; speed?: number; sight?: number; separate?: number; align?: number; cohere?: number; wander?: number; edges?: …` (:2063)
-  - `readonly count: number` (:2064)
-  - `living: number` (:2064)
-  - `gpu: boolean` (:2064)
-  - `x: Float32Array` (:2065)
-  - `y: Float32Array` (:2065)
-  - `vx: Float32Array` (:2065)
-  - `vy: Float32Array` (:2065)
-  - `alive: Uint8Array` (:2065)
-  - `speed: number` (:2066)
-  - `sight: number` (:2066)
-  - `separate: number` (:2066)
-  - `align: number` (:2066)
-  - `cohere: number` (:2066)
-  - `wander: number` (:2066)
-  - `edges: 'wrap' | 'bounce'` (:2066)
-  - `ready: Promise<boolean>` Resolves true once it's moving on the GPU (false if it stays on the CPU). (:2068)
-  - `pull(x: number, y: number, o?: { strength?: number; radius?: number }): this` Towards (x, y) this frame; strength < 0 pushes away. (:2070)
-  - `obstacle(x: number, y: number, r: number): this` (:2071)
-  - `clearObstacles(): this` (:2071)
-  - `kill(i: number): this` (:2072)
-  - `revive(i: number, x: number, y: number): this` (:2072)
-  - `place(i: number, x: number, y: number): this` (:2072)
-  - `angle(i: number): number` (:2073)
-  - `near(x: number, y: number, r: number): number[]` Living ones within r of (x, y), as indices. (:2075)
-  - `order(): number` 0 (all over) to 1 (all heading one way). (:2077)
-  - `update(dt: number): this` (:2078)
-  - `sync(): Promise<void>` (:2078)
-  - `dispose(): void` (:2078)
-  - `static max(): number` About how many this phone moves smoothly (8192 with the GPU, 2000 without). (:2080)
-- `Tree: typeof Tree` (:2082)
-  - `constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number; /** Corrections (with see): true, or a gs.brains.Coach t…` (:2086)
-  - `static ok: string` (:2087)
-  - `static fail: string` (:2087)
-  - `static run: string` (:2087)
-  - `update(dt: number): this` (:2088)
-  - `reset(): this` (:2088)
-  - `readonly state: 'running' | 'ok' | 'failed'` (:2088)
-  - `path(): string[]` (:2088)
-  - `readonly coach: Coach | null` The coach, when it was given one and a see. (:2090)
-  - `correct(name: string): this` "In a moment like this, do this": makes the built-in condition [Told, "Name"] true in moments like it, so give the tree a branch for it first: sequence { condition [Told, "Flee"] action [Flee] }. (:2092)
-  - `avoid(name?: string): this` "Not that, in a moment like this": the action named (default: the one it last ran) fails at once in moments like it, and the tree goes on to its next branch. (:2094)
-  - `readonly told: { action: string; not: boolean } | null` After update(): what the coach's examples changed this step, or null. (:2096)
-- `Choose: typeof Choose` (:2082)
-  - `constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: numbe…` (:2101)
-  - `pick(...a: Loose[]): string` (:2102)
-  - `scores: Record<string, number>` (:2102)
-  - `current: string | null` (:2102)
-  - `readonly coach: Coach | null` With coach: want.coach.correct('sleep') ("there, it should have wanted sleep"), want.coach.avoid(), want.coach.recalled. (:2104)
-  - `static linear: Consideration` (:2105)
-  - `static quad: Consideration` (:2105)
-  - `static root: Consideration` (:2105)
-  - `static invert: Consideration` (:2105)
-  - `static logistic(mid?: number, k?: number): Consideration` (:2106)
-  - `static step(at?: number): Consideration` (:2106)
+- `Crowd: new (...a: Loose[]) => Loose` (:2087)
+- `NavGrid: new (...a: Loose[]) => Loose` (:2087)
+- `Brain: new (...a: Loose[]) => Loose` (:2087)
+- `YUKA: Loose` (:2087)
+- `Swarm: typeof Swarm` (:2087)
+  - `constructor(o?: { count?: number; w?: number; h?: number; speed?: number; sight?: number; separate?: number; align?: number; cohere?: number; wander?: number; edges?: …` (:2068)
+  - `readonly count: number` (:2069)
+  - `living: number` (:2069)
+  - `gpu: boolean` (:2069)
+  - `x: Float32Array` (:2070)
+  - `y: Float32Array` (:2070)
+  - `vx: Float32Array` (:2070)
+  - `vy: Float32Array` (:2070)
+  - `alive: Uint8Array` (:2070)
+  - `speed: number` (:2071)
+  - `sight: number` (:2071)
+  - `separate: number` (:2071)
+  - `align: number` (:2071)
+  - `cohere: number` (:2071)
+  - `wander: number` (:2071)
+  - `edges: 'wrap' | 'bounce'` (:2071)
+  - `ready: Promise<boolean>` Resolves true once it's moving on the GPU (false if it stays on the CPU). (:2073)
+  - `pull(x: number, y: number, o?: { strength?: number; radius?: number }): this` Towards (x, y) this frame; strength < 0 pushes away. (:2075)
+  - `obstacle(x: number, y: number, r: number): this` (:2076)
+  - `clearObstacles(): this` (:2076)
+  - `kill(i: number): this` (:2077)
+  - `revive(i: number, x: number, y: number): this` (:2077)
+  - `place(i: number, x: number, y: number): this` (:2077)
+  - `angle(i: number): number` (:2078)
+  - `near(x: number, y: number, r: number): number[]` Living ones within r of (x, y), as indices. (:2080)
+  - `order(): number` 0 (all over) to 1 (all heading one way). (:2082)
+  - `update(dt: number): this` (:2083)
+  - `sync(): Promise<void>` (:2083)
+  - `dispose(): void` (:2083)
+  - `static max(): number` About how many this phone moves smoothly (8192 with the GPU, 2000 without). (:2085)
+- `Tree: typeof Tree` (:2087)
+  - `constructor(definition: string | object, agent: Record<string, (...a: Loose[]) => Loose>, o?: { seed?: number; /** Corrections (with see): true, or a gs.brains.Coach t…` (:2091)
+  - `static ok: string` (:2092)
+  - `static fail: string` (:2092)
+  - `static run: string` (:2092)
+  - `update(dt: number): this` (:2093)
+  - `reset(): this` (:2093)
+  - `readonly state: 'running' | 'ok' | 'failed'` (:2093)
+  - `path(): string[]` (:2093)
+  - `readonly coach: Coach | null` The coach, when it was given one and a see. (:2095)
+  - `correct(name: string): this` "In a moment like this, do this": makes the built-in condition [Told, "Name"] true in moments like it, so give the tree a branch for it first: sequence { condition [Told, "Flee"] action [Flee] }. (:2097)
+  - `avoid(name?: string): this` "Not that, in a moment like this": the action named (default: the one it last ran) fails at once in moments like it, and the tree goes on to its next branch. (:2099)
+  - `readonly told: { action: string; not: boolean } | null` After update(): what the coach's examples changed this step, or null. (:2101)
+- `Choose: typeof Choose` (:2087)
+  - `constructor(options: Record<string, Consideration | Consideration[] | { score: Consideration | Consideration[]; weight?: number }>, o?: { stick?: number; noise?: numbe…` (:2106)
+  - `pick(...a: Loose[]): string` (:2107)
+  - `scores: Record<string, number>` (:2107)
+  - `current: string | null` (:2107)
+  - `readonly coach: Coach | null` With coach: want.coach.correct('sleep') ("there, it should have wanted sleep"), want.coach.avoid(), want.coach.recalled. (:2109)
+  - `static linear: Consideration` (:2110)
+  - `static quad: Consideration` (:2110)
+  - `static root: Consideration` (:2110)
+  - `static invert: Consideration` (:2110)
+  - `static logistic(mid?: number, k?: number): Consideration` (:2111)
+  - `static step(at?: number): Consideration` (:2111)
 
 ## From the maker kit
 
@@ -189,7 +189,33 @@ drawing for each tile on screen.
 
 ## In real games
 
-2 games use it (`node scripts/examples.mjs gs.ai` lists them). The shortest:
+3 games use it (`node scripts/examples.mjs gs.ai` lists them). The shortest:
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { Stick } = gs.controls;
+const { NavGrid } = gs.ai;
+// …
+    for (let x = 13; x <= 14; x++) map.set(x, 11, '#');
+    nav = new NavGrid(COLS, ROWS, T, (cx, cy) => map.solid(cx, cy));
+// …
+    if (gateOpen) return;
+    gateOpen = true; for (let x = 13; x <= 14; x++) { map.set(x, 11, '.'); nav.set(x, 11, false); }
+// …
+  function walkTo(wx, wy, then = null) {
+    const p = nav.path(hero.x, hero.y, wx, wy);
+// …
+      if (Math.hypot(n.x - hero.x, n.y - hero.y) < 26) { interact(n); return; }
+      const spots = [[0, 1], [0, -1], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: (tx + dx) * T + 8, y: (ty + dy) * T + 8 })).filter(p => !nav.blocked(p.
+// …
+    }
+    if (!nav.blocked(w.x, w.y)) { walkTo(w.x, w.y); feel.click(); marker = { x: tx * T + 8, y: ty * T + 8, l: .6 }; }
+// …
+    if (want >= dist) {
+      n.tx += w.d[0] * w.steps; n.ty += w.d[1] * w.steps; n.x = n.tx * T + 8; n.y = n.ty * T + 8; map.set(n.tx, n.ty, '#'); nav.set(n.tx, n.ty, true);
+      for (let i = 0; i < w.steps; i++) nav.set(n.tx - w.d[0] * (i + 1), n.ty - w.d[1] * (i + 1), false);
+```
 
 `src/games/door-committee.js` (Door Committee, Next Gen · Puzzle, 1338 lines):
 
@@ -208,14 +234,4 @@ const { NavGrid } = gs.ai;
 // …
     if (!B.on) return;
     if (!B.path) { B.wait -= dt; if (B.wait <= 0) { B.at = 1 - B.at; const s = B.stops[B.at]; const r = nav.path(B.x + COLS / 2, B.z + ROWS / 2, s.x +
-```
-
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
-
-```js
-const { CoverMap, Squad } = gs.tactics;
-const { NavGrid } = gs.ai;
-// …
-  WD.cover = new CoverMap(GC, GR, coverAt, { size: CELL, x0: GX0, y0: GZ0, low: (c, r) => WD.lowCells.has(c + ',' + r) });
-  WD.nav = new NavGrid(GC, GR, CELL, (c, r) => {
 ```

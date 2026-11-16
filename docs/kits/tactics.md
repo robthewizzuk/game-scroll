@@ -8,13 +8,13 @@ Cover (2D and 3D), squads that use it, taking cover, routes.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TacticsPart`, line 3558), where every option and field is described.
+From `src/gamescroll.d.ts` (`TacticsPart`, line 3563), where every option and field is described.
 
-- `CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => b…` (:3559)
-- `Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m:…` (:3566)
-- `Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: numb…` (:3576)
-- `Cover3D: new (o?: { world?: Loose | false; space?: number; radius?: number; crouch?: number; low?: number; cell?: number; floors?: number; ms?: number; top?: number; l…` Cover in 3D found from the game's World3D with rays (walls, low walls, cars, crates, buildings: whatever is solid). (:3583)
-- `TakeCover: new (cover: Loose, o?: { speed?: number; run?: number; peek?: number; dash?: boolean; pull?: number }) => { state: 'out' | 'moving' | 'in' | 'peek' | 'blind…` The hero in cover: take(feet, facing) snaps to the nearest wall, then update(dt, input, feet) each frame slides along it, stops at its ends, leans out round them or pops up over it while aiming, fires blind, runs to… (:3613)
+- `CoverMap: new (cols: number, rows: number, blocked: (c: number, r: number) => boolean, o?: { size?: number; x0?: number; y0?: number; low?: (c: number, r: number) => b…` (:3564)
+- `Squad: new (members: Loose[], o?: { /** A CoverMap. Left out: the one the game made before the squad; false: none. */ cover?: Loose | false; link?: boolean; sees?: (m:…` (:3571)
+- `Route: new (points: P3[], o?: { leash?: number; reach?: number }) => On<Loose> & { points: P3[]; i: number; readonly point: P3; readonly done: boolean; update(dt: numb…` (:3581)
+- `Cover3D: new (o?: { world?: Loose | false; space?: number; radius?: number; crouch?: number; low?: number; cell?: number; floors?: number; ms?: number; top?: number; l…` Cover in 3D found from the game's World3D with rays (walls, low walls, cars, crates, buildings: whatever is solid). (:3588)
+- `TakeCover: new (cover: Loose, o?: { speed?: number; run?: number; peek?: number; dash?: boolean; pull?: number }) => { state: 'out' | 'moving' | 'in' | 'peek' | 'blind…` The hero in cover: take(feet, facing) snaps to the nearest wall, then update(dt, input, feet) each frame slides along it, stops at its ends, leans out round them or pops up over it while aiming, fires blind, runs to… (:3618)
 
 ## From the maker kit
 
@@ -48,7 +48,7 @@ shows, for enemies' aim.
 
 1 game uses it (`node scripts/examples.mjs gs.tactics` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Gun, Health, Explosives } = gs.combat;

@@ -2,6 +2,7 @@
 // lighting up as they sound; turn to each one and tap it to play the rhythm back in the same order. Each
 // round adds a beat. Get one wrong and you lose a drumstick, and the rhythm plays again. Three sticks.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds, sfx } = gs.sound;
 const { haptic, want } = gs.device;
 const { Juice } = gs.juice;
@@ -16,10 +17,11 @@ const DRUMS = [
 ];
 
 function make(api) {
+  const ready = new Ready();   // the first touch starts the round and does nothing else
   want('motion');
   const fx = new Juice();
   let v, drums, sparks, wide;
-  let seq, step, mode, wait, sticks, score, t, started, ended, round, msg, ml;
+  let seq, step, mode, wait, sticks, score, t, ended, round, msg, ml;
   const g = new Gestures({ tap: (x, y) => tapAt(x, y), drag: (x, y, dx, dy) => v?.drag(-dx, -dy) });
 
   function setup() {
@@ -54,7 +56,7 @@ function make(api) {
 
   function tapAt(x, y) {
     if (!v || ended) return;
-    if (!started) { started = true; nextRound(); return; }
+    if (ready.go()) { nextRound(); return; }
     if (mode !== 'you') return;
     let best = null, bd = 60;
     for (const d of drums) { const p = d.grp.position, [sx, sy, z] = v.toScreen(p.x, p.y + .25, p.z); const dist = Math.hypot(sx - x, sy - y); if (z < 1 && dist < bd) { bd = dist; best = d; } }
@@ -74,7 +76,7 @@ function make(api) {
     reset() {
       if (!v) setup();
       v.off(); v.recenter(); layout();
-      seq = []; step = 0; mode = 'idle'; wait = 0; sticks = 3; score = 0; t = 0; started = false; ended = false; round = 0; msg = ''; ml = 0;
+      seq = []; step = 0; mode = 'idle'; wait = 0; sticks = 3; score = 0; t = 0; ready.reset(); ended = false; round = 0; msg = ''; ml = 0;
       sparks.clear(); fx.clear(); g.release();
     },
     resize(w, h) { W = w; H = h; },
@@ -83,7 +85,7 @@ function make(api) {
       fx.update(dt); sparks.update(dt); t += dt; if (ml > 0 && ml < 90) ml -= dt;
       if (!!v.sensor !== wide) layout();   // the gyro woke up: spread the drums all round
       for (const d of drums) { d.flash = Math.max(0, d.flash - dt); d.skinMat.emissiveIntensity = d.flash * 8; d.skin.scale.y = 1 - d.flash * 1.5; }
-      if (!started || ended) return;
+      if (!ready.playing || ended) return;
       if (mode === 'show') {
         wait -= dt;
         if (wait <= 0) {
@@ -101,16 +103,16 @@ function make(api) {
       fx.begin(c); fx.end(c, W, H);
       for (let i = 0; i < 3; i++) { c.save(); c.translate(18 + i * 14, 24); c.rotate(-.5); c.fillStyle = i < sticks ? '#e0b070' : '#ffffff30'; c.fillRect(-2, -10, 4, 20); c.beginPath(); c.arc(0, -10, 3.5, 0, 7); c.fill(); c.restore(); }
       c.textAlign = 'center';
-      if (ml > 0 && started) { c.fillStyle = '#fff'; c.font = '800 18px Rubik, sans-serif'; c.fillText(msg, W / 2, H * .8); if (mode === 'show') { c.font = '600 12px Rubik, sans-serif'; c.fillText(`${step} of ${seq.length}`, W / 2, H * .8 + 18); } }
+      if (ml > 0 && ready.playing) { c.fillStyle = '#fff'; c.font = '800 18px Rubik, sans-serif'; c.fillText(msg, W / 2, H * .8); if (mode === 'show') { c.font = '600 12px Rubik, sans-serif'; c.fillText(`${step} of ${seq.length}`, W / 2, H * .8 + 18); } }
       if (mode === 'you') { c.font = '600 12px Rubik, sans-serif'; c.fillStyle = '#fff'; c.fillText(`Beat ${step + 1} of ${seq.length}`, W / 2, H * .8 + 20); }
-      if (!started) { c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.fillText('Listen, then play it back', W / 2, H * .78); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#e0e0ff'; c.fillText('Turn the phone (or drag) to find each drum. Tap to start', W / 2, H * .78 + 20); }
+      if (!ready.playing) { c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.fillText('Listen, then play it back', W / 2, H * .78); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#e0e0ff'; c.fillText('Turn the phone (or drag) to find each drum. Tap to start', W / 2, H * .78 + 20); }
       arNote(c, v, W, H);
     },
     // the AR kit gets touches first: its floor panels (Skip, Done, the Floor chip) use them
     down: (x, y, id) => { if (!v?.input?.('down', x, y, id)) g.down(x, y, id); },
     move: (x, y, p, id) => { if (!v?.input?.('move', x, y, id, p)) g.move(x, y, p, id); },
     up: (x, y, id) => { if (!v?.input?.('up', x, y, id)) g.up(x, y, id); },
-    key(k, d) { if (!d) return; if (!started) { started = true; nextRound(); } },
+    key(k, d) { if (!d) return; if (ready.go()) nextRound(); },
   };
 }
 

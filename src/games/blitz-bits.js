@@ -3,6 +3,8 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
+const { text } = gs.pixel;
 
 // A gauntlet of four-second micro games, back to back. Each one flashes a single word telling
 // you what to do: tap, catch, dodge, pop, stop, rub, plug, flick or wait. Win to keep going;
@@ -53,7 +55,7 @@ function make(api) {
   const ready = new Ready();                                            // the first micro game waits for a tap
   let cur, s, wins, lives, t, phase, pt, speed, order, last;
   function next() {
-    if (!order.length) { order = MICROS.map((_, i) => i).sort(() => Math.random() - .5); if (order[0] === last) order.push(order.shift()); }
+    if (!order.length) { order = shuffle(MICROS.map((_, i) => i)); if (order[0] === last) order.push(order.shift()); }
     last = order.shift(); cur = MICROS[last]; s = { t: 0, sp: speed, win: false, lose: false }; cur.init(s); phase = 'intro'; pt = 0;
   }
   const dur = () => Math.max(2.6, 4.2 - (speed - 1) * 1.6);
@@ -91,9 +93,9 @@ function make(api) {
       if (phase === 'intro' || phase === 'result' || phase === 'over') {
         c.fillStyle = '#20202880'; for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283 + t; c.beginPath(); c.moveTo(W / 2, H / 2); c.arc(W / 2, H / 2, W, a, a + .26); c.fill(); }
         c.fillStyle = '#f8f8f0'; c.font = '8px "Press Start 2P", monospace';
-        if (phase === 'intro') { const sc = 1 + Math.max(0, .3 - pt) * 2; c.save(); c.translate(W / 2, H / 2); c.scale(sc, sc); c.fillStyle = '#202028'; c.fillText(cur.verb, 2, 2); c.fillStyle = '#f8f8f0'; c.fillText(cur.verb, 0, 0); c.restore(); }
-        else if (phase === 'result') { c.fillText(s.won ? 'NICE!' : 'MISS!', W / 2, H / 2 - 8); }
-        else { c.fillText('GAME OVER', W / 2, H / 2); }
+        if (phase === 'intro') { const sc = 1 + Math.max(0, .3 - pt) * 2; c.save(); c.translate(W / 2, H / 2); c.scale(sc, sc); c.fillStyle = '#202028'; text(c, cur.verb, 2, -6, { color: '#202028', align: 'center', font: 'big' }); c.fillStyle = '#f8f8f0'; text(c, cur.verb, 0, -8, { color: '#f8f8f0', align: 'center', font: 'big' }); c.restore(); }
+        else if (phase === 'result') { text(c, s.won ? 'NICE!' : 'MISS!', W / 2, H / 2 - 8 - 8, { color: c.fillStyle, align: 'center', font: 'big' }); }
+        else { text(c, 'GAME OVER', W / 2, H / 2 - 8, { color: c.fillStyle, align: 'center', font: 'big' }); }
         c.font = '6px "Press Start 2P", monospace'; c.fillText(`${wins}`, W / 2, H / 2 + 14);
         for (let i = 0; i < 4; i++) { c.fillStyle = i < lives ? '#f83858' : '#20202860'; c.beginPath(); const x = W / 2 - 21 + i * 14, y = H - 20; c.arc(x - 2, y, 3, 0, 7); c.arc(x + 2, y, 3, 0, 7); c.moveTo(x - 5, y + 1); c.lineTo(x, y + 6); c.lineTo(x + 5, y + 1); c.fill(); }
         return;

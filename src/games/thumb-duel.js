@@ -1,21 +1,55 @@
 // Thumb Duel: a quick-draw for one phone. You take the bottom half; a friend takes the top, or the robot
 // does if nobody's there. When the lamp turns GREEN, tap your half first. Tap early on a fake-out
 // (yellow, a flicker, a cough) and the point goes the other way. First to five wins the duel.
+// The robot is a Tiny Brains rival with a memory: each round it picks the lamp's trick (a plain wait, a
+// yellow, a flicker, a cough, two fakes, or a long wait) from how you play it (how quick you are, how
+// often you jump the gun, the score). It feels how close each round was: a few milliseconds in it, or
+// a fake you fell for, is the exciting one; a mile-wide win is dull. It remembers which trick made a
+// close one for this player, and the win-rate rail keeps it fair. Against a friend the lamp is random.
 import gs from '../gamescroll.js';
 const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes } = gs.sound;
-const { rnd } = gs.util;
+const { rnd, clamp } = gs.util;
+const { Brain } = gs.brains;
+const TRICKS = ['plain', 'yellow', 'flicker', 'cough', 'double', 'long'];
 
 let W = 360, H = 640;
 
 function make(api) {
   const feel = new Feel();
   let score, phase, wait, lamp, fakes, goT, you, them, two, botAt, t, msg, ml, last, rounds, best, ended;
-
+  // how this player duels, kept across rounds: how quick (-1 slow .. 1 sharp) and how often they jump the gun
+  const style = { quick: 0, jumpy: -.5 };
+  // see: 0 how quick, 1 how jumpy, 2 the score between you, 3 how far into the duel
+  const see = () => [style.quick, style.jumpy, (you - them) / 5, clamp(rounds / 8, 0, 1) * 2 - 1];
+  const robot = new Brain(api, {
+    name: 'thumb-duel-robot', inputs: 4, actions: TRICKS, memory: true,
+    // the teacher: a plain lamp to start, a long wait for someone who jumps the gun, else a yellow
+    teacher: s => s[3] < -.6 ? 'plain' : s[1] > .1 ? 'long' : 'yellow',
+    limits: { react: .1, perSecond: 10, minNoise: .1 },
+  });
+  const fake = (kind, at) => ({ at, kind, done: false });
   function nextRound() {
     phase = 'wait'; wait = rnd(1.5, 4); lamp = 'red'; goT = 0; botAt = 0;
-    fakes = []; const n = Math.random() * 3 | 0; for (let i = 0; i < n; i++) fakes.push({ at: rnd(.6, wait - .3), kind: ['yellow', 'flicker', 'cough'][Math.random() * 3 | 0], done: false });
+    fakes = [];
+    if (two) { const n = Math.random() * 3 | 0; for (let i = 0; i < n; i++) fakes.push(fake(['yellow', 'flicker', 'cough'][Math.random() * 3 | 0], rnd(.6, wait - .3))); return; }
+    robot.act(see(), 1);
+    const k = robot.action;
+    if (k === 'long') wait = rnd(4, 5.5);
+    if (k === 'yellow' || k === 'flicker' || k === 'cough') fakes.push(fake(k, rnd(.5, Math.min(1.4, wait - .3))));
+    if (k === 'double') { wait = Math.max(wait, 2.6); fakes.push(fake('yellow', rnd(.4, .9)), fake(Math.random() < .5 ? 'flicker' : 'cough', rnd(1.2, 1.6))); }
+  }
+  // the round is over: what the robot learns (a close one is the thrill), and how this player duels
+  function learn(who, early) {
+    if (two) return;
+    if (early) { robot.feel(.4); style.jumpy += (1 - style.jumpy) * .25; }
+    else {
+      style.jumpy += (-1 - style.jumpy) * .1;
+      if (who === 'you') { const gap = botAt - goT; robot.feel(gap < .06 ? 1 : gap < .14 ? .3 : -.3); style.quick += (clamp((.4 - goT) / .15, -1, 1) - style.quick) * .25; }
+      else robot.feel(.2);
+    }
+    robot.result(who === 'you');
   }
   function point(who, why) {
     if (who === 'you') you++; else them++;
@@ -40,10 +74,10 @@ function make(api) {
         wait -= dt;
         for (const f of fakes) if (!f.done && wait <= (f.at)) { f.done = true; if (f.kind === 'yellow') { lamp = 'yellow'; sfx(400, .1, 'triangle', .03); } else if (f.kind === 'flicker') { lamp = 'flicker'; } else { sfx(200, .08, 'sawtooth', .04, -50); } }
         if (lamp !== 'red' && Math.random() < dt * 3) lamp = 'red';
-        if (wait <= 0) { phase = 'go'; lamp = 'green'; goT = 0; sfx(880, .15, 'square', .05); haptic('heavy'); botAt = rnd(.26, .5) - Math.min(.08, rounds * .005); }
+        if (wait <= 0) { phase = 'go'; lamp = 'green'; goT = 0; sfx(880, .15, 'square', .05); haptic('heavy'); botAt = rnd(.26, .5) - Math.min(.08, rounds * .005) + (1 - robot.skill) * .06; }
         return;
       }
-      if (phase === 'go') { goT += dt; if (!two && goT >= botAt) { last = goT; point('them', `ROBOT ${Math.round(goT * 1000)} ms`); } }
+      if (phase === 'go') { goT += dt; if (!two && goT >= botAt) { last = goT; learn('them', false); point('them', `ROBOT ${Math.round(goT * 1000)} ms`); } }
     },
     draw(c) {
       c.fillStyle = '#14213d'; c.fillRect(0, 0, W, H / 2); c.fillStyle = '#1b263b'; c.fillRect(0, H / 2, W, H / 2);
@@ -67,11 +101,11 @@ function make(api) {
     down(x, y) {
       const top = y < H / 2;
       if (top && !two && phase !== 'go') { two = true; msg = 'Two players!'; ml = 1; return; }
-      if (phase === 'wait') return point(top ? 'you' : 'them', top ? 'TOP TAPPED EARLY' : 'TOO EARLY!');
+      if (phase === 'wait') { if (!top) learn('them', true); return point(top ? 'you' : 'them', top ? 'TOP TAPPED EARLY' : 'TOO EARLY!'); }
       if (phase !== 'go') return;
       last = goT;
       if (top) { if (two) point('them', `TOP ${Math.round(goT * 1000)} ms`); }
-      else { best = Math.min(best, goT); point('you', `${Math.round(goT * 1000)} ms!`); feel.coin(x, y); }
+      else { best = Math.min(best, goT); learn('you', false); point('you', `${Math.round(goT * 1000)} ms!`); feel.coin(x, y); }
     },
     key(k, d) { if (d && (k === ' ' || k === 'Enter')) this.down(W / 2, H * .8); },
   };

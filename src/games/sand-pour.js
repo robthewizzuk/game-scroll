@@ -7,6 +7,7 @@ const { Ready } = gs.rounds;
 const { sfx, notes, bed } = gs.sound;
 const { haptic } = gs.device;
 const { rnd, clamp } = gs.util;
+const { icon } = gs.icons;
 
 // fluid height: the tray, pile, funnel and controls keep their spacing anchored to the bottom; extra height is sky.
 const W = 360, CW = 3, N = W / CW, REP = 2.4, G = 3.2, RATE = 115, DROP = 366;
@@ -148,7 +149,7 @@ function make(api) {
       c.font = '600 12px Rubik, sans-serif'; c.fillText(`pass mark ${pass}%`, W / 2, top + 17);
       if (grade) {
         c.fillStyle = '#5b2e12'; c.font = '900 40px Rubik, sans-serif'; c.fillText(`${grade.pct}%`, W / 2, FY + 80);
-        c.font = '800 16px Rubik, sans-serif'; c.fillText(grade.ok ? '★'.repeat(grade.stars) + '☆'.repeat(3 - grade.stars) : 'BELOW THE PASS MARK', W / 2, FY + 106);
+        c.font = '800 16px Rubik, sans-serif'; if (grade.ok) for (let i = 0; i < 3; i++) icon(c, 'star', W / 2 + (i - 1) * 20, FY + 100, 18, { color: i < grade.stars ? '#5b2e12' : '#5b2e1240' }); else c.fillText('BELOW THE PASS MARK', W / 2, FY + 106);
       } else if (level === 1 && pt < 4) { c.fillStyle = '#5b2e12'; c.font = '700 14px Rubik, sans-serif'; c.fillText('HOLD TO POUR · DRAG TO SLIDE', W / 2, FY + 50); }
       ready.draw(c, W, H);
     },

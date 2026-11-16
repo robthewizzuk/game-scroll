@@ -882,9 +882,8 @@ async function framegenScenes() {
     'frame generation is timed in the square five ways: as many drawn as the phone draws, half of them, and half with the rest blended as before, blended as now, then made ahead', JSON.stringify(fg.modes));
   check(M('half').pictures === M('half').drawn && !M('half').how && M('before').how === 'blend' && M('blend').how === 'blend' && M('ahead').how === 'ahead' && ['before', 'blend', 'ahead'].every(k => M(k).pictures > M(k).drawn * 1.5),
     'with none made only the drawn frames are new pictures; blended and ahead, the refreshes between show made frames', JSON.stringify(fg.modes));
-  // (as now at 30 real frames a second is 30 → 60's 'early' since phones draw 30 and make 30 where they can't hold 60, #415)
   check(M('before').pace === 'after' && ['first', 'after', 'early'].includes(M('blend').pace) && (M('blend').madeMs == null) === (M('before').madeMs == null),
-    'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times (or 30 → 60\'s two refreshes)', JSON.stringify(fg.modes));
+    'blended before puts the made frame on the real one\'s refresh; as now, it is paced by the chip\'s times ("early", 30 → 60, where the chip holds under 45 a second, as a test machine does)', JSON.stringify(fg.modes));
   const told = !/chip time not told/.test(fg.text);
   check(/^Game Scroll engine test scenes, GSFG frame generation · /.test(fg.text) && /\nPICTURE: WebGPU · .* · GSFG as each run says, for a \d+ Hz screen · /.test(fg.text)
     && /\n  \d+ drawn, \d+ blended +\d+ pictures a second \(\d+ drawn\) · worst 1% \d+ · longest \d+ ms · .*(each frame on a refresh of its own|the made frame on the real one's refresh|each real frame given two refreshes \(30 → 60\)) · .*code [\d.]+ ms · 3D at \d+ x \d+ · screen \d+ Hz/.test(fg.text)
@@ -1032,9 +1031,11 @@ async function ready(b) {
   }));
   await p.waitForTimeout(1200);
   const after = await p.evaluate(() => ({ resets: __n.resets, state: __gs.active.state, updates: __n.updates }));
-  check(r.stepped && !r.starting && r.state === 'ready' && !r.cover && r.ov && after.resets === r.resets + 1 && after.state === 'ready' && after.updates === 1,
-    'a start given up after the round\'s first step: no round, the card as it was, and the game reset once the feed is still', JSON.stringify({ r, after }));
+  // (a Next Gen card shows its picture in the feed and does nothing there: its next Play resets it, not the feed)
+  check(r.stepped && !r.starting && r.state === 'ready' && !r.cover && r.ov && after.resets === r.resets && after.state === 'ready' && after.updates === 1,
+    'a start given up after the round\'s first step: no round, the card as it was, and nothing more done in the feed', JSON.stringify({ r, after }));
   check(r.tune === 'zz-ready-left' && r.ahead === null && r.now === null, 'and the tune made for that round is let go', JSON.stringify([r.tune, r.ahead, r.now]));
+  { const again = await watch('play'); check(again.state === 'playing' && again.resets === 1, 'and its next Play resets it and starts the round', JSON.stringify([again.state, again.resets, r.resets])); await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(700); }
   // reset() for the next round asks for something still loading (the next mission's people, not sculpted on this phone
   // yet: Play again after a mission): the loading screen waits for it, reset() runs again and the round starts
   await add('zz-ready-late');
@@ -1077,6 +1078,77 @@ async function ready(b) {
   });
   check(r.starting && r.state === 'ready' && r.end === 'playing' && r.readyMs > 0, 'an AR game gets ready behind its loading screen too', JSON.stringify(r));
   await q.done();
+}
+
+/* ---------- Next Gen, AR and Board cards make nothing in the feed until Play ---------- */
+async function asleep(b) {
+  console.log('\nNext Gen cards asleep until Play');
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  const p = await ctx.newPage(), errs = []; p.on('pageerror', e => errs.push(e.message));
+  const go = async () => { await p.goto('http://localhost:4184/'); await p.waitForFunction(() => window.__gs, null, { timeout: 60000 }); await p.waitForTimeout(300); };
+  // a made-up Next Gen game that counts its makes and resets, put in the feed as a player meets it (asleep)
+  const add = () => p.evaluate(async () => {
+    const gs = (await __gs.gs()).default, N = window.__n = { makes: 0, resets: 0, draws: 0 };
+    const def = { id: 'zz-asleep', likes: 1, title: 'Asleep test', tag: 'Next Gen · Test', retro: true, era: 'nextgen', pal: 'grape', w: 300, h: 300, goal: 50, hint: 'A test.', creator: 'Test',
+      make: () => { if (window.__hold) { window.__hold = false; const e = new Error('a test part is still loading'); e.name = 'StillLoading'; e.what = 'Test'; e.kitLoading = new Promise(r => setTimeout(r, 800)); throw e; }
+        N.makes++; const { HDView, pbr, sun, THREE } = gs.hd; let v;
+        return { reset() { N.resets++; if (v) return; v = new HDView({ bg: '#203048' }); const l = sun('#ffffff', 3, 10); v.scene.add(l, l.target); v.cam.position.set(0, 3, 6); v.cam.lookAt(0, .5, 0);
+            const m = new THREE.Mesh(new THREE.TorusKnotGeometry(1, .3, 64, 12), pbr('#e0a030', { rough: .3, metal: .5 })); m.position.y = 1; v.scene.add(m);
+            const f = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), pbr('#6080a0')); f.rotation.x = -Math.PI / 2; v.scene.add(f); },
+          update() {}, draw(c) { N.draws++; v.render(c, 300, 300); } }; } };
+    __gs.GAMES.push(def); __gs.only('zz-asleep', true, true);
+    await new Promise(res => setTimeout(res, 1500));
+    const s = __gs.active;
+    const adapter = !!(navigator.gpu && await navigator.gpu.requestAdapter().catch(() => null));
+    return { id: s?.def.id, asleep: !!s?.asleep, loading: !!s?.loading, makes: N.makes, draws: N.draws, gpu: __gs.gpuMade(), adapter, pic: !!s?.pic, cover: !!s?.el.querySelector('.load-ov:not([hidden])') };
+  });
+  const playTill = (left = false) => p.evaluate(left => new Promise(res => {
+    const s = __gs.active, t0 = performance.now(); __gs.play();
+    const at = { starting: !!s.starting, cover: !!s.el.querySelector('.load-ov:not([hidden])'), loading: !!s.loading };
+    if (left) { __gs.left(s); res({ ...at, asleep: !!s.asleep, starting: !!s.starting, makes: __n.makes }); return; }
+    const f = () => { if (s.state === 'playing' || performance.now() - t0 > 60000) res({ ...at, state: s.state, makes: __n.makes, resets: __n.resets, gpu: __gs.gpuMade(), webgpu: !!navigator.gpu, ms: Math.round(performance.now() - t0) }); else requestAnimationFrame(f); };
+    requestAnimationFrame(f);
+  }), left);
+  await go();
+  let r = await add();
+  check(r.id === 'zz-asleep' && r.asleep && !r.loading && r.makes === 0 && r.draws === 0 && !r.cover, 'a Next Gen card in the feed is a picture: its game is not made, nothing of it is drawn', JSON.stringify(r));
+  const adapter = r.adapter;
+  check(!r.gpu, `and no 3D renderer is made for it before Play${adapter ? '' : ' (no WebGPU here: WebGL is made on first draw)'}`, JSON.stringify(r));
+  r = await playTill();
+  check(r.starting && r.cover && r.state === 'playing' && r.makes === 1 && r.resets === 1, 'Play puts the loading screen up, makes the game once (reset once) and starts the round', JSON.stringify(r));
+  check(r.gpu || !adapter, `the 3D renderer is made on that Play${adapter ? '' : ' (no WebGPU here)'}`, JSON.stringify(r));
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(900);
+  r = await p.evaluate(() => { const s = __gs.active, c = s.pic; return { state: s.state, pic: !!c, w: c?.width | 0, h: c?.height | 0 }; });
+  check(r.state === 'over' && r.pic && r.w > 100 && r.w === r.h, 'the round\'s last frame becomes the card\'s picture', JSON.stringify(r));
+  // swiped back to later: it shows that picture, and its next Play is quick (it stays made)
+  await p.evaluate(async () => { const s = __gs.active, n = __n.draws; __gs.left(s); s.state = 'over'; await new Promise(r => setTimeout(r, 50)); });
+  r = await playTill();
+  check(r.state === 'playing' && r.makes === 1 && r.resets === 2, 'Play again: no new make, one reset, the round starts', JSON.stringify(r));
+  await p.evaluate(() => __gs.api(__gs.active).over()); await p.waitForTimeout(1500);   // (the picture is saved meanwhile)
+  // the app starts again: the card shows the saved picture, and still makes nothing
+  await go();
+  r = await add();
+  check(r.asleep && r.makes === 0 && r.pic, 'after a restart the card shows the game\'s saved picture and makes nothing', JSON.stringify(r));
+  // Play given up while the game is still being made (a part it needs still loading): back to a picture, nothing of it carries on in the feed
+  await p.evaluate(() => { window.__hold = true; });
+  r = await playTill(true);
+  await p.waitForTimeout(1200);
+  const later = await p.evaluate(() => ({ asleep: !!__gs.active.asleep, makes: __n.makes, loading: !!__gs.active.loading }));
+  check(r.cover && r.loading && r.asleep && !r.starting && later.asleep && !later.loading && later.makes <= 1, 'Play given up while the game is being made: the card goes back to its picture', JSON.stringify({ r, later }));
+  r = await playTill();
+  check(r.state === 'playing', 'and Play after that still starts it', JSON.stringify(r));
+  // the Next Gen tab, swiped through: no card makes its game, so no frame is held up by one
+  await go();
+  r = await p.evaluate(async () => {
+    window.__lt = []; try { new PerformanceObserver(l => { for (const e of l.getEntries()) __lt.push(Math.round(e.duration)); }).observe({ type: 'longtask' }); } catch (_) {}
+    document.querySelector('[data-f="nextgen"]').click(); await new Promise(r => setTimeout(r, 4000)); __lt.length = 0;
+    for (let i = 0; i < 4; i++) { const sl = [...document.querySelectorAll('#feed .slide')], k = sl.indexOf(__gs.active.el); sl[k + 1]?.scrollIntoView({ behavior: 'smooth' }); await new Promise(r => setTimeout(r, 1200)); }
+    const cards = [...document.querySelectorAll('#feed .slide')].map(e => e._s).filter(Boolean);
+    return { cards: cards.length, awake: cards.filter(c => !c.asleep).map(c => c.def.id), long: __lt.slice(), at: [...document.querySelectorAll('#feed .slide')].indexOf(__gs.active.el) };
+  });
+  check(r.cards >= 4 && r.at >= 3 && !r.awake.length, 'swiping through the Next Gen tab makes none of its games', JSON.stringify(r));
+  check(!errs.length, 'no page errors', errs.join('\n     '));
+  await ctx.close();
 }
 
 /* ---------- old WebViews: the fill-ins for roundRect, Object.hasOwn and structuredClone ---------- */
@@ -1310,7 +1382,7 @@ async function updates(b) {
 (async () => {
   const server = await (await import('vite')).preview({ preview: { port: 4184 } });
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }), only = process.argv.slice(2);
-  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, oldweb, reports, updates };
+  const parts = { awake, touch, pixels, music, saves, fonts, looks, tour, scenes, framegen: framegenScenes, loading, ready, asleep, oldweb, reports, updates };
   const unknown = only.map(n => n.replace(/^-/, '')).filter(n => !parts[n]);
   if (unknown.length) { console.log(`no part called ${unknown.join(', ')}: the parts are ${Object.keys(parts).join(', ')}`); process.exit(1); }
   const want = only.filter(n => !n.startsWith('-')), skip = only.filter(n => n.startsWith('-')).map(n => n.slice(1));

@@ -2,6 +2,7 @@
 // to find them and tap them in order, 1, 2, 3..., to draw the picture before the clock runs out. Wrong
 // stars cost time. Each finished picture scores its stars and adds time, and the next one is bigger.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds, notes, sfx } = gs.sound;
 const { haptic, want } = gs.device;
 const { Juice } = gs.juice;
@@ -14,10 +15,11 @@ let W = 300, H = 460;
 const NAMES = ['THE KETTLE', 'THE LONG CAT', 'THE KITE', 'THE SNAIL', 'THE LADDER', 'THE BOOT', 'THE TEAPOT', 'THE OWL', 'THE CROWN', 'THE WHALE'];
 
 function make(api) {
+  const ready = new Ready();   // the first touch starts the round and does nothing else
   want('motion');
   const fx = new Juice();
   let v, starGeo, dimMat, litMat, nextMat, pool, dust, lines, lineMat, sparks;
-  let stars, decoys, next, level, score, time, t, started, ended, name, nameT;
+  let stars, decoys, next, level, score, time, t, ended, name, nameT;
   const g = new Gestures({
     tap: (x, y) => tapAt(x, y),
     drag: (x, y, dx, dy) => { v?.drag(-dx, -dy); },
@@ -59,7 +61,7 @@ function make(api) {
   }
   function tapAt(x, y) {
     if (!v || ended) return;
-    if (!started) { started = true; sounds.click(); return; }
+    if (ready.go()) { sounds.click(); return; }
     let best = null, bd = 36;
     for (const s of [...stars, ...decoys]) { if (s.done) continue; const [sx, sy, z] = v.toScreen(s.m.position.x, s.m.position.y, s.m.position.z); const d = Math.hypot(sx - x, sy - y); if (z < 1 && d < bd) { bd = d; best = s; } }
     if (!best) return;
@@ -79,14 +81,14 @@ function make(api) {
     reset() {
       if (!v) setup();
       v.off(); v.recenter();
-      level = 0; score = 0; time = 30; t = 0; started = false; ended = false; sparks.clear(); fx.clear(); g.release();
+      level = 0; score = 0; time = 30; t = 0; ready.reset(); ended = false; sparks.clear(); fx.clear(); g.release();
       newPicture();
     },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       v.live(); if (v.calibrating) return;   // finding or lining up the floor: the round waits
       fx.update(dt); sparks.update(dt); t += dt;
-      if (!started || ended) return;
+      if (!ready.playing || ended) return;
       time -= dt; nameT = Math.max(0, nameT - dt);
       const s = stars[next]; if (s) s.m.scale.setScalar(1.2 + Math.sin(t * 6) * .25);
       if (time <= 0) { ended = true; time = 0; v.off(); sounds.lose(); api.over(); }
@@ -118,8 +120,8 @@ function make(api) {
       c.textAlign = 'left'; c.font = '700 16px Rubik, sans-serif'; c.fillStyle = time < 8 && (t * 4 | 0) % 2 ? '#ff7070' : '#fff';
       c.fillText(Math.ceil(time) + 's', 14, 28);
       c.textAlign = 'center';
-      if (nameT > 0 && started) { c.fillStyle = '#ffe9a0'; c.font = '800 18px Rubik, sans-serif'; c.fillText(name, W / 2, H * .82); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#cfe0ff'; c.fillText(`${stars.length} stars to join`, W / 2, H * .82 + 18); }
-      if (!started) { c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.fillText('Tap the stars in number order', W / 2, H * .78); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#cfe0ff'; c.fillText('Turn the phone (or drag) to find them. Tap to start', W / 2, H * .78 + 20); }
+      if (nameT > 0 && ready.playing) { c.fillStyle = '#ffe9a0'; c.font = '800 18px Rubik, sans-serif'; c.fillText(name, W / 2, H * .82); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#cfe0ff'; c.fillText(`${stars.length} stars to join`, W / 2, H * .82 + 18); }
+      if (!ready.playing) { c.fillStyle = '#fff'; c.font = '700 16px Rubik, sans-serif'; c.fillText('Tap the stars in number order', W / 2, H * .78); c.font = '500 12px Rubik, sans-serif'; c.fillStyle = '#cfe0ff'; c.fillText('Turn the phone (or drag) to find them. Tap to start', W / 2, H * .78 + 20); }
       arNote(c, v, W, H);
     },
     // the AR kit gets touches first: its floor panels (Skip, Done, the Floor chip) use them

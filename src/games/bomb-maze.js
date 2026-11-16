@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { approach } = gs.juice;
 
 // Single-screen bomb maze: tap to drop a bomb, drag to walk. Blasts break crates and catch critters. Don't stand in the blast.
 const R = PAL.moss, W = 160, H = 160, GW = 15, GH = 13, CS = 10, OX = 5, OY = 24;
@@ -30,11 +31,11 @@ function make(api) {
     update(dt) {
       feel.update(dt); t += dt;
       if (p.mv > 0) { p.mv -= dt; } else if (held && dir) { const nx = p.x + dir[0], ny = p.y + dir[1]; if (!blocked(nx, ny)) { p.x = nx; p.y = ny; p.mv = .14; } }
-      const k = Math.max(0, p.mv / .14); p.fx += (p.x - p.fx) * Math.min(1, dt * 16); p.fy += (p.y - p.fy) * Math.min(1, dt * 16);
+      const k = Math.max(0, p.mv / .14); p.fx = approach(p.fx, p.x, 19, dt); p.fy = approach(p.fy, p.y, 19, dt);
       for (const b of [...bombs]) { b.f -= dt; if (b.f <= 0) explode(b); }
       for (const f of fires) f.l -= dt; fires = fires.filter(f => f.l > 0);
       for (const cr of critters) {
-        cr.mv -= dt; cr.fx += (cr.x - cr.fx) * Math.min(1, dt * 10); cr.fy += (cr.y - cr.fy) * Math.min(1, dt * 10);
+        cr.mv -= dt; cr.fx = approach(cr.fx, cr.x, 11, dt); cr.fy = approach(cr.fy, cr.y, 11, dt);
         if (cr.mv <= 0) { cr.mv = cr.sp; if (blocked(cr.x + cr.d[0], cr.y + cr.d[1]) || Math.random() < .25) { const opts = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(d => !blocked(cr.x + d[0], cr.y + d[1])); if (opts.length) cr.d = opts[Math.random() * opts.length | 0]; } if (!blocked(cr.x + cr.d[0], cr.y + cr.d[1])) { cr.x += cr.d[0]; cr.y += cr.d[1]; } }
       }
       const caught = critters.filter(cr => fires.some(f => f.x === cr.x && f.y === cr.y));

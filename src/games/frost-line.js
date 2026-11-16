@@ -75,7 +75,7 @@ function make(api) {
   function shapeTile(ms, z0) {
     const p = ms.geometry.attributes.position;
     for (let i = 0; i < p.count; i++) { const lx = p.getX(i), lz = p.getZ(i) + z0 + TILE / 2; p.setY(i, ground(lx, lz)); }
-    p.needsUpdate = true; ms.geometry.computeVertexNormals(); ms.geometry.computeBoundingSphere(); ms.geometry.computeBoundingBox(); ms.position.z = z0 + TILE / 2; ms.userData.z0 = z0; v.shadowsDirty();   // bounds move with the reshaped tile, else it gets culled
+    p.needsUpdate = true; ms.geometry.computeVertexNormals(); ms.geometry.computeBoundingSphere(); ms.geometry.computeBoundingBox(); ms.position.z = z0 + TILE / 2; ms.userData.z0 = z0;   // bounds move with the reshaped tile, else it gets culled (the snow only takes shadows, it casts none: no shadow map to draw again, which v.shadowsDirty() did for every map, kept copies too, at each new tile)
   }
   // things on the slope ahead: trees in clumps, rocks, kickers, gates of flags
   function populate(z0, z1) {

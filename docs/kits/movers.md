@@ -8,23 +8,23 @@ Platformer and top-down movement with coyote time, jump buffer, wall jumps and t
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MoversPart`, line 1479), where every option and field is described.
+From `src/gamescroll.d.ts` (`MoversPart`, line 1484), where every option and field is described.
 
-- `Platformer: new (o?: { x?: number; y?: number; w?: number; h?: number; jump?: number; jumpTime?: number; run?: number; accel?: number; airAccel?: number; stop?: number…` (:1480)
-  - `x: number` (:1478)
-  - `y: number` (:1478)
-  - `w: number` (:1478)
-  - `h: number` (:1478)
-  - `vx: number` (:1478)
-  - `vy: number` (:1478)
-  - `onGround: boolean` (:1478)
-  - `facing: number` (:1478)
-  - `hit: Partial<TileHit>` (:1478)
-  - `readonly left: number` (:1478)
-  - `readonly right: number` (:1478)
-  - `readonly top: number` (:1478)
-  - `readonly bottom: number` (:1478)
-- `TopDown: new (o?: { x?: number; y?: number; w?: number; h?: number; speed?: number; accel?: number; stop?: number }) => MoverBase & { speed: number; state: 'idle' | 'w…` (:1487)
+- `Platformer: new (o?: { x?: number; y?: number; w?: number; h?: number; jump?: number; jumpTime?: number; run?: number; accel?: number; airAccel?: number; stop?: number…` (:1485)
+  - `x: number` (:1483)
+  - `y: number` (:1483)
+  - `w: number` (:1483)
+  - `h: number` (:1483)
+  - `vx: number` (:1483)
+  - `vy: number` (:1483)
+  - `onGround: boolean` (:1483)
+  - `facing: number` (:1483)
+  - `hit: Partial<TileHit>` (:1483)
+  - `readonly left: number` (:1483)
+  - `readonly right: number` (:1483)
+  - `readonly top: number` (:1483)
+  - `readonly bottom: number` (:1483)
+- `TopDown: new (o?: { x?: number; y?: number; w?: number; h?: number; speed?: number; accel?: number; stop?: number }) => MoverBase & { speed: number; state: 'idle' | 'w…` (:1492)
 
 ## From the maker kit
 
@@ -60,4 +60,17 @@ and effects. `TopDown` is eight-way walking that slides along walls.
 
 ## In real games
 
-No game uses `gs.movers` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.movers` lists them). The shortest:
+
+`src/games/critter-quest.js` (Critter Quest, Advance · RPG, 1254 lines):
+
+```js
+const { TileMap } = gs.tiles;
+const { TopDown } = gs.movers;
+// …
+      setupWorld(); makeQuests();
+      hero = new TopDown({ x: 12 * T + 8, y: 53 * T + 8, w: 9, h: 7, speed: K.walk, accel: 900, stop: 1400 }); hero.dir = { x: 0, y: -1 };
+// …
+      hero.speed = K.walk;
+      hero.update(dt, map, walkInput());
+```

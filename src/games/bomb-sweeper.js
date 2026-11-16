@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { text } = gs.pixel;
 
 // A pocket-sized mine field. Tap to dig, hold to plant a flag. Numbers count the bombs touching
 // that square. Your first dig is always safe. Clear a board to get a new, slightly nastier one.
@@ -59,7 +60,7 @@ function make(api) {
         if (g.open) {
           c.fillStyle = P[3]; c.fillRect(x, y, CS - 1, CS - 1);
           if (g.mine) { c.fillStyle = boom && boom.i === i ? P[1] : P[0]; c.beginPath(); c.arc(x + 8.5, y + 8.5, 5, 0, 7); c.fill(); c.fillRect(x + 8, y + 1, 1, 4); }
-          else if (g.n) { c.fillStyle = g.n > 2 ? P[0] : P[1]; c.fillText(String(g.n), x + 9, y + 13); }
+          else if (g.n) { c.fillStyle = g.n > 2 ? P[0] : P[1]; text(c, String(g.n), x + 9, y + 13 - 8, { color: c.fillStyle, align: 'center', font: 'big' }); }
         } else {
           c.fillStyle = P[1]; c.fillRect(x, y, CS - 1, CS - 1); c.fillStyle = P[2]; c.fillRect(x, y, CS - 1, 2); c.fillRect(x, y, 2, CS - 1);
           if (g.flag) { c.fillStyle = P[3]; c.fillRect(x + 7, y + 4, 2, 10); c.fillRect(x + 9, y + 4, 4, 4); }

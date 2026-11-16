@@ -8,6 +8,7 @@ const { noise } = gs.sound;
 const { Table, slab, pawn, ring, eyes, wood, fuse, sounds, COLOURS } = gs.tabletop;
 const { pbr, rbox } = gs.hd;
 const { Mesh, Group, TubeGeometry, CatmullRomCurve3, Vector3, SphereGeometry, BoxGeometry, PlaneGeometry } = gs.THREE;
+const { icon } = gs.icons;
 
 let W = 300, H = 460;
 const END = 64, BZ = -.95;                                           // the last square; how far back the board sits (the dice tray is in front)
@@ -31,7 +32,7 @@ function make(api) {
       for (let n = 1; n <= END; n++) {
         const { col, row } = cell(n), x = col * q, y = (7 - row) * q;
         c.fillStyle = n === END ? '#f2c230' : LADDERS[n] ? '#bfe3b0' : SNAKES[n] ? '#f3c0b4' : (col + row) % 2 ? '#f4ead2' : '#e6d5ae'; c.fillRect(x, y, q, q);
-        c.fillStyle = n === END ? '#7a4a00' : '#8a7350'; c.font = `700 ${q * .26}px Rubik, sans-serif`; c.textAlign = 'left'; c.textBaseline = 'top'; c.fillText(n === END ? '★' : String(n), x + q * .08, y + q * .07);
+        c.fillStyle = n === END ? '#7a4a00' : '#8a7350'; c.font = `700 ${q * .26}px Rubik, sans-serif`; c.textAlign = 'left'; c.textBaseline = 'top'; if (n === END) icon(c, 'star', x + q * .2, y + q * .2, q * .26, { color: c.fillStyle }); else c.fillText(String(n), x + q * .08, y + q * .07);
       }
       g.h.strokeStyle = '#555'; g.h.lineWidth = S / 400; c.strokeStyle = '#b89f70'; c.lineWidth = S / 500;
       for (let i = 0; i <= 8; i++) for (const k of [g.h, c]) { k.beginPath(); k.moveTo(i * q, 0); k.lineTo(i * q, S); k.moveTo(0, i * q); k.lineTo(S, i * q); k.stroke(); }

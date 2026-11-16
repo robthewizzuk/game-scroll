@@ -3,6 +3,8 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { PAL } = gs.palettes;
 const { Feel } = gs.effects;
+const { icon } = gs.icons;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Warehouse puzzle: push (never pull) every crate onto a dot. Swipe or tap beside the worker to step. Tap ↺ to restart a room.
 const R = PAL.amber, W = 160, H = 160, N = 8, CS = 16, OX = (W - N * CS) / 2, OY = 20, D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -16,7 +18,7 @@ function make(api) {
     for (;;) {
       wall = Array.from({ length: N * N }, (_, i) => { const x = i % N, y = i / N | 0; return x === 0 || y === 0 || x === N - 1 || y === N - 1 || Math.random() < .1; });
       const free = []; for (let i = 0; i < N * N; i++) if (!wall[i]) free.push(i);
-      const nc = Math.min(3, 2 + (score >> 2)); const pick = free.sort(() => Math.random() - .5);
+      const nc = Math.min(3, 2 + (score >> 2)); const pick = shuffle(free);
       targets = pick.slice(0, nc).map(i => ({ x: i % N, y: i / N | 0 })); crates = targets.map(c => ({ ...c })); let pl = { x: pick[nc] % N, y: pick[nc] / N | 0 };
       for (let s = 0; s < 400; s++) {   // play backwards: random walks with pulls guarantee a solvable room
         const d = D[Math.random() * 4 | 0], nx = pl.x + d[0], ny = pl.y + d[1]; if (isWall(nx, ny) || crateAt(nx, ny) >= 0) continue;
@@ -48,7 +50,7 @@ function make(api) {
       for (const k of crates) { const X = OX + k.x * CS, Y = OY + k.y * CS, on = targets.some(g => g.x === k.x && g.y === k.y); c.fillStyle = on ? R[0] : R[2]; c.fillRect(X + 1, Y + 1, CS - 2, CS - 2); c.fillStyle = on ? R[2] : R[0]; c.strokeStyle = c.fillStyle; c.strokeRect(X + 1.5, Y + 1.5, CS - 3, CS - 3); c.beginPath(); c.moveTo(X + 2, Y + 2); c.lineTo(X + CS - 2, Y + CS - 2); c.moveTo(X + CS - 2, Y + 2); c.lineTo(X + 2, Y + CS - 2); c.stroke(); }
       const X = OX + p.x * CS, Y = OY + p.y * CS; c.fillStyle = R[0]; c.fillRect(X + 5, Y + 2, 6, 5); c.fillRect(X + 4, Y + 7, 8, 5); c.fillRect(X + 4, Y + 12, 3, 3); c.fillRect(X + 9, Y + 12, 3, 3); c.fillStyle = R[3]; c.fillRect(X + 6, Y + 4, 1, 1); c.fillRect(X + 9, Y + 4, 1, 1);
       feel.end(c, W, H);
-      c.fillStyle = R[0]; c.font = '6px "Press Start 2P", monospace'; c.textAlign = 'left'; c.fillText(`${Math.ceil(time)}s`, 4, 10); c.textAlign = 'right'; c.font = '9px Rubik, sans-serif'; c.fillText('↺', W - 4, 12);
+      c.fillStyle = R[0]; c.font = '6px "Press Start 2P", monospace'; c.textAlign = 'left'; c.fillText(`${Math.ceil(time)}s`, 4, 10); icon(c, 'anticlockwise-rotation', W - 8, 8, 9, { color: R[0], pixel: true });
     },
     down(x, y) { pd = { x, y }; },
     up(x, y) {

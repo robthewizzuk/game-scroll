@@ -7,6 +7,7 @@ const { PAL } = gs.palettes;
 const { text } = gs.pixel;
 const { haptic } = gs.device;
 const { sfx } = gs.sound;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 const R = PAL.ice;
 let W = 160, H = 160;
@@ -30,7 +31,7 @@ function make(api) {
       const s = norm(cells), rk = new Set(rots(s).map(key));
       if (rots(mir(s)).some(m => rk.has(key(m)))) continue;   // symmetric under a flip: no good
       shape = s;
-      const good = rots(s)[1 + Math.random() * 3 | 0], bads = rots(mir(s)).sort(() => Math.random() - .5).slice(0, 3);
+      const good = rots(s)[1 + Math.random() * 3 | 0], bads = shuffle(rots(mir(s))).slice(0, 3);
       right = Math.random() * 4 | 0; opts = [...bads]; opts.splice(right, 0, good);
       break;
     }

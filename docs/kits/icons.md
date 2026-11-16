@@ -8,16 +8,16 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`IconsPart`, line 703), where every option and field is described.
+From `src/gamescroll.d.ts` (`IconsPart`, line 708), where every option and field is described.
 
-- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:710)
-- `readonly names: readonly string[]` Every icon's name, a to z. (:712)
-- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:714)
-- `has(name: string): boolean` (:715)
-- `find(text: string): string[]` Icons whose name has this text in it. (:717)
-- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:719)
-- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:721)
-- `remembered(): number` How many drawn icons are remembered right now. (:723)
+- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:715)
+- `readonly names: readonly string[]` Every icon's name, a to z. (:717)
+- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:719)
+- `has(name: string): boolean` (:720)
+- `find(text: string): string[]` Icons whose name has this text in it. (:722)
+- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:724)
+- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:726)
+- `remembered(): number` How many drawn icons are remembered right now. (:728)
 
 ## From the maker kit
 
@@ -55,21 +55,24 @@ icon(c, 'key', x, y, 16, { pixel: true, color: PAL[3] });           // hard pixe
 
 ## In real games
 
-3 games use it (`node scripts/examples.mjs gs.icons` lists them). The shortest:
+13 games use it (`node scripts/examples.mjs gs.icons` lists them). The shortest:
 
-`src/games/parcel-dash.js` (Parcel Dash, Next Gen · Driving, 186 lines):
+`src/games/colour-word.js` (Colour Word Trap, Casual · Brain, 63 lines):
 
 ```js
-const { rng } = gs.math;
+const { Feel } = gs.effects; const { Ready } = gs.rounds;
 const { icon } = gs.icons;
 // …
-    c.strokeStyle = n.on ? '#ffb24a66' : '#ffffff33'; c.lineWidth = 1; c.stroke();
-    icon(c, n.on ? 'musical-notes' : 'speaker-off', d.x + 14, d.y + d.h / 2, 16, { color: n.on ? '#ffb24a' : '#9aa4b8' });
+      c.fillStyle = '#fff'; c.font = '400 13px "Press Start 2P", monospace'; c.textAlign = 'center'; c.fillText(rule === 'ink' ? 'TAP THE INK' : 'TAP 
+      for (let i = 0; i < 3; i++) icon(c, 'heart', W / 2 - 28 + i * 28, 53, 20, { color: i < lives ? '#ff4d6d' : '#ffffff22' });
 ```
 
-`src/games/mud-pie-duel.js` (Mud Pie Duel, Casual · Duel, 264 lines):
+`src/games/link-pairs.js` (Link Pairs, Casual · Matching, 71 lines):
 
 ```js
-import gs from '../gamescroll.js';
-const { Feel } = gs.effects, { Ready } = gs.rounds, { Brain } = gs.brains, { icon } = gs.icons, { font, use } = gs.fonts;
+const { Feel } = gs.effects;
+const { icon } = gs.icons;
+// …
+        c.fillStyle = s ? '#ffe9a8' : '#f3ead6'; c.beginPath(); c.roundRect(x + 3, y + 3, CS - 6, CS - 6, 8); c.fill(); c.fillStyle = '#c9bb98'; c.fil
+        c.fillStyle = `hsl(${HUES[g[i]]} 65% 42%)`; icon(c, ICONS[g[i]], x + CS / 2, y + CS / 2, 30, { color: `hsl(${HUES[g[i]]} 65% 42%)` }); }
 ```

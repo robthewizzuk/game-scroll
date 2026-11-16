@@ -2,6 +2,7 @@
 // Drag your finger to dig tunnels: the water flows wherever you open a way, sand pockets slump into your
 // tunnels and grey rock won't dig. Fill a pot to make it bloom. Fill all three for a bonus and a new hill.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { Feel } = gs.effects;
 const { Sand, M } = gs.sand;
 const { text } = gs.pixel;
@@ -14,8 +15,9 @@ const GW = 88, GH = 96, S = 2, TOP = 16;   // the grid: 88 x 96 cells drawn 2 x 
 const FULL = 26;                           // water cells a pot needs to bloom
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const feel = new Feel({ pixel: true });
-  let sand, pots, score, t, time, level, last, started, ended, splash;
+  let sand, pots, score, t, time, level, last, ended, splash;
 
   function build() {
     level++;
@@ -57,12 +59,12 @@ function make(api) {
   function at(x, y) { return [Math.floor(x / S), Math.floor((y - TOP) / S)]; }
 
   return {
-    reset() { score = 0; t = 0; level = 0; last = null; started = false; ended = false; build(); feel.clear(); },
+    reset() { score = 0; t = 0; level = 0; last = null; ready.reset(); ended = false; build(); feel.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
       t += dt; sand.update(dt);
-      if (!started) return;
+      if (!ready.playing) return;
       time -= dt; splash = Math.max(0, splash - dt);
       let done = 0;
       for (const p of pots) {
@@ -106,9 +108,9 @@ function make(api) {
       text(c, `${score}`, 4, 5, { color: '#fff' });
       text(c, `HILL ${level}`, 40, 5, { color: '#9fd8ff' });
       text(c, `${Math.max(0, Math.ceil(time))}S`, W - 4, 5, { align: 'right', color: time < 8 && (t * 4 | 0) % 2 ? '#ff6060' : '#fff' });
-      if (!started) { c.fillStyle = '#000000a0'; c.fillRect(8, H / 2 - 18, W - 16, 30); text(c, 'DRAG TO DIG A WAY', W / 2, H / 2 - 12, { align: 'center', color: '#fff' }); text(c, 'FROM THE WATER TO THE POTS', W / 2, H / 2, { align: 'center', color: '#9fd8ff' }); }
+      if (!ready.playing) { c.fillStyle = '#000000a0'; c.fillRect(8, H / 2 - 18, W - 16, 30); text(c, 'DRAG TO DIG A WAY', W / 2, H / 2 - 12, { align: 'center', color: '#fff' }); text(c, 'FROM THE WATER TO THE POTS', W / 2, H / 2, { align: 'center', color: '#9fd8ff' }); }
     },
-    down(x, y) { started = true; last = at(x, y); dig(...last); haptic('tick'); },
+    down(x, y) { ready.go(); last = at(x, y); dig(...last); haptic('tick'); },
     move(x, y, pressed) {
       if (!pressed || !last) return;
       const [gx, gy] = at(x, y), steps = Math.max(1, Math.ceil(Math.hypot(gx - last[0], gy - last[1]) / 2));

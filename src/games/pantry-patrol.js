@@ -20,7 +20,7 @@ let W = 176, H = 176;
 function make(api) {
   const feel = new Feel({ pixel: true, sound: false, buzz: false });   // own sounds and buzzes
   const ready = new Ready({ eat: false });                               // the raid starts when you first point the torch
-  let foes, pies, raid, score, t, light, charge, msg, dead, held, flash, toSpawn, spawnT, stink, restT;
+  let foes, pies, raid, score, t, light, charge, msg, dead, held, toSpawn, spawnT, stink, restT;
   const hor = () => H * .38, flo = () => H - 8, beam = () => Math.max(W, H) * .2;
   const proj = (x, z) => { const s = 1 / (1 + z * 3.2); return { x: W / 2 + x * W * .5 * s, y: hor() + (flo() - hor()) * s, s }; };
   const mid = f => { const p = proj(f.x, f.z); return { x: p.x, y: p.y - f.h * p.s * 1.3 }; };
@@ -80,7 +80,7 @@ function make(api) {
     if (dead || charge < 1 || !ready.playing) return;
     const inBeam = foes.filter(f => !f.gone && lit(f)), skunk = inBeam.find(f => f.k === 'skunk'), got = inBeam.filter(f => f.k !== 'skunk' && f.stare >= .4);
     if (!skunk && !got.length) return;
-    charge = 0; flash = .1; sfx(1800, .05, 'square', .05, -900); haptic('medium');
+    charge = 0; feel.juice.flash('#ffffff', .6, .1); sfx(1800, .05, 'square', .05, -900); haptic('medium');
     let n = 0;
     for (const f of got) {
       const p = mid(f); f.hp--; f.hit = .12; f.stare = 0;
@@ -97,12 +97,12 @@ function make(api) {
   }
   const self = {
     reset() {
-      foes = []; pies = 5; raid = 0; score = 0; t = 0; light = { x: W / 2, y: H * .55 }; charge = 1; dead = 0; held = false; flash = 0; stink = 0; msg = null; toSpawn = []; spawnT = 0; restT = 0;
+      foes = []; pies = 5; raid = 0; score = 0; t = 0; light = { x: W / 2, y: H * .55 }; charge = 1; dead = 0; held = false; stink = 0; msg = null; toSpawn = []; spawnT = 0; restT = 0;
       feel.clear(); ready.reset(); newRaid();
     },
     resize(w, h) { W = w; H = h; if (light) light = { x: clamp(light.x, 0, W), y: clamp(light.y, 0, H) }; },
     update(dt) {
-      feel.update(dt); t += dt; flash = Math.max(0, flash - dt); stink = Math.max(0, stink - dt);
+      feel.update(dt); t += dt; stink = Math.max(0, stink - dt);
       if (msg) { msg.l -= dt; if (msg.l <= 0) msg = null; }
       if (dead) { dead += dt; if (dead > 1.4) api.over(); return; }
       if (!ready.update(dt)) return;
@@ -137,7 +137,6 @@ function make(api) {
       const r = beam() * 1.1, g = c.createRadialGradient(light.x, light.y, r * .3, light.x, light.y, r * 1.3);
       g.addColorStop(0, 'rgba(4,6,20,0)'); g.addColorStop(.6, 'rgba(4,6,20,.6)'); g.addColorStop(1, 'rgba(4,6,20,.9)'); c.fillStyle = g; c.fillRect(0, 0, W, H);
       glow(c, light.x, light.y, r * .9, '#f8e8c0', .12);
-      if (flash > 0) { c.fillStyle = '#ffffff'; c.globalAlpha = flash * 6; c.fillRect(0, 0, W, H); c.globalAlpha = 1; }
       if (stink > 0) { c.fillStyle = '#70c040'; c.globalAlpha = Math.min(.45, stink * .5); c.fillRect(0, 0, W, H); c.globalAlpha = 1; }
       feel.begin(c);
       for (const f of foes) if (!f.gone && f.stare >= .4) { const p = mid(f); text(c, '!', p.x, p.y - f.h * proj(f.x, f.z).s * 1.6 - 8, { color: '#f8e070', align: 'center', shadow: '#101018' }); }

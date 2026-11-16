@@ -3,6 +3,7 @@ const { sfx } = gs.sound;
 const { startMic, stopMic, haptic } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Feel } = gs.effects;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
 
 // Blow into the mic to put out the birthday candles. Trick candles (striped) relight unless
 // every candle is out at the same moment. No mic? Tap a candle to puff at it.
@@ -14,7 +15,7 @@ function make(api) {
   function cake() {
     const n = Math.min(9, 4 + cakes), trick = Math.min(3, Math.floor(cakes / 2));
     candles = [...Array(n)].map((_, i) => ({ x: 70 + i * (220 / (n - 1 || 1)) + rnd(-6, 6), y: 360 + Math.abs(i - (n - 1) / 2) * 6, hp: 1, out: 0, trick: i < trick ? 1 : 0, col: ['#ff6b8a', '#6bc5ff', '#ffd34a', '#8aff9a'][i % 4] }));
-    candles.sort(() => Math.random() - .5);
+    candles = shuffle(candles);
     done = 0;
   }
   return {

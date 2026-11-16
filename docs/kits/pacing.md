@@ -8,12 +8,12 @@ Spawners, waves, a director that eases off, difficulty ramps.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PacingPart`, line 954), where every option and field is described.
+From `src/gamescroll.d.ts` (`PacingPart`, line 959), where every option and field is described.
 
-- `ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number` (:955)
-- `Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; co…` (:956)
-- `Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state…` (:957)
-- `Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who us…` (:958)
+- `ramp(t: number, from: number, to: number, seconds: number, ease?: (k: number) => number): number` (:960)
+- `Spawner: new (o?: { every?: number; fastest?: number; over?: number; jitter?: number; first?: number; max?: number; rnd?: () => number }) => { readonly gap: number; co…` (:961)
+- `Waves: new (waves: Loose[], o?: { breather?: number; loop?: boolean; first?: number }) => { readonly wave: Loose; readonly number: number; readonly left: number; state…` (:962)
+- `Director: new (o?: { over?: number; start?: number; max?: number; ease?: number; calmFor?: number; /** A gs.brains.Dial (or 0..1): it climbs sooner for a player who us…` (:963)
 
 ## From the maker kit
 

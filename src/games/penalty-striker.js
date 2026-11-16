@@ -1,18 +1,37 @@
 // Penalty Striker: you take the kicks. Swipe up from the ball toward the goal: the direction aims, a
 // faster swipe lifts the ball higher (too fast sails over the bar), and a curved swipe bends the shot.
 // The keeper reads the line you swipe, so bend it round them. A sometimes-there wall gets in the way.
+// The keeper is a Tiny Brains rival with a memory. For each kick it picks how to go: read your straight
+// line (as before), allow for the bend you usually put on it, guess your favourite side early, or stand
+// tall in the middle. It feels each kick (a fingertip save or a goal just past the glove is the exciting
+// one) and remembers which way of keeping made a close call against this striker; the win-rate rail
+// keeps it fair. A gold sparkle on the keeper means it is going on what it remembered.
 import gs from '../gamescroll.js';
 const { Feel } = gs.effects;
 const { haptic } = gs.device;
 const { sfx, notes, noise } = gs.sound;
 const { clamp, rnd } = gs.util;
 const { approach } = gs.juice;
+const { Brain } = gs.brains;
+const { sounds } = gs.sound;
+const READS = ['line', 'bend', 'guess', 'stay'];
 
 let W = 360, H = 640;
 
 function make(api) {
   const feel = new Feel();
-  let swipe, shot, keeper, wall, score, misses, kicks, t, msg, ml, wait;
+  let swipe, shot, keeper, wall, score, misses, kicks, t, msg, ml, wait, sparkle = 0;
+  // how this striker shoots, kept across rounds: the bend they put on it, the side they go for and how
+  // high, each smoothed over the last few kicks (-1..1)
+  const trend = { curl: 0, side: 0, high: 0 };
+  // see: 0..2 the habits above, 3 how far into the round (kicks), 4 misses so far
+  const see = () => [trend.curl, trend.side, trend.high, clamp(kicks / 12, 0, 1) * 2 - 1, misses - 1];
+  const gk = new Brain(api, {
+    name: 'penalty-striker-keeper', inputs: 5, actions: READS, memory: true, target: .7,
+    // the teacher: allow for a striker who always bends it, else read the line
+    teacher: s => Math.abs(s[0]) > .4 ? 'bend' : 'line',
+    limits: { react: .1, perSecond: 10, minNoise: .08 },
+  });
   const G = () => ({ l: W * .12, r: W * .88, top: 150, bot: 270 });
   const BALL = () => ({ x: W / 2, y: H - 130 });
 
@@ -27,13 +46,13 @@ function make(api) {
     resize(w, h) { W = w; H = h; },
     update(dt) {
       feel.update(dt); if (feel.frozen) return;
-      t += dt; if (ml > 0) ml -= dt;
+      t += dt; if (ml > 0) ml -= dt; sparkle = Math.max(0, sparkle - dt);
       const g = G();
       if (!shot) { keeper.x = W / 2 + Math.sin(t * 1.4 + keeper.sway) * (30 + Math.min(40, kicks * 4)); return; }
       if (wait > 0) { wait -= dt; if (wait <= 0) { if (misses >= 3) return api.over(); setup(); } return; }
       shot.k += dt / shot.dur;
       // keeper reacts to the straight line you swiped, a beat late
-      if (shot.k > .18) { keeper.x = approach(keeper.x, keeper.tx, 260 + kicks * 8, dt); keeper.dive = Math.min(1, keeper.dive + dt * 4); }
+      if (shot.k > .18) { keeper.x = approach(keeper.x, keeper.tx, (260 + kicks * 8) * (.85 + .3 * gk.skill), dt); keeper.dive = Math.min(1, keeper.dive + dt * 4); }
       const k = Math.min(1, shot.k), b = BALL();
       shot.x = b.x + (shot.gx - b.x) * k + Math.sin(k * Math.PI) * shot.curl * 70 + shot.curl * 50 * k * k;
       shot.y = b.y + (shot.gy - b.y) * k;
@@ -73,6 +92,11 @@ function make(api) {
       c.fillStyle = '#ffb703'; c.fillRect(-14, -20, 28, 34); c.fillStyle = '#023047'; c.fillRect(-12, 14, 10, 18); c.fillRect(2, 14, 10, 18);
       c.fillStyle = '#ffb703'; c.fillRect(-34, -18, 20, 8); c.fillRect(14, -18, 20, 8); c.fillStyle = '#8ecae6'; c.fillRect(-40, -20, 8, 12); c.fillRect(32, -20, 8, 12);
       c.fillStyle = '#e0a370'; c.beginPath(); c.arc(0, -30, 10, 0, 7); c.fill();
+      if (sparkle > 0) {   // the keeper remembers what worked against you
+        const r = 5 + Math.sin(t * 14) * 1.5; c.globalAlpha = Math.min(1, sparkle * 2); c.fillStyle = '#ffd166'; c.beginPath();
+        for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4, rr = i % 2 ? r * .4 : r; c.lineTo(14 + Math.cos(a) * rr, -44 + Math.sin(a) * rr); }
+        c.fill(); c.globalAlpha = 1;
+      }
       c.restore();
       // wall
       if (wall) { const y = H * .52; for (let i = 0; i < wall.n; i++) { const x = wall.x - wall.n * 13 + 13 + i * 26; c.fillStyle = '#e63946'; c.fillRect(x - 11, y - 30, 22, 34); c.fillStyle = '#e0a370'; c.beginPath(); c.arc(x, y - 38, 9, 0, 7); c.fill(); c.fillStyle = '#fff'; c.fillRect(x - 11, y + 4, 22, 24); } }
@@ -104,14 +128,28 @@ function make(api) {
       const gx = b.x + (z.x - a.x) / dy * toGoal, gy = g.bot - clamp((speed - 500) / 1300, 0, 1.4) * (g.bot - g.top);
       const curl = clamp(-side / 40, -1.2, 1.2);
       shot = { k: 0, dur: clamp(900 / speed, .45, .8), gx, gy, curl, x: b.x, y: b.y };
-      // the keeper guesses from the straight line, with some error
-      keeper.tx = clamp(gx + rnd(-30, 30), g.l + 20, g.r - 20); keeper.dive = 0;
+      // the keeper picks how to read this kick: the straight line, the line plus your usual bend, your
+      // favourite side, or the middle (each with some error)
+      gk.act(see(), 1); sparkle = gk.remembered ? 1.4 : 0; if (sparkle) sounds.twinkle();
+      const read = gk.action, mid = (g.l + g.r) / 2;
+      const guess = read === 'bend' ? gx + trend.curl * 40 : read === 'guess' ? mid + trend.side * (g.r - g.l) * .3 : read === 'stay' ? mid : gx;
+      keeper.tx = clamp(guess + rnd(-30, 30) * (read === 'stay' ? .3 : 1), g.l + 20, g.r - 20); keeper.dive = 0;
+      trend.curl += (curl - trend.curl) * .3;
+      trend.side += (clamp((gx - mid) / ((g.r - g.l) * .4), -1, 1) - trend.side) * .3;
+      trend.high += (clamp((g.bot - gy) / (g.bot - g.top) * 2 - 1, -1, 1) - trend.high) * .3;
       kicks++; noise(.06, { vol: .06, from: 600, to: 200 }); sfx(120, .08, 'square', .05); haptic('medium');
     },
   };
 
   function end(why, goal, pts = 1) {
     msg = why; ml = 1.3; wait = 1.2;
+    // what the keeper learns: a save by the fingertips or a goal just past the glove is the close call;
+    // a goal it was nowhere near is dull, and a kick that missed by itself says nothing about the keeping
+    const miss = Math.abs(shot.x - keeper.x);
+    if (why === 'SAVED!') gk.feel(miss > 24 ? 1 : .15);
+    else if (goal) gk.feel(miss < 70 ? .8 : -.3);
+    else gk.feel(0);
+    gk.result(goal);
     if (goal) { score += pts; api.score(score); notes(pts > 1 ? 'C5 E5 G5 C6' : 'C5 G5', { len: .06 }); feel.win(shot.x, shot.gy); haptic('success'); }
     else { misses++; feel.hurt(shot.x, shot.gy); haptic(why === 'SAVED!' ? 'heavy' : 'warning'); sfx(150, .2, 'triangle', .04); }
     shot.k = 1;

@@ -4,12 +4,19 @@ const { haptic, want } = gs.device;
 const { clamp, rnd } = gs.util;
 const { Particles, pbr, rbox, surface, speckle, THREE } = gs.hd;
 const { ARView, arNote, FLOOR } = gs.ar;
+const { Brain } = gs.brains;
+const STARES = ['short', 'usual', 'long', 'back'];
 const { Group, Mesh, Vector3, Quaternion, SphereGeometry, ConeGeometry, CapsuleGeometry, CylinderGeometry } = THREE;
 
 // Freeze Rex: a dinosaur has wandered into your room. You feel its footsteps through the phone, and
 // you want photos: tap to snap one (bigger, closer and centred scores more). But it only sees
 // movement. When it stops and sniffs, FREEZE: hold the phone dead still until it looks away. Move
 // while it's watching and it charges. A photo while it's staring scores triple, if you dare.
+// How long it stares comes from a Tiny Brains rival with a memory: each time it stops it picks a short
+// look, its usual one, a long stare, or a glance back (it looks away, then whips round again soon after),
+// from how still you keep, how often you dare a photo and how far you've got. It feels each stare: the
+// one you only just held your nerve through is the thrill, an easy one is dull. Its memory keeps which
+// stare gave this player a close call, and the win-rate rail keeps it fair.
 let W = 300, H = 460;
 const HEIGHT = 2.3;
 
@@ -53,6 +60,24 @@ function make(api) {
   let v, rex, dust, flashFx, built;
   let state, sT, target, lives, score, t, susp, freezes, msg, flash, tap, lastQ, lastP, motion, stepT, level, shots, charge, heading, snapT;
   const tmp = new Vector3(), tq = new Quaternion();
+  // how this player faces it, kept across rounds: how still they keep (-1 rock still .. 1 shaky), how often
+  // they dare a photo while it stares; and this stare's closest call (suspicion at its highest)
+  const nerve = { shaky: 0, dare: -.5 };
+  let peak = 0, stare = 'usual', backSoon = false, daredNow = false;
+  // see: 0..1 the habits above, 2 how far into the round (looks survived)
+  const see = () => [nerve.shaky, nerve.dare, clamp(freezes / 8, 0, 1) * 2 - 1];
+  const rexMind = new Brain(api, {
+    name: 'freeze-rex-stare', inputs: 3, actions: STARES, memory: true, target: .8,
+    // the teacher: a long stare for someone who keeps very still, a glance back at a daring photographer
+    teacher: s => s[0] < -.4 ? 'long' : s[1] > .2 ? 'back' : 'usual',
+    limits: { react: .1, perSecond: 10, minNoise: .1 },
+  });
+  // a stare is over: what it learns (a stare you only just held still through is the close call)
+  function stared(survived) {
+    rexMind.feel(!survived ? .1 : peak > .55 ? 1 : peak > .25 ? .4 : -.2);
+    rexMind.result(survived);
+    nerve.dare += ((daredNow ? 1 : -1) - nerve.dare) * .25;
+  }
 
   function setup() {
     v = new ARView();
@@ -69,7 +94,12 @@ function make(api) {
     state = s; sT = 0;
     if (s === 'walk') { target = pickSpot(); }
     if (s === 'sniff') { tone(110, { len: .5, wave: 'sawtooth', vol: .05, slide: 60 }); noise(.4, { vol: .05, from: 900, to: 200 }); haptic('warning'); }
-    if (s === 'look') { susp = 0; sT = 0; this_look = rnd(2, 3.2) + Math.min(2, level * .25); }
+    if (s === 'look') {
+      susp = 0; sT = 0; peak = 0; daredNow = false; this_look = rnd(2, 3.2) + Math.min(2, level * .25);
+      rexMind.act(see(), 1); stare = rexMind.action; backSoon = stare === 'back';
+      // a low skill (you've been caught a lot) stares a little less
+      this_look *= (stare === 'short' ? .65 : stare === 'long' ? 1.35 : 1) * (1.1 - .2 * rexMind.skill);
+    }
     if (s === 'charge') { noise(1.2, { vol: .16, from: 1500, to: 60 }); tone(90, { len: 1, wave: 'sawtooth', vol: .1, slide: -40 }); haptic('error'); say('IT SAW YOU!', '#ff3030', 2); charge = rex.position.clone(); }
   }
   let this_look = 3;
@@ -81,7 +111,7 @@ function make(api) {
     if (hz > 1 || fz > 1 || hx < 0 || hx > W || hy < 0 || hy > H) { say('MISSED IT', '#ffffffb0', .8); return; }
     const size = Math.abs(fy - hy) / H, cen = 1 - Math.min(1, Math.hypot((hx + fx) / 2 - W / 2, (hy + fy) / 2 - H / 2) / (Math.min(W, H) * .6));
     let pts = Math.round(10 + size * 140 * (.4 + cen * .6)); const brave = state === 'look';
-    if (brave) { pts *= 3; susp += .35; }
+    if (brave) { pts *= 3; susp += .35; daredNow = true; }
     score += pts; shots++; api.score(score); say(brave ? `BRAVE SHOT +${pts}` : `+${pts}`, brave ? '#ffd040' : '#8affdc', 1, size > .45 ? 'FRAME FILLER!' : size > .25 ? 'NICE AND CLOSE' : 'GET CLOSER');
   }
   function update(dt) {
@@ -96,7 +126,7 @@ function make(api) {
     if (state === 'walk') {
       tmp.copy(target).sub(rex.position); tmp.y = 0; const d = tmp.length();
       if (d > .2) { const want = Math.atan2(tmp.x, tmp.z); heading += ((want - heading + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 2.5); speed = 1.1 + level * .08; rex.position.x += Math.sin(heading) * speed * dt; rex.position.z += Math.cos(heading) * speed * dt; }
-      if (sT > rnd(3, 5) - Math.min(1.5, level * .15) || (d < .3 && sT > 2)) setState('sniff');
+      if (sT > (backSoon ? .9 : rnd(3, 5) - Math.min(1.5, level * .15)) || (d < .3 && sT > 2)) { backSoon = false; setState('sniff'); }
     } else if (state === 'sniff') {
       // turns to face you
       tmp.copy(eye()).sub(rex.position); const want = Math.atan2(tmp.x, tmp.z); heading += ((want - heading + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 4);
@@ -104,9 +134,10 @@ function make(api) {
     } else if (state === 'look') {
       const dead = .14 - Math.min(.05, level * .006);
       if (motion > dead) susp += (motion - dead) * dt * 3.2;
-      susp = Math.max(0, susp - dt * .08);
-      if (susp >= 1) setState('charge');
-      else if (sT > this_look) { freezes++; level++; score += 50; api.score(score); say('IT LOOKED AWAY', '#8affdc', 1, `+50 · ${freezes} FREEZE${freezes > 1 ? 'S' : ''}`); haptic('success'); setState('walk'); }
+      susp = Math.max(0, susp - dt * .08); peak = Math.max(peak, susp);
+      nerve.shaky += (clamp(motion / .28 * 2 - 1, -1, 1) - nerve.shaky) * Math.min(1, dt * .5);
+      if (susp >= 1) { stared(false); setState('charge'); }
+      else if (sT > this_look) { stared(true); freezes++; level++; score += 50; api.score(score); say('IT LOOKED AWAY', '#8affdc', 1, `+50 · ${freezes} FREEZE${freezes > 1 ? 'S' : ''}`); haptic('success'); setState('walk'); }
     } else if (state === 'charge') {
       tmp.copy(eye()).sub(rex.position); tmp.y = 0; const d = tmp.length(); heading = Math.atan2(tmp.x, tmp.z); speed = 6;
       if (d > .9) { rex.position.addScaledVector(tmp.normalize(), speed * dt); } else if (sT > .2) { flash = .7; haptic('heavy'); v.off(); return api.over(); }
@@ -151,7 +182,7 @@ function make(api) {
   }
   function this_reset() {
     v?.off(); v?.recenter();
-    lives = 1; score = 0; t = 0; susp = 0; freezes = 0; msg = null; flash = 0; tap = null; lastQ = null; motion = 0; stepT = 0; level = 0; shots = 0; heading = 0; snapT = 0;
+    lives = 1; score = 0; t = 0; susp = 0; freezes = 0; backSoon = false; peak = 0; msg = null; flash = 0; tap = null; lastQ = null; motion = 0; stepT = 0; level = 0; shots = 0; heading = 0; snapT = 0;
     if (v) { const e = { x: 0, z: 0 }; rex.position.set(e.x + rnd(-1, 1), FLOOR, e.z - 5); dust.clear(); state = 'walk'; sT = 0; target = new Vector3(rnd(-1.5, 1.5), FLOOR, -4); }
   }
   return {

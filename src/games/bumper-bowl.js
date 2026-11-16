@@ -2,6 +2,7 @@
 // drag), ram the others off the edge and keep yourself on. Each car you knock off scores; each round adds
 // one more rival, and the table shrinks a little. Fall off three times and the fair closes.
 import gs from '../gamescroll.js';
+const { Ready } = gs.rounds;
 const { sounds } = gs.sound;
 const { haptic } = gs.device;
 const { Juice } = gs.juice;
@@ -29,10 +30,11 @@ function view3d() {
 }
 
 function make(api) {
+  const ready = new Ready({ eat: false });   // the round starts on the first touch
   const fx = new Juice();
   const stick = new Stick({ r: 26, floating: true, zone: [0, 0, 9999, 9999] });
   const keys = new Keys();
-  let cars, me, score, lives, round, t, R, msg, ml, started, ended, respawn;
+  let cars, me, score, lives, round, t, R, msg, ml, ended, respawn;
   const CX = () => W / 2, CY = () => H / 2 + 6;
 
   function car(x, y, col, ai) { return { x, y, vx: 0, vy: 0, a: 0, col, ai, out: 0, r: 7, hit: 0, wob: Math.random() * 6 }; }
@@ -47,11 +49,11 @@ function make(api) {
   }
 
   return {
-    reset() { score = 0; lives = 3; round = 0; t = 0; me = null; started = false; ended = false; respawn = 0; newRound(); fx.clear(); stick.release(); keys.clear(); },
+    reset() { score = 0; lives = 3; round = 0; t = 0; me = null; ready.reset(); ended = false; respawn = 0; newRound(); fx.clear(); stick.release(); keys.clear(); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
       fx.update(dt); t += dt; if (ml > 0) ml -= dt;
-      if (!started) return;
+      if (!ready.playing) return;
       // you: push toward where you drag
       const k = keys.axis(), ax = stick.active ? stick.x : k.x, ay = stick.active ? stick.y : k.y;
       if (!me.out) { me.vx += ax * 150 * dt; me.vy += ay * 150 * dt; if (Math.hypot(ax, ay) > .2) me.a = Math.atan2(ay, ax); }
@@ -115,12 +117,12 @@ function make(api) {
       for (let i = 0; i < 3; i++) { c.fillStyle = i < lives ? COLS[0] : '#ffffff30'; c.fillRect(6 + i * 9, 6, 7, 7); }
       c.textAlign = 'center';
       if (ml > 0) { c.font = '800 16px Rubik, sans-serif'; c.fillStyle = '#fff'; c.fillText(msg, W / 2, H * .3); }
-      if (!started) { c.fillStyle = '#000a'; c.fillRect(0, H - 22, W, 18); c.fillStyle = '#fff'; c.font = '600 9px Rubik, sans-serif'; c.fillText('Drag to drive. Ram the others off the table', W / 2, H - 10); }
+      if (!ready.playing) { c.fillStyle = '#000a'; c.fillRect(0, H - 22, W, 18); c.fillStyle = '#fff'; c.font = '600 9px Rubik, sans-serif'; c.fillText('Drag to drive. Ram the others off the table', W / 2, H - 10); }
     },
-    down: (x, y, id) => { started = true; stick.down(x, y, id); },
+    down: (x, y, id) => { ready.go(); stick.down(x, y, id); },
     move: (x, y, pr, id) => stick.move(x, y, pr, id),
     up: (x, y, id) => stick.up(x, y, id),
-    key: (k, d) => { if (d) started = true; keys.key(k, d); },
+    key: (k, d) => { if (d) ready.go(); keys.key(k, d); },
   };
 }
 

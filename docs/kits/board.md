@@ -8,14 +8,14 @@ Grid puzzles: match, fall and refill, 2048 slides, flood fill, hints.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BoardPart`, line 2427), where every option and field is described.
+From `src/gamescroll.d.ts` (`BoardPart`, line 2432), where every option and field is described.
 
-- `Board: new (cols: number, rows: number, o?: { fill?: ((c: number, r: number) => BoardPiece | null) | null; same?: (a: BoardPiece, b: BoardPiece) => boolean; speed?: nu…` (:2427)
-  - `kind?: Loose` (:2410)
-  - `col?: number` (:2410)
-  - `row?: number` (:2410)
-  - `x?: number` (:2410)
-  - `y?: number` (:2410)
+- `Board: new (cols: number, rows: number, o?: { fill?: ((c: number, r: number) => BoardPiece | null) | null; same?: (a: BoardPiece, b: BoardPiece) => boolean; speed?: nu…` (:2432)
+  - `kind?: Loose` (:2415)
+  - `col?: number` (:2415)
+  - `row?: number` (:2415)
+  - `x?: number` (:2415)
+  - `y?: number` (:2415)
 
 ## From the maker kit
 
@@ -31,12 +31,12 @@ gets a drawn `x`, `y` that glides to its cell (`board.update(dt)`, `board.busy`)
 
 1 game uses it (`node scripts/examples.mjs gs.board` lists them). The shortest:
 
-`src/games/slide-ten.js` (Slide Ten, Pocket · Merge, 108 lines):
+`src/games/slide-ten.js` (Slide Ten, Pocket · Merge, 140 lines):
 
 ```js
 const { sfx, notes } = gs.sound;
 const { Board } = gs.board;
 // …
   return {
-    reset() { b = new Board(N, N, { speed: 16 }); score = 0; t = 0; dead = 0; moves = 0; lastTen = 0; g.release(); feel.clear(); for (let i = 0; i < 5
+    reset() { b = new Board(N, N, { speed: 16 }); score = 0; t = 0; dead = 0; moves = 0; lastTen = 0; streak = 0; rocks = 0; g.release(); feel.clear()
 ```

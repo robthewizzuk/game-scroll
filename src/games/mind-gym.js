@@ -3,6 +3,8 @@ const { sfx } = gs.sound;
 const { haptic } = gs.device;
 const { rnd } = gs.util;
 const { Feel } = gs.effects; const { Ready } = gs.rounds;
+const shuffle = gs.math.rng().shuffle;   // a fair shuffle (a sort with a random compare favours some orders)
+const { text } = gs.pixel;
 
 // A one-minute daily workout for your brain: four quick drills, fifteen seconds each. Quick sums,
 // count the dots, remember the lit squares, pick the bigger side, and tap 1 to 9 in order. Every
@@ -16,7 +18,7 @@ function make(api) {
   let plan, di, phase, pt, q, score, per, t, fx, done, results, tx = 0, ty = 0;
   function newQ() {
     const d = plan[di], lvl = per[di] || 0;
-    if (d === 'SUMS') { const op = lvl > 4 && Math.random() < .5 ? '-' : lvl > 8 && Math.random() < .3 ? 'x' : '+', a = op === 'x' ? 2 + (Math.random() * 8 | 0) : 2 + (Math.random() * (9 + lvl * 2) | 0), b = op === 'x' ? 2 + (Math.random() * 8 | 0) : 1 + (Math.random() * (8 + lvl) | 0), A = op === '-' ? Math.max(a, b) : a, B = op === '-' ? Math.min(a, b) : b, ans = op === '+' ? A + B : op === '-' ? A - B : A * B; const opts = new Set([ans]); while (opts.size < 4) opts.add(Math.max(0, ans + (Math.random() * 7 | 0) - 3)); q = { text: `${A} ${op === 'x' ? '×' : op} ${B}`, ans, opts: [...opts].sort(() => Math.random() - .5) }; }
+    if (d === 'SUMS') { const op = lvl > 4 && Math.random() < .5 ? '-' : lvl > 8 && Math.random() < .3 ? 'x' : '+', a = op === 'x' ? 2 + (Math.random() * 8 | 0) : 2 + (Math.random() * (9 + lvl * 2) | 0), b = op === 'x' ? 2 + (Math.random() * 8 | 0) : 1 + (Math.random() * (8 + lvl) | 0), A = op === '-' ? Math.max(a, b) : a, B = op === '-' ? Math.min(a, b) : b, ans = op === '+' ? A + B : op === '-' ? A - B : A * B; const opts = new Set([ans]); while (opts.size < 4) opts.add(Math.max(0, ans + (Math.random() * 7 | 0) - 3)); q = { text: `${A} ${op === 'x' ? '×' : op} ${B}`, ans, opts: shuffle([...opts]) }; }
     else if (d === 'DOTS') { const n = 3 + (Math.random() * Math.min(9, 4 + lvl) | 0), dots = []; while (dots.length < n) { const p = { x: rnd(.1, .9), y: rnd(.1, .9) }; if (dots.every(o => Math.hypot(o.x - p.x, o.y - p.y) > .14)) dots.push(p); } const opts = new Set([n]); while (opts.size < 4) opts.add(Math.max(1, n + (Math.random() * 5 | 0) - 2)); q = { dots, ans: n, show: Math.max(.6, 1.4 - lvl * .08), opts: [...opts].sort((a, b) => a - b) }; }
     else if (d === 'MEMORY') { const n = 3 + Math.min(4, lvl >> 1), cells = []; while (cells.length < n) { const i = Math.random() * 16 | 0; if (!cells.includes(i)) cells.push(i); } q = { cells, got: [], show: 1.4, bad: 0 }; }
     else if (d === 'BIGGER') { const mk = () => { const a = 1 + (Math.random() * (6 + lvl) | 0), b = 1 + (Math.random() * (6 + lvl) | 0); return Math.random() < .5 ? { s: `${a}+${b}`, v: a + b } : { s: `${a}×${b > 5 ? b - 4 : b}`, v: a * (b > 5 ? b - 4 : b) }; }; let L = mk(), R = mk(); while (L.v === R.v) R = mk(); q = { L, R }; }
@@ -28,7 +30,7 @@ function make(api) {
   function wrong() { pt += 1; fx = { ok: false, l: .3 }; haptic('error'); sfx(160, .12, 'sawtooth', .04, -40); feel.juice.shake(3); }
   function optRects(n) { const a = area(), bw = (a.w - 6) / 2, bh = 30, y0 = a.y + a.h - bh * 2 - 6; return Array.from({ length: n }, (_, i) => ({ x: a.x + (i % 2) * (bw + 6), y: y0 + (i >> 1) * (bh + 6), w: bw, h: bh })); }
   const self = {
-    reset() { plan = [...DRILLS].sort(() => Math.random() - .5).slice(0, 4); di = 0; phase = 'intro'; pt = 0; score = 0; per = []; t = 0; fx = null; done = 0; results = []; feel.clear(); ready.reset(); newQ(); },
+    reset() { plan = shuffle([...DRILLS]).slice(0, 4); di = 0; phase = 'intro'; pt = 0; score = 0; per = []; t = 0; fx = null; done = 0; results = []; feel.clear(); ready.reset(); newQ(); },
     fx(dt) { feel.update(dt); },
     resize(w, h) { W = w; H = h; },
     update(dt) {
@@ -51,11 +53,11 @@ function make(api) {
       if (phase !== 'end') { c.fillStyle = '#d8d0c0'; c.fillRect(0, 14, W, 4); c.fillStyle = pt > 12 ? '#e04848' : '#48a868'; c.fillRect(0, 14, W * (1 - pt / 15), 4); }
       const a = area(); c.textAlign = 'center';
       if (phase === 'end') {
-        c.fillStyle = '#2c3848'; c.font = '8px "Press Start 2P", monospace'; c.fillText('MIND SCORE', W / 2, H * .25); c.font = '16px "Press Start 2P", monospace'; c.fillStyle = '#e07020'; c.fillText(String(score * 10), W / 2, H * .4);
+        c.fillStyle = '#2c3848'; c.font = '8px "Press Start 2P", monospace'; text(c, 'MIND SCORE', W / 2, H * .25 - 8, { color: '#2c3848', align: 'center', font: 'big' }); c.font = '16px "Press Start 2P", monospace'; c.fillStyle = '#e07020'; text(c, String(score * 10), W / 2, H * .4 - 16, { color: '#e07020', align: 'center', font: 'big', size: 2 });
         c.font = '6px "Press Start 2P", monospace'; plan.forEach((d, i) => { c.fillStyle = '#2c3848'; c.textAlign = 'left'; c.fillText(d, W * .25, H * .55 + i * 12); c.textAlign = 'right'; c.fillText(String(results[i] || 0), W * .75, H * .55 + i * 12); });
         c.textAlign = 'center'; c.fillStyle = '#708090'; c.fillText(score >= 40 ? 'SHARP AS A TACK' : score >= 25 ? 'NICELY WARMED UP' : 'GOOD START', W / 2, H * .9); return;
       }
-      c.fillStyle = '#2c3848'; c.font = '8px "Press Start 2P", monospace'; c.fillText(plan[di], W / 2, 32); c.font = '6px "Press Start 2P", monospace';
+      c.fillStyle = '#2c3848'; c.font = '8px "Press Start 2P", monospace'; text(c, plan[di], W / 2, 24, { color: '#2c3848', align: c.textAlign, font: 'big' }); c.font = '6px "Press Start 2P", monospace';
       if (phase === 'intro') { c.fillStyle = '#708090'; c.fillText({ SUMS: 'TAP THE ANSWER', DOTS: 'HOW MANY DOTS?', MEMORY: 'TAP THE LIT SQUARES', BIGGER: 'TAP THE BIGGER SIDE', ORDER: 'TAP 1 TO 9 IN ORDER' }[plan[di]], W / 2, H / 2); return; }
       const d = plan[di];
       if (d === 'SUMS' || d === 'DOTS') {
@@ -68,7 +70,7 @@ function make(api) {
       } else if (d === 'BIGGER') {
         const bw = (a.w - 8) / 2; [q.L, q.R].forEach((o, i) => { const x = a.x + i * (bw + 8); c.fillStyle = '#2c3848'; c.fillRect(x, a.y + 10, bw, a.h - 20); c.fillStyle = '#f4f0e8'; c.font = '10px "Press Start 2P", monospace'; c.fillText(o.s, x + bw / 2, a.y + a.h / 2 + 4); c.font = '6px "Press Start 2P", monospace'; });
       } else {
-        for (const p of q.nums) { const x = a.x + p.x * a.w, y = a.y + p.y * a.h; c.fillStyle = p.n < q.next ? '#48a868' : '#2c3848'; c.beginPath(); c.arc(x, y, 11, 0, 7); c.fill(); c.fillStyle = '#f4f0e8'; c.font = '8px "Press Start 2P", monospace'; c.fillText(String(p.n), x, y + 4); c.font = '6px "Press Start 2P", monospace'; }
+        for (const p of q.nums) { const x = a.x + p.x * a.w, y = a.y + p.y * a.h; c.fillStyle = p.n < q.next ? '#48a868' : '#2c3848'; c.beginPath(); c.arc(x, y, 11, 0, 7); c.fill(); c.fillStyle = '#f4f0e8'; c.font = '8px "Press Start 2P", monospace'; text(c, String(p.n), x, y + 4 - 8, { color: '#f4f0e8', align: c.textAlign, font: 'big' }); c.font = '6px "Press Start 2P", monospace'; }
       }
       if (fx) { c.strokeStyle = fx.ok ? '#48a868' : '#e04848'; c.lineWidth = 3; c.strokeRect(2, 20, W - 4, H - 22); c.lineWidth = 1; }
     },

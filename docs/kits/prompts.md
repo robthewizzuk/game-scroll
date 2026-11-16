@@ -8,9 +8,9 @@ Quick-time prompts.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PromptsPart`, line 3759), where every option and field is described.
+From `src/gamescroll.d.ts` (`PromptsPart`, line 3764), where every option and field is described.
 
-- `Prompts: new (o?: { radius?: number; swipe?: number }) => On<Loose> & { active: boolean; timeScale: number; passed: number; readonly now: Prompt | null; readonly left:…` (:3760)
+- `Prompts: new (o?: { radius?: number; swipe?: number }) => On<Loose> & { active: boolean; timeScale: number; passed: number; readonly now: Prompt | null; readonly left:…` (:3765)
 
 ## From the maker kit
 
@@ -24,7 +24,7 @@ time; `timeScale` slows the world while one shows; `ease` gives the player more 
 
 1 game uses it (`node scripts/examples.mjs gs.prompts` lists them). The shortest:
 
-`src/games/long-shadow.js` (Long Shadow, village, 4136 lines):
+`src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 
 ```js
 const { Cutscene } = gs.cutscene;
