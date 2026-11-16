@@ -1068,7 +1068,9 @@ io=new IntersectionObserver(es=>{if(performance.now()-resizeAt<500)return lookAg
 // Hot reload (npm run dev, vite.config.js hotGames): a saved game file arrives here and replaces the
 // game on its card. The feed, the debug overlay and gs.tweak values stay; a round in progress goes on
 // from where it was if the game has snapshot() / restore(data), otherwise it starts again at once.
-if(import.meta.hot)import.meta.hot.on('gs:game',async({id,url})=>{
+// (hot held in a const: a statement starting import.meta trips CodeQL's parser)
+const hot=import.meta.hot;
+if(hot)hot.on('gs:game',async({id,url})=>{
   try{const m=await import(/* @vite-ignore */url+'?t='+Date.now());hotSwap(m.default)}
   catch(e){console.error(`[hot] ${id}:`,e)}
 });

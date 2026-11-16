@@ -274,7 +274,8 @@ export class Reputation {
    * 'avoid', 'ignore', 'stare' (a famous stranger), 'greet', 'bow', 'cheer' (loved and famous). Your game plays it.
    */
   mood(faction) {
-    const f = this.factions[faction] || {}, s = this.with(faction) / 100, fame = this.lean(this.fameAxis), g = this.lean(this.goodAxis);
+    // (this.with in brackets: without them CodeQL's parser reads 'with(...) / 100, ... /' as a regex)
+    const f = this.factions[faction] || {}, s = (this.with(faction)) / 100, fame = this.lean(this.fameAxis), g = this.lean(this.goodAxis);
     if (f.law && this.bounty(faction) > 0) return 'arrest';
     if (s <= -.6) return f.fights ? 'attack' : 'flee';
     if (f.timid && g <= -.5 && fame >= .5) return 'flee';

@@ -1,0 +1,113 @@
+# CodeQL code scanning (advanced setup). Replaces GitHub's "default setup", which could not build the
+# native code: Java was scanned without a build (low quality: Android and Capacitor classes unknown) and
+# Swift never finished a scan. Swift runs on a Mac, so it has its own file: codeql-swift.yml.
+#
+# JavaScript, Python and the workflows are read without building. Java is the real Android build:
+# node_modules (Capacitor's Android library and the plugins live there), `cap sync` and a Gradle compile.
+# Results in third-party code (node_modules) are dropped before upload; only our own code is reported.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md', 'store/**', '.github/ISSUE_TEMPLATE/**']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md', 'store/**', '.github/ISSUE_TEMPLATE/**']
+  schedule:
+    - cron: '23 4 * * 1'  # Mondays: new CodeQL queries find things in code that hasn't changed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04  # pinned: move to a newer image on purpose, not when ubuntu-latest flips
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: matrix.build-mode == 'manual'
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - if: matrix.build-mode == 'manual'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      # Before CodeQL starts watching, so it only sees our Gradle compile.
+      - name: Install, and make the Android project's generated parts
+        if: matrix.build-mode == 'manual'
+        run: |
+          npm ci
+          # cap sync needs a web app to copy; the scan doesn't need the real one (npm run build).
+          mkdir -p dist && echo '<!doctype html><title>Game Scroll</title>' > dist/index.html
+          npx cap sync android
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config: |
+            paths-ignore:
+              - node_modules
+              - dist
+              - '**/*.min.js'
+
+      - name: Build the Android app's Java
+        if: matrix.language == 'java-kotlin'
+        working-directory: android
+        # The app and every plugin module it uses (Gradle compiles them first). -Pnpu.qnn=false leaves out
+        # android/qnn, which only packs Qualcomm's downloaded libraries and has no code of ours.
+        run: ./gradlew :app:compileDebugJavaWithJavac -Pnpu.qnn=false --no-daemon --no-build-cache --stacktrace
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+          output: sarif-results
+          upload: failure-only
+
+      # The Java build compiles Capacitor's own Android library from node_modules too: report our code only.
+      - name: Keep only results in our own code
+        run: |
+          for f in sarif-results/*.sarif; do
+            jq '.runs[].results |= map(select((.locations[0].physicalLocation.artifactLocation.uri // "")
+                  | (test("(^|/)node_modules/") or startswith("file:") or startswith("/")) | not))' "$f" > "$f.tmp"
+            echo "$f: $(jq '[.runs[].results[]] | length' "$f") results, $(jq '[.runs[].results[]] | length' "$f.tmp") in our code"
+            mv "$f.tmp" "$f"
+          done
+
+      - name: Upload the results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: /language:${{ matrix.language }}

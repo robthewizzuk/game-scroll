@@ -1,0 +1,102 @@
+# CodeQL code scanning for the iOS app's Swift (the app and the plugins in plugins/*/ios).
+# Swift has to be built on a Mac, and macOS runners use Actions minutes 10x faster than Linux, so this
+# runs only when Swift or the iOS project changes, every Monday, and by hand. The other languages: codeql.yml.
+#
+# GitHub's "default setup" tried `xcodebuild -target App` on a bare checkout and failed: the iOS project
+# needs node_modules (Capacitor's Swift package and the plugins) and `cap sync ios` first, as ios-ipa.yml does.
+name: CodeQL (Swift)
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', 'plugins/*/ios/**', 'plugins/*/Package.swift', 'package-lock.json', '.github/workflows/codeql-swift.yml']
+  pull_request:
+    branches: [main]
+    paths: ['ios/**', 'plugins/*/ios/**', 'plugins/*/Package.swift', 'package-lock.json', '.github/workflows/codeql-swift.yml']
+  schedule:
+    - cron: '41 4 * * 1'  # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (swift)
+    runs-on: macos-26  # pinned: Xcode 26, which Capacitor 8 needs (as ios-ipa.yml)
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Before CodeQL starts watching, so it only sees the Xcode build.
+      - name: Install, and make the iOS project's generated parts
+        run: |
+          xcodebuild -version
+          npm ci
+          # cap sync needs a web app to copy; the scan doesn't need the real one (npm run build).
+          mkdir -p dist && echo '<!doctype html><title>Game Scroll</title>' > dist/index.html
+          npx cap sync ios
+          # Fetch the Swift packages now, outside the scan.
+          xcodebuild -resolvePackageDependencies -project ios/App/App.xcodeproj -scheme App \
+            -derivedDataPath "$RUNNER_TEMP/dd"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+          build-mode: manual
+
+      - name: Build the iOS app
+        # Unsigned, as ios-ipa.yml; Debug is enough to compile every Swift file. The last four settings are
+        # the ones CodeQL's own Swift build uses so it can see each compile (no compile cache, separate driver).
+        run: |
+          xcodebuild build \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILATION_CACHE_ENABLE_CACHING=NO \
+            SWIFT_ENABLE_COMPILE_CACHE=NO \
+            SWIFT_USE_INTEGRATED_DRIVER=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:swift
+          output: sarif-results
+          upload: failure-only
+
+      # The build also compiles Capacitor and the community plugins (node_modules, Swift packages): report our code only.
+      - name: Keep only results in our own code
+        run: |
+          for f in sarif-results/*.sarif; do
+            jq '.runs[].results |= map(select((.locations[0].physicalLocation.artifactLocation.uri // "")
+                  | (test("(^|/)node_modules/") or startswith("file:") or startswith("/")) | not))' "$f" > "$f.tmp"
+            echo "$f: $(jq '[.runs[].results[]] | length' "$f") results, $(jq '[.runs[].results[]] | length' "$f.tmp") in our code"
+            mv "$f.tmp" "$f"
+          done
+
+      - name: Upload the results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: /language:swift
