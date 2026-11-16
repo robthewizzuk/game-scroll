@@ -193,7 +193,7 @@ export default {
 <h3>3D games on phones</h3>
 <ul>
   <li><b>60 frames a second, or 30 and 30 made.</b> On a phone, a 3D game aims for a steady 60. Where it can't hold 60, the app draws 30 and frame generation (GSFG) makes the 30 in between, and goes back to 60 when there is room. Low phones, and any phone that is warm or saving power, play at 30 with 30 made. You don't set any of this: keep your game's work light and the app picks.</li>
-  <li><b>A loading screen after Play.</b> On Next Gen, AR and Board games, Play first shows a loading screen while the app runs <code>reset()</code>, draws the first frames and builds every shader they need, so the round never stutters on its first seconds. Make what a round needs in <code>reset()</code> or its first <code>update()</code>, not a few frames in.</li>
+  <li><b>Made after Play.</b> In the feed, a Next Gen, AR or Board card is only a picture (the game as it looked at the end of its last round on that phone, or a cover), so scrolling past it costs nothing. Play shows a loading screen while the app makes your game, runs <code>reset()</code>, draws the first frames and builds every shader they need, so the round never stutters in its first seconds. Make what a round needs in <code>make()</code>, <code>reset()</code> or its first <code>update()</code>, not a few frames in.</li>
   <li><b>Smoothness is part of the game.</b> The speed report (in <code>npm run check</code>, or <code>npm run speed &lt;id&gt;</code> alone) times your frames on a slowed processor, names your slowest lines and the garbage they make, and for 3D games counts draw calls, triangles and shaders built mid-play against low, mid and top phones. Over the budget fails the check.</li>
 </ul>
 
