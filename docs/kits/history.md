@@ -8,9 +8,9 @@ Undo and redo for moves.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HistoryPart`, line 2861), where every option and field is described.
+From `src/gamescroll.d.ts` (`HistoryPart`, line 2865), where every option and field is described.
 
-- `History: new <S = Loose>(start: S, o?: { max?: number }) => History<S>` (:2861)
+- `History: new <S = Loose>(start: S, o?: { max?: number }) => History<S>` (:2865)
 
 ## From the maker kit
 

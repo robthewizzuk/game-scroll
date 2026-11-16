@@ -8,30 +8,30 @@ Team sports AI: pitches, formations, marking, passing and shooting.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SportsPart`, line 3256), where every option and field is described.
+From `src/gamescroll.d.ts` (`SportsPart`, line 3260), where every option and field is described.
 
-- `Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch` (:3257)
-  - `w: number` (:3246)
-  - `h: number` (:3246)
-  - `goal: number` (:3246)
-  - `x: number` (:3246)
-  - `y: number` (:3246)
-  - `goalFor(side: 0 | 1): { x: number; y: number; half: number }` (:3246)
-  - `toPitch(side: 0 | 1, u: number, v: number): { x: number; y: number }` (:3246)
-  - `upfield(side: 0 | 1, p: { x: number; y: number }): number` (:3246)
-- `Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?…` (:3258)
-  - `pitch: SportsPitch` (:3249)
-  - `side: 0 | 1` (:3249)
-  - `skill: Skill` (:3249)
-  - `keeper: boolean` (:3249)
-  - `shootRange: number` (:3249)
-  - `players: Loose[]` (:3249)
-  - `chaser: Loose` (:3249)
-  - `plan: Map<Loose, SportsAct>` (:3249)
-  - `readonly coach: Coach | null` With coach: about the last choice of the one with the ball ('shoot' | 'pass' | 'dribble'): team.coach.correct('pass'), team.coach.avoid('shoot'), team.coach.recalled. (:3251)
-  - `home(p: Loose, ball: { x: number; y: number }): { x: number; y: number }` (:3252)
-  - `think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>` (:3253)
-  - `kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number }` (:3254)
+- `Pitch: new (o?: { w?: number; h?: number; goal?: number; x?: number; y?: number }) => SportsPitch` (:3261)
+  - `w: number` (:3250)
+  - `h: number` (:3250)
+  - `goal: number` (:3250)
+  - `x: number` (:3250)
+  - `y: number` (:3250)
+  - `goalFor(side: 0 | 1): { x: number; y: number; half: number }` (:3250)
+  - `toPitch(side: 0 | 1, u: number, v: number): { x: number; y: number }` (:3250)
+  - `upfield(side: 0 | 1, p: { x: number; y: number }): number` (:3250)
+- `Team: new (pitch: SportsPitch, side: 0 | 1, o?: { formation?: string | [number, number][]; skill?: Skill; shootRange?: number | null; keeper?: boolean | null; players?…` (:3262)
+  - `pitch: SportsPitch` (:3253)
+  - `side: 0 | 1` (:3253)
+  - `skill: Skill` (:3253)
+  - `keeper: boolean` (:3253)
+  - `shootRange: number` (:3253)
+  - `players: Loose[]` (:3253)
+  - `chaser: Loose` (:3253)
+  - `plan: Map<Loose, SportsAct>` (:3253)
+  - `readonly coach: Coach | null` With coach: about the last choice of the one with the ball ('shoot' | 'pass' | 'dribble'): team.coach.correct('pass'), team.coach.avoid('shoot'), team.coach.recalled. (:3255)
+  - `home(p: Loose, ball: { x: number; y: number }): { x: number; y: number }` (:3256)
+  - `think(world: { ball: { x: number; y: number; vx?: number; vy?: number; owner?: Loose }; mates?: Loose[]; foes?: Loose[] }, dt?: number): Map<Loose, SportsAct>` (:3257)
+  - `kick(p: { x: number; y: number }, at: { x: number; y: number }, power: number): { x: number; y: number; power: number }` (:3258)
 
 ## From the maker kit
 

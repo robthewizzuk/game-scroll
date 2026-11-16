@@ -8,15 +8,15 @@ Toy bricks in 3D.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`BricksPart`, line 1657), where every option and field is described.
+From `src/gamescroll.d.ts` (`BricksPart`, line 1661), where every option and field is described.
 
-- `BRICK: Loose` (:1657)
-- `BRICK_KEYS: Loose` (:1657)
-- `STUD: Loose` (:1657)
-- `brick: Loose` (:1657)
-- `brick3d: Loose` (:1657)
-- `stud: Loose` (:1657)
-- `stud3d: Loose` (:1657)
+- `BRICK: Loose` (:1661)
+- `BRICK_KEYS: Loose` (:1661)
+- `STUD: Loose` (:1661)
+- `brick: Loose` (:1661)
+- `brick3d: Loose` (:1661)
+- `stud: Loose` (:1661)
+- `stud3d: Loose` (:1661)
 
 ## In real games
 

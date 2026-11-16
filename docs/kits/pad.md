@@ -8,12 +8,12 @@ Game controllers: analog sticks, triggers, buttons, rumble.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PadPart`, line 559), where every option and field is described.
+From `src/gamescroll.d.ts` (`PadPart`, line 563), where every option and field is described.
 
-- `pad(i?: number): PadState | null` (:559)
-- `pads(): PadState[]` (:559)
-- `rumble(strength?: number, ms?: number, i?: number): void` (:559)
-- `padConnected(): boolean` (:559)
+- `pad(i?: number): PadState | null` (:563)
+- `pads(): PadState[]` (:563)
+- `rumble(strength?: number, ms?: number, i?: number): void` (:563)
+- `padConnected(): boolean` (:563)
 
 ## From the maker kit
 

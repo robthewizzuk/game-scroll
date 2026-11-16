@@ -8,12 +8,12 @@ Hand-drawn looks (sketchy shapes) and ink lines the player draws.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SketchPart`, line 672), where every option and field is described.
+From `src/gamescroll.d.ts` (`SketchPart`, line 676), where every option and field is described.
 
-- `Sketch: new (o?: SketchOptions & { seed?: number; boil?: number }) => { boil: number; seed: number; readonly remembered: number; update(dt: number): void; clear(): voi…` A pen that draws sketchy shapes. (:677)
-- `Ink: new (o?: InkOptions) => { readonly points: number[][]; readonly length: number; done: boolean; add(x: number, y: number, pressure?: number): Loose; end(): Loose; …` One ink stroke that grows as points are added and remembers its shape: add(x, y) while the finger moves, end() when it lifts, draw(c) each frame. (:696)
-- `ink(c: Ctx, points: InkPoint[] | { points: InkPoint[] }, o?: InkOptions): boolean` Draws one ink stroke through the points in one call (a gs.strokes Stroke works too). (:705)
-- `inkOutline(points: InkPoint[] | { points: InkPoint[] }, o?: InkOptions, done?: boolean): number[][]` The outline of an ink stroke: [[x, y], ...], a closed shape to fill or to test. (:707)
+- `Sketch: new (o?: SketchOptions & { seed?: number; boil?: number }) => { boil: number; seed: number; readonly remembered: number; update(dt: number): void; clear(): voi…` A pen that draws sketchy shapes. (:681)
+- `Ink: new (o?: InkOptions) => { readonly points: number[][]; readonly length: number; done: boolean; add(x: number, y: number, pressure?: number): Loose; end(): Loose; …` One ink stroke that grows as points are added and remembers its shape: add(x, y) while the finger moves, end() when it lifts, draw(c) each frame. (:700)
+- `ink(c: Ctx, points: InkPoint[] | { points: InkPoint[] }, o?: InkOptions): boolean` Draws one ink stroke through the points in one call (a gs.strokes Stroke works too). (:709)
+- `inkOutline(points: InkPoint[] | { points: InkPoint[] }, o?: InkOptions, done?: boolean): number[][]` The outline of an ink stroke: [[x, y], ...], a closed shape to fill or to test. (:711)
 
 ## From the maker kit
 
