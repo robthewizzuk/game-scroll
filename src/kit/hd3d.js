@@ -86,6 +86,8 @@ import { lensFrame, afTake, AF_LOG } from './lens.js';
 import { DS, measured, resetSize, fromPixels } from './detail-size.js';
 import { FADE, FADING, fadeStep, fadeAheadList, glTwins, hookGL, twinList, fadingCount } from './lod-fade.js';
 import { ORIGIN, ORIGIN_U, ORIGIN_SET, ORIGIN_GLSL, follow as originFollow } from './origin.js';
+import { MIRROR, mirrorCamera, mirrorCam, depthOf } from './mirror.js';
+const MIR_CC = new Color();
 import { memory } from './memory.js';
 import { getready, waitsOn } from './getready.js';
 import { speed, phoneClass, fpsFor, stepDown, stepUp, settle, settledFor, frameGenFor, frameGenPick, frameGenFailed, frameGenReady, frameGenPace, frameGenSlack, frameGenOne, frameGenRoom, frameGenPaceOf, frameGenCould, frameGenSteps, screenHz, qualityVerdict, chipCost } from './speed.js';
@@ -1772,9 +1774,14 @@ const AIR = {
   // the rain as it falls (0..1) and the weather's own clock for running water, which runs while it rains and slows as it dries
   gsRain: { value: new Vector4() },
   gsOrigin: ORIGIN_U,   // where the drawing's centre is in the world (origin.js): the clouds, mist patches and wet ground are where they are in the world
+  // the puddle mirror (mirror.js): its picture, its view-projection, and (on, the most blur): read only by the mirror's own meshes (GS_MIRROR)
+  gsMirror: { value: null }, gsMirVP: { value: MIRROR.vp }, gsMirOn: { value: new Vector4() },
 };
 const AIR_GLSL = ORIGIN_GLSL + `
 uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt, gsRain; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
+#ifdef GS_MIRROR
+uniform sampler2D gsMirror; uniform mat4 gsMirVP; uniform vec4 gsMirOn;
+#endif
 float gsH12(vec2 p){ vec3 a = fract(p.xyx * .1031); a += dot(a, a.yzx + 33.33); return fract((a.x + a.y) * a.z); }
 float gsVN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(gsH12(i), gsH12(i + vec2(1., 0.)), f.x), mix(gsH12(i + vec2(0., 1.)), gsH12(i + vec2(1., 1.)), f.x), f.y); }
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
@@ -1877,6 +1884,21 @@ const AIR_WET = `#ifdef USE_FOG
         }
         normal = normalize(normal + mat3(viewMatrix) * vec3(rr.x, 0., rr.y) * .4 * p * smoothstep(0., .03, dep));
       }
+#ifdef GS_MIRROR
+      // the puddle mirror (mirror.js): what stands round the water, in place of the sky the material reflects there, by the water's
+      // Fresnel term (hd3d-gpu.js gpuWet has the same sums); bent by ripples and rings, blurred as rough as the water is
+      float gsMw = max(p, max(soak * .6, film * .7)) * (1. - s) * gsMirOn.x;
+      if (gsMw > 0.) {
+        vec3 gsNw = gsVi * normal, gsV = normalize(cameraPosition - gsW); vec4 gsMc = gsMirVP * vec4(gsW, 1.);
+        vec2 gsMq = clamp(gsMc.xy / gsMc.w * .5 + .5 + gsNw.xz * .06, .002, .998);
+        float gsNv = clamp(dot(gsNw, gsV), 0., 1.), gsFr = .04 + (max(1. - roughnessFactor, .04) - .04) * pow(1. - gsNv, 5.);
+        vec4 gsMs = textureLod(gsMirror, gsMq, clamp((roughnessFactor - .03) * 16., 0., gsMirOn.y)); vec3 gsSky = vec3(0.);
+#ifdef USE_ENVMAP
+        gsSky = getIBLRadiance(normalize(vViewPosition), normal, roughnessFactor);
+#endif
+        totalEmissiveRadiance += (gsMs.rgb - gsSky * gsMs.a) * gsFr * gsMw;
+      }
+#endif
     }
 #endif
   }
@@ -2226,7 +2248,7 @@ export class HDView {
     this.details = null; own(this);   // (cluster detail's twins hold index lists on the graphics chip: free() lets them go when the card leaves the feed)
   }
   /** Called when the card leaves the feed (cleanup.js): lets go of what this view holds on the graphics chip for cluster detail. */
-  free() { detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; this._far?.dispose(); this._far = null; }
+  free() { this._mirGpu?.dispose(); this._mirGpu = null; this._mirRT?.dispose(); this._mirRT = null; MIRROR.on = 0; detailDropAll(this); this.bounceGrid(null, null); this._tracer?.dispose(); this._tracer = null; this._far?.dispose(); this._far = null; }
   /**
    * Outdoor air for every lit material in the scene: haze (how thick the air is: .001 is about 1 km of
    * view), colour (far away fades to it) and sunColour (towards the sun), mist (thickness at mistY,
@@ -2924,6 +2946,67 @@ export class HDView {
     return this;
   }
   /**
+   * Flat ground whose puddles mirror what stands round them (mirror.js): wet, its standing water, soaked band and the water
+   * in its joints show the buildings, props and people round it, upside down, bent by ripples and blurred where the water
+   * is rough. For phones that don't ray trace their reflections (there the meshes are traced: they are marked as reflect()
+   * marks them), from medium up, while something is wet. The meshes are level at one height: their top, or o.y. Call it
+   * before their first frame (gs.outdoors.Ground does it for its own ground).
+   */
+  mirror(...args) {
+    const o = args.length && !args[args.length - 1]?.isObject3D && !Array.isArray(args[args.length - 1]) ? args.pop() : {};
+    const list = this.mirrors ||= [];
+    for (const m of args.flat()) {
+      if (!m || list.includes(m)) continue;
+      list.push(m); m.updateMatrixWorld(true);
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+        if (!mat || mat.userData.gsMirror) continue;
+        mat.userData.gsMirror = true; mat.defines = { ...mat.defines, GS_MIRROR: '' }; mat.needsUpdate = true;
+      }
+      if (this.mirrorY == null) { const b = new Box3().setFromObject(m); this.mirrorY = b.max.y; }
+    }
+    if (o.y != null) this.mirrorY = o.y;
+    if (traceWanted()) this.reflect(args.flat().filter(Boolean));   // (where reflections are ray traced, the puddles are too)
+    return this;
+  }
+  // The puddle mirror's picture for this frame (before the scene's pass and before what is hidden behind things is hidden):
+  // whether it is wanted, the camera turned over, the scene drawn into it (mirror.js; WebGPU: hd3d-gpu-mirror.js)
+  mirrorStep(G, r, T, pw, ph, skip, nw = null) {
+    const ms = this.mirrors, wx = AIR.gsWx.value;
+    const traced = HD.info.refl === 'traced' && ms?.some(m => this.reflectors.includes(m));
+    const want = !!ms?.length && !skip && HD.mirror !== false && T.name !== 'low' && !this.clearBg && AIR.gsAirOn.value > .5 && (wx.z > 0 || wx.x > .05) && !traced;
+    const off = why => { MIRROR.on = 0; AIR.gsMirOn.value.x = 0; HD.info.mirror = why; if (ms) for (const m of ms) if (this.reflectors.includes(m)) m.userData.gsReflect = true; return false; };
+    if (!want) { if (!skip) { if (!ms?.length) HD.info.mirror = null; else off(traced ? 'traced' : 'dry or off'); } return false; }
+    const mc = this._mirCam ||= mirrorCam();
+    this.cam.updateMatrixWorld();
+    if (!mirrorCamera(this.cam, this.mirrorY ?? 0, mc, depthOf(this.cam, !!G))) return off('under');
+    const k = T.name === 'medium' ? .35 : .5, w = Math.max(32, Math.round(pw * k)), h = Math.max(32, Math.round(ph * k));
+    const every = T.name === 'medium' ? 2 : 1, due = !this._mirOk || (this._mirN = (this._mirN || 0) + 1) % every === 0;
+    for (const m of ms) if (this.reflectors.includes(m)) m.userData.gsReflect = false;   // (not the screen's reflections as well)
+    if (!due) { MIRROR.on = AIR.gsMirOn.value.x = 1; return true; }
+    const hid = this._mirHid ||= [];
+    for (const m of ms) if (m.visible) { m.visible = false; hid.push(m); }
+    let ok = false;
+    try {
+      if (G) {
+        let M = this._mirGpu; if (M?.r !== r) { M?.dispose(); M = this._mirGpu = new G.fx.Mirror(r); }
+        M.size(w, h); ok = M.draw(this.scene, mc, nw);   // (nw: a thing whose shader isn't built yet sits the mirror out a frame or two, as in the scene's pass: nowait.js)
+        HD.info.mirror = { w, h, every, why: M.info.why };
+      } else {
+        let rt = this._mirRT;
+        if (!rt || rt.width !== w || rt.height !== h) { rt?.dispose(); rt = this._mirRT = new WebGLRenderTarget(w, h, { type: HalfFloatType, generateMipmaps: true, minFilter: LinearMipmapLinearFilter, magFilter: LinearFilter, depthBuffer: true }); }
+        const was = r.getRenderTarget(), cc = r.getClearColor(MIR_CC), ca = r.getClearAlpha();
+        try { r.setRenderTarget(rt); r.setClearColor(0x000000, 0); r.clear(); r.render(this.scene, mc); }
+        finally { r.setClearColor(cc, ca); r.setRenderTarget(was); }
+        AIR.gsMirror.value = rt.texture; MIRROR.lod = Math.max(0, Math.floor(Math.log2(Math.min(w, h))) - 2); ok = true;
+        HD.info.mirror = { w, h, every, why: '' };
+      }
+    } finally { for (const m of hid) m.visible = true; hid.length = 0; }
+    if (!ok) return off('building');
+    this._mirOk = true;
+    MIRROR.vp.multiplyMatrices(mc.projectionMatrix, mc.matrixWorldInverse); MIRROR.on = 1; AIR.gsMirOn.value.set(1, MIRROR.lod, 0, 0);
+    return true;
+  }
+  /**
    * Soft contact shadows on a floor: the dark, blurry patch right under things that makes them sit
    * on the ground. y: the floor height; size: metres across; follow it with cs.at(x, z). Medium tier
    * and up.
@@ -3594,6 +3677,7 @@ export class HDView {
     let shown = false;
     // sharper textures while SGSR 2 upscales (hd3d-gpu.js sharpMips): read as the screen's size would read them
     G.fx.mipScale(s2 && HD.mipBias !== false ? Math.min(1, pw / o.fw * 2 ** (HD.mipBias ?? 0)) : 1);
+    if (pm >= 0) enter('3D: puddle mirror'); this.mirrorStep(G, r, T, pw, ph, baking || off, nw); if (pm >= 0) leave(pm);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     // the far world from its pictures (v.farWorld): its still far things leave the camera's layer for the scene's pass
     if (pm >= 0) enter('3D: far world');
@@ -3947,6 +4031,7 @@ export class HDView {
     r.info.autoReset = false; r.info.reset();
     const mwa = this.scene.matrixWorldAutoUpdate; this.scene.matrixWorldAutoUpdate = false;   // already updated above
     if (s2) { s2.tuned = HD.sgsrTune !== false; s2.fsr = HD.sgsrFsr || null; s2.net = HD.gssrNet === true ? null : netFor(HD.gssrNet); HD.info.gssrNet = s2.net ? s2.net.id : ''; s2.begin(this.cam, pw, ph, fw, fh, this, now, cut); }   // the camera's move and this frame's jitter
+    if (pm >= 0) enter('3D: puddle mirror'); this.mirrorStep(G, r, T, pw, ph, baking || off); if (pm >= 0) leave(pm);
     if (!baking && !off && !HD.occludeShow) hideNow(this);
     if (pm >= 0) enter('3D: drawing');   // (on WebGL the shadow maps are drawn in here too)
     fadeOn(this, null, r, !!s2, baking || off);   // (things changing detail level: drawn dithered, lod-fade.js)

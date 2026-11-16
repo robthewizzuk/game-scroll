@@ -783,6 +783,16 @@ side). Keep the HUD anchored to the edges of `W` × `H` and it just works.
   on the high tier (at half size) and ultra; on WebGL on ultra only (tests and `HD.force = 3`:
   play stops at high). On other phones those surfaces keep their normal look, so mark the few that
   matter (a wet floor, a polished hall), not everything. A rougher material reflects less sharply.
+- `v.mirror(ground)` makes flat ground's puddles mirror what stands round them: the scene drawn a second
+  time, small, from the camera turned over in the ground's plane (cut at it), laid on where the weather's
+  puddles, the soaked band round them and the water in painted ground's joints are, bent by ripples and
+  rain rings and blurred as rough as the water is. For phones that don't ray trace reflections (there the
+  ground is traced instead), medium tier and up (every other frame on medium), only while something is
+  wet, the camera above the ground. It costs a second pass of the scene at a third to a half of its size
+  each way, so it is for level ground the player looks across (a yard, a street, a square), not for
+  every floor. `gs.outdoors.Ground` does it for its own ground (`mirror: false` to leave it off); `{ y }`
+  gives the plane's height when the meshes' top is not it. `__hd.mirror = false` turns it off;
+  `__hd.info.mirror` says its size and whether it drew.
 - **Ray traced on the best phones.** On most phones those reflections are worked out from the picture
   itself (screen-space), so a floor can only show what the camera can also see: nothing above the top of
   the screen, behind the camera or hidden behind something else. On the best phones (the `top` class,

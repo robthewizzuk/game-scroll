@@ -1,11 +1,11 @@
 // Draws a yard of gs.outdoors.Ground with its props and rain coming on (scripts/yard/index.html): a row for each camera,
 // a column for each moment of the rain, to judge the ground, the puddles' shores, the props and the puddle mirror by eye.
-//   node scripts/yard.cjs <out.png> [views=over,low,down,props,shore] [rain=0,.3,.6,1] [cell=360x240] [kind=yard] [time=17.5] [tier=2] [mirror] [props=a,b] [noprops] [--webgpu]
+//   node scripts/yard.cjs <out.png> [views=over,low,down,props,shore] [rain=0,.3,.6,1] [cell=360x240] [kind=yard] [time=17.5] [tier=2] [nomirror] [props=a,b] [noprops] [--webgpu]
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
   const argv = process.argv.slice(2), gpu = argv.includes('--webgpu'), [out, ...q] = argv.filter(a => !a.startsWith('--'));
-  if (!out) { console.log('usage: yard.cjs <out.png> [views=over,low,down,props,shore] [rain=0,.3,.6,1] [cell=360x240] [kind=yard] [time=17.5] [tier=2] [mirror] [props=a,b] [noprops] [--webgpu]'); process.exit(2); }
+  if (!out) { console.log('usage: yard.cjs <out.png> [views=over,low,down,props,shore] [rain=0,.3,.6,1] [cell=360x240] [kind=yard] [time=17.5] [tier=2] [nomirror] [props=a,b] [noprops] [--webgpu]'); process.exit(2); }
   const vite = await import('vite'), port = +(process.env.PORT || 4193);
   const server = await vite.createServer({ server: { port }, mode: 'bundled', logLevel: 'error' }); await server.listen();
   const icd = path.join(path.dirname(chromium.executablePath()), 'vk_swiftshader_icd.json');
