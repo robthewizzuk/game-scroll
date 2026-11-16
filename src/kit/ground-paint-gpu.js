@@ -4,7 +4,7 @@
 // Kit use only.
 import { MeshBasicNodeMaterial, NoBlending, DoubleSide, RendererUtils } from 'three/webgpu';
 import { Fn, If, Loop, uniform, uniformArray, texture, positionWorld, normalWorldGeometry, materialColor, materialRoughness, reference,
-  vec2, vec3, vec4, float, int, floor, fract, mod, abs, min, max, clamp, dot, length, sqrt, cos, sin, smoothstep, step, mix, select, dFdx, dFdy } from 'three/tsl';
+  vec2, vec3, vec4, float, int, floor, fract, mod, abs, min, max, clamp, dot, length, sqrt, cos, sin, smoothstep, step, mix, select, dFdx, dFdy, fwidth } from 'three/tsl';
 import { DataTexture, LinearFilter } from 'three';
 import { ORIGIN } from './origin.js';
 
@@ -34,9 +34,15 @@ const STAIN = Fn(([p, cell, often, seed]) => {
   return out;
 }).setLayout({ name: 'gsGpStain', type: 'float', inputs: [{ name: 'p', type: 'vec2' }, { name: 'cell', type: 'float' }, { name: 'often', type: 'float' }, { name: 'seed', type: 'float' }] });
 
+// paint on the ground, chipped (PAINT_GLSL's gpChip)
+const CHIP = Fn(([p, wear, gap]) => {
+  const n = N(p.mul(17)).mul(.45).add(N(p.mul(57).add(11)).mul(.33)).add(N(p.mul(181).add(5)).mul(.22)), t = mix(float(.26), float(.62), clamp(wear.add(N(p.mul(.45).add(7)).mul(.35)).sub(.1), 0, 1)).toVar();
+  return smoothstep(t.sub(.045), t.add(.045), n.mul(.7).add(N(p.mul(3.3).add(2)).mul(.3))).mul(float(1).sub(gap));
+}).setLayout({ name: 'gsGpChip', type: 'float', inputs: [{ name: 'p', type: 'vec2' }, { name: 'wear', type: 'float' }, { name: 'gap', type: 'float' }] });
+
 // the ground at p (metres, the world's own): its colour (linear) and roughness, from its base colour and kind (PAINT_GLSL's gpPaint)
 function paint(p, base, kind, St) {
-  const c = base.mul(F(p.mul(.07)).mul(.32).add(.84)).toVar(), r = float(.86).toVar();
+  const c = base.mul(F(p.mul(.07)).mul(.32).add(.84)).toVar(), r = float(.86).toVar(), gap = float(0).toVar(), wear = float(0).toVar();
   If(kind.lessThan(.5), () => {   // asphalt: repairs, stones, cracks, oil
     const cell = floor(p.div(7)).toVar(), h = H(cell.add(11)).toVar();
     If(h.lessThan(.3), () => {   // a patch: newer and darker, or older and paler, with a sealed seam round it
@@ -54,6 +60,7 @@ function paint(p, base, kind, St) {
     c.mulAssign(float(1).sub(crack.mul(.55))); c.assign(mix(c, base.mul(.45), tar.mul(.8)));
     r.assign(mix(r.add(fine.sub(.5).mul(.08)), float(.95), crack)); r.assign(mix(r, float(.55), tar));
     const oil = STAIN(p, float(3), float(.16), float(31)).toVar(); c.mulAssign(float(1).sub(oil.mul(.45))); r.assign(mix(r, float(.5), oil.mul(.8)));
+    gap.assign(max(crack, tar.mul(.6)));
   }).ElseIf(kind.lessThan(2.5), () => {   // paving slabs (.6 m) or a plaza's flags (1.2 m), laid in a bond
     const S = select(kind.lessThan(1.5), float(.6), float(1.2)).toVar(), q0 = p.div(S), q = vec2(q0.x.add(step(1, mod(floor(q0.y), 2)).mul(.5)), q0.y).toVar();
     const id = floor(q).toVar(), f = fract(q).toVar(), hs = H(id.add(7)).toVar();
@@ -70,21 +77,56 @@ function paint(p, base, kind, St) {
       c.assign(mix(c, base.mul(.25), float(1).sub(smoothstep(.008, .014, length(p.sub(gp)))).mul(.8)));
     });
     const st = STAIN(p, float(2.6), float(.1), float(47)).toVar(); c.mulAssign(float(1).sub(st.mul(.3))); r.assign(mix(r, float(.7), st.mul(.5)));
-  }).Else(() => {   // grass
+    gap.assign(joint);
+  }).ElseIf(kind.lessThan(3.5), () => {   // grass
     c.mulAssign(N(p.mul(1.3)).mul(.3).add(.85)); r.assign(1);
+  }).Else(() => {   // a yard's cast concrete slabs: tar in the joints, pale stones, cracks (some sealed), wear, oil, rust
+    const SZ = vec2(6, 4.5), q = p.div(SZ), id = floor(q).toVar(), f = fract(q).toVar(), hs = H(id.add(7)).toVar(), hs2 = H(id.add(8)).toVar();
+    c.mulAssign(hs.mul(.3).add(.84));
+    const e = min(f, f.oneMinus()).mul(SZ), jd = min(e.x, e.y).add(N(p.mul(3.1)).sub(.5).mul(.018)).toVar(), tw = N(p.mul(.9).add(4)).mul(.018).add(.014).toVar();
+    const tar = float(1).sub(smoothstep(tw.mul(.55), tw, jd)).toVar(), edge = float(1).sub(smoothstep(tw, tw.add(.03), jd)).mul(tar.oneMinus());
+    const fine = N(p.mul(55)).toVar(), agg = smoothstep(.66, .82, N(p.mul(34).add(3))).mul(.6).add(step(.955, H(floor(p.mul(85)))).mul(.6));
+    c.mulAssign(fine.mul(.2).add(.9)); c.assign(mix(c, c.mul(1.45).add(.025), agg.mul(.55))); c.mulAssign(float(1).sub(edge.mul(.18)));
+    const area = smoothstep(.78, .9, N(p.mul(.28).add(2)).mul(.7).add(hs.mul(.45))).toVar();
+    const w = p.add(vec2(N(p.mul(1.7)), N(p.mul(1.7).add(9))).sub(.5).mul(.4)), ed = EDGE(w.div(1.7)).toVar();
+    const aa = fwidth(p.x).div(1.7), cw = max(float(.011), aa.mul(1.5)).toVar(), sw = max(float(.022), aa.mul(2)).toVar();   // (never thinner than a texel of the picture)
+    const sealed = step(.6, hs2), crack = float(1).sub(smoothstep(cw.mul(.3), cw, ed)).mul(area).mul(sealed.oneMinus()).mul(clamp(float(.0165).div(cw), .35, 1)).toVar(), seal = float(1).sub(smoothstep(sw.mul(.45), sw, ed)).mul(area).mul(sealed).toVar();
+    c.mulAssign(float(1).sub(crack.mul(.5))); c.assign(mix(c, base.mul(.1), max(tar.mul(.94), seal.mul(.8))));
+    r.assign(float(.8).add(fine.sub(.5).mul(.1)).add(N(p.mul(9)).sub(.5).mul(.08))); r.assign(mix(r, float(.55), max(tar, seal))); r.assign(mix(r, float(.95), crack));
+    wear.assign(smoothstep(.58, .82, F(p.mul(.06).add(13))).mul(.5)); c.mulAssign(float(1).sub(wear.mul(.16))); r.subAssign(wear.mul(.12));
+    const oil = STAIN(p, float(4), float(.14), float(31)).toVar(); c.mulAssign(float(1).sub(oil.mul(.5))); r.assign(mix(r, float(.48), oil.mul(.85)));
+    const rust = STAIN(p, float(5.5), float(.07), float(63)); c.assign(mix(c, c.mul(vec3(1.35, .9, .6)), rust.mul(.7)));
+    gap.assign(max(max(tar, seal), crack));
   });
-  // the stamps on this strip: oil, skid marks, scorches
+  // the stamps on this piece: oil, skid marks, scorches; polished lanes; painted lines and hatched boxes
   Loop({ start: int(0), end: St.n, type: 'int' }, ({ i }) => {
-    const A = St.A.element(i).toVar(), B = St.B.element(i).toVar(), d = p.sub(A.xy), cs = cos(A.w), sn = sin(A.w);
-    const l = vec2(cs.mul(d.x).add(sn.mul(d.y)), sn.negate().mul(d.x).add(cs.mul(d.y))).div(A.z).toVar(), n = N(p.mul(3).add(B.w)).toVar();
+    const A = St.A.element(i).toVar(), B = St.B.element(i).toVar(), C = St.C.element(i).toVar(), d = p.sub(A.xy), cs = cos(A.w), sn = sin(A.w);
+    const lm = vec2(cs.mul(d.x).add(sn.mul(d.y)), sn.negate().mul(d.x).add(cs.mul(d.y))).toVar(), l = lm.div(A.z).toVar(), n = N(p.mul(3).add(B.w)).toVar();
     If(B.x.lessThan(.5), () => {
       const s = float(1).sub(smoothstep(.5, 1, length(l).mul(n.mul(.3).add(1)))).toVar(); c.mulAssign(float(1).sub(s.mul(.5).mul(B.y))); r.assign(mix(r, float(.45), s));
     }).ElseIf(B.x.lessThan(1.5), () => {
       const dy = abs(abs(l.y.mul(A.z)).sub(B.z.mul(.5)));
       const s = float(1).sub(smoothstep(.06, .1, dy)).mul(smoothstep(-1, -.8, l.x)).mul(float(1).sub(smoothstep(.6, 1, l.x))).mul(N(p.mul(20)).mul(.4).add(.6));
       c.mulAssign(float(1).sub(s.mul(.6).mul(B.y)));
-    }).Else(() => {
+    }).ElseIf(B.x.lessThan(2.5), () => {
       const s = float(1).sub(smoothstep(.2, 1, length(l).mul(n.mul(.4).add(1)))).toVar(); c.assign(mix(c, c.mul(.15), s.mul(B.y))); r.assign(mix(r, float(.95), s));
+    }).ElseIf(B.x.lessThan(3.5).or(B.x.greaterThan(4.5)), () => {   // a painted line, or a hatched box: chipped, worn where wheels run
+      const wob = N(p.mul(23).add(B.w)).sub(.5).mul(.012).toVar(), inside = float(0).toVar();
+      If(B.x.lessThan(3.5), () => {
+        inside.assign(float(1).sub(smoothstep(B.z.mul(.5).sub(.006), B.z.mul(.5).add(.006), abs(lm.y).add(wob))).mul(float(1).sub(smoothstep(A.z.sub(.01), A.z.add(.01), abs(lm.x)))));
+        If(C.w.greaterThan(0), () => { const k = fract(lm.x.div(C.w.mul(2)).add(.25)); inside.mulAssign(smoothstep(.48, .5, k).mul(float(1).sub(smoothstep(.98, 1, k)))); });
+      }).Else(() => {
+        const bd = vec2(A.z, B.z).sub(abs(lm)), rim = min(bd.x, bd.y).toVar(), k = fract(lm.x.add(lm.y).div(max(C.w, .1)));
+        const stripe = smoothstep(.47, .5, k).mul(float(1).sub(smoothstep(.97, 1, k)));
+        inside.assign(smoothstep(-.006, .006, rim.add(wob)).mul(max(float(1).sub(smoothstep(.1, .112, rim.add(wob))), stripe)));
+      });
+      const s = inside.mul(CHIP(p.add(B.w), wear.add(B.y.oneMinus()), gap)).toVar();
+      c.assign(mix(c, C.rgb.mul(N(p.mul(.7).add(B.w)).mul(.28).add(.72)), s.mul(.94))); r.assign(mix(r, float(.62), s));
+    }).Else(() => {   // a lane worn by traffic: polished smoother and darker, rubber in the two wheel tracks
+      const across = abs(lm.y).div(max(B.z.mul(.5), .01)).toVar(), along = float(1).sub(smoothstep(A.z.sub(1.5), A.z, abs(lm.x))).toVar();
+      const s = float(1).sub(smoothstep(.55, 1.05, across.add(n.sub(.5).mul(.3)))).mul(along).mul(B.y).toVar();
+      const tracks = float(1).sub(smoothstep(.08, .22, abs(across.sub(.5)).add(N(p.mul(1.9).add(B.w)).sub(.5).mul(.12)))).mul(along).mul(B.y).toVar();
+      wear.assign(max(wear, s)); c.mulAssign(float(1).sub(s.mul(.14)).sub(tracks.mul(.22))); r.subAssign(s.mul(.16).add(tracks.mul(.06)));
     });
   });
   return vec4(max(c, 0), clamp(r, .05, 1));
@@ -92,7 +134,7 @@ function paint(p, base, kind, St) {
 
 // the stamps' uniforms (ground-paint.js's STAMP_U: the same arrays, set for each strip)
 let ST = null;
-const stampNodes = U => ST ||= { A: uniformArray(U.gpStampA.value, 'vec4'), B: uniformArray(U.gpStampB.value, 'vec4'), n: uniform(0, 'int').onRenderUpdate(() => U.gpStampN.value) };
+const stampNodes = U => ST ||= { A: uniformArray(U.gpStampA.value, 'vec4'), B: uniformArray(U.gpStampB.value, 'vec4'), C: uniformArray(U.gpStampC.value, 'vec4'), n: uniform(0, 'int').onRenderUpdate(() => U.gpStampN.value) };
 function paintMat(pm, U) {
   const m = new MeshBasicNodeMaterial(); m.depthTest = false; m.depthWrite = false; m.blending = NoBlending; m.toneMapped = false; m.fog = false; m.side = DoubleSide;   // (both sides: the camera paints upside down)
   const St = stampNodes(U), g = Fn(() => paint(positionWorld.xz.add(ORG.xz), vec3(pm.col.r, pm.col.g, pm.col.b), float(pm.k), St))().toVar();
@@ -103,7 +145,7 @@ function paintMat(pm, U) {
 
 /** Paints pieces of a level's picture (ground-paint.js paint(): [c0, r0, width, height, world x0, x1, z0, z1], rows counted along -z). */
 let state;
-export function groundPaintRender(r, gp, L, pieces, U) {
+export function groundPaintRender(r, gp, L, pieces, U, load) {
   const rt = L.rt, N = L.px;
   state = RendererUtils.resetRendererAndSceneState(r, gp.scene, state);
   for (const s of gp.surfaces) { const pm = s.p.userData.paint; s.p.material = pm.gpu ||= paintMat(pm, U); }
@@ -112,7 +154,7 @@ export function groundPaintRender(r, gp, L, pieces, U) {
     pieces.forEach((q, i) => {
       // (on WebGPU a picture's rows count from the top, the viewport's too, and three reads it as it is: the camera is
       // turned upside down so that each texel holds the same ground as on WebGL, where the rows count from the bottom)
-      gp.aim(q); const c = gp.cam, t = c.top; c.top = c.bottom; c.bottom = t; c.updateProjectionMatrix();
+      load(q[8]); gp.aim(q); const c = gp.cam, t = c.top; c.top = c.bottom; c.bottom = t; c.updateProjectionMatrix();
       rt.viewport.set(q[0], q[1], q[2], q[3]); rt.scissor.copy(rt.viewport); rt.scissorTest = true;
       rt.texture.mipmapsAutoUpdate = i === pieces.length - 1;
       r.setRenderTarget(rt); r.render(gp.scene, gp.cam);
@@ -161,4 +203,15 @@ export function groundPaintLook(m, s, o, { live }) {
   })().toVar('gsGpG');
   m.colorNode = mix(own, vec4(col.mul(G.rgb), 1), k);
   m.roughnessNode = mix(ownRough, G.a, k);
+  // what the puddles read (hd3d-gpu.js gpuWet; ground-paint.js READ's gsGroove): darker than the ground round it here (a joint,
+  // a crack: water stays in it), or lighter (paint: a little proud), from the fine level and one more read of it a few mips down
+  m.userData.gsGroove = Fn(() => {
+    const gv = float(0).toVar(), gq = vec2(gp.x, gp.y.negate()).toVar(), gx = dFdx(gq).toVar(), gy = dFdy(gq).toVar();   // (derivatives outside the branch: WGSL)
+    If(k.greaterThan(0).and(w0.lessThan(1)), () => {
+      const a = T0.sample(gq.div(L.z)).grad(gx.div(L.z), gy.div(L.z)).rgb, ab = T0.sample(gq.div(L.z)).grad(gx.div(L.z).mul(6), gy.div(L.z).mul(6)).rgb;
+      const l = dot(a, vec3(.3, .5, .2)).div(max(dot(ab, vec3(.3, .5, .2)), .02)).toVar();
+      gv.assign(smoothstep(.88, .55, l).sub(smoothstep(1.15, 1.5, l)).mul(w0.oneMinus()).mul(k));
+    });
+    return gv;
+  })().toVar('gsGpGroove');
 }

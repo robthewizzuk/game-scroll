@@ -1784,6 +1784,7 @@ const AIR = {
 const AIR_GLSL = ORIGIN_GLSL + `
 uniform float gsAirOn, gsHaze, gsWet; uniform vec3 gsSun, gsAirC, gsAirSun; uniform vec4 gsMist, gsCloud, gsCasc, gsWx, gsCoverAt, gsRain; uniform vec2 gsDrift; uniform sampler2D gsNoise, gsCover; varying vec3 gsW;
 float gsH12(vec2 p){ vec3 a = fract(p.xyx * .1031); a += dot(a, a.yzx + 33.33); return fract((a.x + a.y) * a.z); }
+float gsVN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(gsH12(i), gsH12(i + vec2(1., 0.)), f.x), mix(gsH12(i + vec2(0., 1.)), gsH12(i + vec2(1., 1.)), f.x), f.y); }
 float gsInside(vec4 c){ vec3 p = c.xyz / c.w; vec2 e = min(p.xy, 1. - p.xy); return p.z > 0. && p.z < 1. ? smoothstep(0., gsCasc.z, min(e.x, e.y)) : 0.; }
 float gsShadeAt(vec3 wp){
   vec2 c = wp.xz + gsOrigin.xz + gsSun.xz / max(gsSun.y, .15) * (gsCloud.z - wp.y);
@@ -1852,21 +1853,37 @@ const AIR_WET = `#ifdef USE_FOG
       roughnessFactor = mix(roughnessFactor, .03, max(run, bead)); diffuseColor.rgb *= 1. - run * mix(.35, .15, slick);
     }
 #ifndef GS_NO_SETTLE
-    if (gsWx.y + gsWx.z > 0.) {
-      vec4 gsN1 = texture2D(gsNoise, gsT * .05); float gsN2 = texture2D(gsNoise, gsT * .021).r * .4;
-      float pl = mix(.86, .55, gsWx.z), p = step(1e-6, gsWx.z) * smoothstep(pl, pl + .035, gsN1.b * .6 + gsN2) * smoothstep(.97, .995, gg.y) * gsOpen;
+#ifdef GS_GROUND_PAINT
+    float gsGv = gsGroove;   // (ground-paint.js: + a joint or crack here, - paint standing a little proud)
+#else
+    float gsGv = 0.;
+#endif
+    if (gsWx.y + gsWx.z > 0. || gsGv * gsWx.x > 0.) {
+      vec4 gsN1 = texture2D(gsNoise, gsT * .05); float gsN2 = texture2D(gsNoise, gsT * .021).r * .4, gsFlat = smoothstep(.97, .995, gg.y) * gsOpen;
+      // the puddles (Saltline's way, 2026-11-16): one water level (pl, rising as it rains on) against how low the ground lies, with a
+      // shore that wanders at 40, 15 and 5 cm (the finer only near), so one gradient runs from standing water through a soaked band
+      // and a damp halo to dry; and water left in the joints and cracks of painted ground
+      vec2 gsTm = mod(gsT, 512.); float gsD = length(cameraPosition - gsW), gsF2 = 1. - smoothstep(18., 45., gsD), gsF3 = 1. - smoothstep(6., 16., gsD);
+      float sn1 = gsVN(gsTm * 2.5 + 3.), shore = sn1 * .5 + mix(.5, gsVN(gsTm * 6.7 + 17.), gsF2) * .3 + mix(.5, gsVN(gsTm * 20. + 9.), gsF3) * .2;
+      float pl = mix(.86, .55, gsWx.z), dep = gsN1.b * .6 + gsN2 - pl + (shore - .5) * .045 + max(gsGv, 0.) * .022 + min(gsGv, 0.) * .012, on = step(1e-6, gsWx.z) * gsFlat;
+      float p = smoothstep(0., .03, dep) * on, deep = smoothstep(0., .14, dep);
+      float soak = smoothstep(-(.01 + .03 * sn1 * sn1), 0., dep) * on, halo = smoothstep(-.085, -.004, dep) * on * (.75 + .25 * shore);
+      float film = clamp(max(gsGv, 0.) * max(gsWx.x * gsOpen, soak), 0., 1.) * gsFlat;
       float sn = gsN1.g * .6 + gsN2, lim = mix(.97, .55, gsWx.y);
       float s = step(1e-6, gsWx.y) * smoothstep(lim, lim + .14, gg.y + (sn - .5) * .22) * smoothstep(0., .3, gsWx.y * 1.2 - sn * .6) * gsOpen;
+      roughnessFactor = mix(roughnessFactor, roughnessFactor * .68, halo); roughnessFactor = mix(roughnessFactor, .2, soak * .85); roughnessFactor = mix(roughnessFactor, .1, film * .8);
       roughnessFactor = mix(mix(roughnessFactor, .03, p), .85, s); metalnessFactor *= 1. - s;
-      diffuseColor.rgb = mix(diffuseColor.rgb * (1. - p * .3), vec3(.86, .9, .96), s); normal = normalize(mix(normal, nonPerturbedNormal, max(p * .92, s * .6)));
-      if (gsRain.x * p > 0.) {   // rings spreading on the puddles where drops land: two layers of drops, one a cell, a new one each beat
+      diffuseColor.rgb *= (1. - halo * .14) * (1. - soak * .32) * (1. - film * .3);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * mix(.85, .42, deep) + vec3(.004, .006, .0065) * deep, p);   // (a shallow rim shows the wet bed, deeper water goes murky: never a black cut-out)
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.86, .9, .96), s); normal = normalize(mix(normal, nonPerturbedNormal, max(max(p * .92, soak * .45), s * .6)));
+      if (gsRain.x * p > 0.) {   // rings spreading on the puddles where drops land: two layers of drops, one a cell, a new one each beat (none at the very rim)
         vec2 rr = vec2(0.);
         for (int k = 0; k < 2; k++) {
           vec2 q = gsT * 4.2 + float(k) * vec2(.37, .71), c = floor(q) + float(k) * 19.7, f = fract(q) - .5; float h = gsH12(c);
           float ph = fract(gsRain.y * (.9 + h * .5) + h * 13.); vec2 dv = f - (vec2(h, gsH12(c + 5.3)) - .5) * .4; float dl = length(dv) + 1e-4, xr = (dl - ph * .45) * 22.;
           rr += dv / dl * sin(xr * 3.14159) * (1. - smoothstep(0., 1.5, abs(xr))) * (1. - ph) * (1. - ph) * step(h, gsRain.x * .85 + .1);
         }
-        normal = normalize(normal + mat3(viewMatrix) * vec3(rr.x, 0., rr.y) * .4 * p);
+        normal = normalize(normal + mat3(viewMatrix) * vec3(rr.x, 0., rr.y) * .4 * p * smoothstep(0., .03, dep));
       }
     }
 #endif

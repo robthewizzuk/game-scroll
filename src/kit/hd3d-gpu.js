@@ -895,17 +895,34 @@ export function gpuWet(m, o, AIR, dry = false, noise = AIR.gsNoise.value, world 
   const base = m.normalNode ? vec3(m.normalNode) : TSL.materialNormal, wetN = base.add(runN).normalize();
   let rough = mix(mix(r0, .12, w.mul(.8)), .03, rw.out.z);
   if (dry) { m.roughnessNode = rough; afterColor(m, o, c => wetTint(c, w, por).mul(rw.out.w.oneMinus())); m.normalNode = wetN; return; }
-  const n1 = texture(noise, wp.xz.mul(.05)), n2 = texture(noise, wp.xz.mul(.021)).r.mul(.4), pl = mix(float(.86), float(.55), wx.z);
-  const p = smoothstep(pl, pl.add(.035), n1.b.mul(.6).add(n2)).mul(smoothstep(.97, .995, gg.y)).mul(open).mul(on).mul(step(1e-6, wx.z));
+  // the puddles (AIR_WET's sums, Saltline's way): one water level against how low the ground lies, a shore that wanders at 40, 15 and
+  // 5 cm, standing water, a soaked band, a damp halo; water left in the joints and cracks of painted ground (gv: ground-paint-gpu.js)
+  const gv = m.userData.gsGroove ? float(m.userData.gsGroove) : null, gvUp = gv ? max(gv, 0) : null;
+  const n1 = texture(noise, wp.xz.mul(.05)), n2 = texture(noise, wp.xz.mul(.021)).r.mul(.4), pl = mix(float(.86), float(.55), wx.z), fl = smoothstep(.97, .995, gg.y).mul(open).mul(on);
+  const tm = TSL.mod(wp.xz, 512), dc = distance(cameraPosition, positionWorld), f2 = smoothstep(18, 45, dc).oneMinus(), f3 = smoothstep(6, 16, dc).oneMinus();
+  const sn1 = VN(tm.mul(2.5).add(3)).toVar(), shore = sn1.mul(.5).add(mix(float(.5), VN(tm.mul(6.7).add(17)), f2).mul(.3)).add(mix(float(.5), VN(tm.mul(20).add(9)), f3).mul(.2));
+  let dep = n1.b.mul(.6).add(n2).sub(pl).add(shore.sub(.5).mul(.045)); if (gv) dep = dep.add(gvUp.mul(.022)).add(min(gv, 0).mul(.012));
+  dep = dep.toVar();
+  const ons = fl.mul(step(1e-6, wx.z)), p = smoothstep(0, .03, dep).mul(ons), deep = smoothstep(0, .14, dep);
+  const soak = smoothstep(sn1.mul(sn1).mul(.03).add(.01).negate(), 0, dep).mul(ons), halo = smoothstep(-.085, -.004, dep).mul(ons).mul(shore.mul(.25).add(.75));
+  const film = gv ? clamp(gvUp.mul(max(wx.x.mul(open).mul(on), soak)), 0, 1).mul(fl) : float(0);
   const sn = n1.g.mul(.6).add(n2), lim = mix(float(.97), float(.55), wx.y);
   const s = smoothstep(lim, lim.add(.14), gg.y.add(sn.sub(.5).mul(.22))).mul(smoothstep(0, .3, wx.y.mul(1.2).sub(sn.mul(.6)))).mul(open).mul(on).mul(step(1e-6, wx.y));
+  rough = mix(rough, rough.mul(.68), halo); rough = mix(rough, .2, soak.mul(.85)); rough = mix(rough, .1, film.mul(.8));
   rough = mix(mix(rough, .03, p), .85, s);
   m.roughnessNode = rough;
   m.metalnessNode = (m.metalnessNode ? float(m.metalnessNode) : TSL.materialMetalness).mul(s.oneMinus());
-  afterColor(m, o, c => mix(wetTint(c, w, por).mul(rw.out.w.oneMinus()).mul(float(1).sub(p.mul(.3))), vec3(.86, .9, .96), s));
+  const damp = float(1).sub(halo.mul(.14)).mul(float(1).sub(soak.mul(.32))).mul(float(1).sub(film.mul(.3)));
+  afterColor(m, o, c => { const d = wetTint(c, w, por).mul(rw.out.w.oneMinus()).mul(damp); return mix(mix(d, d.mul(mix(float(.85), float(.42), deep)).add(vec3(.004, .006, .0065).mul(deep)), p), vec3(.86, .9, .96), s); });
   const rr = puddleRings(AIR, wp, p);
-  m.normalNode = mix(wetN, flat, max(p.mul(.92), s.mul(.6))).normalize().add(cameraViewMatrix.mul(vec4(rr.x, 0, rr.y, 0)).xyz.mul(p.mul(.4))).normalize();
+  m.normalNode = mix(wetN, flat, max(max(p.mul(.92), soak.mul(.45)), s.mul(.6))).normalize().add(cameraViewMatrix.mul(vec4(rr.x, 0, rr.y, 0)).xyz.mul(p.mul(.4).mul(smoothstep(0, .03, dep)))).normalize();
+  m.userData.gsPuddle = { p, soak, film };   // (the puddle mirror's weight: hd3d-gpu-mirror.js)
 }
+// value noise (AIR_WET's gsVN)
+const VN = Fn(([p]) => {
+  const i = floor(p).toVar(), f = fract(p).toVar(), u = f.mul(f).mul(f.mul(-2).add(3)).toVar();
+  return mix(mix(hash2(i), hash2(i.add(vec2(1, 0))), u.x), mix(hash2(i.add(vec2(0, 1))), hash2(i.add(vec2(1, 1))), u.x), u.y);
+}).setLayout({ name: 'gsWetVN', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 // Rain that runs (hd3d.js AIR_WET has the same sums): rivulets down walls and windows with drops sliding down them, beads on what is
 // smooth, more the longer it rains (r0: the material's own roughness; coat: a clear coat's say, or null). out: the tilt of the surface
 // along it (x level across, y up it), how glassy the water makes it, how much darker; ga, gd: those two ways, in the world. Worked out

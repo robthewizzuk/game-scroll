@@ -8,14 +8,14 @@ Dice rolls in dice notation, odds, 2D and 3D dice.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DicePart`, line 5564), where every option and field is described.
+From `src/gamescroll.d.ts` (`DicePart`, line 5598), where every option and field is described.
 
-- `roll(text: string, random?: number | (() => number) | null): { total: number; rolls: number[][]; kept: number[][]; text: string }` (:5565)
-- `odds(count: number, sides: number): Record<number, number>` (:5566)
-- `Dice: new (count?: number, o?: { sides?: number; time?: number; seed?: number | null }) => On<Loose> & { values: number[]; shown: number[]; held: boolean[]; readonly s…` (:5567)
-- `FACES: Record<number, P3>` (:5571)
-- `faceUp(q: { x: number; y: number; z: number; w: number }): number` (:5571)
-- `Dice3D: new (world: Loose, meshes?: number | Loose[], o?: { size?: number; bounce?: number; friction?: number; density?: number; seed?: number | null }) => On<Loose> &…` (:5572)
+- `roll(text: string, random?: number | (() => number) | null): { total: number; rolls: number[][]; kept: number[][]; text: string }` (:5599)
+- `odds(count: number, sides: number): Record<number, number>` (:5600)
+- `Dice: new (count?: number, o?: { sides?: number; time?: number; seed?: number | null }) => On<Loose> & { values: number[]; shown: number[]; held: boolean[]; readonly s…` (:5601)
+- `FACES: Record<number, P3>` (:5605)
+- `faceUp(q: { x: number; y: number; z: number; w: number }): number` (:5605)
+- `Dice3D: new (world: Loose, meshes?: number | Loose[], o?: { size?: number; bounce?: number; friction?: number; density?: number; seed?: number | null }) => On<Loose> &…` (:5606)
 
 ## From the maker kit
 
