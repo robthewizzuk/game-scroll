@@ -10,12 +10,20 @@
 //   metro.route(a, b)       a driving route across districts and the roads between them, as City.route()
 //   metro.districtAt(x, z)  which district a point is in (or null on the roads between)
 //   metro.city              the district the player is in, made (a City), or null between them
+//   metro.cars, metro.people every car and person of the big city, as a City's (so gs.city Wanted, Gps and Interiors take a
+//                           Metro as they take a City): police and chases cross from district to district and round the
+//                           highway (city-metro-cars.js), and any car can be taken (cars.near(me, 4, { parked: true }), cars.take)
+//   metro.events            what happened last frame in every made district and on the roads between (as city.events)
+//   metro.switchTo(at)      the player somewhere else at once (a second lead, a taxi ride): the districts far from there let
+//                           go first, then those round it made, under the game's own fade
 //
 // The districts share one crowd of people, one ground painter and one set of lamps, so a district made late costs
 // only its own streets and buildings: the 0.5 s a city takes to make is mostly its people being shaped.
 
 import { Group } from 'three';
-import { City, layout, routeOn, roadOn, farColours, cityCrowd, cityFolkNeed, FACADES, STYLES, LANE, KERB, TIER } from './city.js';
+import { City, layout, routeOn, roadOn, farColours, cityCrowd, cityFolkNeed, cityWarmers, FACADES, STYLES, LANE, KERB, TIER } from './city.js';
+import { MetroCars, MetroPeople } from './city-metro-cars.js';
+import { Ears } from './sound.js';
 import { Skyline, Standins } from './city-far.js';
 import { Ways, RING } from './city-ways.js';
 import { CITY_CARS, carKit, parkKit } from './city-cars.js';
@@ -121,6 +129,9 @@ export class Metro {
     if ((over.fleet ?? !!view.placeLamps) && traffic > 0) for (const st of new Set(this.districts.map(d => d.style))) (CITY_CARS[st] || CITY_CARS.downtown).forEach((s, i) => { carKit(s); if (i < 3 && (over.parked ?? !!view.placeLamps)) parkKit(s); });   // (the three commonest park: City)
     this.crowd = crowd && people > 0 ? cityCrowd(view) : null;
     this.paint = paint ? new GroundPaint(view) : null;
+    this.next = []; this.events = [];
+    // every material the districts can be built with, built with the rest before play (a district made later builds no shaders)
+    this.warmers = cityWarmers(this.districts.map(d => d.plan), { dress: over.dress ?? true, walls: over.walls ?? true }); this.group.add(this.warmers);
     this.make = { side, traffic, people, keep, lamps: lamps ? 'shared' : false, sound: false, occlude: false, field: false, far: false, link: false, night: this._night, crowd: this.crowd || false, paint: this.paint || false, ...over };
     view.occluders?.(this.occluders());
     // the roads between the districts, then the land under everything that is not a district or the sea
@@ -135,18 +146,14 @@ export class Metro {
     }
     const S0 = this.districts[0].plan.style, scale = TIER[phoneClass()] ?? .65;
     this.far = far ? new Skyline(view, { bounds: U, seed }, { seed, colours: farColours(S0), street: S0.ground, reach: far === true ? 6000 : +far, floors: S0.floors, tall: S0.tall, water: this.districts.some(d => d.harbour), scale, ground: LAND }) : null;
+    // every car and person of the big city as one (city-metro-cars.js); the big city's own cars (police, chases) drive anywhere
+    this.cars = new MetroCars(this, { fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, cap: 12 });
+    this.people = new MetroPeople(this);
     // the district the player starts in is made now (under the loading screen); the rest as the player comes near
     const first = (at && this.districtAt(at.x, at.z ?? at.y, MARGIN)) || this.districts[0];
     this.makeNow(first, at);
     this.start = at || first.city.start;
     this.focus = { x: this.start.x, z: this.start.z ?? this.start.y };
-    // the traffic and people of every made district, as City's cars and people
-    const m = this;
-    const W = () => m.ways.traffic?.list || [], wayNear = (p, r) => W().filter(c => Math.hypot(c.x - p.x, c.z - (p.z ?? p.y)) < r + 2.2 && Math.abs(c.y - (p.y != null && p.z != null ? p.y : c.y)) < 3);
-    this.cars = { hit: (p, r) => m.first(c => c.cars.hit(p, r)) || wayNear(p, r)[0] || null, near: (p, r) => m.cities.flatMap(c => c.cars.near(p, r)).concat(wayNear(p, r)),
-      bump: car => { for (const c of m.cities) if (c.cars.list.includes(car)) c.cars.bump(car); if (W().includes(car)) car.v = 0; }, get list() { return m.cities.flatMap(c => c.cars.list).concat(W()); } };
-    this.people = { hit: (p, r) => m.first(c => c.people.hit(p, r)), near: (p, r) => m.cities.flatMap(c => c.people.near(p, r)), scare: (p, r, t) => { for (const c of m.cities) c.people.scare(p, r, t); return m.people; },
-      knock: (q, dx, dz, t) => { for (const c of m.cities) if (c.people.list.includes(q)) c.people.knock(q, dx, dz, t); return q; }, get list() { return m.cities.flatMap(c => c.people.list); } };
   }
   /** The districts made now (Cities). */
   get cities() { return this.districts.filter(d => d.city).map(d => d.city); }
@@ -162,7 +169,8 @@ export class Metro {
   cityOptions(d, at) { return { ...this.make, ...d.extra, seed: d.plan.seed, blocks: [d.plan.nx, d.plan.nz], style: d.style, centre: d.plan.centre, night: this._night, at: at ? { x: at.x, z: at.z ?? at.y } : null }; }
   makeNow(d, at) { const it = City.over(this.view, this.cityOptions(d, at)); let r; while (!(r = it.next()).done); this.made(d, r.value); }
   made(d, city) {
-    d.city = city; d.making = null; d.stand.group.visible = false;
+    d.city = city; d.making = null; d.partial = null; d.stand.group.visible = false;
+    city.cars.guests = this.cars.roam.list; this.cars.learn(city.plan);   // (the big city's police and chases are in its roads too: its traffic pulls over and swerves round them)
     if (d.harbour) this.ways.seaShown(false);
     if (this.world) city.solid(this.world, { ...this.solidOpts, floor: false });
     this.view.shadowsDirty?.();
@@ -178,7 +186,7 @@ export class Metro {
     if (!this.making) {
       let want = null, wd = Infinity;
       for (const d of this.districts) { const dd = distToRect(d.rect, f.x, f.z); if (!d.city && dd < this.live && dd < wd) { want = d; wd = dd; } }
-      if (want) { const r = want.rect, at = { x: Math.max(r.x0, Math.min(r.x1, f.x)), z: Math.max(r.z0, Math.min(r.z1, f.z)) }; this.making = want; want.making = City.over(this.view, this.cityOptions(want, at)); }
+      if (want) { const r = want.rect, at = { x: Math.max(r.x0, Math.min(r.x1, f.x)), z: Math.max(r.z0, Math.min(r.z1, f.z)) }; this.making = want; this.begin(want, at); }
     }
     if (this.making) {
       const d = this.making;
@@ -187,6 +195,27 @@ export class Metro {
     for (const d of this.districts) if (d.city && d !== this.making && distToRect(d.rect, f.x, f.z) > this.live * 1.3 + 100) { this.letGo(d); break; }
   }
 
+  // a district's making started (kept, so one let go half made can be freed: switchTo)
+  begin(d, at) {
+    const c = d.partial = new City(this.view, { ...this.cityOptions(d, at), steps: true });
+    d.making = (function* () { yield* c.steps; c.steps = null; return c; })();
+  }
+  /**
+   * The player is somewhere else at once (a second lead to play, a ride across the city): first lets go of every made
+   * district (and the one being made) that `at` would not want, then makes those it would, the traffic and people of each
+   * put back round `at` (reset: false keeps them) and the cars between the districts too. Call it under your own fade or
+   * loading moment: the districts are made in this one call. Their materials were built before play (Metro's warmers), so
+   * nothing builds a shader after it. The big city's own cars (the police) stay where they are.
+   */
+  switchTo(at, { reset = true } = {}) {
+    const x = at.x, z = at.z ?? at.y, far = d => distToRect(d.rect, x, z) >= this.live;
+    if (this.making && far(this.making)) { const d = this.making; d.making?.return?.(); d.partial?.dispose(); d.making = d.partial = null; this.making = null; }
+    for (const d of this.districts) if (d.city && d !== this.making && far(d)) this.letGo(d);
+    this.prepare({ x, z });
+    if (reset) { for (const c of this.cities) c.reset({ x, z }); this.ways.traffic?.reset(); }
+    this.view.warm?.();
+    return this;
+  }
   /** Makes now every district the player at `at` would want (from a game's reset(), under the loading screen), so none is made a step at a time in the first seconds. */
   prepare(at = this.focus) {
     const x = at.x, z = at.z ?? at.y; this.focus = { x, z };
@@ -199,11 +228,12 @@ export class Metro {
   set night(k) { if (!this.following) this.seeksSky = false; this._night = Math.max(0, Math.min(1, k)); }
 
   /** Cars and people back round the start (call from your game's reset()). */
-  reset(focus = this.start) { this.t = 0; for (const c of this.cities) c.reset(focus); return this; }
+  reset(focus = this.start) { this.t = 0; for (const c of this.cities) c.reset(focus); this.cars.roam.reset(); this.next = []; this.events = []; return this; }
 
   /** Once a frame, as City's: makes the districts coming near and lets go of those left behind, then moves each made one. */
   update(dt, focus = this.view.cam.position) {
     const f = { x: focus.x, z: focus.z ?? focus.y }; this.t += dt; this.focus = f;
+    this.events = this.next; this.next = [];   // (what happened last frame: the big city's own, then each district's below)
     const sky = this.sky || (this.seeksSky ? this.links?.one('sky') : null);
     if (sky) { this.following = true; this.night = sky.night ?? 0; this.following = false; }
     this.stream(f);
@@ -214,8 +244,11 @@ export class Metro {
       if (Math.abs(c.night - this._night) >= .01) c.night = this._night;
       c.soundOn = this.soundOn && d === here;
       c.update(dt, f);
+      for (const e of c.events || []) this.events.push(e);
     }
-    this.ways.update(dt, f, this._night, this._avoid || []); if (this._avoid) this._avoid.length = 0;
+    this.cars.update(dt, f, this.t);   // (the big city's own cars: police and chases, anywhere)
+    this.ways.update(dt, f, this._night, this._avoid || [], this.cars.sirens); if (this._avoid) this._avoid.length = 0;
+    if (this._ears) { const cam = this.view.cam; this._ears.place(cam.position, cam.getWorldDirection(this._dir ||= cam.position.clone())); }
     // one set of lamps for all of them: the nearest street lamps and headlights of whichever districts are made
     const v = this.view;
     if (this.lampsOn && v.placeLamps && (this._night > .05 || this.indoor?.length)) {
@@ -224,6 +257,7 @@ export class Metro {
       for (const l of this.indoor || []) all.push(l);   // (the lamps of a room behind a door, by day too: gs.city Interiors)
       for (const c of this.cities) for (const l of c._lamps || []) all.push(l);
       for (const l of this.ways.traffic?.headlamps(this._night, this._hl ||= []) || []) all.push(l);
+      if (this.cars.fleet?.close.size) for (const l of this.cars.fleet.headlamps(this._night, this._rhl ||= [])) all.push(l);
       v.placeLamps(all, f.x, 2, f.z, this.t);
     } else if (v.lamps?.length) for (const l of v.lamps) l.intensity = 0;
     this.crowd?.update(dt);
@@ -279,12 +313,17 @@ export class Metro {
   }
   // the nearest point on a road between districts, a slip road or the highway: { d, road, s, x, y, z }
   onRoad(x, z, reach = 400) { return this.ways.near(x, z, reach); }
-  /** The nearest point in a driving lane, in a district or on the roads between: as City.road(), plus road (between districts) or district, and y. */
-  road(x, z) {
+  /**
+   * The nearest point in a driving lane, in a district or on the roads between: as City.road() (heading: only lanes going
+   * within 70 degrees of it), plus district, or road (between districts) with back (driving from its second end) and y.
+   */
+  road(x, z, heading = null) {
     const d = this.districtAt(x, z, MARGIN), c = this.onRoad(x, z);
-    if (d && (!c || distToRect(d.rect, x, z) <= 0 || c.d > 8)) { const r = roadOn(d.plan, x, z); r.district = d; r.y = 0; return r; }
+    if (d && (!c || distToRect(d.rect, x, z) <= 0 || c.d > 8)) { const r = d.city ? d.city.road(x, z, heading) : roadOn(d.plan, x, z); if (!r) return null; r.district = d; r.y = 0; return r; }
     if (!c) return null;
-    const R = c.road, right = c.lateral > 0 === (this.side !== 'left'), k = R.lanes > 1 && Math.abs(c.lateral) > LANE + 1 ? 1 : 0, q = this.lanePos(R, k, right ? c.s : R.len - c.s, !right);
+    let right = c.lateral > 0 === (this.side !== 'left');
+    if (heading != null) { const p = this.along(c.road, c.s, this._al ||= {}); right = Math.sin(heading) * p.dx + Math.cos(heading) * p.dz >= 0; }
+    const R = c.road, k = R.lanes > 1 && Math.abs(c.lateral) > LANE + 1 ? 1 : 0, q = this.lanePos(R, k, right ? c.s : R.len - c.s, !right);
     return { d: Math.hypot(q.x - x, q.z - z), x: q.x, y: q.y, z: q.z, heading: Math.atan2(q.dx, q.dz), road: R, lane: k, s: c.s, back: !right };
   }
   /**
@@ -359,6 +398,22 @@ export class Metro {
     const path = new Path(pts.map(([x, z]) => ({ x, y: 0, z })), { kind: 'line' });
     return { points: pts, path, length: path.length ?? 0, legs };
   }
+  /** Which district's plan a road edge is of (gs.city Wanted reads the junctions of the edge the player is on). */
+  planOf(e) { return this.cars.planOf(e); }
+  /** The height a car at x, z drives at: 0 in a district, else the road there (the deck of a bridge it is on, the floor of a tunnel), or the land. y: its height now. */
+  carY(x, z, y = 0) { return this.districtAt(x, z, 0) ? 0 : this.ways.surface(x, z, y + .6) - .05; }
+  /**
+   * Something that happened ({ kind, at, car, person, by, power }), for everything that reads metro.events next frame: told to
+   * the made district it happened in (its people look, run or phone it in), else kept by the big city.
+   */
+  event(e) {
+    const d = e.at ? this.districtAt(e.at.x, e.at.z ?? e.at.y, 0) : null;
+    if (d?.city) d.city.event(e); else this.next.push(e);
+    return this;
+  }
+  /** The ears that hear the city: the district the player is in's, else the big city's own (with sound on). */
+  get ears() { return this.city?.ears || (this.soundOn ? this._ears ||= new Ears({ ref: 6, max: 140, hrtf: false, link: false }) : null); }
+  honk(c) { City.prototype.honk.call(this, c); }
   nearestDistrict(x, z) { return this.districts.reduce((m, d) => distToRect(d.rect, x, z) < distToRect(m.rect, x, z) ? d : m); }
 
   /* ---------- answers for the game, from whichever district is there ---------- */
@@ -388,7 +443,19 @@ export class Metro {
   /** The first building along a ray in any made district: as City.ray(). */
   ray(from, dir, far = 300) { let best = null; for (const c of this.cities) { const h = c.ray(from, dir, far); if (h && (!best || h.dist < best.dist)) best = h; } return best; }
   /** A place to use, as City.spot(), in the district `in` (a name, or the one the player is in). */
-  spot(kind = 'pavement', { in: name = null, ...o } = {}) { const d = name ? this.districts.find(x => x.name === name || x.style === name) : this.districtAt(this.focus.x, this.focus.z, MARGIN); const c = d?.city || this.cities[0]; return c ? c.spot(kind, o) : null; }
+  spot(kind = 'pavement', { in: name = null, ...o } = {}) {
+    // a lane near a point (police cars coming to the player): any made district's streets, or the roads between and the highway
+    if (kind === 'street' && !name && o.near) {
+      const rnd = o.rnd || Math.random, W = this.ways.roads, cs = this.cities, ok = p => { const dd = Math.hypot(p.x - o.near.x, p.z - (o.near.z ?? o.near.y)); return dd >= (o.min ?? 0) && dd <= (o.max ?? Infinity); };
+      for (let i = 0; i < 30; i++) {
+        if (cs.length && (i % 2 === 0 || !W.length)) { const c = cs[rnd() * cs.length | 0], s = c.spot('street', { ...o, rnd }); if (s) return s; continue; }
+        const r = W[rnd() * W.length | 0]; if (!r) continue;
+        const back = rnd() < .5, k = rnd() * r.lanes | 0, s = 10 + rnd() * Math.max(1, r.len - 20), p = this.lanePos(r, k, s, back, {});
+        if (ok(p)) return { x: p.x, y: p.y + .05, z: p.z, heading: Math.atan2(p.dx, p.dz), road: r, lane: k, s: back ? r.len - s : s, back };
+      }
+      return null;
+    }
+    const d = name ? this.districts.find(x => x.name === name || x.style === name) : this.districtAt(this.focus.x, this.focus.z, MARGIN); const c = d?.city || this.cities[0]; return c ? c.spot(kind, o) : null; }
   /** Every district's buildings as boxes, for occlusion culling (as City.occluders()). */
   occluders(near = null, r = Infinity) {
     const out = [];
@@ -409,6 +476,7 @@ export class Metro {
     this.world = world; this.solidOpts = opts; this.floorBody ||= world.floor?.(0);
     if (!this.ways.flat) this.waysBody ||= world.ground(this.ways.solids);   // (the hills, the roads' decks, parapets, piers and tunnels)
     for (const c of this.cities) c.solid(world, { ...opts, floor: false });
+    this.cars.solid(world, opts);   // (the nearest cars between the districts and the big city's own: they meet the player's too)
     return this;
   }
   /** A top-down map of every district and the roads between, as City.drawMap(). */
@@ -450,6 +518,7 @@ export class Metro {
   /** Takes the whole city out of the scene and frees it. */
   dispose() {
     for (const d of this.districts) { if (d.city) d.city.dispose(); d.city = null; d.making = null; d.stand.dispose(); }
+    this.cars.dispose(); for (const d of this.districts) { d.partial?.dispose(); d.partial = null; }
     this.making = null; this.floorBody?.remove?.(); this.floorBody = null; this.waysBody?.remove?.(); this.waysBody = null;
     this.ways.dispose();
     this.paint?.dispose(); this.crowd?.dispose(); this.far?.dispose(); this.group.removeFromParent();

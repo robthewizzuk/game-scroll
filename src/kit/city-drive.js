@@ -211,9 +211,12 @@ export function chaseCar(T, c, dt) {
   const al = Math.hypot(ax - c.x, az - c.z) || 1, fx = (ax - c.x) / al, fz = (az - c.z) / al, reach = 10 + Math.abs(c.v) * 1.1;   // (along where it is heading for: round a corner too)
   const free = off => {
     let best = reach;
-    for (const o of T.list) {
+    const A = T.list, B = T.others, nA = A.length, n = nA + (B ? B.length : 0);   // (others: the cars of other traffics it drives among, gs.city Metro)
+    for (let i = 0; i < n; i++) {
+      const o = i < nA ? A[i] : B[i - nA];
       if (o === c || o === g || o === C.target) continue;
       const rx = o.x - c.x, rz = o.z - c.z, along = rx * fx + rz * fz; if (along < 0 || along > best + 3) continue;
+      if (o.y != null && c.y != null && Math.abs(o.y - c.y) > 3) continue;   // (on a bridge over it, or under one)
       const lat = rx * fz - rz * fx; if (Math.abs(lat - off) > 1.15 + o.wid / 2 + Math.abs(off) * .15) continue;
       const ov = Math.sin(o.heading) * o.v * fx + Math.cos(o.heading) * o.v * fz, room = along - (o.len + c.len) / 2 + Math.max(0, ov) * 1.2;
       if (room < best) best = room;
@@ -287,25 +290,26 @@ function settle(T, c) {
 
 /**
  * Cars off the lanes against the others (no World3D needed): a chasing or sliding car that drives into one hard
- * sets it sliding too, a softer knock stops it a moment; the one that hit loses speed. Returns how many met.
+ * sets it sliding too, a softer knock stops it a moment; the one that hit loses speed. Returns how many met. into: the
+ * traffic whose cars they meet (T's own; a big city's police meet each district's traffic: gs.city Metro).
  */
-export function meet(T, dt) {
+export function meet(T, dt, into = T) {
   let n = 0;
   for (const a of T.list) {
     if ((a.mode !== 'chase' && a.mode !== 'loose') || (a.body && !a.body.dead) || Math.abs(a.v) < 2) continue;
     const ax = a.vx ?? Math.sin(a.heading) * a.v, az = a.vz ?? Math.cos(a.heading) * a.v, nx = a.x + Math.sin(a.heading) * a.len * .4, nz = a.z + Math.cos(a.heading) * a.len * .4;
-    for (const b of T.near({ x: nx, z: nz }, 5)) {
+    for (const b of into.near({ x: nx, z: nz }, 5)) {
       if (b === a || b.metT > 0 || !T.overlaps(b, nx, nz, a.wid / 2)) continue;
       const bvx = Math.sin(b.heading) * b.v, bvz = Math.cos(b.heading) * b.v, rv = Math.hypot(ax - bvx, az - bvz); b.metT = .5; n++;
       // two police cars closing on the same player nudge and slow; they don't wreck each other
       if (a.police && b.police && a.mode === 'chase') { a.v *= .5; if (b.mode === 'chase') b.v *= .7; continue; }
-      T.city.event({ kind: 'crash', at: { x: nx, z: nz }, car: b, by: a.by ?? a, power: rv });
-      if (rv > 6 && b.mode !== 'wreck') T.crash(b, { x: (ax - bvx) * .45, z: (az - bvz) * .45 }, { at: { x: nx, z: nz }, by: a.by ?? a });
-      else if (b.mode === 'lane') T.bump(b, 1.2);
+      into.city.event({ kind: 'crash', at: { x: nx, z: nz }, car: b, by: a.by ?? a, power: rv });
+      if (rv > 6 && b.mode !== 'wreck') into.crash(b, { x: (ax - bvx) * .45, z: (az - bvz) * .45 }, { at: { x: nx, z: nz }, by: a.by ?? a });
+      else if (b.mode === 'lane') into.bump(b, 1.2);
       if (a.mode === 'chase') { a.v *= rv > 10 ? .35 : .6; if (rv > 16 && !a.police) T.crash(a, { x: -ax * .2, z: -az * .2 }, { by: a.by }); }
       else { a.vx *= .5; a.vz *= .5; a.spin += (T.R() - .5) * 2; }
     }
   }
-  for (const c of T.list) if (c.metT > 0) c.metT -= dt;
+  if (into === T) for (const c of T.list) if (c.metT > 0) c.metT -= dt;
   return n;
 }

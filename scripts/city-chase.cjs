@@ -2,6 +2,8 @@
 // stars on it, the police after it, the traffic pulling over and swerving, a crash, people doing things, a full person
 // knocked over, a roadblock; a picture of each and the numbers.
 //   node scripts/city-chase.cjs <out.png> [shots=chase,yield,crash,life,knock,block] [cell=480x360] [seed=7] [time=17.5] [phys=0] [secs=24] [old] [--webgpu]
+//   node scripts/city-chase.cjs <out.png> metro [shots=chase,yield,crash,parked,way,police] [secs=60] [trace] [--webgpu]   (a big city: police across
+//   its districts and the roads between, cars between them pulling over, taking parked, between and police cars, switchTo)
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 (async () => {
@@ -14,10 +16,10 @@ const fs = require('fs'), path = require('path');
     ? { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--use-angle=vulkan', '--enable-features=Vulkan'], env: { ...process.env, VK_ICD_FILENAMES: icd } }
     : { args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] }), p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' || process.env.ALLWARN) console.log('page:', m.text().slice(0, 600)); });
-  await p.goto(`http://localhost:${port}/scripts/city-chase/?${gpu ? 'gpu&' : ''}${q.map(a => a.replace(/#/g, '%23')).join('&')}`); await p.waitForFunction(() => window.result, null, { timeout: 900000 });
+  await p.goto(`http://localhost:${port}/scripts/city-chase/${q.includes('metro') ? 'metro.html' : ''}?${gpu ? 'gpu&' : ''}${q.filter(a => a !== 'metro').map(a => a.replace(/#/g, '%23')).join('&')}`); await p.waitForFunction(() => window.result, null, { timeout: 900000 });
   const res = await p.evaluate(() => window.result);
   await b.close(); await server.close();
-  if (res.error || errs.length) { console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }
+  if (res.error || errs.length) { for (const l of res.info || []) console.log(l); if (res.sheet) fs.writeFileSync(out, Buffer.from(res.sheet.split(',')[1], 'base64')); console.log('FAIL', res.error || errs.join('\n')); process.exit(1); }
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(out, Buffer.from(res.sheet.split(',')[1], 'base64'));
   for (const l of res.info) console.log(l);

@@ -8,40 +8,40 @@ Falling sand: liquids, fire, lava, ground that blasts into holes.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SandPart`, line 3209), where every option and field is described.
+From `src/gamescroll.d.ts` (`SandPart`, line 3214), where every option and field is described.
 
-- `M: SandMaterials` (:3209)
-  - `readonly EMPTY: 0` (:3201)
-  - `readonly WALL: 1` (:3201)
-  - `readonly DIRT: 2` (:3201)
-  - `readonly WOOD: 3` (:3201)
-  - `readonly SAND: 4` (:3201)
-  - `readonly WATER: 5` (:3201)
-  - `readonly OIL: 6` (:3201)
-  - `readonly FIRE: 7` (:3201)
-  - `readonly SMOKE: 8` (:3201)
-  - `readonly ACID: 9` (:3201)
-  - `readonly STEAM: 10` (:3201)
-  - `readonly LAVA: 11` (:3201)
-  - `readonly STONE: 12` (:3201)
-- `Sand: new (w?: number, h?: number, o?: { seed?: number }) => Sand` (:3209)
-  - `w: number` (:3203)
-  - `h: number` (:3203)
-  - `rate: number` (:3203)
-  - `bg: [number, number, number, number]` (:3203)
-  - `t: Uint8Array` (:3203)
-  - `get(x: number, y: number): number` (:3204)
-  - `set(x: number, y: number, m: number): void` (:3204)
-  - `solid(x: number, y: number): boolean` (:3204)
-  - `inside(x: number, y: number): boolean` (:3204)
-  - `fill(fn: (x: number, y: number) => number): Sand` (:3205)
-  - `paint(x: number, y: number, r: number, m: number, o?: { over?: boolean; chance?: number }): Sand` (:3205)
-  - `blast(x: number, y: number, r: number, o?: { fire?: boolean }): number` (:3206)
-  - `count(m: number, x?: number, y?: number, w?: number, h?: number): number` (:3206)
-  - `update(dt: number): Sand` (:3207)
-  - `step(): void` (:3207)
-  - `colour(m: number, rgbv: [number, number, number, number]): Sand` (:3207)
-  - `picture(bg?: [number, number, number, number]): HTMLCanvasElement | OffscreenCanvas` (:3207)
+- `M: SandMaterials` (:3214)
+  - `readonly EMPTY: 0` (:3206)
+  - `readonly WALL: 1` (:3206)
+  - `readonly DIRT: 2` (:3206)
+  - `readonly WOOD: 3` (:3206)
+  - `readonly SAND: 4` (:3206)
+  - `readonly WATER: 5` (:3206)
+  - `readonly OIL: 6` (:3206)
+  - `readonly FIRE: 7` (:3206)
+  - `readonly SMOKE: 8` (:3206)
+  - `readonly ACID: 9` (:3206)
+  - `readonly STEAM: 10` (:3206)
+  - `readonly LAVA: 11` (:3206)
+  - `readonly STONE: 12` (:3206)
+- `Sand: new (w?: number, h?: number, o?: { seed?: number }) => Sand` (:3214)
+  - `w: number` (:3208)
+  - `h: number` (:3208)
+  - `rate: number` (:3208)
+  - `bg: [number, number, number, number]` (:3208)
+  - `t: Uint8Array` (:3208)
+  - `get(x: number, y: number): number` (:3209)
+  - `set(x: number, y: number, m: number): void` (:3209)
+  - `solid(x: number, y: number): boolean` (:3209)
+  - `inside(x: number, y: number): boolean` (:3209)
+  - `fill(fn: (x: number, y: number) => number): Sand` (:3210)
+  - `paint(x: number, y: number, r: number, m: number, o?: { over?: boolean; chance?: number }): Sand` (:3210)
+  - `blast(x: number, y: number, r: number, o?: { fire?: boolean }): number` (:3211)
+  - `count(m: number, x?: number, y?: number, w?: number, h?: number): number` (:3211)
+  - `update(dt: number): Sand` (:3212)
+  - `step(): void` (:3212)
+  - `colour(m: number, rgbv: [number, number, number, number]): Sand` (:3212)
+  - `picture(bg?: [number, number, number, number]): HTMLCanvasElement | OffscreenCanvas` (:3212)
 
 ## From the maker kit
 
@@ -76,7 +76,7 @@ flood on the graphics chip. `gs.sand` has lava too, for 2D.
 
 1 game uses it (`node scripts/examples.mjs gs.sand` lists them). The shortest:
 
-`src/games/canal-dig.js` (Canal Dig, Advance · Physics, 133 lines):
+`src/games/canal-dig.js` (Canal Dig, Advance · Physics, 135 lines):
 
 ```js
 const { Feel } = gs.effects;

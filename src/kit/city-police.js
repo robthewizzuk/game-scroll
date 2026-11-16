@@ -8,12 +8,16 @@
 //
 //   const { City, Wanted } = gs.city;
 //   make()   { city = new City(view, {...}); law = new Wanted(city, api); law.on('busted', () => api.over()); }
+//            (or a big city: new Wanted(metro, api), a gs.city Metro: the police come from any district or along the roads
+//            between, chase across them and round the highway, and set up roadblocks on those roads too)
 //   reset()  { city.reset(); law.reset(); }
 //   update(dt) {
 //     city.avoid(me, 1.2); city.update(dt, me);
 //     law.update(dt, { x, z, heading, v, car: true, body: kart.body });   // the player: where, which way, how fast, in a car or not
 //     if (hitSomeone) law.crime('hit', me);                             // what the player did ('crash', 'hit', 'theft', 'cop', 'shots', 'fight', 'speeding')
 //   }
+//   A car the player takes (city.cars.take(car, { by: me.body })) is a theft, or a crime against the police for a police car,
+//   by itself (its 'carjack' event); a police car taken is no longer theirs.
 //   law.stars (0..5), law.seen, law.search ({ x, z, r }: where they are looking), law.left (seconds until you are clear),
 //   law.busting (0..1: how close to being caught), law.units ([{ car, officers, tactic }]: to draw on a map)
 //
@@ -39,7 +43,7 @@ const COPS = [
 
 export class Wanted {
   /**
-   * city: a gs.city City; api: the game's (the brains keep what they learn in its brain slot). Options: max (most
+   * city: a gs.city City, or a Metro (a big city of districts); api: the game's (the brains keep what they learn in its brain slot). Options: max (most
    * stars, 5), cars (most police cars at once; by the phone's speed), officers (true: officers get out on foot,
    * Next Gen views), brains (true: the tactics learn; false: the rules alone), sight (metres a police car sees by day, 70).
    */
@@ -119,6 +123,8 @@ export class Wanted {
     for (const e of city.events || []) {
       if (e.kind === 'call' && e.about) { this.calls.push(e); this.emit('call', e); if (this.stars || e.about.weight) this.addHeat(e.about.weight || 0, e.at, false); if (e.about.tip) this.tip(e.at); continue; }
       const mine = e.by && ((me.body && e.by === me.body) || e.by === player || (typeof player.car === 'object' && e.by === player.car));
+      // a car taken (cars.take): the player's, unless the game said someone else took it
+      if (e.kind === 'carjack') { if (!e.by || mine) this.crime(e.police ? 'cop' : 'theft', e.at); continue; }
       if (!mine) continue;
       if (e.kind === 'crash' && (e.power || 0) > 3) this.crime(e.car?.police ? 'cop' : 'crash', e.at);
       else if (e.kind === 'knock') this.crime(e.person?.cop ? 'cop' : 'hit', e.at);
@@ -176,19 +182,31 @@ export class Wanted {
   }
   // which way the player turns at junctions (in a car, while wanted): a Predict of left / straight / right
   learnTurns() {
-    const me = this.me; if (!me.car || !this.stars) { this.edge = null; return; }
+    const me = this.me; if (!me.car || !this.stars) { this.edge = null; this.way = null; return; }
     const r = this.city.road(me.x, me.z, me.v > 2 ? me.heading : null); if (!r || r.d > 7) return;
     const e = r.edge;
-    if (this.edge && e !== this.edge && this.edge.b === e.a) {
+    if (!e) { this.edge = null; this.way = r.road ? r : null; return; }   // (on a road between a big city's districts, or its highway: no junction to guess)
+    this.way = null;
+    if (this.edge && e !== this.edge && this.edge.b === e.a && this.planOf(this.edge) === this.planOf(e)) {
       const a = this.edge, cross = a.dx * e.dz - a.dz * e.dx, turn = Math.abs(cross) < .5 ? 'straight' : cross * this.city.cars.sideK > 0 ? 'left' : 'right';
       this.turns?.see(turn);
     }
     this.edge = e;
   }
-  // the road out of the player's next junction they are likely to take, and a point a way along it
+  // which plan a road edge is of (a big city's districts each have their own)
+  planOf(e) { return this.city.planOf?.(e) || this.city.plan; }
+  // the road out of the player's next junction they are likely to take, and a point a way along it (on a road between a big
+  // city's districts: a point d metres on along it)
   ahead(d = 30) {
-    const e = this.edge; if (!e) return null;
-    const T = this.city.cars, P = this.city.plan, B = P.nodes[e.b], guess = this.turns?.guess?.() || 'straight';
+    const e = this.edge;
+    if (!e) {
+      const w = this.way; if (!w?.road) return null;
+      const R = w.road, s = w.back ? w.s - d : w.s + d, loop = R.loop || R.ring, sf = loop ? ((s % R.len) + R.len) % R.len : s;
+      if (!loop && (sf < 8 || sf > R.len - 8)) return null;
+      const p = this.city.lanePos(R, 0, w.back ? R.len - sf : sf, w.back, {});
+      return { x: p.x, z: p.z, y: p.y, heading: Math.atan2(p.dx, p.dz), road: R, s: sf, back: w.back, turn: 'straight' };
+    }
+    const T = this.city.cars, P = this.planOf(e), B = P.nodes[e.b], guess = this.turns?.guess?.() || 'straight';
     let best = null;
     for (const id of B.out) {
       const f = P.edges[id]; if (f.b === e.a) continue;
@@ -205,14 +223,14 @@ export class Wanted {
   // police cars come (out of sight, a way off) until there are enough for the stars; they go when the stars do
   dispatch(dt) {
     const T = this.city.cars;
-    for (const u of [...this.units]) if (!T.list.includes(u.car)) { this.units.splice(this.units.indexOf(u), 1); u.mind?.done(); }
+    for (const u of [...this.units]) if (!(T.has ? T.has(u.car) : T.list.includes(u.car))) { this.units.splice(this.units.indexOf(u), 1); this.dismiss(u, true); }   // (taken by the player, or gone)
     const want = this.stars ? Math.min(this.maxCars, this.stars + (this.skill > .65 ? 1 : 0)) : 0, chasing = this.units.filter(u => !u.roadblock);
     this.roadblock(dt);
     if (chasing.length < want && (this.spawnT -= dt) <= 0) {
       this.spawnT = (2.5 + 3 * (1 - this.skill)) / Math.max(1, this.stars * .6);
       const at = this.seen ? this.me : this.search || this.me, spot = this.spawnSpot(at);
       if (spot) {
-        const car = T.add({ edge: spot.edge, lane: spot.lane, s: spot.s, police: true, keep: true });
+        const car = T.add(spot.edge ? { edge: spot.edge, lane: spot.lane, s: spot.s, police: true, keep: true } : { x: spot.x, z: spot.z, y: spot.y, heading: spot.heading, police: true, keep: true });
         if (car) { car.siren = true; const u = { car, tactic: 'chase', mind: this.wave?.mind() || null, thinkT: 0, felt: 0, officers: [], home: null, t: 0 }; this.units.push(u); }
       }
     }
@@ -236,14 +254,20 @@ export class Wanted {
     this.blockT = 14 - 6 * this.skill;
     const a = this.ahead(26); if (!a) return;
     const d = dist(a, me); if (d < 45 || d > 220) return;
-    // nose to tail across the whole road, centred on its middle line
-    const back = T.back(a.edge), k0 = T.lanePos(a.edge, 0, T.across(a.edge, a.x, a.z, {}).s);
-    let cx = a.x, cz = a.z, px = Math.cos(a.heading), pz = -Math.sin(a.heading);
-    if (back) { const q = T.across(back, a.x, a.z, {}), p = T.lanePos(back, 0, q.s); cx = (k0.x + p.x) / 2; cz = (k0.z + p.z) / 2; const l = Math.hypot(k0.x - p.x, k0.z - p.z) || 1; px = (k0.x - p.x) / l; pz = (k0.z - p.z) / l; }
-    const n = a.edge.lanes > 1 ? 3 : 2, face = Math.atan2(px, pz), made = [];
+    // nose to tail across the whole road, centred on its middle line (a highway: across the player's side of its barrier)
+    let cx = a.x, cz = a.z, cy = a.y || 0, px = Math.cos(a.heading), pz = -Math.sin(a.heading), n, back = null;
+    if (a.edge) {
+      back = T.back(a.edge); const k0 = T.lanePos(a.edge, 0, T.across(a.edge, a.x, a.z, {}).s);
+      if (back) { const q = T.across(back, a.x, a.z, {}), p = T.lanePos(back, 0, q.s); cx = (k0.x + p.x) / 2; cz = (k0.z + p.z) / 2; const l = Math.hypot(k0.x - p.x, k0.z - p.z) || 1; px = (k0.x - p.x) / l; pz = (k0.z - p.z) / l; }
+      n = a.edge.lanes > 1 ? 3 : 2;
+    } else {
+      const R = a.road, p = R.median ? this.city.lanePos(R, (R.lanes - 1) / 2, a.back ? R.len - a.s : a.s, a.back, {}) : this.city.along(R, a.s, {});
+      cx = p.x; cz = p.z; cy = p.y; n = R.median ? R.lanes : R.lanes > 1 ? 3 : 2;
+    }
+    const face = Math.atan2(px, pz), made = [];
     for (let i = 0; i < n; i++) {
-      const o = (i - (n - 1) / 2) * 4.7, x = cx + px * o, z = cz + pz * o, e = o >= 0 || !back ? a.edge : back;
-      const car = T.add({ edge: e, lane: 0, s: T.across(e, x, z, {}).s, police: true, keep: true }); if (!car) break;
+      const o = (i - (n - 1) / 2) * 4.7, x = cx + px * o, z = cz + pz * o, e = a.edge ? (o >= 0 || !back ? a.edge : back) : null;
+      const car = T.add(e ? { edge: e, lane: 0, s: T.across(e, x, z, {}).s, police: true, keep: true } : { x, z, y: cy, heading: face, police: true, keep: true }); if (!car) break;
       T.chase(car, { x, z }, { how: 'block', face, top: 0, siren: true });
       Object.assign(car, { x, z, heading: face, v: 0 }); car.chase.parked = true;
       const u = { car, tactic: 'block', roadblock: true, blocked: true, blockAt: { ...a, x, z }, mind: null, thinkT: 0, felt: 0, officers: [], home: null, t: 0 };
@@ -255,10 +279,11 @@ export class Wanted {
   spawnSpot(at) {
     const city = this.city;
     for (let i = 0; i < 12; i++) {
-      const s = city.spot('street', { near: at, min: 70, max: 150 }); if (!s) continue;
+      const s = city.spot('street', { near: at, min: 70, max: 150 }); if (!s) continue;   // (a big city's: in any made district, or on a road between)
       const dx = s.x - this.me.x, dz = s.z - this.me.z, d = Math.hypot(dx, dz);
       if (i < 6 && this.me.v > 4 && (dx * Math.sin(this.me.heading) + dz * Math.cos(this.me.heading)) / d < .3) continue;   // (ahead of a moving player first: they come to meet you)
       if (i < 9 && !city.ray({ x: this.me.x, y: 1.4, z: this.me.z }, { x: dx, y: 0, z: dz }, d)) continue;   // (one it would be seen arriving at: another)
+      if (!s.edge) return { x: s.x, z: s.z, y: s.y, heading: s.heading };
       const [s0, s1] = city.cars.ends(s.edge), q = city.cars.across(s.edge, s.x, s.z, {});
       return { edge: s.edge, lane: s.lane, s: clamp(q.s, s0 + 2, s1 - 2) };
     }
@@ -268,7 +293,7 @@ export class Wanted {
     const T = this.city.cars; u.mind?.done();
     for (const o of u.officers) { const i = this.officers.indexOf(o); if (i >= 0) this.officers.splice(i, 1); o.body.removeFromParent(); }
     u.officers.length = 0;
-    if (now || !T.list.includes(u.car)) { T.remove(u.car); return; }
+    if (now || !(T.has ? T.has(u.car) : T.list.includes(u.car))) { T.remove(u.car); return; }
     u.car.siren = false; u.car.keep = false; T.release(u.car);   // (back into the traffic: it is sent elsewhere when far, as any car)
   }
   // a police car each frame: its tactic (the brain's, a few times a second), and driving it
@@ -368,7 +393,7 @@ export class Wanted {
         city.collide(p, .3, .2);
         o.speed += (Math.hypot(p.x - o.x, p.z - o.z) / Math.max(dt, 1e-4) - o.speed) * Math.min(1, dt * 8);
         o.x = p.x; o.z = p.z; o.heading = dd > .2 ? Math.atan2(dx, dz) : o.heading;
-        const B = o.body; B.position.set(o.x, city.ground(o.x, o.z) || 0, o.z); B.rotation.y += wrap(o.heading - B.rotation.y) * Math.min(1, dt * 8);
+        const B = o.body; o.y = city.ground(o.x, o.z, (o.y || 0) + 1) || 0; B.position.set(o.x, o.y, o.z); B.rotation.y += wrap(o.heading - B.rotation.y) * Math.min(1, dt * 8);
         if (!back && dd < 2.2) { if (o.move !== 'wave') { B.rig.play('wave'); o.move = 'wave'; } }   // (an arm out: "stop there")
         else { o.move = null; B.rig.blend({ idle: 0, walk: 1.4, run: 4 }, o.speed); }
         B.rig.update(dt, { speed: o.speed, toward: { x: tx, z: tz } }); o.react.update(dt);
@@ -384,8 +409,8 @@ export class Wanted {
     const src = this.cops[(c.id + i) % this.cops.length]; if (!src) return null;
     const body = src.twin(); addMoves(body.rig); this.city.group.add(body);
     const sk = this.city.cars.sideK, h = c.heading, side = i ? -1 : 1, lx = Math.cos(h) * sk * side, lz = -Math.sin(h) * sk * side, w = c.wid / 2 + .45;
-    const x = c.x + lx * w, z = c.z + lz * w; body.position.set(x, 0, z); body.rotation.y = h;
-    return { body, react: new Reactions(body, { steady: 1.3 }), x, z, heading: h, speed: 0, inCar: false, gone: false, move: null, cop: true, unit: c };
+    const x = c.x + lx * w, z = c.z + lz * w, y = c.y || 0; body.position.set(x, y, z); body.rotation.y = h;
+    return { body, react: new Reactions(body, { steady: 1.3 }), x, y, z, heading: h, speed: 0, inCar: false, gone: false, move: null, cop: true, unit: c };
   }
 
   /* ---------- caught, or away ---------- */
