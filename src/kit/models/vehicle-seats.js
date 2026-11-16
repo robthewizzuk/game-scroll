@@ -3,10 +3,13 @@
 // as it turns, getting out again, and being pulled out by someone else, who then gets in. A motorbike is got astride.
 // A person in a vehicle, or on the way in or out, is the vehicle's to move: its update(dt) (move() calls it) runs their
 // rig and puts their hands where they go, so the game leaves them alone while person.vehicle is set.
+// A boat has no doors and no road beside it: people step aboard from a jetty or climb in out of the water, sit at
+// the oars or stand at its wheel, and step off onto whatever is solid beside it (a gs.physics3d World3D's jetty or
+// quay) or drop over the side into the water, where the game's gs.climb Swimmer takes them.
 // Works with any character on a gs.poses rig (gs.models.human(), figure()); hands go on things only where it has touch().
 // Kit use only.
-import { Vector3, Object3D } from 'three';
-import { linksFor } from '../links.js';
+import { Vector3, Object3D, Box3 } from 'three';
+import { linksFor, linksOf } from '../links.js';
 
 const { PI, abs, min, max, sin, cos, atan2, hypot, sqrt } = Math, clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const ease = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
@@ -16,8 +19,12 @@ const V = new Vector3(), W = new Vector3(), H = new Vector3();
 
 /** Gives a vehicle (root, with shell, seats and maybe doors) enter, exit, pull, putIn, takeOut and who (not sit: a plane's sit is how its nose stands). */
 export function riders(root, plan) {
-  const shell = root.shell, seats = root.seats, trips = [];
-  const hw = (plan.size?.width || 1.8) / 2 - (plan.lean ? 0 : .08);
+  const shell = root.shell, seats = root.seats, trips = [], afloat = root.kind === 'boat';
+  let hw = (plan.size?.width || 1.8) / 2 - (plan.lean ? 0 : .08);
+  if (afloat || root.kind === 'helicopter') {   // (the body's own width: a helicopter's rotor is far wider than its cabin)
+    const B = new Box3(); for (const m of shell.children) if (m.isMesh) { const g = m.geometry; if (!g.boundingBox) g.computeBoundingBox(); B.union(g.boundingBox); }
+    if (!B.isEmpty()) hw = max(abs(B.min.x), B.max.x) - .04;
+  }
   // the hip's height over a cushion, and where a rider's hands go: on a car's wheel, at ten to two; on a bike's grips
   const wheel = root.parts.steering, grips = plan.lean ? [root.points.barL, root.points.barR] : null;
   const rim = [new Object3D(), new Object3D()];
@@ -47,7 +54,8 @@ export function riders(root, plan) {
   // someone's own: their rig run each frame; hips set on the cushion; hands where they go
   const reactsOf = person => person.react || linksFor(null)?.all?.('reactions')?.find(r => r.body === person) || null;
   const pose = (person, name, fade = .3) => person.rig?.play(name, { fade });
-  const seatSpot = (person, seat) => {   // the person's place in the shell for their hips to be on the cushion
+  const seatSpot = (person, seat) => {   // the person's place in the shell for their hips to be on the cushion (standing at a wheel, on a deck: their feet on it)
+    if (seat.stand) return seat.point.position.clone();
     const hips = person.rig?.parts?.hips; if (!hips) return seat.point.position.clone();
     person.updateMatrixWorld(true); const h = shell.worldToLocal(hips.getWorldPosition(H));
     return V.copy(seat.point.position).add(W.set(0, seat.saddle ? .05 : .09, seat.saddle ? .02 : .06)).sub(h).add(person.position).clone();
@@ -68,7 +76,7 @@ export function riders(root, plan) {
     which ??= wheelSeat; const seat = seats[which]; if (!seat) throw new Error(`gs.models.vehicle: no seat '${which}' (try ${Object.keys(seats).join(', ')})`);
     if (seat.who && seat.who !== person) root.takeOut(seat.who);
     end(person); shell.attach(person); person.rotation.set(0, PI, 0); person.vehicle = root; person.seat = seat.name; seat.who = person;
-    pose(person, seat.saddle ? 'ride' : seat.steer ? 'drive' : 'sit', 0); person.rig?.update(0); person.position.copy(seatSpot(person, seat));
+    pose(person, seatPose(seat), 0); person.rig?.update(0); person.position.copy(seatSpot(person, seat));
     return root;
   };
   /** Takes a person out of their seat at once and stands them beside it, theirs again (null if they were in none). */
@@ -77,6 +85,8 @@ export function riders(root, plan) {
     person.position.copy(standAt(seat)); person.rotation.set(0, faceIn(seat) + PI, 0); free(person); pose(person, 'idle', 0);
     return person;
   };
+  // how they sit: astride a bike, at a car's wheel, on a seat, or standing (a boat's wheel, its deck)
+  const seatPose = seat => seat.stand ? 'idle' : seat.saddle ? 'ride' : seat.steer && !afloat ? 'drive' : 'sit';
   const free = person => {
     const home = root.parent;
     if (home) { home.attach(person); const f = W.set(0, 0, 1).applyQuaternion(person.quaternion); person.rotation.set(0, atan2(f.x, f.z), 0); person.updateMatrixWorld(true); } else shell.remove(person);
@@ -131,7 +141,7 @@ export function riders(root, plan) {
     const spot = seatSpot(p, seat), a = ease(u / .45), b = ease((u - .35) / .65), up = seat.saddle ? ease((u - .2) / .4) : b;   // (astride: up first, then the leg over and across)
     p.position.set(lerp(lerp(T.from.x, T.mid.x, a), spot.x, seat.saddle ? ease((u - .45) / .55) : b), lerp(0, spot.y, up), lerp(lerp(T.from.z, T.mid.z, a), spot.z, b));
     p.rotation.y = turnTo(T.r0, PI, ease(u / .8));
-    if (u >= 1) { seat.who = p; p.seat = seat.name; if (seat.steer || seat.saddle) pose(p, seat.saddle ? 'ride' : 'drive', .35); }
+    if (u >= 1) { seat.who = p; p.seat = seat.name; if (seat.steer || seat.saddle) pose(p, seatPose(seat), .35); }
     return u >= 1;
   } });
   // out of it: the legs out, up off the cushion and a step out to stand clear, facing out
@@ -145,15 +155,61 @@ export function riders(root, plan) {
     return u >= 1;
   } });
   // seated: their pose, their hips on the cushion, their hands on the wheel as it turns
-  const seated = (person, seat, dt) => { person.rig?.update(dt); person.position.copy(seatSpot(person, seat)); if (seat.hold) handsOn(person, seat, 1); };   // (seat.hold = false frees the hands: shooting out of the window)
+  const seated = (person, seat, dt) => { person.rig?.update(dt, seat.stand ? { speed: 0 } : undefined); person.position.copy(seatSpot(person, seat)); if (seat.hold && !afloat) handsOn(person, seat, 1); };   // (seat.hold = false frees the hands: shooting out of the window)
+
+  // a boat: aboard from where they are (a jetty beside it, or the water: from 'water', or found by how low they are), up
+  // over its side where it is nearest them and onto the seat or the deck; the time goes with how far they have to come
+  const aboard = (seat, from) => ({ name: 'board', time: null, run(T, dt) {
+    const p = T.person;
+    if (!T.from) {
+      T.from = p.position.clone(); T.r0 = p.rotation.y; const sd = Math.sign(T.from.x || seat.side || 1);
+      T.wet = from === 'water' || (from == null && T.from.y < -.25);
+      T.rail = new Vector3(sd * (hw - .05), max(seat.point.position.y, 0) + (seat.stand ? .35 : .25), clamp(T.from.z, seat.point.position.z - 1.5, seat.point.position.z + 1.5));
+      T.time = clamp(.8 + T.from.distanceTo(T.rail) * .35, .9, 2.4) + (T.wet ? .6 : 0);
+      if (!T.wet) pose(p, 'jump', .15);
+    }
+    const u = clamp(T.t / T.time, 0, 1), a = ease(u / .6), b = ease((u - .55) / .45);
+    if (T.wet) { if (u < .6) p.rig?.play('climbOut', { at: u / .6, fade: 0 }); else if (T.posed !== 1) { T.posed = 1; pose(p, seatPose(seat), .3); } }
+    else if (u > .55 && T.posed !== 1) { T.posed = 1; pose(p, seatPose(seat), .3); }
+    p.rig?.update(dt, { speed: 0 });
+    const spot = seatSpot(p, seat), hop = T.wet ? 0 : sin(PI * min(1, u / .6)) * .35;
+    p.position.set(lerp(lerp(T.from.x, T.rail.x, a), spot.x, b), lerp(lerp(T.from.y, T.rail.y, a), spot.y, b) + hop, lerp(lerp(T.from.z, T.rail.z, a), spot.z, b));
+    p.rotation.y = turnTo(T.r0, PI, ease(u / .8));
+    if (u >= 1) { seat.who = p; p.seat = seat.name; }
+    return u >= 1;
+  } });
+  // where someone leaving a boat goes: `to` (a point in the world: a jetty's step), else whatever is solid beside it in
+  // the game's World3D that is not far above the water, on the nearer side first; else over the side into the water
+  const ashore = (seat, to) => {
+    root.updateMatrixWorld(true);
+    if (to) return { at: shell.worldToLocal(new Vector3(to.x, to.y ?? 0, to.z)), water: false };
+    const world = linksOf(root)?.one('world'), z = seat.point.position.z, sides = [seat.side || 1, -(seat.side || 1)];
+    const water = root.getWorldPosition(V).y;
+    if (world?.floorAt) for (const sd of sides) for (const dz of [0, -1.2, 1.2]) {
+      const w = shell.localToWorld(W.set(sd * (hw + .75), 0, z + dz)), f = world.floorAt(w.x, water + 2.5, w.z, .5);
+      if (f != null && f > water - .15 && f < water + 2) return { at: shell.worldToLocal(W.set(w.x, f, w.z)).clone(), water: false };
+    }
+    return { at: new Vector3((seat.side || 1) * (hw + .7), -1.05, z), water: true };   // (treading water: shoulders at the surface)
+  };
+  const overSide = (seat, off) => ({ name: off.water ? 'jump' : 'step', time: off.water ? 1.1 : .95, run(T, dt) {
+    const p = T.person, u = clamp(T.t / this.time, 0, 1);
+    if (!T.from) { T.from = p.position.clone(); T.r0 = p.rotation.y; seat.who = null; pose(p, off.water ? 'jump' : 'idle', .2); T.rail = new Vector3(Math.sign(off.at.x || 1) * (hw - .05), max(T.from.y, 0) + .3, (T.from.z + off.at.z) / 2); }
+    if (off.water && u > .6 && T.posed !== 1) { T.posed = 1; pose(p, 'tread', .25); }
+    p.rig?.update(dt, { speed: 0 });
+    const a = ease(u / .5), b = ease((u - .4) / .6), hop = off.water ? 0 : sin(PI * u) * .25;
+    p.position.set(lerp(lerp(T.from.x, T.rail.x, a), off.at.x, b), lerp(lerp(T.from.y, T.rail.y, a), off.at.y, b) + hop, lerp(lerp(T.from.z, T.rail.z, a), off.at.z, b));
+    p.rotation.y = turnTo(T.r0, Math.sign(off.at.x || 1) > 0 ? PI / 2 : -PI / 2, ease(u / .7));
+    return u >= 1;
+  } });
 
   /**
    * Someone gets in: walks to the door (from wherever they are, at `walk` metres a second), opens it by its handle, steps
    * in and sits, and pulls it shut behind them (shut: false leaves it open). A motorbike is got astride from its left.
    * Returns the trip: { step, done, then(fn) }; person.vehicle is the vehicle from now on and person.seat the seat once in.
    */
-  root.enter = (person, { seat: which = null, walk = 1.5, shut = true } = {}) => {
+  root.enter = (person, { seat: which = null, walk = 1.5, shut = true, from = null } = {}) => {
     which ??= wheelSeat; const seat = seats[which]; if (!seat) throw new Error(`gs.models.vehicle: no seat '${which}' (try ${Object.keys(seats).join(', ')})`);
+    if (afloat) { if (seat.who && seat.who !== person) return null; return trip(person, seat, 'enter', [aboard(seat, from)]); }
     if (seat.who && seat.who !== person) return root.pull(which, person, { walk });
     const steps = [walkTo(standAt(seat), faceIn(seat), walk)];
     if (doorOf(seat)) steps.push(doorStep(seat, 1, { back: .12 }));
@@ -162,8 +218,9 @@ export function riders(root, plan) {
     return trip(person, seat, 'enter', steps);
   };
   /** Someone gets out (a seat's name, or the person): opens the door from inside, steps out and stands, and shuts it (shut: false leaves it open). They are the game's again once it is done. */
-  root.exit = (which = null, { shut = true } = {}) => {
+  root.exit = (which = null, { shut = true, to = null } = {}) => {
     const seat = seatOf(which); if (!seat?.who) return null; const person = seat.who;
+    if (afloat) { const off = ashore(seat, to); return trip(person, seat, 'exit', [overSide(seat, off)], { leaves: true, into: off.water ? 'water' : 'land' }); }
     const steps = [];
     if (doorOf(seat)) steps.push(doorStep(seat, 1, { inside: true, speed: 2 }));
     steps.push(outStep(seat));

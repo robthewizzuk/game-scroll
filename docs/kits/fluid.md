@@ -12,10 +12,10 @@ foam colours and shader are made with it, so the first splash builds nothing.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FluidPart`, line 1264), where every option and field is described.
+From `src/gamescroll.d.ts` (`FluidPart`, line 1269), where every option and field is described.
 
-- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1266)
-- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1273)
+- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1271)
+- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1278)
 
 ## From the maker kit
 
@@ -91,4 +91,22 @@ From [Water you can disturb](../maker-kit.md#water-you-can-disturb):
 
 ## In real games
 
-No game uses `gs.fluid` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.fluid` lists them). The shortest:
+
+`src/games/lava-gate.js` (Lava Gate, Next Gen · Strategy, 797 lines):
+
+```js
+const { Keys } = gs.controls;
+const { Fluid } = gs.fluid;
+// …
+  // Fluid simulation + solids + drains (all created ONCE).
+  fluid = new Fluid(v, { box: BOX, volume: 3.6, kind: 'lava', shadows: false, drops: Fluid.max() > 3000 ? undefined : 175 });
+  fluid.ground(groundHeight);
+  tap = fluid.pour({ x: 0, y: 2.35, z: -2.55, dir: [0, -0.72, 0.69], rate: 0.95, speed: 3.1, spread: 0.08, r: 0.24, on: false });
+// …
+
+  fluid.box({ x: -1.04, y: 0.96, z: 1.02, w: 0.34, h: 1.25, d: 1.78 });
+  fluid.box({ x: 1.04, y: 0.96, z: 1.02, w: 0.34, h: 1.25, d: 1.78 });
+  gateSolidL = fluid.box({ x: GATE_CLOSED.lx, y: GATE_CLOSED.y, z: GATE_CLOSED.z, w: 1.90, h: 0.90, d: 0.26 });
+  gateSolidR = fluid.box({ x: GATE_CLOSED.rx, y: GATE_CLOSED.y, z: GATE_CLOSED.z, w: 1.90, h: 0.90, d: 0.26 });
+```

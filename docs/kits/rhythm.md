@@ -8,38 +8,38 @@ Rhythm games: a beat kept with the sound card, charts, calibration.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RhythmPart`, line 3294), where every option and field is described.
+From `src/gamescroll.d.ts` (`RhythmPart`, line 3299), where every option and field is described.
 
-- `lag(): number` (:3295)
-- `Beat: new (o?: { bpm?: number; offset?: number; steps?: number; /** false: count from when sounds are played, with no allowance for the phone's sound delay. */ heard?:…` (:3296)
-  - `bpm: number` (:3286)
-  - `offset: number` (:3286)
-  - `steps: number` (:3286)
-  - `time: number` (:3286)
-  - `running: boolean` (:3286)
-  - `onBeat: boolean` (:3286)
-  - `onStep: boolean` (:3286)
-  - `readonly spb: number` (:3286)
-  - `readonly beat: number` (:3286)
-  - `readonly phase: number` (:3286)
-  - `readonly delay: number` The sound delay being allowed for, in seconds. (:3286)
-  - `start(): Beat` (:3286)
-  - `stop(): Beat` (:3286)
-  - `update(dt: number): Beat` (:3286)
-- `Chart: new (text: string, o?: { bpm?: number; per?: number; lead?: number; windows?: { perfect?: number; good?: number; miss?: number } }) => Chart` (:3297)
-  - `notes: ChartNote[]` (:3289)
-  - `lanes: number` (:3289)
-  - `length: number` (:3289)
-  - `counts: { perfect: number; good: number; miss: number }` (:3289)
-  - `combo: number` (:3289)
-  - `best: number` (:3289)
-  - `w: { perfect: number; good: number; miss: number }` (:3290)
-  - `readonly done: boolean` (:3290)
-  - `readonly accuracy: number` (:3290)
-  - `hit(lane: number, time: number): { result: 'perfect' | 'good' | 'miss'; note: ChartNote; error: number } | null` (:3291)
-  - `missed(time: number): ChartNote[]` (:3292)
-  - `near(time: number, ahead?: number, behind?: number): ChartNote[]` (:3292)
-- `Calibrate: new (o?: { bpm?: number; beats?: number; skip?: number }) => { beat: Beat; taps: number[]; done: boolean; lag: number; update(dt: number): Loose; tap(): Loo…` (:3298)
+- `lag(): number` (:3300)
+- `Beat: new (o?: { bpm?: number; offset?: number; steps?: number; /** false: count from when sounds are played, with no allowance for the phone's sound delay. */ heard?:…` (:3301)
+  - `bpm: number` (:3291)
+  - `offset: number` (:3291)
+  - `steps: number` (:3291)
+  - `time: number` (:3291)
+  - `running: boolean` (:3291)
+  - `onBeat: boolean` (:3291)
+  - `onStep: boolean` (:3291)
+  - `readonly spb: number` (:3291)
+  - `readonly beat: number` (:3291)
+  - `readonly phase: number` (:3291)
+  - `readonly delay: number` The sound delay being allowed for, in seconds. (:3291)
+  - `start(): Beat` (:3291)
+  - `stop(): Beat` (:3291)
+  - `update(dt: number): Beat` (:3291)
+- `Chart: new (text: string, o?: { bpm?: number; per?: number; lead?: number; windows?: { perfect?: number; good?: number; miss?: number } }) => Chart` (:3302)
+  - `notes: ChartNote[]` (:3294)
+  - `lanes: number` (:3294)
+  - `length: number` (:3294)
+  - `counts: { perfect: number; good: number; miss: number }` (:3294)
+  - `combo: number` (:3294)
+  - `best: number` (:3294)
+  - `w: { perfect: number; good: number; miss: number }` (:3295)
+  - `readonly done: boolean` (:3295)
+  - `readonly accuracy: number` (:3295)
+  - `hit(lane: number, time: number): { result: 'perfect' | 'good' | 'miss'; note: ChartNote; error: number } | null` (:3296)
+  - `missed(time: number): ChartNote[]` (:3297)
+  - `near(time: number, ahead?: number, behind?: number): ChartNote[]` (:3297)
+- `Calibrate: new (o?: { bpm?: number; beats?: number; skip?: number }) => { beat: Beat; taps: number[]; done: boolean; lag: number; update(dt: number): Loose; tap(): Loo…` (:3303)
 
 ## From the maker kit
 
@@ -58,4 +58,24 @@ lag (screens and Bluetooth headphones add delay) and every chart allows for it.
 
 ## In real games
 
-No game uses `gs.rhythm` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.rhythm` lists them). The shortest:
+
+`src/games/beat-crypt.js` (Beat Crypt, Pocket · Rhythm, 719 lines):
+
+```js
+const { Ready } = gs.rounds;
+const { Beat } = gs.rhythm;
+// …
+  const ready = new Ready({ eat: true });
+  const beat = new Beat({ bpm: 108, steps: 2 });
+// …
+    beat.bpm = K.bpm;
+    if (!beat.running) beat.start();
+// …
+      for (const k in keysDown) delete keysDown[k];
+      beat.stop();
+// …
+      beat.bpm = K.bpm;
+      if (!beat.running) beat.start();
+      beat.update(dt);
+```

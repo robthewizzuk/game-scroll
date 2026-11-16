@@ -5,6 +5,8 @@
 // people doing things, a full person knocked over, and a roadblock. A picture of each, and the numbers.
 //   ?gpu (WebGPU)   &seed=7   &cell=480x360   &time=17.5 (the hour)   &phys=0 (no World3D: crashes slide by themselves)
 //   &shots=chase,yield,crash,life,knock,block   &secs=24 (seconds of chase before the first picture)   &old (no fleet or crowd)
+//   the police with guns (city-force.js): &shots=armed (officers out of their car, armed, firing), heli (the helicopter
+//   over the player; &time=21 for its searchlight), boat (&style=harbour &phys=0: the player in a boat, police launches after it)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -22,7 +24,7 @@ try {
   const sun = gs.hd.sun('#ffc890', 2.4, 60, [-.6, .45, .3]); v.scene.add(sun, sun.target); v.sun = sun; v.onTier(t => sun.setTier(t));
   v.air({ haze: .0012, colour: '#9aa6bc' });
   const sky = new gs.sky.Sky(v, { time: +(Q.get('time') || 17.5), speed: 0, stars: 200, sun, physical: true, fog: true, env: true });
-  const opts = { seed: +(Q.get('seed') || 7), blocks: 6, style: 'downtown', sky };
+  const opts = { seed: +(Q.get('seed') || 7), blocks: 6, style: Q.get('style') || 'downtown', sky };
   if (Q.has('old')) Object.assign(opts, { fleet: false, crowd: false, parked: false });
   await gs.city.City.ready?.(opts); if (!Q.has('old')) await gs.city.Wanted.ready();
   const city = new gs.city.City(v, opts);
@@ -31,7 +33,7 @@ try {
   const law = new gs.city.Wanted(city, null);
   city.warm?.();
   const info = [], T = city.cars, P = city.plan, R = gs.math.rng(5);
-  const counts = {}; for (const k of ['stars', 'seen', 'lost', 'busted', 'escaped', 'call', 'block']) law.on(k, () => { counts[k] = (counts[k] || 0) + 1; });
+  const counts = {}; for (const k of ['stars', 'seen', 'lost', 'busted', 'escaped', 'call', 'block', 'shot', 'heli', 'boat', 'officer down', 'heli down']) law.on(k, () => { counts[k] = (counts[k] || 0) + 1; });
   // the player: a car driven along routes from corner to corner of the city, at a chase's speed
   const me = { x: 0, z: 0, heading: 0, v: 0, car: true };
   const start = city.spot('street', { rnd: R }); Object.assign(me, { x: start.x, z: start.z, heading: start.heading });
@@ -44,7 +46,8 @@ try {
     const want = dh > .5 ? 7 : speed; me.v += Math.max(-9 * dt, Math.min(5 * dt, want - me.v)); along += me.v * dt;
     const p = route.path.at(along), q = route.path.at(along + 2); me.x = p.x; me.z = p.z; me.heading = Math.atan2(q.x - p.x, q.z - p.z);
   };
-  const step = dt => { drive(dt); city.avoid(me, 1.2); city.update(dt, me); phys?.step(dt); law.update(dt, me); sky.update(dt); };
+  let afoot = false, myBoat = null;
+  const step = dt => { if (myBoat) myBoat.step(dt); else if (!afoot) drive(dt); city.avoid(me, 1.2); city.update(dt, me); phys?.step(dt); law.update(dt, me); sky.update(dt); };
   const H = window.__hd.info, shoot = async (name, at, look, n = 4) => {
     v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix(); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld(); sun.follow(at[0], 0, at[2]); v.cut?.();
     for (let i = 0; i < n; i++) { step(1 / 60); v.cam.position.set(...at); v.cam.lookAt(...look); v.cam.updateMatrixWorld(); H.shCalls = 0; v.render(cx, cw, ch); await frame(); }
@@ -54,11 +57,50 @@ try {
   const behind = (c, back = 9, up = 3.5) => { const fx = Math.sin(c.heading), fz = Math.cos(c.heading); return [[c.x - fx * back, up, c.z - fz * back], [c.x + fx * 6, 1, c.z + fz * 6]]; };
   // a few seconds of the city as it is, then the stars
   for (let i = 0; i < 90; i++) step(1 / 30);
+  const near = (list, f = q => q) => list.slice().sort((a, b) => Math.hypot(f(a).x - me.x, f(a).z - me.z) - Math.hypot(f(b).x - me.x, f(b).z - me.z))[0];
+  if (shots.includes('armed')) {
+    // on foot on the road (moving a little, so not caught at once), two stars: a car stops, its officers get out armed and fire
+    afoot = true; Object.assign(me, { car: false, v: 2.5 }); law.set(2); law.seenNow(me);
+    let t = 0; for (; t < 30 * 40 && !law.officers.some(o => o.armed && o.aim >= 1); t++) { step(1 / 30); if (t % 60 === 0) law.seenNow(me); }
+    for (let i = 0; i < 45; i++) { step(1 / 30); if (Q.has('trace') && i % 9 === 0) info.push('officers: ' + law.officers.map(q => `${Math.hypot(q.x - me.x, q.z - me.z).toFixed(1)}m ${q.order?.do}/${q.order?.role} aim ${(q.aim || 0).toFixed(1)} sees ${q.sees} hp ${q.health?.hp} wield ${q.wield?.how}`).join(' | ')); }
+    const o = near(law.officers.filter(q => q.armed)) || me, fx = o.x - me.x, fz = o.z - me.z, l = Math.hypot(fx, fz) || 1;
+    await shoot('armed', [me.x - fx / l * 3 + fz / l * 1.6, 2.1, me.z - fz / l * 3 - fx / l * 1.6], [o.x, 1.2, o.z], 3);
+    const hit = o !== me ? law.shoot({ x: me.x, y: 1.3, z: me.z }, { x: fx / l, y: 0, z: fz / l }, { damage: 30 }) : null;
+    info.push(`armed: ${law.officers.filter(q => q.armed).length} armed officers (${law.officers.map(q => q.kind || '-')}) after ${(t / 30).toFixed(0)} s, ${counts.shot || 0} shots at the player; the player's shot hit ${hit ? hit.kind + (hit.head ? ' (head)' : '') + ', hp ' + hit.target.health?.hp : 'nothing'}`);
+    law.set(0); afoot = false; me.car = true; for (let i = 0; i < 60; i++) step(1 / 30);
+  }
+  if (shots.includes('heli')) {
+    // three stars: the helicopter comes and sits over the player (its searchlight on them at night)
+    const plist = () => [...(gs.hd.bakeRenderer?.()?.info?.programs || [])].map(p => (p.name || '?') + '#' + (p.cacheKey || '')), progs = () => GPU ? null : plist().length, p0 = progs(), n0 = plist();
+    law.set(3); law.seenNow(me);
+    for (let i = 0; i < 30 * 20 && !(law.heli && law.heli.arrived); i++) step(1 / 30);
+    for (let i = 0; i < 30 * 6; i++) step(1 / 30);
+    const h = law.heli, q = h ? h.craft.pos : { x: me.x, y: 30, z: me.z }, fx = Math.sin(me.heading), fz = Math.cos(me.heading);
+    await shoot('heli', [me.x - fx * 26 + fz * 14, 18, me.z - fz * 26 - fx * 14], [(q.x + me.x) / 2, q.y * .55, (q.z + me.z) / 2], 4);
+    info.push(`heli: ${h ? `${Math.hypot(q.x - me.x, q.z - me.z).toFixed(0)} m off, ${q.y.toFixed(0)} m up, tactic ${h.tactic}, sees ${law.force.sees(me)}, light ${law.force.lamp.i.toFixed(0)}` : 'none'}${p0 != null ? `, shaders before ${p0} after ${progs()} (new: ${plist().filter(n => !n0.includes(n)).map(n => { const a = n.split(','); let best = null, bd = 1e9; for (const m of n0) { const b = m.split(','); if (b.length !== a.length) continue; let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; if (d < bd) { bd = d; best = b; } } return a[0].slice(0, 12) + ' differs at ' + (best ? a.map((x, i) => x !== best[i] ? i + ':' + JSON.stringify(best[i]) + '->' + JSON.stringify(x) : null).filter(Boolean).join(' ') : 'none'); }).join(' | ')})` : ''}`);
+    law.set(0); for (let i = 0; i < 60; i++) step(1 / 30);
+  }
+  if (shots.includes('boat')) {
+    // the player out on the harbour in a motor boat, three stars: police launches come after it
+    const z0 = P.bounds.z1 + 60, water = (x, z) => z > P.bounds.z1 + 12 ? -.6 : null;
+    law.force.waterOf.water = water;
+    const look = gs.models.vehicle('boat', { style: 'motor', seed: 3 }); v.scene.add(look);
+    const craft = new gs.craft.Boat({ height: (x, z) => water(x, z) ?? -Infinity }, { at: { x: (P.bounds.x0 + P.bounds.x1) / 2, z: z0 }, heading: Math.PI / 2, vehicle: look, power: 7, top: 12 });
+    let bt = 0; myBoat = { step: dt => { bt += dt; craft.update(dt, { throttle: .8, steer: Math.sin(bt * .4) * .5 }); Object.assign(me, { x: craft.x, z: craft.z, y: craft.y, heading: craft.heading, v: craft.speed, car: true, boat: true }); } };
+    for (let i = 0; i < 60; i++) step(1 / 30);
+    law.set(3); law.seenNow(me);
+    for (let i = 0; i < 30 * 30 && !law.boats.some(b => Math.hypot(b.craft.x - me.x, b.craft.z - me.z) < 30); i++) { step(1 / 30); if (i % 60 === 0) law.seenNow(me); }
+    const b = near(law.boats, q => q.craft), c = b ? b.craft : craft, fx = Math.sin(c.heading), fz = -Math.cos(c.heading);
+    await shoot('boat', [c.x - fx * 12 + fz * 6, 3.5, c.z - fz * 12 - fx * 6], [(c.x + me.x) / 2, .5, (c.z + me.z) / 2], 4);
+    info.push(`boat: ${law.boats.length} police launches, nearest ${b ? Math.hypot(b.craft.x - me.x, b.craft.z - me.z).toFixed(0) + ' m, tactic ' + b.tactic + ', lights ' + b.model.sirenOn : '-'}, ${counts.shot || 0} shots`);
+    law.set(0); myBoat = null;
+  }
   law.set(3); law.seenNow(me);
   const secs = +(Q.get('secs') || 24);
   let laneMax = 0;
   for (let i = 0; i < secs * 30; i++) {
-    step(1 / 30); if (i % 15 === 0) { v.cam.position.set(me.x, 30, me.z - 20); v.cam.lookAt(me.x, 0, me.z); }
+    step(1 / 30);
+    if (Q.has('trace') && law.heli && i % 30 === 0) { const h = law.heli; info.push(`heli ${h.craft.pos.x.toFixed(0)},${h.craft.pos.y.toFixed(0)},${h.craft.pos.z.toFixed(0)} hp ${h.model.health.toFixed(2)} eng ${h.model.engine.toFixed(2)} down ${h.down} crashed ${h.craft.crashed} ground ${h.craft.onGround} ${h.tactic}`); } if (i % 15 === 0) { v.cam.position.set(me.x, 30, me.z - 20); v.cam.lookAt(me.x, 0, me.z); }
     if (Q.has('trace') && i % 60 === 0) info.push(`${(i / 30).toFixed(0)}s me ${me.v.toFixed(0)} m/s seen ${law.seen} know ${law.know.toFixed(1)} | ` + law.units.map(u => `${Math.hypot(u.car.x - me.x, u.car.z - me.z).toFixed(0)}m ${u.car.mode}/${u.car.chase?.how} ${u.car.v.toFixed(0)}m/s sees ${u.car.chase?.sees} ${u.tactic} rev ${(u.car.chase?.rev || 0).toFixed(1)} ${Math.abs(u.car.v) < 2 ? T.near(u.car, 9).filter(o => o !== u.car).map(o => o.mode + ':' + (o.why || '') + ':' + o.v.toFixed(0)).join(',') : ''}`).join(' | '));
   }
   const tactic = () => law.units.map(u => u.tactic).join(',');

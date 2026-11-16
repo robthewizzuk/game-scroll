@@ -12,16 +12,16 @@ once outside `draw()` saves even that, worth it only for a lot of icons a frame)
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`IconsPart`, line 708), where every option and field is described.
+From `src/gamescroll.d.ts` (`IconsPart`, line 711), where every option and field is described.
 
-- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:715)
-- `readonly names: readonly string[]` Every icon's name, a to z. (:717)
-- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:719)
-- `has(name: string): boolean` (:720)
-- `find(text: string): string[]` Icons whose name has this text in it. (:722)
-- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:724)
-- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:726)
-- `remembered(): number` How many drawn icons are remembered right now. (:728)
+- `icon(c: Ctx, name: string, x: number, y: number, size?: number, o?: { color?: string; outline?: string | null; width?: number; angle?: number; alpha?: number; flip?: b…` Draws an icon centred on (x, y), `size` game units across. (:718)
+- `readonly names: readonly string[]` Every icon's name, a to z. (:720)
+- `readonly words: Readonly<Record<string, string>>` The plain words that also work, and the icon each is: { sword: 'broadsword', ... (:722)
+- `has(name: string): boolean` (:723)
+- `find(text: string): string[]` Icons whose name has this text in it. (:725)
+- `path(name: string): Path2D | null` The icon as a Path2D on a 512 by 512 grid (to fill, stroke or clip with yourself), or null. (:727)
+- `data(name: string): string | null` The icon's SVG path data on a 512 by 512 grid, or null. (:729)
+- `remembered(): number` How many drawn icons are remembered right now. (:731)
 
 ## From the maker kit
 
@@ -59,7 +59,7 @@ icon(c, 'key', x, y, 16, { pixel: true, color: PAL[3] });           // hard pixe
 
 ## In real games
 
-13 games use it (`node scripts/examples.mjs gs.icons` lists them). The shortest:
+20 games use it (`node scripts/examples.mjs gs.icons` lists them). The shortest:
 
 `src/games/colour-word.js` (Colour Word Trap, Casual · Brain, 63 lines):
 

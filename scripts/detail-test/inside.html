@@ -5,7 +5,7 @@
 // to a door: shut while the room behind is not made, the room made a piece a frame as they come near, the door swinging
 // open, then in through it (city.collide keeps them to the doorway and the room's walls and furniture) to the counter.
 // Pictures from the street, through the open door, and from inside looking back out through the door and windows.
-//   ?gpu  ?tier=2  ?w=240&h=320  ?kinds=store,diner  ?night
+//   ?gpu  ?tier=2  ?w=240&h=320  ?kinds=store,diner  ?night  ?folk (the city's sculpted people: a keeper and patrons in each room)
 import gs, { loadParts } from '../../src/gamescroll.js';
 import { setGpuPick, prepareGPU } from '../../src/kit/gpu.js';
 const Q = new URLSearchParams(location.search), GPU = Q.has('gpu');
@@ -27,13 +27,16 @@ const shot = async name => { for (let i = 0; i < (GPU ? 4 : 1); i++) { draw(); a
 const look = (from, to, y = 1.6) => { v.cam.position.set(from.x, y, from.z); v.cam.lookAt(to.x, to.ty ?? y - .1, to.z); v.cam.updateMatrixWorld(); sun.follow?.(from.x, 0, from.z); };
 try {
   const { City, Interiors, roomKind } = gs.city;
-  const city = new City(v, { seed: 31, blocks: 3, style: 'downtown', traffic: .2, people: 0, crowd: false, sound: false, far: false, keep: Infinity, night: Q.has('night') ? 1 : 0 });
+  const opts = { seed: 31, blocks: 3, style: 'downtown', traffic: .2, people: Q.has('folk') ? .3 : 0, crowd: Q.has('folk'), sound: false, far: false, keep: Infinity, night: Q.has('night') ? 1 : 0 };
+  if (Q.has('folk')) await City.ready?.(opts);
+  const city = new City(v, opts);
   city.warm();
   const want = (Q.get('kinds') || 'store,diner,bar,lobby').split(','), picked = new Map();
   // a building for each kind wanted: shops for the shop kinds, the others by their own kind; the nearest the city's middle first
   const mid = { x: 0, z: 0 }, list = city.plan.buildings.filter(b => b.doorway).sort((a, b) => Math.hypot(a.doorway.x - mid.x, a.doorway.z - mid.z) - Math.hypot(b.doorway.x - mid.x, b.doorway.z - mid.z));
   for (const k of want) { const b = list.find(b => !picked.has(b.id) && (['store', 'diner', 'bar'].includes(k) ? b.shops : roomKind(b) === k || k === 'lobby' && !b.shops)); if (b) picked.set(b.id, k); }
-  const inside = new Interiors(city, { kinds: b => picked.get(b.id) || null });
+  const seen = { enter: 0, leave: 0, made: 0 };
+  const inside = new Interiors(city, { kinds: b => picked.get(b.id) || null, onEnter: () => seen.enter++, onLeave: () => seen.leave++ }).on('made', () => seen.made++);
   for (let i = 0; i < 3; i++) { city.update(1 / 30, city.start); inside.update(1 / 30, city.start); draw(); await frame(); }
   info.city = { buildings: city.plan.buildings.length, doors: city.doors.state.size, picked: [...picked.values()] };
   check('every building has its door', city.doors.state.size === city.plan.buildings.length, city.doors.state.size);
@@ -50,6 +53,10 @@ try {
     const room = b.room;
     check(kind + ': the room behind is made as the walker comes up to the door', !!room && room.kind === kind, room?.kind);
     check(kind + ': the door opens for them', city.doors.open(b) === 1, city.doors.open(b));
+    if (Q.has('folk')) {
+      check(kind + ': people in it, its keeper behind the counter', room.people?.length >= 1 && (kind === 'home' || room.keeper && Math.hypot(room.keeper.body.position.x - room.spots.keeper.x, room.keeper.body.position.z - room.spots.keeper.z) < .5), room.people?.length);
+      check(kind + ': everyone in it is on its floor', room.people.every(q => room.inside({ x: q.body.position.x, z: q.body.position.z })));
+    }
     look(P(1.2, 4), P(0, -3), 1.65); await shot(kind + '-2-open');
     // in, and across to the counter (the doorway and the room's walls and furniture hold them to the floor)
     const target = room.spots.counter; frames = 0; let into = null;
@@ -64,6 +71,7 @@ try {
     for (const to of [room.spots.door, P(0, -.2), P(0, 6)]) for (let i = 0; i < 300 && Math.hypot(walker.x - to.x, walker.z - to.z) > .35; i++) step(to);
     for (let i = 0; i < 90; i++) step(walker);
     check(kind + ': out again, and the door shut behind them', !inside.room && city.doors.open(b) === 0, city.doors.open(b));
+    check(kind + ': enter and leave said', seen.enter >= 1 && seen.leave >= 1 && seen.made >= 1, JSON.stringify(seen));
     info[kind] = { boxes: room.boxes.length, pieces: room.pieces.length, lamps: room.lamps.length, seats: room.spots.seats.length, size: [+(room.x1 - room.x0).toFixed(1), +(room.z1 - room.z0).toFixed(1)] };
   }
   // a shut door holds: walking straight at one with no room made behind it gets nobody in

@@ -8,14 +8,14 @@ A word dictionary, word comparison, letter bags, scoring.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`WordsPart`, line 5404), where every option and field is described.
+From `src/gamescroll.d.ts` (`WordsPart`, line 5446), where every option and field is described.
 
-- `Words: new () => { readonly size: number; has(w: string): boolean; safe(w: string): boolean; of(len: number): string[]; random(o?: { length?: number | null; min?: numb…` The dictionary (loads on first use: make it in make() or reset()). (:5406)
-- `compare(guess: string, answer: string): ('hit' | 'near' | 'miss')[]` (:5413)
-- `LETTERS: Record<string, number>` (:5414)
-- `VALUES: Record<string, number>` (:5414)
-- `score(word: string, o?: { values?: Record<string, number>; mult?: number }): number` (:5415)
-- `Bag: new (o?: { size?: number; blanks?: number; seed?: number | string | null; letters?: Record<string, number> }) => { tiles: string[]; readonly left: number; shuffle…` (:5416)
+- `Words: new () => { readonly size: number; has(w: string): boolean; safe(w: string): boolean; of(len: number): string[]; random(o?: { length?: number | null; min?: numb…` The dictionary (loads on first use: make it in make() or reset()). (:5448)
+- `compare(guess: string, answer: string): ('hit' | 'near' | 'miss')[]` (:5455)
+- `LETTERS: Record<string, number>` (:5456)
+- `VALUES: Record<string, number>` (:5456)
+- `score(word: string, o?: { values?: Record<string, number>; mult?: number }): number` (:5457)
+- `Bag: new (o?: { size?: number; blanks?: number; seed?: number | string | null; letters?: Record<string, number> }) => { tiles: string[]; readonly left: number; shuffle…` (:5458)
 
 ## From the maker kit
 

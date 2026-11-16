@@ -17,6 +17,10 @@
 //   law.stars (0..5), law.seen, law.search ({ x, z, r }: where they are looking), law.left (seconds until you are clear),
 //   law.busting (0..1: how close to being caught), law.units ([{ car, officers, tactic }]: to draw on a map)
 //
+// From two stars its officers are armed (a gs.tactics Squad with a Tiny Brains coach), from three a helicopter comes,
+// and on the water police launches do (city-force.js): law.on('shot', s => ...) says when they fire at the player,
+// law.shoot(from, dir, { damage }) is the player shooting back, law.heli and law.boats are out, law.brains are its minds.
+//
 // The kit gives answers; the game draws the stars and decides what being caught means.
 
 import { Brain, Wave, Predict } from './brains.js';
@@ -24,6 +28,7 @@ import { human } from './models/human.js';
 import { Reactions } from './reactions.js';
 import { addMoves } from './city-life.js';
 import { phoneClass } from './speed.js';
+import { Force, shootAt } from './city-force.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 /** How bad each crime is, in heat (a star at 1, 4, 9, 16 and 26). */
@@ -41,9 +46,11 @@ export class Wanted {
   /**
    * city: a gs.city City; api: the game's (the brains keep what they learn in its brain slot). Options: max (most
    * stars, 5), cars (most police cars at once; by the phone's speed), officers (true: officers get out on foot,
-   * Next Gen views), brains (true: the tactics learn; false: the rules alone), sight (metres a police car sees by day, 70).
+   * Next Gen views), brains (true: the tactics learn; false: the rules alone), sight (metres a police car sees by day, 70),
+   * armed (officers carry guns from two stars, true), air (a helicopter from three stars, true), water (police launches
+   * when the player is on the water, true): city-force.js.
    */
-  constructor(city, api = null, { max = 5, cars = null, officers = !!city.view.placeLamps, brains = true, sight = 70 } = {}) {
+  constructor(city, api = null, { max = 5, cars = null, officers = !!city.view.placeLamps, brains = true, sight = 70, armed = true, air = true, water = true } = {}) {
     this.city = city; this.api = api; this.max = max; this.sight = sight;
     this.maxCars = cars ?? { top: 6, mid: 5, low: 3 }[phoneClass()] ?? 5;
     this.handlers = {};
@@ -55,6 +62,7 @@ export class Wanted {
     if (officers) { human.need(COPS); this.cops = COPS.map(o => { const h = human(o); addMoves(h.rig); return h; }); }
     city.cars.lightBars();   // (made now, so their shaders are built with the rest)
     this.units = []; this.officers = [];
+    this.force = new Force(this, { armed, air, water, brains });   // (armed officers, the helicopter, the boats)
     this.reset();
   }
   /** Resolves when the officers are sculpted (tools and tests; a game's make() is made again by the app once they are). */
@@ -63,6 +71,7 @@ export class Wanted {
   reset() {
     for (const u of this.units.splice(0)) this.dismiss(u, true);
     for (const o of this.officers.splice(0)) o.body.removeFromParent();
+    this.force?.reset();
     Object.assign(this, { heat: 0, stars: 0, know: 0, seen: false, lost: 0, left: 0, lastSeen: null, search: null, busting: 0, chaseT: 0, spawnT: 0, lookT: 0, edge: null, speedT: 0, tipT: 0, calls: [], t: 0, wasStars: 0 });
     return this;
   }
@@ -156,6 +165,7 @@ export class Wanted {
     this.dispatch(dt);
     for (const u of [...this.units]) this.drive(u, dt);
     this.foot(dt);
+    this.force?.update(dt, player);
     this.arrest(dt);
     this.sirens(dt);
     this.wasStars = this.stars;
@@ -172,6 +182,7 @@ export class Wanted {
       if (d < 4 || !city.ray({ x: c.x, y: 1.3, z: c.z }, { x: dx, y: 0, z: dz }, d)) return true;
     }
     for (const o of this.officers) { const dx = p.x - o.x, dz = pz - o.z, d = Math.hypot(dx, dz); if (d < 35 && (d < 3 || !city.ray({ x: o.x, y: 1.6, z: o.z }, { x: dx, y: -.4, z: dz }, d))) return true; }
+    if (this.force?.sees(p)) return true;   // (the helicopter over you, a boat on the water)
     return false;
   }
   // which way the player turns at junctions (in a car, while wanted): a Predict of left / straight / right
@@ -358,6 +369,7 @@ export class Wanted {
         for (let i = 0; i < n; i++) { const o = this.officer(c, i); if (o) { u.officers.push(o); this.officers.push(o); } }
       }
       for (const o of u.officers) {
+        if (this.force?.takes(o, u, dt)) continue;   // (armed: the squad moves them, city-force.js)
         const back = !this.stars || (me.car && me.v > 6 && dist(me, c) > 22) || dist(me, c) > 45;
         o.inCar = false;
         if (o.react.busy) { o.x = o.body.position.x; o.z = o.body.position.z; o.react.update(dt); continue; }
@@ -385,8 +397,26 @@ export class Wanted {
     const body = src.twin(); addMoves(body.rig); this.city.group.add(body);
     const sk = this.city.cars.sideK, h = c.heading, side = i ? -1 : 1, lx = Math.cos(h) * sk * side, lz = -Math.sin(h) * sk * side, w = c.wid / 2 + .45;
     const x = c.x + lx * w, z = c.z + lz * w; body.position.set(x, 0, z); body.rotation.y = h;
-    return { body, react: new Reactions(body, { steady: 1.3 }), x, z, heading: h, speed: 0, inCar: false, gone: false, move: null, cop: true, unit: c };
+    const o = { body, react: new Reactions(body, { steady: 1.3 }), x, z, heading: h, speed: 0, inCar: false, gone: false, move: null, cop: true, unit: c };
+    return this.force ? this.force.arm(o) : o;
   }
+
+  /* ---------- guns, the helicopter and the boats (city-force.js) ---------- */
+
+  /**
+   * The player's shot (from: the muzzle, dir: the way it goes, in the world) against the police who are out: an
+   * officer (a head shot hurts twice), the helicopter or a boat. What it hits is hurt and it is a crime against the
+   * police ('cop'). Returns { kind: 'officer' | 'helicopter' | 'boat', target, point, d, head } or null.
+   */
+  shoot(from, dir, { damage = 22, range = 120 } = {}) { return this.force ? shootAt(this.force, from, dir, { damage, range }) : null; }
+  /** Hurts an officer by the game's own rules (a blast, a punch): damage, where (at) and from where it came. */
+  hitOfficer(o, damage, at = null, from = null) { this.force?.hurt(o, damage, at, from); return this; }
+  /** The police helicopter while it is out ({ model, craft (a gs.craft Hover), tactic, down }), or null. */
+  get heli() { return this.force?.heli || null; }
+  /** The police launches out on the water ([{ model, craft (a gs.craft Boat), tactic, down }]). */
+  get boats() { return this.force?.boats || []; }
+  /** Its Tiny Brains, to look at, save or forget: cars (the police cars' tactics), turns (which way this player turns), support (the helicopter's and boats'), squad (the armed officers' coach). */
+  get brains() { return { cars: this.brain, turns: this.turns, support: this.force?.brain || null, squad: this.force?.coach || null }; }
 
   /* ---------- caught, or away ---------- */
 
@@ -412,6 +442,7 @@ export class Wanted {
   clearAll() {
     this.heat = 0; this.restar(); this.seen = false; this.know = 0; this.lost = 0; this.search = null; this.lastSeen = null; this.busting = 0; this.chaseT = 0; this.left = 0;
     for (const u of this.units.splice(0)) this.dismiss(u);
+    this.force?.clear();
   }
 
   /* ---------- sirens and lights ---------- */

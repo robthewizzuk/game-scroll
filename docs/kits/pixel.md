@@ -15,13 +15,13 @@ Anything else is drawn as `?`; `node scripts/game-lint.mjs <id>` names any lette
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PixelPart`, line 587), where every option and field is described.
+From `src/gamescroll.d.ts` (`PixelPart`, line 590), where every option and field is described.
 
-- `text(c: Ctx, str: string, x: number, y: number, o?: { size?: number; font?: PixelFontName; align?: 'left' | 'center' | 'right'; color?: string; outline?: string | null…` Crisp pixel text with its top-left at x, y; returns the width drawn. (:593)
-- `measure(str: string, font?: PixelFontName): { w: number; h: number }` Width and height in pixels at size 1. (:595)
-- `sprite(art: string | string[], palette: Record<string, string> | string[]): Loose` (:596)
-- `anim(frames: (string | string[])[], palette: Record<string, string> | string[], fps?: number): Loose` (:597)
-- `tiles(art: Loose, palette: Loose, tw: number, th: number): Loose` (:598)
+- `text(c: Ctx, str: string, x: number, y: number, o?: { size?: number; font?: PixelFontName; align?: 'left' | 'center' | 'right'; color?: string; outline?: string | null…` Crisp pixel text with its top-left at x, y; returns the width drawn. (:596)
+- `measure(str: string, font?: PixelFontName): { w: number; h: number }` Width and height in pixels at size 1. (:598)
+- `sprite(art: string | string[], palette: Record<string, string> | string[]): Loose` (:599)
+- `anim(frames: (string | string[])[], palette: Record<string, string> | string[], fps?: number): Loose` (:600)
+- `tiles(art: Loose, palette: Loose, tw: number, th: number): Loose` (:601)
 
 ## From the maker kit
 
@@ -68,7 +68,17 @@ a palette colour you pass. Call `ready.go()` from a tilt or a shout to start the
 
 ## In real games
 
-61 games use it (`node scripts/examples.mjs gs.pixel` lists them). The shortest:
+71 games use it (`node scripts/examples.mjs gs.pixel` lists them). The shortest:
+
+`src/games/quiet-ninja.js` (Quiet Ninja, Pocket · Mic, 78 lines):
+
+```js
+const { Feel } = gs.effects;
+const { text } = gs.pixel;
+// …
+        if (g.wake > 0 && !awake) { c.fillStyle = P[0]; c.fillRect(gx - 6, FLOOR - 36, 12, 2); c.fillStyle = P[3]; c.fillRect(gx - 6, FLOOR - 36, Math
+        if (awake) { c.fillStyle = P[0]; c.font = '8px "Press Start 2P", monospace'; text(c, '!', gx - 2, FLOOR - 32 - 8, { color: P[0], font: 'big' }
+```
 
 `src/games/sprint-feet.js` (Sprint Feet, Advance · Sport, 88 lines):
 
@@ -82,17 +92,4 @@ const { text } = gs.pixel;
       if (phase === 'set') text(c, cd > 1.2 ? 'ON YOUR MARKS' : 'GET SET', W / 2, 74, { font: 'big', align: 'center', color: '#f8f8f0', outline: '#202
       if (ml > 0) text(c, msg, W / 2, 74, { font: 'big', align: 'center', color: '#f8d038', outline: '#202028' });
       if (heat === 1 && phase !== 'done' && t < 6) text(c, 'TAP LEFT, RIGHT, LEFT...', W / 2, H - 54, { align: 'center', color: '#f8f8f0', outline: '#
-```
-
-`src/games/laser-dodge.js` (Laser Dodge, Pocket · Dodge, 94 lines):
-
-```js
-const { PAL } = gs.palettes;
-const { text } = gs.pixel;
-// …
-      c.fillStyle = R[3]; c.fillRect(0, 0, 36, 11); c.fillRect(W - 24, 0, 24, 11);
-      text(c, `${score}`, 4, 3, { color: R[0] });
-// …
-      for (let i = 0; i < lives; i++) { c.fillStyle = R[0]; c.fillRect(W - 8 - i * 6, 3, 4, 4); }
-      if (t < 3) text(c, 'DRAG TO MOVE', W / 2, H - 12, { align: 'center', color: R[0] });
 ```

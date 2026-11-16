@@ -8,18 +8,18 @@ Card decks, totals, groups, poker hands, winners, stacks.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CardsPart`, line 5377), where every option and field is described.
+From `src/gamescroll.d.ts` (`CardsPart`, line 5419), where every option and field is described.
 
-- `SUITS: string[]` (:5378)
-- `SUIT_SIGN: Record<string, string>` (:5378)
-- `card(suit: string, rank: number): Card` (:5379)
-- `Deck: new (o?: { suits?: string[]; ranks?: number[]; jokers?: number; decks?: number; seed?: number | null; cards?: Card[] | null }) => { cards: Card[]; discards: Card…` (:5380)
-- `sort(cards: Card[], o?: { by?: 'suit' | 'rank'; aceHigh?: boolean; suits?: string[] }): Card[]` (:5385)
-- `total(cards: Card[], o?: { face?: number; limit?: number; aceHigh?: number }): { total: number; soft: boolean; bust: boolean }` (:5386)
-- `groups(cards: Card[], o?: { min?: number; aceHigh?: boolean }): { sets: Card[][]; runs: Card[][] }` (:5387)
-- `poker(cards: Card[]): { name: string; describe: string; rank: number; cards: Card[]; solved: Loose }` (:5388)
-- `winners(hands: Card[][]): number[]` (:5389)
-- `stacks(a: Card, b: Card | null, o?: { down?: boolean; alternate?: boolean; sameSuit?: boolean }): boolean` (:5390)
+- `SUITS: string[]` (:5420)
+- `SUIT_SIGN: Record<string, string>` (:5420)
+- `card(suit: string, rank: number): Card` (:5421)
+- `Deck: new (o?: { suits?: string[]; ranks?: number[]; jokers?: number; decks?: number; seed?: number | null; cards?: Card[] | null }) => { cards: Card[]; discards: Card…` (:5422)
+- `sort(cards: Card[], o?: { by?: 'suit' | 'rank'; aceHigh?: boolean; suits?: string[] }): Card[]` (:5427)
+- `total(cards: Card[], o?: { face?: number; limit?: number; aceHigh?: number }): { total: number; soft: boolean; bust: boolean }` (:5428)
+- `groups(cards: Card[], o?: { min?: number; aceHigh?: boolean }): { sets: Card[][]; runs: Card[][] }` (:5429)
+- `poker(cards: Card[]): { name: string; describe: string; rank: number; cards: Card[]; solved: Loose }` (:5430)
+- `winners(hands: Card[][]): number[]` (:5431)
+- `stacks(a: Card, b: Card | null, o?: { down?: boolean; alternate?: boolean; sameSuit?: boolean }): boolean` (:5432)
 
 ## From the maker kit
 
@@ -33,7 +33,23 @@ your style. No real-money gambling.
 
 ## In real games
 
-1 game uses it (`node scripts/examples.mjs gs.cards` lists them). The shortest:
+3 games use it (`node scripts/examples.mjs gs.cards` lists them). The shortest:
+
+`src/games/higher-lower.js` (Higher or Lower, Casual · Cards, 76 lines):
+
+```js
+const { icon } = gs.icons;
+const { Deck } = gs.cards;
+// …
+  const feel = new Feel({ sound: false, buzz: false });   // the game has its own sounds and buzzes
+  const deck = new Deck();   // 52 cards, ace low
+// …
+  let cur, prev, pot, bank, run, t, msg, flip, streak;
+  function draw1() { if (deck.empty) deck.reset(); return deck.top(); }
+// …
+  return {
+    reset() { deck.reset(); bank = 0; run = 0; t = 0; msg = null; flip = 0; next = false; lastRun = false; feel.clear(); newRun(); },
+```
 
 `src/games/sevens-cards.js` (Sevens, Casual · Cards, 110 lines):
 

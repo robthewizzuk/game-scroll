@@ -8,12 +8,12 @@ Guesses what a player drew among 200 things, and learns their way of drawing.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DoodlePart`, line 5470), where every option and field is described.
+From `src/gamescroll.d.ts` (`DoodlePart`, line 5512), where every option and field is described.
 
-- `Doodle: { /** new Doodle(): the model alone. new Doodle(api, { name }): what learn() is shown is kept on the phone with the game's brains (name: 'doodle'; save: false:…` Make it in make() or reset() (the model loads first). (:5472)
-- `picture(strokes: Loose[], size?: number): Float32Array` The strokes drawn into a 28 x 28 picture (0..1), the way the model sees them. (:5489)
-- `scores(img: Float32Array, model: Loose): Float32Array` (:5490)
-- `features(img: Float32Array, model: Loose): Float32Array` What the network makes of a picture just before it names it (its last hidden layer). (:5492)
+- `Doodle: { /** new Doodle(): the model alone. new Doodle(api, { name }): what learn() is shown is kept on the phone with the game's brains (name: 'doodle'; save: false:…` Make it in make() or reset() (the model loads first). (:5514)
+- `picture(strokes: Loose[], size?: number): Float32Array` The strokes drawn into a 28 x 28 picture (0..1), the way the model sees them. (:5531)
+- `scores(img: Float32Array, model: Loose): Float32Array` (:5532)
+- `features(img: Float32Array, model: Loose): Float32Array` What the network makes of a picture just before it names it (its last hidden layer). (:5534)
 
 ## From the maker kit
 

@@ -17,14 +17,25 @@
 // stand for the ground storey while they are in it or in its doorway), and with a World3D its walls and furniture are
 // bodies, and the door stops being solid while it is open (city.solid). Its ceiling lamps light it by day and by
 // night through the city's lamps. The plan of a room is plain numbers (roomPlan), the same every time for a building.
+//
+// On a Next Gen view (a city with sculpted people) a room has people in it as it is made: the one who works there at
+// room.spots.keeper (room.keeper) and a customer or two on its seats and at its tables (room.people, the keeper first),
+// each { body (a gs.models.human), react (gs.characters Reactions), role: 'keeper' | 'customer' | 'home', spot }:
+// the keeper looks up and talks as the player comes to the counter, the rest sit or stand about, ready for gs.story's
+// Talk or a mission. They go with the room. inside.on('enter' | 'leave' | 'made', room => ...) (or onEnter / onLeave).
 // Kit file: games reach it as gs.city.Interiors.
-import { Group, Mesh, MeshStandardMaterial, Color } from 'three';
+import { Group, Mesh, MeshStandardMaterial, Color, Vector3 } from 'three';
 import { Quads, FACADES, KERB } from './city.js';
 import { DOOR_DEEP } from './city-doors.js';
 import { Regions } from './regions.js';
 import { material } from './models/materials.js';
 import { rng } from './math.js';
 import { linksFor, linked } from './links.js';
+import { addMoves } from './city-life.js';
+import { Reactions } from './reactions.js';
+import { phoneClass } from './speed.js';
+/** How many patrons a room has at most (besides its keeper), by the phone's speed. */
+export const ROOM_PEOPLE = { top: 3, mid: 2, low: 1 };
 
 /** The kinds of room, and how big each can be across (along the street) and deep: metres. */
 export const INSIDE_KINDS = { store: [12, 10], diner: [13, 10], bar: [12, 11], home: [8.5, 7], lobby: [12, 9], warehouse: [18, 14] };
@@ -350,10 +361,15 @@ export class Interiors {
    * out; false for none). reach: how near a door the player comes before the room behind it is made (metres). kinds:
    * which room is behind a door, b => a INSIDE_KINDS name, or null for a door that stays shut (default roomKind). auto: the
    * doors open by themselves as the player comes to them once the room is made (false: the game opens them, city.door(b, 1)).
-   * budget: milliseconds a frame for making a room.
+   * budget: milliseconds a frame for making a room. people: a keeper and customers in each room (true on a city with
+   * sculpted people: Next Gen views; false for empty rooms; a number: the most in a room). onEnter, onLeave: (room) => ...
+   * as the player comes in and goes out (the same as on('enter' | 'leave')).
    */
-  constructor(city, { world = null, reach = 22, kinds = null, auto = true, budget = 2, seed = 0, link = true } = {}) {
+  constructor(city, { world = null, reach = 22, kinds = null, auto = true, budget = 2, seed = 0, link = true, people = true, onEnter = null, onLeave = null } = {}) {
     this.city = city; this.view = city.view; this.reach = reach; this.kindOf = kinds || roomKind; this.auto = auto; this.seed = seed;
+    this.handlers = {}; if (onEnter) this.on('enter', onEnter); if (onLeave) this.on('leave', onLeave);
+    this.folk = people ? (city.people?.folk || this.cities().find(c => c.people?.folk)?.people.folk || null) : null;   // (the city's own sculpted people: their shaders are built already)
+    this.most = typeof people === 'number' ? people : ROOM_PEOPLE[phoneClass()] ?? 2;
     world = linked(world, linksFor(this.view, link), 'world');
     this.world = world || null;
     this.regions = new Regions(this.view, { world: world || false, budget, keep: 2, link: false });
@@ -416,9 +432,53 @@ export class Interiors {
       }
       const room = { ...plan, name, city, building: b, door: b.doorway, live: true, shut: true, group: g, inside: p => { const x = p.x, z = p.z ?? p.y; return x >= room.x0 && x <= room.x1 && z >= room.z0 && z <= room.z1; }, free: (x, z, rr) => roomFree(room, x, z, rr) };
       b.room = room; me.rooms.set(name, room);
-      r.on(() => { if (b.room === room) b.room = null; room.live = false; me.rooms.delete(name); city.door(b, 0); if (me.room === room) { me.room = null; me.left = true; } });
+      me.populate(room); yield;
+      r.on(() => { if (b.room === room) b.room = null; room.live = false; me.rooms.delete(name); city.door(b, 0); for (const q of room.people) q.body.removeFromParent(); room.people.length = 0; room.keeper = null; if (me.room === room) { me.room = null; me.left = true; } });
+      me.emit('made', room);
     });
     return name;
+  }
+  /** Listen: 'enter' (room: the player came in), 'leave' (room: went out), 'made' (room: made, its people in it). */
+  on(name, fn) { (this.handlers[name] ||= []).push(fn); return this; }
+  emit(name, ...a) { for (const f of this.handlers[name] || []) f(...a); }
+  // a room's people, from the city's own: its keeper at the counter (a home: whoever lives there, sitting), and customers on the seats or standing about
+  populate(room) {
+    room.people = []; room.keeper = null;
+    const folk = this.folk; if (!folk?.length || this.most <= 0) return room;
+    const R = rng((room.building.id + 1) * 131 + this.seed), S = room.spots, kind = room.kind, n = (S.keeper && kind !== 'home' ? 1 : 0) + Math.max(1, kind === 'home' ? 1 : this.most);   // (the keeper, and most patrons)
+    const place = (role, spot, seated) => {
+      const body = folk[(room.building.id * 7 + room.people.length * 3) % folk.length].twin(); addMoves(body.rig); room.group.add(body);
+      body.position.set(spot.x, spot.y, spot.z); body.rotation.y = spot.turn ?? 0;
+      const q = { body, react: new Reactions(body, { rest: 1.2 + R() }), role, spot, seated, move: null, look: R() * .5, t: R() * 3 };
+      body.rig.play(seated ? 'sit' : 'idle', { fade: 0 }); body.rig.update(0);
+      if (seated) {   // (hips on the cushion: the pose lowers them, so the body goes where that leaves them)
+        const hips = body.rig.parts?.hips; body.updateMatrixWorld(true);
+        if (hips) { const h = hips.getWorldPosition(new Vector3()); body.position.y += spot.y + .09 - h.y; }
+      } else body.position.y = room.y;
+      room.people.push(q); return q;
+    };
+    if (S.keeper && kind !== 'home') room.keeper = place('keeper', S.keeper, false);
+    const seats = [...S.seats].sort(() => R() - .5), stands = [...S.stand].sort(() => R() - .5);
+    while (room.people.length < n && (seats.length || stands.length)) {
+      const sit = seats.length && (!stands.length || R() < .7), spot = sit ? seats.shift() : stands.shift();
+      place(kind === 'home' ? 'home' : 'customer', spot, !!sit);
+    }
+    return room;
+  }
+  // each frame: the people of the rooms near the player; the keeper looks up and talks when the player comes to the counter
+  people(dt, p) {
+    for (const r of this.rooms.values()) {
+      if (!r.people?.length) continue;
+      const near = Math.hypot(r.door.x - p.x, r.door.z - p.z) < 26 || r === this.room; if (!near) continue;
+      for (const q of r.people) {
+        const B = q.body, d = Math.hypot(B.position.x - p.x, B.position.z - p.z);
+        if (q.react.busy) { q.react.update(dt); continue; }
+        const want = q.seated ? 'sit' : q.role === 'keeper' && r === this.room && d < 3.2 ? 'talk' : (q.t += dt) % 9 < 6 ? 'idle' : 'phone';
+        if (want !== q.move) { B.rig.play(want, { fade: .4 }); q.move = want; }
+        B.rig.update(dt, { speed: 0 }); q.react.update(dt);
+        if (B.face && (q.look -= dt) <= 0) { q.look = .5; B.face.look(d < 4 && r === this.room ? { x: p.x, y: (r.y || 0) + 1.6, z: p.z } : null); }
+      }
+    }
   }
   /** Once a frame, after the city's update: makes the room behind the nearest door, opens and shuts the doors, says where the player is. */
   update(dt, player) {
@@ -437,7 +497,8 @@ export class Interiors {
     }
     // where the player is, and the room's lamps for the city's lights while they are near it
     const now = this.at(p);
-    if (now !== was) { this.room = now; if (now) this.entered = true; if (was) this.left = true; }
+    if (now !== was) { this.room = now; if (now) this.entered = true; if (was) this.left = true; if (was) this.emit('leave', was); if (now) this.emit('enter', now); }
+    this.people(dt, p);
     const lit = []; for (const r of this.rooms.values()) if (Math.hypot(r.door.x - p.x, r.door.z - p.z) < 30) for (const l of r.lamps) lit.push(l);
     this.city.indoor = lit;
     return this;

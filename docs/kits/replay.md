@@ -8,18 +8,18 @@ Ghosts to race, and whole rounds recorded and played back.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ReplayPart`, line 1548), where every option and field is described.
+From `src/gamescroll.d.ts` (`ReplayPart`, line 1553), where every option and field is described.
 
-- `Ghost: typeof Ghost` (:1549)
-  - `constructor(o?: { every?: number })` (:1540)
-  - `time: number` (:1541)
-  - `readonly length: number` (:1541)
-  - `record(dt: number, ...values: number[]): this` (:1542)
-  - `at(t: number): { x: number; y: number; v: number[]; done: boolean } | null` (:1543)
-  - `pack(maxBytes?: number, precision?: number): string` A short string for api.save(). (:1545)
-  - `static unpack(s: string): Ghost` (:1546)
-- `Recorder: new (o?: { seed?: number; max?: number }) => { seed: number; rng: Rng; readonly time: number; readonly data: { seed: number; frames: Loose[] }; event(kind: s…` (:1550)
-- `Replayer: new (data: { seed: number; frames: Loose[] }) => { rng: Rng; readonly done: boolean; step(game: Partial<Game>): number }` (:1551)
+- `Ghost: typeof Ghost` (:1554)
+  - `constructor(o?: { every?: number })` (:1545)
+  - `time: number` (:1546)
+  - `readonly length: number` (:1546)
+  - `record(dt: number, ...values: number[]): this` (:1547)
+  - `at(t: number): { x: number; y: number; v: number[]; done: boolean } | null` (:1548)
+  - `pack(maxBytes?: number, precision?: number): string` A short string for api.save(). (:1550)
+  - `static unpack(s: string): Ghost` (:1551)
+- `Recorder: new (o?: { seed?: number; max?: number }) => { seed: number; rng: Rng; readonly time: number; readonly data: { seed: number; frames: Loose[] }; event(kind: s…` (:1555)
+- `Replayer: new (data: { seed: number; frames: Loose[] }) => { rng: Rng; readonly done: boolean; step(game: Partial<Game>): number }` (:1556)
 
 ## From the maker kit
 
