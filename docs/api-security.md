@@ -19,7 +19,7 @@ game, can only connect to these two hosts, so a game can't send data anywhere el
 | One heart per device per game; un-hearting takes it back | D1 primary key |
 | Only games in the live catalogue are accepted | `gameIds()` |
 | Request bodies capped (512 B for hearts, 24 KB for passes); strict id formats | `body()`, regexes |
-| Browsers allowed only from the app (`capacitor://localhost`, `https://localhost`), the test site and game-scroll.com | `ORIGINS` (CORS) |
+| Browsers allowed only from the app (`capacitor://localhost`, `https://localhost`), the web version (`https://robthewizzuk.github.io`) and game-scroll.com | `ORIGINS` (CORS) |
 | Hearts without a pass: 10 a minute per address. With a pass: 60 a minute per device | `[[ratelimits]]` in `wrangler.toml` |
 | Challenges and passes: 10 a minute per address | `LIMIT_SESSION` |
 | Counts list cached 60 s at the edge, so D1 is read at most about once a minute per location | `counts()` |
@@ -34,7 +34,7 @@ game, can only connect to these two hosts, so a game can't send data anywhere el
    - **Android, Play Integrity:** Google issues a token for the challenge. The Worker has Google decode it, then checks the package name, the nonce, how fresh the token is, that the app was installed from Play (`PLAY_RECOGNIZED`), and that the device is genuine (`MEETS_DEVICE_INTEGRITY`).
 3. `POST /session` returns a pass valid for 24 hours. The app sends it with each heart as `Authorization: Bearer …`.
 
-Passes are off until the store accounts exist. While `ENFORCE = "off"`, hearts without a pass are still accepted, under the tighter limit. The web test site never gets a pass, so once enforcement is on it can show counts but can't add hearts.
+Passes are off until the store accounts exist. While `ENFORCE = "off"`, hearts without a pass are still accepted, under the tighter limit. The web version never gets a pass, so once enforcement is on it can show counts but can't add hearts.
 
 ## Switching it on (needs the store accounts)
 

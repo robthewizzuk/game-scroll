@@ -75,6 +75,10 @@ const rejects = async (p, re) => { await assert.rejects(p, e => re.test(e.messag
   assert.ok(!/didn’t work/.test(blind) && !blind.includes('undefined'));
   assert.ok(!sharePage(null, { webUrl: 'https://x.test/', id: '"><script>' }).includes('<script>'));
   assert.match(sharePage(shareGame({ id: 'mini-golf' }), { webUrl: 'https://x.test/' }), /\?g=mini-golf/);
+  // Next Gen and AR games play only in the apps: no "Play in your browser" for them
+  assert.ok(!sharePage({ id: 'long-shadow', title: 'Long Shadow', era: 'nextgen' }, { webUrl: 'https://x.test/' }).includes('Play in your browser'));
+  assert.ok(!sharePage({ id: 'rift-keeper', title: 'Rift Keeper', era: 'ar' }, { webUrl: 'https://x.test/' }).includes('Play in your browser'));
+  assert.match(sharePage({ id: 'tower-four', title: 'Tower Four', era: 'board' }, { webUrl: 'https://x.test/' }), /Play in your browser/);
   assert.equal(shareGame(undefined), null);
   ok('…and keep the game in their links when the catalogue can\'t be read');
 }
@@ -381,11 +385,13 @@ await run({}, async url => {
   assert.equal((await r.json()).counts[game], 1);
   r = await fetch(url + '/counts', { headers: { Origin: 'https://localhost' } });
   assert.equal(r.headers.get('access-control-allow-origin'), 'https://localhost', 'the Android and desktop apps');
-  for (const o of ['https://evil.example', 'https://robthewizzuk.github.io']) {
+  r = await fetch(url + '/counts', { headers: { Origin: 'https://robthewizzuk.github.io' } });
+  assert.equal(r.headers.get('access-control-allow-origin'), 'https://robthewizzuk.github.io', 'the web version');
+  for (const o of ['https://evil.example', 'https://someone.github.io', 'https://robthewizzuk.github.io.evil.example']) {
     r = await fetch(url + '/counts', { headers: { Origin: o } });
     assert.equal(r.headers.get('access-control-allow-origin'), null, o);
   }
-  ok('counts readable; browsers only allowed from the apps (the GitHub Pages test site is gone)');
+  ok('counts readable; browsers only allowed from the apps and the web version');
   // leaderboards: best score kept per device, ranks, today's board, made-up names
   r = await post(url, '/score', { device: A, game, score: 50, secs: 10 }); assert.equal(r.status, 200);
   let sc = await r.json(); assert.deepEqual([sc.all.rank, sc.all.of, sc.day.rank], [1, 1, 1]);

@@ -35,7 +35,11 @@ The same app runs on Mac and Windows (`desktop/`, Electron, which carries the Ch
 [Mac (Intel)](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-mac-x64.dmg) ·
 [Windows](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-x64.exe) ·
 [Windows on Snapdragon](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-windows-arm64.exe).
-They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md). (The web version on GitHub Pages was taken down when the desktop app came in.)
+They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md).
+
+### Web version on GitHub Pages
+
+Every push to `main` also builds the web version (`npm run build:web`) and publishes it to https://robthewizzuk.github.io/game-scroll/ (`.github/workflows/web-pages.yml`), for trying Game Scroll without installing it. It is the same app, with the heavy parts left to the apps (`src/web.js`): Next Gen and AR games are left out of the feed and never downloaded in the browser, but stay in the feed menu, where picking them says to get the app, with download links; board games play on their table in 3D, without the AR chip. Shared links' "Play in your browser" opens it (not for Next Gen and AR games). One-time setup: Settings > Pages > Source: **GitHub Actions**. Check it with `npm run web-test`.
 
 ## Website and store listings
 

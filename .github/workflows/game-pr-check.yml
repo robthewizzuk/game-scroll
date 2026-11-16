@@ -146,8 +146,8 @@ jobs:
           part app 'src/(main|saves|soundtrack|sfx|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill|update)\.js|src/kit/(sound|voice-fx|acoustics|instruments|compose|foley|awake|rhythm|lazy|cleanup|tick|progress|fontlib|font-files|pixel|gfx|materials2d|sketch|icons|icon-data)\.js|scripts/(app-test\.cjs|sound-test)|index\.html|vite\.config\.js'
           # the app shell, the tour and the engine test scenes
           part app-scenes 'src/(main|saves|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(awake|lazy|cleanup|tick|progress|crowd)\.js|scripts/app-test\.cjs|index\.html|vite\.config\.js'
-          # the feed, the link code and the games catalogue
-          part share-link 'src/(main|share|remote)\.js|scripts/(share-link|build-games)\.mjs|index\.html|vite\.config\.js'
+          # the feed, the link code and the games catalogue; and the web version (src/web.js, the board kit's AR chip, Settings)
+          part share-link 'src/(main|share|remote|web|settings|style)\.(js|css)|src/kit/tabletop\.js|scripts/(share-link|build-games|web-test)\.mjs|index\.html|vite\.config\.js'
 
       - name: Pick the games
         id: plan
@@ -478,3 +478,8 @@ jobs:
 
       - name: A shared link opens that game
         run: node scripts/share-link.mjs
+
+      # the web version: Next Gen and AR games out of the feed and never downloaded, "get the app" in the menu, board games without AR
+      - name: The web version
+        if: ${{ !cancelled() }}
+        run: node scripts/web-test.mjs
