@@ -277,7 +277,7 @@ function make(api) {
 
   const K = gs.tweak('Feel', {
     pourRate: [0.95, 0.45, 1.8, 'base magma flow rate from the crater (units cubed per second)'],
-    flowAccel: [.6538, 0.0, 1.4, 'extra magma flow rate added as you approach the goal'],
+    flowAccel: [0.55, 0.0, 1.4, 'extra magma flow rate added as you approach the goal'],
     gateSpeed: [5.5, 2.0, 12.0, 'how fast the bronze sluice gates slide open and shut'],
     batchVol: [0.68, 0.35, 1.2, 'lava needed to forge one gold ingot batch in a crucible'],
     quenchCool: [2.6, 1.0, 6.0, 'seconds between cryo-quench blasts'],

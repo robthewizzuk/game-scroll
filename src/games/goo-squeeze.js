@@ -27,9 +27,9 @@ function make(api) {
   const K = gs.tweak('Feel', {
     gravity: [220, 100, 450, 'jelly downward pull'],
     sludgeSpeed: [20, 10, 55, 'rising sludge speed'],
-    sludgeRamp: [2.802, 0, 6, 'extra sludge speed per 1000px'],
+    sludgeRamp: [2.2, 0, 6, 'extra sludge speed per 1000px'],
     grabReach: [55, 30, 85, 'finger grab reach around jelly'],
-    maxStretch: [88.75, 70, 195, 'max stretch tether length'],
+    maxStretch: [125, 70, 195, 'max stretch tether length'],
     slingBoost: [1.25, 0.4, 2.5, 'release flick boost'],
     lives: [3, 1, 5, 1, 'jelly integrity hearts'],
     pressure: [1.05, 0.6, 1.5, 'jelly bounce-back pressure'],
