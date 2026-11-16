@@ -57,7 +57,7 @@ export class Skyline {
     const B = plan.bounds, cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2, R = rng(seed * 61 + 7), noise = makeNoise(seed * 13 + 5), n01 = (x, z) => .5 + .5 * noise(x, z);
     const pal = colours.map(h => new Color(h)), roof = new Color('#55575a'), road = new Color(street);
     // the city's own ground: its blocks and the asphalt round them (plus a gap), and the harbour's water
-    const ox0 = B.x0 - clear, ox1 = B.x1 + clear, oz0 = B.z0 - clear, oz1 = B.z1 + clear, wet = water ? [B.x0 - 40, B.x1 + 40, B.z1, B.z1 + 3010] : null;
+    const ox0 = B.x0 - clear, ox1 = B.x1 + clear, oz0 = B.z0 - clear, oz1 = B.z1 + clear, wet = !water ? null : water === 'north' ? [B.x0 - 40, B.x1 + 40, B.z0 - 3010, B.z0] : water === 'east' ? [B.x1, B.x1 + 3010, B.z0 - 40, B.z1 + 40] : water === 'west' ? [B.x0 - 3010, B.x0, B.z0 - 40, B.z1 + 40] : [B.x0 - 40, B.x1 + 40, B.z1, B.z1 + 3010];   // (water: true or a side, south by default)
     const slices = Array.from({ length: SLICES }, () => ({ P: [], N: [], U: [], C: [], I: [] })), pads = { P: [], C: [], I: [] }, lamps = [];
     const box = (x0, z0, x1, z1, h, col) => {
       const a = Math.atan2((z0 + z1) / 2 - cz, (x0 + x1) / 2 - cx), s = slices[Math.floor(((a + Math.PI) / (2 * Math.PI)) * SLICES) % SLICES];
@@ -116,7 +116,7 @@ export class Skyline {
     } else this.pads = null;
     // the land round it all: a ring from where the city's own ground ends (a rectangle 3 km out from its blocks, or the far side
     // of the harbour's water), flat at first and then hills, out to `land` metres
-    const Rx = (B.x1 - B.x0) / 2 + ground, Rz0 = (B.z1 - B.z0) / 2 + ground, Rz1 = water ? B.z1 + 3010 - cz : Rz0, A = 96, RN = 28, LP = [], LC = [], LI = [];
+    const Rx = (B.x1 - B.x0) / 2 + ground, Rz0 = (B.z1 - B.z0) / 2 + ground, Rz1 = water === true || water === 'south' ? B.z1 + 3010 - cz : Rz0, A = 96, RN = 28, LP = [], LC = [], LI = [];
     const green = new Color('#56704a'), brown = new Color('#6e6a58'), far = new Color('#6f7d86'), hills0 = Math.max(reach, Math.max(Rx, Rz0) + 1500);
     for (let r = 0; r <= RN; r++) {
       const t = r / RN;

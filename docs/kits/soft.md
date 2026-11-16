@@ -8,10 +8,10 @@ Soft things: cloth, rope and jelly to grab and cut; 2D liquid.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`SoftPart`, line 5355), where every option and field is described.
+From `src/gamescroll.d.ts` (`SoftPart`, line 5395), where every option and field is described.
 
-- `Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bou…` world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. (:5357)
-- `Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: num…` A simple 2D liquid (particles that pool and splash). (:5370)
+- `Soft: new (o?: { gravity?: P3 | null; dims?: 2 | 3; iterations?: number; damping?: number; bounds?: [number, number, number, number] | null; floor?: number | null; bou…` world: a 2D gs.physics world whose shapes the points stay out of; weight: kg a point, to push loose things there back. (:5397)
+- `Liquid: new (o?: { r?: number; gravity?: number; stiff?: number; near?: number; rest?: number; viscosity?: number; bounds?: [number, number, number, number]; max?: num…` A simple 2D liquid (particles that pool and splash). (:5410)
 
 ## From the maker kit
 
@@ -32,4 +32,26 @@ splashes and pours (`pour()`, `near()`, `count()`) for water and goo puzzles.
 
 ## In real games
 
-No game uses `gs.soft` yet: the examples above are what there is.
+1 game uses it (`node scripts/examples.mjs gs.soft` lists them). The shortest:
+
+`src/games/goo-squeeze.js` (Goo Squeeze, shelf, 938 lines):
+
+```js
+const { Physics } = gs.physics;
+const { Soft } = gs.soft;
+// …
+    pushBuf.x = hx; pushBuf.y = hy; pushBuf.z = 0;
+    soft.push(pushBuf, 110, pushForce);
+// …
+      phys = new Physics({ gravity: 450 });
+      soft = new Soft({
+// …
+
+      jelly = soft.jelly(W * 0.5, H - 120, 28, 12, { pressure: K.pressure, stiff: 0.88, mass: 1 });
+// …
+      phys.step(dt);
+      soft.update(dt);
+// …
+      const wx = x, wy = y + camY;
+      const g = soft.grab(wx, wy, K.grabReach);
+```

@@ -16,6 +16,7 @@ import { BufferAttribute, BufferGeometry, BoxGeometry, Color, DoubleSide, Dynami
   PlaneGeometry, Quaternion, Vector3 } from 'three';
 import { Quads, asphaltMat, paintMat, groundTex, LANE } from './city.js';
 import { CITY_CARS, Fleet } from './city-cars.js';
+import { WATER_Y, SEA_BED, planWater } from './city-coast.js';
 import { makeNoise, rng } from './math.js';
 
 export const CELL = 6;          // the land's grid near the city, metres
@@ -41,12 +42,14 @@ function shared(k, make) { if (!MATS.has(k)) MATS.set(k, make()); return MATS.ge
 
 export class Ways {
   /** metro: the Metro (its districts, bounds, connectors). hills 0..1, river, highway: as Metro's options. */
-  constructor(metro, { seed = 1, hills = .5, river = null, highway = true, traffic = 1, fleet = false, meshes = true } = {}) {
+  constructor(metro, { seed = 1, hills = .5, river = null, highway = true, traffic = 1, fleet = false, meshes = true, grass = '#4f7a3a', waters = null } = {}) {
     this.m = metro; this.amp = 60 * Math.max(0, hills); this.N = makeNoise(seed * 7 + 3); this.R = rng(seed * 19 + 11);
     const D = metro.districts;
     this.inner = grow(metro.bounds, INNER);
     this.holes = D.map(d => grow(d.rect, 40));
-    this.seas = D.filter(d => d.harbour).map(d => { const cx = (d.rect.x0 + d.rect.x1) / 2; return { x0: cx - 3000, x1: cx + 3000, z0: d.rect.z1 + 10, z1: d.rect.z1 + 3010 }; });
+    // the sea: past each harbour on the south edge (shown while its district isn't made: the district's own water is), or a bay and the open sea (always shown)
+    this.seas = waters ? waters.map(w => ({ ...w, keep: true })) : D.filter(d => d.harbour).map(d => { const cx = (d.rect.x0 + d.rect.x1) / 2; return { x0: cx - 3000, x1: cx + 3000, z0: d.rect.z1 + 2, z1: d.rect.z1 + 3010 }; });
+    this.grass = grass;
     this.river = river || null;
     this.group = new Group(); this.group.name = 'metro ways'; metro.group?.add(this.group);
     this.solids = new Group(); this.solids.name = 'metro ways solid'; this.group.add(this.solids);   // (what World3D makes solid: land, decks, parapets, tunnel walls)
@@ -65,6 +68,7 @@ export class Ways {
     this.land = this.makeLand();
     this.meshes = this.roads.map(r => this.makeRoad(r));
     this.water = this.makeWater();
+    this.walls = this.makeWalls();
     // the cars on them
     const laneLen = this.roads.reduce((s, r) => s + r.len * r.lanes * 2, 0);
     this.traffic = traffic > 0 ? new WayTraffic(this, Math.min(56, Math.round(laneLen / 75 * traffic)), { fleet, style: D[0].style }) : null;
@@ -157,11 +161,11 @@ export class Ways {
     const cut = (lo, hi, k0, k1) => [...new Set([lo, hi, ...holes.flatMap(h => [h[k0], h[k1]])].map(v => Math.max(lo, Math.min(hi, v))))].sort((a, b) => a - b);
     const xs = cut(F.x0, F.x1, 'x0', 'x1'), zs = cut(F.z0, F.z1, 'z0', 'z1');
     for (let i = 0; i < xs.length - 1; i++) for (let j = 0; j < zs.length - 1; j++) { const cx = (xs[i] + xs[i + 1]) / 2, cz = (zs[j] + zs[j + 1]) / 2; if (!holes.some(h => cx > h.x0 && cx < h.x1 && cz > h.z0 && cz < h.z1)) out.top(xs[i], zs[j], xs[i + 1], zs[j + 1], 0, 1); }
-    const tex = groundTex('grass', '#4f7a3a').clone(); tex.repeat.set(.1, .1); tex.needsUpdate = true;
+    const tex = groundTex('grass', this.grass).clone(); tex.repeat.set(.1, .1); tex.needsUpdate = true;
     const mat = new MeshStandardMaterial({ map: tex, roughness: 1 });
     const near = new Mesh(geo, mat); near.name = 'metro land'; near.receiveShadow = true; near.castShadow = !this.flat; this.solids.add(near);
     const far = new Mesh(out.geometry(), mat); far.name = 'metro far land'; far.receiveShadow = true; this.group.add(far);
-    this.m.paint?.add(near, 'grass', { base: '#4f7a3a' }); this.m.paint?.add(far, 'grass', { base: '#4f7a3a' });
+    this.m.paint?.add(near, 'grass', { base: this.grass }); this.m.paint?.add(far, 'grass', { base: this.grass });
     return { near, far, mat, tex };
   }
   /** The land's height at x, z, as its mesh has it (cut, filled and raised for the roads); 0 outside the grid. */
@@ -186,10 +190,38 @@ export class Ways {
     }
     for (const s of this.seas) {
       const m = new Mesh(new PlaneGeometry(s.x1 - s.x0, s.z1 - s.z0), waterMat()); m.rotation.x = -Math.PI / 2; m.position.set((s.x0 + s.x1) / 2, -.62, (s.z0 + s.z1) / 2);
-      m.name = 'metro sea'; m.receiveShadow = true; this.group.add(m); this.m.view.reflect?.(m); m.userData.sea = true; out.push(m);
+      m.name = 'metro sea'; m.receiveShadow = true; this.group.add(m); this.m.view.reflect?.(m); m.userData.sea = !s.keep; out.push(m);
     }
     void I; return out;
   }
+  // a sea wall wherever a district's ground (not its own shore) meets the sea or the bay: concrete from the street down to the bed
+  makeWalls() {
+    const q = new Quads(), col = new Color('#9c978c'), STEP = 8;
+    for (const d of this.m.districts) {
+      const h = grow(d.rect, 40), W = planWater(d.plan), dry = (x, z) => W.bed(x, z) == null;
+      for (const [ax, az, bx, bz, nx, nz] of [[h.x0, h.z0, h.x1, h.z0, 0, -1], [h.x1, h.z0, h.x1, h.z1, 1, 0], [h.x1, h.z1, h.x0, h.z1, 0, 1], [h.x0, h.z1, h.x0, h.z0, -1, 0]]) {
+        const L = Math.hypot(bx - ax, bz - az), n = Math.ceil(L / STEP);
+        for (let k = 0; k < n; k++) {
+          const t0 = k / n, t1 = (k + 1) / n, mx = ax + (bx - ax) * (t0 + t1) / 2, mz = az + (bz - az) * (t0 + t1) / 2;
+          if (!this.seas.some(s => inRect(s, mx + nx, mz + nz)) || !dry(mx - nx, mz - nz)) continue;
+          const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0, x1 = ax + (bx - ax) * t1, z1 = az + (bz - az) * t1;
+          q.q12(x1, .02, z1, x0, .02, z0, x0, SEA_BED - .2, z0, x1, SEA_BED - .2, z1, undefined, col);   // (facing out, nx nz)
+          q.q12(x0, .02, z0, x1, .02, z1, x1, .02 - .001, z1, x0, .02 - .001, z0, undefined, col);
+        }
+      }
+    }
+    if (q.empty) return null;
+    const m = new Mesh(q.geometry(), new MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: .9 })); m.name = 'metro sea walls'; m.receiveShadow = true; this.solids.add(m);
+    return m;
+  }
+  /** The water between the districts as numbers: the surface over the river, the bay and the sea (null: not this land's to say). */
+  waterAt(x, z) {
+    const sea = this.seas.some(s => inRect(s, x, z)), river = !sea && this.riverD(x, z) < RW + 22;
+    if (!sea && !river) return null;
+    return this.bedAt(x, z) < WATER_Y - .02 ? WATER_Y : -Infinity;
+  }
+  /** The ground under the river and the sea (the land's mesh where it reaches, else the natural land). */
+  bedAt(x, z) { const G = this.grid; return x > G.x0 && z > G.z0 && x < G.x0 + G.nx * CELL && z < G.z0 + G.nz * CELL && !this.seas.some(s => inRect(s, x, z)) ? this.landAt(x, z) : this.natural(x, z); }
 
   /* ---------- the roads' heights ---------- */
   // y at each point of road r: the land under it smoothed, held to `grade`, pinned to `ends` where it meets a district or
@@ -243,7 +275,9 @@ export class Ways {
   /* ---------- the highway and its slip roads ---------- */
   // round the whole city, 100 m out, its corners rounded
   makeRing() {
-    const B = grow(this.m.bounds, 100), rad = 150, pts = [];
+    // (round the mainland: on a bay the waterfront and the island stay open to the water, and are reached by their own roads)
+    const D = this.m.waters ? this.m.districts.filter(d => !d.harbour) : [], U = D.length ? D.reduce((u, d) => ({ x0: Math.min(u.x0, d.rect.x0), x1: Math.max(u.x1, d.rect.x1), z0: Math.min(u.z0, d.rect.z0), z1: Math.max(u.z1, d.rect.z1) }), { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity }) : this.m.bounds;
+    const B = grow(U, 100), rad = 150, pts = [];
     const corner = (cx, cz, a0) => { for (let k = 1; k < 48; k++) { const a = a0 + k / 48 * Math.PI / 2; pts.push([cx + Math.cos(a) * rad, cz + Math.sin(a) * rad]); } };
     const line = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.ceil(L / 5)); for (let k = 0; k < n; k++) pts.push([x0 + (x1 - x0) * k / n, z0 + (z1 - z0) * k / n]); };
     line(B.x0 + rad, B.z0, B.x1 - rad, B.z0); corner(B.x1 - rad, B.z0 + rad, -Math.PI / 2);
@@ -260,6 +294,7 @@ export class Ways {
     const ring = this.ring, out = [], side = this.m.side === 'left' ? -1 : 1, B = ring.rect, used = new Set(this.m.connectors.flatMap(r => [r.from, r.to]));
     const cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2, tmp = {};
     for (const d of this.m.districts) {
+      if (d.rect.x0 < B.x0 || d.rect.x1 > B.x1 || d.rect.z0 < B.z0 || d.rect.z1 > B.z1) continue;   // (outside the ring: on a bay)
       const P = d.plan, sides = [['n', d.rect.z0 - B.z0], ['s', B.z1 - d.rect.z1], ['w', d.rect.x0 - B.x0], ['e', B.x1 - d.rect.x1]].sort((a, b) => a[1] - b[1]);
       for (const [sd, gap] of sides) {
         if (gap > 420) continue;

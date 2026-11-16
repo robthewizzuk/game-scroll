@@ -10,7 +10,7 @@ Guide: [feel words: which knob a word moves](../feel-words.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TweakFn`, line 2409), where every option and field is described.
+From `src/gamescroll.d.ts` (`TweakFn`, line 2414), where every option and field is described.
 
 ## From the maker kit
 
@@ -45,7 +45,7 @@ range). [Feel words](feel-words.md) says which knob each word moves, and the usu
 
 ## In real games
 
-9 games use it (`node scripts/examples.mjs gs.tweak` lists them). The shortest:
+19 games use it (`node scripts/examples.mjs gs.tweak` lists them). The shortest:
 
 `src/games/fast-maths.js` (Fast Maths, Pocket · Brain, 135 lines):
 

@@ -10,17 +10,17 @@ Guide: [AR 3D guide](../ar-3d.md).
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ArPart`, line 1651), where every option and field is described.
+From `src/gamescroll.d.ts` (`ArPart`, line 1656), where every option and field is described.
 
-- `ARView: new (...a: Loose[]) => Loose` (:1651)
-- `FLOOR: Loose` (:1651)
-- `arNote: Loose` (:1651)
-- `markerArt: (seed?: number, size?: number) => HTMLCanvasElement` (:1651)
-- `THREE: Loose` (:1651)
+- `ARView: new (...a: Loose[]) => Loose` (:1656)
+- `FLOOR: Loose` (:1656)
+- `arNote: Loose` (:1656)
+- `markerArt: (seed?: number, size?: number) => HTMLCanvasElement` (:1656)
+- `THREE: Loose` (:1656)
 
 ## In real games
 
-15 games use it (`node scripts/examples.mjs gs.ar` lists them). The shortest:
+16 games use it (`node scripts/examples.mjs gs.ar` lists them). The shortest:
 
 `src/games/ghost-torch.js` (Ghost Torch, AR · Spooky, 119 lines):
 
@@ -48,7 +48,7 @@ const { ARView, arNote } = gs.ar;
       v.draw(c, W, H);
 ```
 
-`src/games/echo-drums.js` (Echo Drums, AR · Memory, 128 lines):
+`src/games/echo-drums.js` (Echo Drums, AR · Memory, 130 lines):
 
 ```js
 const { Particles, pbr, rbox, THREE } = gs.hd;

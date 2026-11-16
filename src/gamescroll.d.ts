@@ -4801,13 +4801,37 @@ export interface CityPlan {
   /** Road centre lines (x for the roads running north-south, z for east-west) and their widths. */
   xs: number[]; zs: number[]; wx: number[]; wz: number[];
   bounds: { x0: number; x1: number; z0: number; z1: number };
-  blocks: { id: number; i: number; j: number; x0: number; x1: number; z0: number; z1: number; sw: number; kind: 'build' | 'park' | 'plaza' }[];
+  blocks: { id: number; i: number; j: number; x0: number; x1: number; z0: number; z1: number; sw: number; kind: 'build' | 'park' | 'plaza' | 'pond'; /** A pond block's water (wetland styles). */ pond?: { x0: number; x1: number; z0: number; z1: number } }[];
   buildings: CityBuilding[];
   nodes: { id: number; i: number; j: number; x: number; z: number; hx: number; hz: number; out: number[]; signal: boolean; phase: number }[];
   edges: { id: number; a: number; b: number; len: number; dx: number; dz: number; axis: 'x' | 'z'; lanes: number; width: number; speed: number }[];
-  trees: { x: number; z: number; s: number; kind: string }[]; lamps: { x: number; z: number; face: number }[]; benches: { x: number; z: number; rot: number }[];
-  spots: { door: CitySpot[]; rooftop: CitySpot[]; corner: CitySpot[]; park: CitySpot[] };
-  water?: { z: number };
+  /** kind: 'round' | 'pine' | 'palm' | 'cypress' | 'bush' (by the climate); y: on the promenade or quay where given. */
+  trees: { x: number; y?: number; z: number; s: number; kind: string }[]; lamps: { x: number; z: number; face: number }[]; benches: { x: number; z: number; rot: number }[];
+  /** The climate its trees and grass are of. */ climate?: 'temperate' | 'tropical' | 'wetland';
+  /**
+   * Where the city's people and games go: doors, rooftops, corners, parks; on a coast shore (the quay or promenade's edge),
+   * beach (on the sand), slip (a marina's berth: where a boat lies, facing out, at the water) and dock (the pier beside a slip:
+   * where a person steps aboard; slip is the slip's index in spots.slip).
+   */
+  spots: { door: CitySpot[]; rooftop: CitySpot[]; corner: CitySpot[]; park: CitySpot[]; shore?: CitySpot[]; beach?: CitySpot[]; slip?: CitySlip[]; dock?: (CitySpot & { slip: number; pier: number })[] };
+  /** The water on one side: 'quay' (a stone edge, deep water at once), 'beach' (sand down into the surf) or 'marina' (a quay with piers); edge: the city's edge on that side; from: metres past it where the water starts; z (south or north) or x (east or west) where it starts. */
+  water?: { side: 'south' | 'north' | 'east' | 'west'; kind: 'quay' | 'beach' | 'marina'; edge: number; from: number; z?: number; x?: number };
+  /** A beach's things: parasols, loungers, lifeguard towers, towels ({ x, y, z, rot, colour }). */
+  beach?: { parasols: Loose[]; loungers: Loose[]; towers: Loose[]; towels: Loose[] };
+  /** A marina's piers and the fingers off them (boxes { x0, x1, z0, z1, y }). */
+  marina?: { piers: Loose[]; fingers: Loose[] };
+  /** Reeds round the ponds. */ reeds?: { x: number; z: number; s: number }[];
+}
+/** A marina's berth: where a boat lies (x, z at the water, heading out to the open water), its length and width, and its pier. */
+export interface CitySlip { x: number; y: number; z: number; heading: number; len: number; width: number; pier: number }
+/**
+ * The water of a City or a Metro as one thing (gs.climb Swimmer, gs.craft boats and floating things, gs.sky Weather's rain,
+ * splashes and impacts find it by themselves): height(x, z) the surface (-Infinity on dry land), bed(x, z) the ground under it.
+ * With { sea } it is drawn as a gs.outdoors Sea (swell, surf up the beach, wet sand), whose splashes and ripples it hands on.
+ */
+export interface CityWater {
+  height(x: number, z: number): number; bed(x: number, z: number): number; wet(x: number, z: number): boolean; normal(x: number, z: number): { x: number; y: number; z: number };
+  level: number; rain: number; readonly sea: Loose | null; splash(x: number, z: number, o?: Loose): CityWater; watch(thing: Loose, o?: Loose): { wet: boolean; remove(): void }; ripples(o?: Loose): CityWater;
 }
 export interface CityBuilding {
   id: number; block: number; facade: string; floors: number; shops: boolean; face: 0 | 1 | 2 | 3; x0: number; x1: number; z0: number; z1: number; h: number;
@@ -5093,7 +5117,10 @@ export interface CityPart {
    * A made-up city from a seed, in a gs.hd HDView (or any view with .scene and .cam). Call reset() from
    * your reset() and update(dt, player) each frame. Cars brake for what you pass to avoid().
    */
-  City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: 'downtown' | 'oldtown' | 'harbour' | 'suburb' | Record<string, Loose>; side?: 'right' | 'left';
+  City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: CityStyleName | Record<string, Loose>; side?: 'right' | 'left';
+    /** The trees and grass: 'temperate' (round trees and pines), 'tropical' (palms, bushes; drier grass), 'wetland' (bald cypresses, bushes, olive grass); the style's own by default. kinds / parkKinds: your own weights of tree kinds ({ palm: 8, round: 2 }) for the streets / parks. */ climate?: CityClimate; kinds?: Record<string, number>; parkKinds?: Record<string, number>;
+    /** The water side ('south' | 'north' | 'east' | 'west' | false) and its shore ('quay' | 'beach' | 'marina'): the style's by default. */ water?: 'south' | 'north' | 'east' | 'west' | false; shore?: 'quay' | 'beach' | 'marina';
+    /** The water drawn as a gs.outdoors Sea (swell, surf up the beach, wet sand), or its options ({ waves, wind... }); default false: flat water. Either way city.water answers swimmers and boats. */ sea?: boolean | Loose;
     traffic?: number; people?: number; night?: number; /** A gs.sky.Sky: the city lights up as it darkens. Left out (and no night given): the Sky the game made. */ sky?: Loose; link?: boolean; lamps?: boolean; sound?: boolean; at?: { x: number; z: number } | null; detail?: number;
     /** Rooms behind every window (default true). */ rooms?: boolean; /** Every building's own front door in its street wall, shut, that city.door() swings and gs.city Interiors opens onto a room (default true). */ doors?: boolean; /** Real cars (default: on a Next Gen view). */ fleet?: boolean; /** Sculpted people as one crowd (default: on a Next Gen view). */ crowd?: boolean;
     /** Street dressing and depth on the fronts (ledges, balconies, shop signs with made-up names, kerbs, drains, name signs, bins, wires, roof huts...; default true). */ dress?: boolean;
@@ -5110,7 +5137,9 @@ export interface CityPart {
    * The districts share one crowd of people, one ground painter and one set of lamps. update(dt, player) each frame.
    */
   Metro: new (view: Loose, o?: { seed?: number; /** How many (4), or styles, or { style, blocks, seed, name }; the first is the middle. */ districts?: number | (string | { style?: string; blocks?: number | [number, number]; seed?: number; name?: string; [style: string]: Loose })[];
-    /** [least, most] metres of land between districts ([120, 240]). */ between?: [number, number]; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
+    /** [least, most] metres of land between districts ([120, 240]). */ between?: [number, number];
+    /** 'south' (the harbours, marinas and beaches along the south edge, the sea past them) or 'bay' (the marinas and harbours along the mainland's east side facing a bay, the beaches out on an island across it facing the open sea, reached by causeways that boats pass under). */ coast?: 'south' | 'bay'; /** Metres across the bay (420). */ bay?: number;
+    /** The climate of the land and of every district that has none of its own (its style's, else this). Its hills by default: tropical .1, wetland 0. */ climate?: CityClimate; /** The water drawn as one gs.outdoors Sea (as City's). */ sea?: boolean | Loose; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
     /** How hilly the land between and round the districts is, 0..1 (.5; districts stay level). */ hills?: number; /** A river down the gap between the first two districts, bridged (true). */ river?: boolean;
     /** A highway round the whole city on piers, with a slip road to each district it can reach (true). */ highway?: boolean;
     side?: 'right' | 'left'; at?: { x: number; z: number } | null; keep?: number; far?: boolean | number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; traffic?: number; people?: number; paint?: boolean; crowd?: boolean; link?: boolean; [option: string]: Loose }) => CityMetro;
@@ -5125,7 +5154,7 @@ export interface CityPart {
    */
   Gps: new (city: CityWorld | CityMetro, o?: { /** Metres off the route before it is worked out again (18). */ off?: number; /** Seconds between routes worked out anyway (0). */ every?: number; /** Metres a target moves before it is (25). */ moved?: number; /** Metres from the end that count as there (14). */ arrive?: number; /** Degrees that count as a turn (30). */ turn?: number; /** Draws a marker's icon: gs.icons.icon. */ icon?: ((c: CanvasRenderingContext2D, name: string, x: number, y: number, size: number, o?: Loose) => void) | null; colour?: string }) => CityGps;
   /** Where a big city's districts go, as plain numbers (no view). */
-  metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number } };
+  metroPlan(o?: { seed?: number; districts?: Loose; between?: [number, number]; side?: 'right' | 'left'; coast?: 'south' | 'bay'; bay?: number; climate?: CityClimate; [style: string]: Loose }): { districts: CityDistrict[]; bounds: { x0: number; x1: number; z0: number; z1: number }; /** The bay and the open sea round the island (coast: 'bay'), else null. */ waters: { x0: number; x1: number; z0: number; z1: number; name: 'bay' | 'sea' }[] | null };
   /**
    * The police and the wanted level for a City: crimes seen by police (counted at once) or by people in the street
    * (phoned in a few seconds later, if nobody stops them), stars 0..5, police cars that come with sirens and chase,
@@ -5179,9 +5208,11 @@ export interface CityPart {
    */
   Town: new (view: Loose, o?: { plan?: TownPlan | TownPlanOptions; seed?: number; kind?: 'village' | 'castle'; houses?: number; name?: string; ground?: (x: number, z: number) => number; world?: Loose | false; floor?: boolean; clock?: Loose; sky?: Loose; lamps?: boolean; materials?: { road?: Loose; square?: Loose; field?: Loose; grass?: Loose }; link?: boolean }) => Town3D;
   /** The plan alone, as plain numbers (no 3D): for a map, a route or your own drawing. */
-  layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; [style: string]: Loose }): CityPlan;
-  /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). */
-  STYLES: Record<'downtown' | 'oldtown' | 'harbour' | 'suburb', Record<string, Loose>>;
+  layout(o?: { seed?: number; blocks?: number | [number, number]; style?: string | Record<string, Loose>; side?: 'right' | 'left'; climate?: CityClimate; [style: string]: Loose }): CityPlan;
+  /** City styles (copy one and change it: { ...STYLES.oldtown, floors: [2, 4] }). beach: pastel art-deco hotels lit with neon at night, a palm promenade and a sandy beach with parasols, loungers and lifeguard huts down into the surf; marina: towers on a quay with piers and berths for boats; glades: a low wetland town round ponds with reeds and bald cypresses. */
+  STYLES: Record<CityStyleName, Record<string, Loose>>;
+  /** The climates: what grows in the streets and parks, and the colour and hills of the land round. */
+  CLIMATES: Record<CityClimate, { street: Record<string, number>; park: Record<string, number>; grass: string; hills: number }>;
   /** Facade looks: kind, wall, trim, glass, win (window width m), floor (storey m), lit, warm. */
   FACADES: Record<string, Record<string, Loose>>;
 }
@@ -5194,7 +5225,10 @@ export interface CityDistrict { name: string; style: string; plan: CityPlan; rec
  */
 export interface CityRoad { id: number | string; a: CityDistrict | Loose; b: CityDistrict | Loose; from: Loose; to: Loose; points: [number, number][]; at: number[]; len: number; width: number; lanes: number; speed: number;
   y: Float32Array; kind: Uint8Array; bridges: { s0: number; s1: number }[]; tunnels: { s0: number; s1: number }[]; ring?: boolean; loop?: boolean; median?: boolean; ramp?: boolean; ringS?: number; join?: 1 | -1 }
+export type CityStyleName = 'downtown' | 'oldtown' | 'harbour' | 'suburb' | 'beach' | 'marina' | 'glades';
+export type CityClimate = 'temperate' | 'tropical' | 'wetland';
 export interface CityMetro {
+  /** The water of every district and between them (rivers, the bay, the sea), as one: what swimmers, boats and the rain find. Null with no water. */ water: CityWater | null; /** With { sea }: the gs.outdoors Sea drawn for it. */ sea: Loose | null;
   districts: CityDistrict[]; connectors: CityRoad[]; bounds: { x0: number; x1: number; z0: number; z1: number }; start: { x: number; z: number }; night: number;
   /** The highway round the city (null with highway: false), and the slip roads up to it. */ ring: CityRoad | null; ramps: CityRoad[];
   /** The land and roads between the districts: river { axis, c, from, to }, landAt(x, z), natural(x, z) (before the roads), hills(x, z), near(x, z, reach) the nearest road point, roads (every one), traffic (its cars: list). */
@@ -5258,6 +5292,7 @@ export interface CityInteriors {
 }
 export interface CityWorld {
   plan: CityPlan; group: Loose; seed: number; start: CitySpot; t: number;
+  /** The city's water (its shore and ponds) as one thing that swimmers, boats and the rain find; a Metro's district: the Metro's. Null with none. */ water: CityWater | null; /** With { sea }: the gs.outdoors Sea drawn for it. */ sea: Loose | null;
   /** With { far }: the city to the horizon (stand-ins, far lamps and land), else null. */
   far: { count: number; lampCount: number; readonly triangles: number; readonly draws: number; group: Loose } | null;
   /** 0 day .. 1 night: windows, shop signs, street lamps and car lights. Follows sky.night when made with { sky }. */

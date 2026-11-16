@@ -9,7 +9,7 @@
 // scripts/look-compare.cjs --webgpu draws the same scenes both ways and compares them.
 // Kit use only.
 import { StandardDrawingPipeline, RenderPipeline, PMREMGenerator, UnsignedShortType, UnsignedInt101111Type, RGBFormat, Vector2, Vector3, Vector4, Color, BackSide, Sprite, Group, InstancedMesh, BufferGeometry, Frustum, Sphere, InstancedBufferAttribute as IBA, SpriteNodeMaterial, InstancedBufferAttribute, AdditiveBlending, NormalBlending, Node, BlendMode, MaterialBlending,
-  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture, RGBAFormat, ClampToEdgeWrapping } from 'three/webgpu';
+  MeshBasicNodeMaterial, NodeMaterial, Data3DTexture, LinearMipmapLinearFilter, RectAreaLightNode, MeshSSSNodeMaterial, PhysicalLightingModel, MeshStandardNodeMaterial, MeshPhysicalNodeMaterial, QuadMesh, MRTNode, OutputStructNode, PMREMNode, CubeRenderTarget, CubeCamera, RenderTarget, Texture, Matrix4, HalfFloatType, FloatType, DepthTexture, NearestFilter, Storage3DTexture, LinearFilter, LessEqualCompare, NoToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, SRGBColorSpace, LinearSRGBColorSpace, Matrix3, ShadowNode, DataTexture, RedFormat, RGFormat, UnsignedByteType, NoColorSpace, NodeBuilder, Mesh, BufferAttribute, OrthographicCamera, AlwaysDepth, RepeatWrapping , FramebufferTexture, RGBAFormat, ClampToEdgeWrapping, InterleavedBufferAttribute } from 'three/webgpu';
 import {
   pass, mrt, output, velocity, normalView, uniform, texture, screenUV, context, screenCoordinate, screenSize, renderOutput, Fn,
   vec2, vec3, vec4, float, mix, smoothstep, dot, exp, length, max, pow, clamp, log2, fract, sin, abs, select,
@@ -812,14 +812,20 @@ export const gpuLooks = {
   // long); light through, outlines that hold up, both sides lit alike
   fronds(m, s, o) {
     const u = s.uniforms, F = attribute('lkFrond', 'vec4'), FI = attribute('lkFrondId', 'vec2'), a = F.w, push = partPush(u);
-    const wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG), rw = modelWorldMatrix.mul(vec4(F.xyz, 1)).xyz.add(ORG), v = wp.sub(rw);
+    // (positionLocal is already where its copy puts it on an InstancedMesh, as weeds and gs.props' plants are: the leaf's root
+    // is put there too, by the copy's matrix, as the WebGL shader does under USE_INSTANCING; the same GPU buffer as three's own)
+    const rootOf = builder => { const im = builder.object?.isInstancedMesh ? builder.object.instanceMatrix : null; return im ? TSL.mat4(...[0, 4, 8, 12].map(k => instancedBufferAttribute(new InterleavedBufferAttribute(im, 4, k)))).mul(vec4(F.xyz, 1)) : vec4(F.xyz, 1); };
+    let wp, rw, v;   // (made per mesh, in positionNode)
     const off = (t, wind, dir) => {
       let w = frondSway(v, a, FI.x, FI.y, t, wind, dir, live(u.lkSway), rw.xz);
       if (push) w = w.add(push(wp, a.mul(FI.y), smoothstep(1.8, 2.6, positionGeometry.y).oneMinus()));   // (pushed by how far along its leaf, not above a passer-by's reach)
       return modelWorldMatrixInverse.mul(vec4(w, 0)).xyz;
     };
     // (where the leaf was last frame as well, for the motion three works out: see leaves)
-    m.positionNode = Fn(builder => { if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(off(lastFrame(u.lkTime), lastFrame(u.lkWind), lastFrame(u.lkWindDir)))); return positionLocal.add(off(live(u.lkTime), live(u.lkWind), live(u.lkWindDir))); })();
+    m.positionNode = Fn(builder => {
+      wp = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz.add(ORG); rw = modelWorldMatrix.mul(rootOf(builder)).xyz.add(ORG); v = wp.sub(rw);
+      if (builder.needsPreviousData()) positionPrevious.assign(positionPrevious.add(off(lastFrame(u.lkTime), lastFrame(u.lkWind), lastFrame(u.lkWindDir)))); return positionLocal.add(off(live(u.lkTime), live(u.lkWind), live(u.lkWindDir)));
+    })();
     seeThroughLeaf(m, o, u);
   },
   // looks.js meadow(): the blades of land.meadow(): each tuft shrinks into the ground towards the edge of the

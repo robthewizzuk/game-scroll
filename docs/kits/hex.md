@@ -8,41 +8,41 @@ Hex maps (taps, neighbours, reach, paths, sight) and isometric views.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HexPart`, line 3066), where every option and field is described.
+From `src/gamescroll.d.ts` (`HexPart`, line 3071), where every option and field is described.
 
-- `HexMap: new (o?: { size?: number; pointy?: boolean; shape?: 'rect' | 'hex' | 'none'; w?: number; h?: number; radius?: number; x?: number; y?: number; cx?: number; cy?:…` x, y: the map's TOP LEFT corner. (:3068)
-  - `size: number` (:3050)
-  - `pointy: boolean` (:3050)
-  - `cells: Map<string, HexCell>` (:3050)
-  - `readonly list: HexCell[]` (:3050)
-  - `add(q: number, r: number): HexCell` (:3051)
-  - `remove(c: HexCell): HexMap` (:3051)
-  - `cell(q: number, r: number): HexCell | null` (:3051)
-  - `at(x: number, y: number): HexCell | null` (:3051)
-  - `each(fn: (c: HexCell) => void): HexMap` (:3051)
-  - `neighbours(c: HexCell): HexCell[]` (:3052)
-  - `distance(a: HexCell, b: HexCell): number` (:3052)
-  - `line(a: HexCell, b: HexCell): HexCell[]` (:3052)
-  - `range(c: HexCell, n: number): HexCell[]` (:3052)
-  - `ring(c: HexCell, n: number): HexCell[]` (:3052)
-  - `reach(from: HexCell, moves: number, cost?: (c: HexCell, from: HexCell) => number): Map<HexCell, number>` (:3053)
-  - `path(a: HexCell, b: HexCell, cost?: (c: HexCell, from: HexCell) => number): HexCell[] | null` (:3053)
-  - `sees(a: HexCell, b: HexCell, blocks?: (c: HexCell) => boolean): boolean` (:3054)
-  - `save(): Loose` (:3054)
-  - `load(d: Loose): HexMap` (:3054)
-  - `readonly bounds: { x: number; y: number; w: number; h: number }` The box round every cell, in game units (x, y its top left). (:3056)
-  - `shift(dx: number, dy: number): HexMap` (:3057)
-  - `centre(x: number, y: number): HexMap` Moves the map so its middle is at x, y. (:3059)
-- `Iso: new (o?: { tw?: number; th?: number; x?: number; y?: number; zh?: number | null }) => Iso` (:3069)
-  - `tw: number` (:3062)
-  - `th: number` (:3062)
-  - `x: number` (:3062)
-  - `y: number` (:3062)
-  - `zh: number` (:3062)
-  - `toScreen(tx: number, ty: number, z?: number): { x: number; y: number }` (:3063)
-  - `toTile(x: number, y: number): { tx: number; ty: number }` (:3063)
-  - `corners(tx: number, ty: number, z?: number): [number, number][]` (:3063)
-  - `sort<T extends { tx: number; ty: number; z?: number }>(list: T[]): T[]` (:3064)
+- `HexMap: new (o?: { size?: number; pointy?: boolean; shape?: 'rect' | 'hex' | 'none'; w?: number; h?: number; radius?: number; x?: number; y?: number; cx?: number; cy?:…` x, y: the map's TOP LEFT corner. (:3073)
+  - `size: number` (:3055)
+  - `pointy: boolean` (:3055)
+  - `cells: Map<string, HexCell>` (:3055)
+  - `readonly list: HexCell[]` (:3055)
+  - `add(q: number, r: number): HexCell` (:3056)
+  - `remove(c: HexCell): HexMap` (:3056)
+  - `cell(q: number, r: number): HexCell | null` (:3056)
+  - `at(x: number, y: number): HexCell | null` (:3056)
+  - `each(fn: (c: HexCell) => void): HexMap` (:3056)
+  - `neighbours(c: HexCell): HexCell[]` (:3057)
+  - `distance(a: HexCell, b: HexCell): number` (:3057)
+  - `line(a: HexCell, b: HexCell): HexCell[]` (:3057)
+  - `range(c: HexCell, n: number): HexCell[]` (:3057)
+  - `ring(c: HexCell, n: number): HexCell[]` (:3057)
+  - `reach(from: HexCell, moves: number, cost?: (c: HexCell, from: HexCell) => number): Map<HexCell, number>` (:3058)
+  - `path(a: HexCell, b: HexCell, cost?: (c: HexCell, from: HexCell) => number): HexCell[] | null` (:3058)
+  - `sees(a: HexCell, b: HexCell, blocks?: (c: HexCell) => boolean): boolean` (:3059)
+  - `save(): Loose` (:3059)
+  - `load(d: Loose): HexMap` (:3059)
+  - `readonly bounds: { x: number; y: number; w: number; h: number }` The box round every cell, in game units (x, y its top left). (:3061)
+  - `shift(dx: number, dy: number): HexMap` (:3062)
+  - `centre(x: number, y: number): HexMap` Moves the map so its middle is at x, y. (:3064)
+- `Iso: new (o?: { tw?: number; th?: number; x?: number; y?: number; zh?: number | null }) => Iso` (:3074)
+  - `tw: number` (:3067)
+  - `th: number` (:3067)
+  - `x: number` (:3067)
+  - `y: number` (:3067)
+  - `zh: number` (:3067)
+  - `toScreen(tx: number, ty: number, z?: number): { x: number; y: number }` (:3068)
+  - `toTile(x: number, y: number): { tx: number; ty: number }` (:3068)
+  - `corners(tx: number, ty: number, z?: number): [number, number][]` (:3068)
+  - `sort<T extends { tx: number; ty: number; z?: number }>(list: T[]): T[]` (:3069)
 
 ## From the maker kit
 
@@ -59,7 +59,7 @@ Infinity for blocked); `path(a, b, cost)` the cheapest route; `sees(a, b, blocks
 
 ## In real games
 
-3 games use it (`node scripts/examples.mjs gs.hex` lists them). The shortest:
+5 games use it (`node scripts/examples.mjs gs.hex` lists them). The shortest:
 
 `src/games/hex-merge.js` (Hex Merge, Casual · Merge, 84 lines):
 

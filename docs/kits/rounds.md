@@ -8,11 +8,11 @@ Ready (wait for the first tap), Scenes with fades, Levels.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RoundsPart`, line 952), where every option and field is described.
+From `src/gamescroll.d.ts` (`RoundsPart`, line 955), where every option and field is described.
 
-- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:953)
-- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:955)
-- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:956)
+- `Scenes: new (scenes: Record<string, Scene>, start: string, o?: { fade?: number }) => { name: string; readonly scene: Scene; is(...names: string[]): boolean; go(name: s…` (:956)
+- `Ready: new (o?: { eat?: boolean; text?: string }) => { waiting: boolean; readonly playing: boolean; t: number; since: number; eat: boolean; text: string; reset(): Loos…` Waits for the first touch or key before the round starts: `if (!ready.update(dt)) return;` in update, `if (ready.go()) return;` in down. (:958)
+- `Levels: new <T>(list: T[], o?: { loop?: boolean; start?: number }) => { readonly now: T; readonly number: number; readonly last: boolean; index: number; next(): Loose;…` (:959)
 
 ## From the maker kit
 
@@ -66,7 +66,7 @@ draw(c) { scenes.draw(c); if (scenes.changing) { c.fillStyle = `rgba(0,0,0,${sce
 
 ## In real games
 
-93 games use it (`node scripts/examples.mjs gs.rounds` lists them). The shortest:
+111 games use it (`node scripts/examples.mjs gs.rounds` lists them). The shortest:
 
 `src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 

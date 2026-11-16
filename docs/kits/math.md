@@ -8,22 +8,22 @@ Seeded random, daily seeds, smooth noise, vectors, grids, timers that pause with
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`MathPart`, line 451), where every option and field is described.
+From `src/gamescroll.d.ts` (`MathPart`, line 454), where every option and field is described.
 
-- `rng(seed?: number | string): Rng` Seeded random numbers (same seed, same run). (:453)
-- `daily(salt?: string, date?: Date): number` A seed that's the same for everyone today. (:455)
-- `seedOf(s: string): number` (:456)
-- `noise2(x: number, y: number): number` (:457)
-- `noise3(x: number, y: number, z: number): number` (:458)
-- `noiseSeed(seed: number | string): void` (:459)
-- `makeNoise(seed: number | string): (x: number, y: number, z?: number) => number` (:460)
-- `fbm(x: number, y: number, octaves?: number): number` (:461)
-- `vec: Loose` (:462)
-- `overlap(a: Loose, b: Loose): boolean` (:463)
-- `angleDiff(a: number, b: number): number` (:464)
-- `wrap(v: number, max: number): number` (:465)
-- `Grid: new (w: number, h: number, fill?: Loose) => Loose` (:466)
-- `Timers: new () => { after(sec: number, fn: () => void): Timer; every(sec: number, fn: () => void): Timer; update(dt: number): void; clear(): void }` Game timing that pauses with the game: timers.after(1.5, fn); timers.update(dt) each frame. (:468)
+- `rng(seed?: number | string): Rng` Seeded random numbers (same seed, same run). (:456)
+- `daily(salt?: string, date?: Date): number` A seed that's the same for everyone today. (:458)
+- `seedOf(s: string): number` (:459)
+- `noise2(x: number, y: number): number` (:460)
+- `noise3(x: number, y: number, z: number): number` (:461)
+- `noiseSeed(seed: number | string): void` (:462)
+- `makeNoise(seed: number | string): (x: number, y: number, z?: number) => number` (:463)
+- `fbm(x: number, y: number, octaves?: number): number` (:464)
+- `vec: Loose` (:465)
+- `overlap(a: Loose, b: Loose): boolean` (:466)
+- `angleDiff(a: number, b: number): number` (:467)
+- `wrap(v: number, max: number): number` (:468)
+- `Grid: new (w: number, h: number, fill?: Loose) => Loose` (:469)
+- `Timers: new () => { after(sec: number, fn: () => void): Timer; every(sec: number, fn: () => void): Timer; update(dt: number): void; clear(): void }` Game timing that pauses with the game: timers.after(1.5, fn); timers.update(dt) each frame. (:471)
 
 ## From the maker kit
 
@@ -133,7 +133,7 @@ if (!regions.has('fort')) drawLoading(regions.progress);
 
 ## In real games
 
-48 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
+51 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
 
 `src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 

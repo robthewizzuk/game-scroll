@@ -8,20 +8,20 @@ Small helpers: clamp, rnd, pix, disc, hash, fmt, letter, flick speed.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`UtilPart`, line 436), where every option and field is described.
+From `src/gamescroll.d.ts` (`UtilPart`, line 439), where every option and field is described.
 
-- `clamp(v: number, a: number, b: number): number` (:437)
-- `rnd(a: number, b: number): number` (:438)
-- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:440)
-- `disc(c: Ctx, x: number, y: number, r: number): void` (:441)
-- `hash(str: string): number` (:442)
-- `fmt(n: number): string` (:443)
-- `flickTracker(): Loose` (:444)
-- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:446)
+- `clamp(v: number, a: number, b: number): number` (:440)
+- `rnd(a: number, b: number): number` (:441)
+- `pix(c: Ctx, map: string[], x: number, y: number, col: Record<string, string>): void` Draws a tiny pixel map: each char keys into col, '.' is clear. (:443)
+- `disc(c: Ctx, x: number, y: number, r: number): void` (:444)
+- `hash(str: string): number` (:445)
+- `fmt(n: number): string` (:446)
+- `flickTracker(): Loose` (:447)
+- `letter(i: number, o?: { lower?: boolean }): string` The i-th letter: letter(0) is 'A' (wraps after 'Z'); { lower: true } for lower case. (:449)
 
 ## In real games
 
-179 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
+187 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
 
 `src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 
