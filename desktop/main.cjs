@@ -10,11 +10,10 @@
 // as usual. The page gets one small extra, window.gsDesktop (preload.cjs), and src/desktop.js reads it.
 // Guide: docs/desktop.md.
 'use strict';
-const { app, BrowserWindow, Menu, ipcMain, net, protocol, screen, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, net, powerMonitor, protocol, screen, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-const { thisDevice, zoomFor } = require('./device.cjs');
+const { thisDevice, zoomFor, linuxPower } = require('./device.cjs');
 
 const HOST = 'localhost', ORIGIN = `https://${HOST}`, SCHEME = 'gamescroll';
 const mac = process.platform === 'darwin', win32 = process.platform === 'win32';
@@ -31,6 +30,17 @@ sw('ignore-gpu-blocklist');                // keep the graphics chip where Chrom
 sw('enable-gpu-rasterization');            // 2D canvases and the feed drawn on the graphics chip
 sw('enable-zero-copy');                    // and handed to the screen without a copy
 sw('autoplay-policy', 'no-user-gesture-required');   // sound can start before the first click
+// JavaScript's room for short-lived things: a 3D game makes several hundred KB of them a frame (Long Shadow about 700 KB,
+// 40 MB a second at 60), and V8 sweeps them out each time its young space fills, a pause each time. Its own size suits a
+// phone, and it only grows where things live on, which garbage doesn't: 700 KB a frame was swept 4.6 times a second. A
+// computer has the memory to start it at 32 MB (up to 64): 0.7 times a second (scripts/desktop-test.cjs checks it).
+sw('js-flags', '--min-semi-space-size=32 --max-semi-space-size=64');
+// Chromium bounds-checks every shader's reads and writes (WebGPU's robustness), so one web page can't read what another
+// left in the graphics chip's memory. The app runs only its own games, so on a computer the checks go, and the
+// shaders run without them (heavy ones a few per cent quicker). WebGPU's checks of each call stay: the engine tries a new
+// effect inside them and turns it off if the chip refuses it (src/kit/pipes.js, hd3d-gpu-trace.js). --gs-safe-gpu
+// (a launch option) keeps the bounds checks, for a game whose shader reads past an array's end.
+if (!process.argv.includes('--gs-safe-gpu')) sw('enable-dawn-features', 'disable_robustness');
 // Windows guesses when a window is covered and stops drawing it; overlays and some screen setups fool it
 // into freezing a window that is in plain view. (Minimised windows still stop.)
 if (win32) sw('disable-features', 'CalculateNativeWinOcclusion');
@@ -82,6 +92,21 @@ const TYPES = {
 };
 const typeOf = f => TYPES[path.extname(f).slice(1).toLowerCase()] || 'application/octet-stream';
 const notFound = () => new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+// The app's files are read whole and kept (they don't change while it runs; the bundles carry their content's hash in
+// their names, so the code cache can keep them; the page itself is read fresh). Streamed through net.fetch, each file
+// went through this process's JavaScript a piece at a time: 5.8 ms a file against 2.8 for Chromium reading a local
+// server, and every file the page and its games load at a start or a loading screen waited on it.
+const KEEP_MB = 160, KEEP_ONE = 16 << 20;
+const kept = new Map();
+let keptBytes = 0;
+async function fileOf(file) {
+  const k = kept.get(file); if (k) return k;
+  let st; try { st = await fs.promises.stat(file); } catch (_) { return null; }
+  if (!st.isFile()) return null;
+  const f = { body: await fs.promises.readFile(file), type: typeOf(file) };
+  if (st.size <= KEEP_ONE && keptBytes + st.size <= KEEP_MB << 20) { kept.set(file, f); keptBytes += st.size; }
+  return f;
+}
 async function serve(req) {
   const u = new URL(req.url);
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response(null, { status: 405 });
@@ -89,13 +114,11 @@ async function serve(req) {
   if (rel === '/' || rel === '') rel = '/index.html';
   const file = path.join(WEB, path.normalize(rel));
   if (!file.startsWith(WEB + path.sep)) return notFound();   // (nothing outside the app's own files)
-  let st; try { st = await fs.promises.stat(file); } catch (_) { return notFound(); }
-  if (!st.isFile()) return notFound();
-  const r = await net.fetch(pathToFileURL(file).toString());   // (streamed from the app's archive)
-  // the bundles carry their content's hash in their names, so the code cache can keep them; the page itself is read fresh
-  return new Response(req.method === 'HEAD' ? null : r.body, {
+  let f; try { f = await fileOf(file); } catch (_) { f = null; }
+  if (!f) return notFound();
+  return new Response(req.method === 'HEAD' ? null : f.body, {
     status: 200,
-    headers: { 'Content-Type': typeOf(file), 'Content-Length': String(st.size), 'Cache-Control': /\/assets\//.test(rel) ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' },
+    headers: { 'Content-Type': f.type, 'Content-Length': String(f.body.length), 'Cache-Control': /\/assets\//.test(rel) ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' },
   });
 }
 
@@ -189,6 +212,19 @@ const ALLOWED = new Set(['media', 'geolocation', 'geolocation-approximate', 'sen
 const ours = url => { try { return new URL(url).origin === ORIGIN; } catch (_) { return false; } };
 
 ipcMain.handle('gs:take-links', e => (e.sender === main?.webContents ? links.splice(0) : []));
+// Heat and battery (src/kit/power.js asks every few seconds while a round is played): how warm macOS says the computer
+// is (Linux: below), how far Windows or macOS has slowed the processor (the share of its full speed, after a change), and whether a
+// laptop is on its battery. A fanless laptop (a MacBook Air) slows itself after some minutes of 3D; the engine steps
+// down a little before, as it does on a phone.
+let speedLimit = null;
+// Linux says neither: there the chips' own temperatures are read (desktop/device.cjs linuxPower), as a headroom.
+ipcMain.handle('gs:power', async e => {
+  if (e.sender !== main?.webContents) return null;
+  let thermal = 'unknown'; try { if (mac) thermal = powerMonitor.getCurrentThermalState(); } catch (_) { /* an older macOS */ }
+  let battery = false; try { battery = powerMonitor.isOnBatteryPower(); } catch (_) { /* no battery here */ }
+  if (process.platform !== 'linux') return { thermal, limit: speedLimit, battery, headroom: null, temp: null };
+  try { const l = await linuxPower(); return { thermal, limit: null, battery: battery || l.battery, headroom: l.headroom, temp: l.temp, chip: l.chip }; } catch (_) { return { thermal, limit: null, battery, headroom: null, temp: null }; }
+});
 // Settings › Quit (a console's games mode is full screen with no window to close; the Steam menu's Exit Game works too)
 ipcMain.handle('gs:quit', e => { if (e.sender === main?.webContents) app.quit(); });
 // the graphics chip in use and its driver, for the phone and driver steering list (src/steer.js): a rule can name a
@@ -207,6 +243,7 @@ app.whenReady().then(() => {
   const s = session.defaultSession;
   s.setPermissionRequestHandler((_wc, perm, cb, d) => cb(ALLOWED.has(perm) && ours(d.requestingUrl)));
   s.setPermissionCheckHandler((_wc, perm, origin) => ALLOWED.has(perm) && ours(origin));
+  powerMonitor.on('speed-limit-change', e => { speedLimit = e?.limit >= 0 && e.limit <= 100 ? e.limit : null; });
   menu();
   createWindow();
   // docked to a TV, or the games mode's resolution changed: draw to the new screen's size

@@ -141,6 +141,15 @@ export function startTier(saved, cls, computer) {
   const start = START[cls] ?? 2, t = Math.min(computer ? 3 : 2, saved?.tier ?? start);
   return computer && t > start && !saved?.room ? start : t;
 }
+/**
+ * The highest tier between rounds (pure: tests), before the heat plan's: a phone's is high, medium while hot. A computer
+ * may reach ultra, but warm (a fanless laptop under minutes of 3D: src/kit/power.js) or on a laptop's battery it plays
+ * as a phone does.
+ */
+export function capFor(computer, isHot, onBattery) {
+  if (computer && !isHot && !onBattery) return 3;
+  return isHot ? 1 : 2;
+}
 /** May a game climb from this tier (pure: tests)? A phone may (up to CAP); a computer above its class's start only with room (the chip's times say so). */
 export const mayClimb = (tier, cls, computer, room) => !computer || tier < (START[cls] ?? 2) || !!room;
 // While the phone is warm or hot (src/kit/power.js), and for a minute after it cools, games draw one tier
@@ -503,7 +512,7 @@ function applyTier() {
   // between rounds: one tier lower while hot, and no higher than the phone holds (each tier's chip work for these
   // frames as a share of what is drawn now: its pixels at full resolution over the drawn tier's at this step)
   const drawn = Math.min(Q.tier, Q.capNow ?? CAP), lv = LEVELS[Q.lvl] ** 2;
-  Q.capNow = Math.min(hot() ? CAP - 1 : CAP, heat.cap(t => TIERS[t].px / (TIERS[drawn].px * lv), drawn));
+  Q.capNow = Math.min(capFor(PC, hot(), power.onBattery), heat.cap(t => TIERS[t].px / (TIERS[drawn].px * lv), drawn));
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.out = Q.outCeil = 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
   if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)

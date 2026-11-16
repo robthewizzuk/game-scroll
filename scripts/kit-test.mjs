@@ -3272,6 +3272,17 @@ console.log('physics ok');
   assert.equal(heatOf({ platform: 'android', thermal: 2, headroom: -1 }), 1, 'Android moderate is warm');
   assert.equal(heatOf({ platform: 'android', thermal: 1, headroom: 1.02 }), 2, 'headroom 1 means throttling soon');
   assert.equal(heatOf({ platform: 'ios', thermal: 2 }), 2, 'iPhone serious is hot');
+  // a computer's (the desktop app: macOS thermal state, the processor's speed limit on macOS and Windows)
+  const { desktopHeat } = await import('../src/kit/power.js');
+  assert.deepEqual(desktopHeat({ thermal: 'nominal', limit: null }), { heat: 0, thermal: 0, headroom: null }, 'a cool Mac');
+  assert.deepEqual(desktopHeat({ thermal: 'fair', limit: null }), { heat: 1, thermal: 1, headroom: null }, 'macOS fair is warm, as an iPhone\'s');
+  assert.equal(desktopHeat({ thermal: 'serious' }).heat, 2, 'serious is hot'); assert.equal(desktopHeat({ thermal: 'critical' }).heat, 2);
+  assert.deepEqual(desktopHeat({ thermal: 'unknown', limit: 100 }), { heat: 0, thermal: null, headroom: null }, 'Windows at full speed: cool, no thermal state');
+  assert.equal(desktopHeat({ thermal: 'unknown', limit: 90 }).heat, 1, 'a processor slowed a little: warm');
+  assert.equal(desktopHeat({ thermal: 'unknown', limit: 60 }).heat, 2, 'below three quarters: hot');
+  assert.equal(desktopHeat(null).heat, 0, 'nothing said: cool');
+  assert.deepEqual(desktopHeat({ thermal: 'unknown', headroom: .5 }), { heat: 0, thermal: null, headroom: .5 }, 'Linux: a chip at 70 C of 100 is cool, its headroom kept for the heat plan');
+  assert.equal(desktopHeat({ headroom: .9 }).heat, 1, 'a headroom of .85 or more is warm'); assert.equal(desktopHeat({ headroom: 1.02 }).heat, 2, '1 or more hot');
   const p = { heat: 0, saver: false, level: .5, charging: false, saving: false, why: '' };
   assert.equal(judge(p, 0), false, 'nothing to save for');
   p.level = .15; assert.equal(judge(p, 1000), true, 'low battery'); assert.equal(p.why, 'the battery is low');
@@ -3600,6 +3611,18 @@ console.log('physics ok');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 72, 'and back up a refresh at a time');
   assert.equal(sp.stepUp(d3), true); assert.equal(sp.fpsFor(d3), 144, 'to the screen\'s rate');
   sp.speed.klass = 'mid'; assert.equal(sp.fpsFor({ id: 'kt-desk-mid', era: 'nextgen' }), 72, 'a mid computer\'s 3D games: near 60 in whole refreshes');
+  // a laptop on its battery (src/kit/power.js onBattery, from the desktop app): 3D near 60 and 2D near 120 at most, as a phone
+  {
+    const { power: pw } = await import('../src/kit/power.js');
+    sp.speed.klass = 'top'; pw.onBattery = true;
+    assert.equal(sp.autoFps({ id: 'kt-bat-3d', era: 'nextgen' }), 72, 'on its battery a top laptop\'s 3D game: near 60 (72 on 144 Hz)');
+    assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 144, 'a 2D game keeps a 144 Hz screen (one refresh a frame is the nearest to 120)');
+    for (let i = 0, t = 20000; i < 80; i++) sp.tick(t += 1000 / 240);
+    assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 120, 'and on a 240 Hz screen 120');
+    pw.onBattery = false; assert.equal(sp.autoFps({ id: 'kt-bat-2d' }), 240, 'plugged in: the screen\'s rate');
+    for (let i = 0, t = 40000; i < 80; i++) sp.tick(t += 1000 / 144);
+    sp.speed.klass = 'mid';
+  }
   // a games handheld (a ROG Ally, a Steam Deck: desktop/device.cjs) is the desktop app, but plays as a phone: 3D at 60 with
   // nothing made between (30 with GSFG making the rest where it can't hold 60), 2D at the screen's rate, steps 60 -> 30
   {
@@ -3635,6 +3658,27 @@ console.log('physics ok');
     assert.ok(dv.gamescopeIn({ XDG_CURRENT_DESKTOP: 'gamescope' }) && dv.gamescopeIn({ GAMESCOPE_WAYLAND_DISPLAY: 'gamescope-0' }) && !dv.gamescopeIn({ XDG_CURRENT_DESKTOP: 'KDE' }), 'Steam\'s games mode from the environment');
     assert.deepEqual(dv.ignoredPads('0x045e/0x028e,0x0b05/0x1abe, junk'), [{ vendor: '045e', product: '028e' }, { vendor: '0b05', product: '1abe' }], 'the pads Steam stands in for');
     assert.deepEqual([1080, 800, 640, 2160, 0].map(dv.zoomFor), [1.75, 1.25, 1, 3, 1], 'drawn bigger in the games mode: a 1080p handheld 1.75 times, a Steam Deck 1.25');
+    // Linux heat and battery from the kernel's files (Electron says neither there): the hottest chip against the temperature it slows at
+    {
+      const h = dv.headroomOf([{ chip: 'amdgpu', temp: 70, crit: 0 }, { chip: 'k10temp', temp: 91, crit: 0 }, { chip: 'nvme', temp: 99, crit: 0 }]);
+      assert.deepEqual(h, { headroom: .85, temp: 91, chip: 'k10temp' }, 'the processor at 91 C of 100 is warm (.85); a disk is not a chip that slows the game');
+      assert.equal(dv.headroomOf([{ chip: 'amdgpu', temp: 75, crit: 110 }]).headroom, .5, 'a chip\'s own crit is its line');
+      assert.equal(dv.headroomOf([{ chip: 'amdgpu', temp: 30, crit: 0 }]).headroom, 0, 'cold is 0');
+      assert.equal(dv.headroomOf([]), null, 'no chip says: null');
+      assert.equal(dv.onBatteryOf([{ type: 'Battery', status: 'Discharging' }, { type: 'Mains', online: '0' }]), true, 'a handheld unplugged');
+      assert.equal(dv.onBatteryOf([{ type: 'Battery', status: 'Charging' }, { type: 'Mains', online: '1' }]), false, 'plugged in');
+      assert.equal(dv.onBatteryOf([{ type: 'Battery', status: 'Discharging', scope: 'Device' }]), false, 'a controller\'s battery is not the computer\'s');
+      assert.equal(dv.onBatteryOf([]), false, 'a desktop PC');
+      // the files as a ROG Ally shows them
+      const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs'), { tmpdir } = await import('node:os');
+      const root = mkdtempSync(tmpdir() + '/gs-sys-'), put = (f, v) => { mkdirSync(f.slice(0, f.lastIndexOf('/')), { recursive: true }); writeFileSync(f, v + '\n'); };
+      put(`${root}/hwmon/hwmon3/name`, 'amdgpu'); put(`${root}/hwmon/hwmon3/temp1_input`, '62000');
+      put(`${root}/hwmon/hwmon5/name`, 'k10temp'); put(`${root}/hwmon/hwmon5/temp1_input`, '94000');
+      put(`${root}/hwmon/hwmon1/name`, 'acpitz'); put(`${root}/hwmon/hwmon1/temp1_input`, '99000');
+      put(`${root}/power_supply/BAT0/type`, 'Battery'); put(`${root}/power_supply/BAT0/status`, 'Discharging'); put(`${root}/power_supply/ACAD/type`, 'Mains'); put(`${root}/power_supply/ACAD/online`, '0');
+      const l = await dv.linuxPower(root); rmSync(root, { recursive: true, force: true });
+      assert.deepEqual(l, { headroom: .9, temp: 94, chip: 'k10temp', battery: true }, `an Ally's files: the processor at 94 C, on its battery (got ${JSON.stringify(l)})`);
+    }
     const { keepPads } = await import('../src/kit/gamepad.js');
     const steam = { id: 'Microsoft X-Box 360 pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)' }, ally = { id: 'ASUS (STANDARD GAMEPAD Vendor: 0b05 Product: 1abe)' };
     assert.deepEqual(keepPads([steam, ally], ['0b05:1abe']), [steam], 'the handheld\'s own pad is left out where Steam stands in for it');
@@ -7879,6 +7923,12 @@ console.log('physics ok');
   assert.equal(startTier({ tier: 3 }, 'top', false), 2, 'a phone never starts above high');
   assert.ok(mayClimb(1, 'top', true, false) && !mayClimb(2, 'top', true, false) && mayClimb(2, 'top', true, true), 'a computer climbs past its start only with room');
   assert.ok(mayClimb(1, 'low', false, false), 'a phone climbs by its frames alone, as before');
+  // the highest tier between rounds (hd3d.js capFor): a computer warm (a fanless laptop) or on its battery plays as a phone
+  const { capFor } = await import('../src/kit/hd3d.js');
+  assert.equal(capFor(false, false, false), 2, 'a phone: high'); assert.equal(capFor(false, true, false), 1, 'a hot phone: medium');
+  assert.equal(capFor(true, false, false), 3, 'a computer: ultra (with room)');
+  assert.equal(capFor(true, true, false), 1, 'a warm computer (a MacBook Air after minutes of 3D): medium, as a hot phone');
+  assert.equal(capFor(true, false, true), 2, 'a laptop on its battery: high');
   console.log('gs.hd tiers start and climb ok');
   // the sizes a frame is drawn at (hd3d.js frameSizes, pickSize): the final picture follows the 3D's own size, and
   // the 3D has a floor (Rob's Fold unfolded, 2026-11-14: 486 x 311 blown up four times, the upscaler twice the scene's cost)

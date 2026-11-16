@@ -178,8 +178,12 @@ export const evenRate = (rate, target) => rate / Math.max(1, Math.floor(rate / t
 /** What Auto would choose for this game on this phone, before any stepping down. */
 export function autoFps(def) {
   const k = phoneClass();
-  // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes); a handheld as a phone
-  if (computer()) return !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
+  // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes); a handheld as a phone.
+  // A laptop on its battery (src/kit/power.js onBattery): 3D near 60 and 2D near 120 at most, as a phone plays
+  if (computer()) {
+    const f = !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
+    return power.onBattery ? Math.min(f, evenRate(hz, is3D(def) ? 60 : 120)) : f;
+  }
   // (a phone: 60, never 120 by itself. On 120 the Fold 8 got hot within minutes and then stuttered; pick 120 in Settings to have it)
   if (is3D(def)) return k === 'low' ? 30 : 60;
   return k === 'low' ? 60 : 120;

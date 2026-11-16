@@ -57,6 +57,34 @@ async function dev() {
     const opened = await app.evaluate(() => global.__opened), wins = app.windows().length, at = await p.evaluate(() => location.origin);
     const went = new Set(opened);
     ok(went.has('https://example.com/a') && went.has('https://example.com/b') && wins === 1 && at === 'https://localhost', 'links out open in the browser, the window stays', JSON.stringify(opened));
+    // the speed settings main.cjs gives Chromium: JavaScript's young space (a sweep about once a second, not several, for a 3D
+    // game's ~700 KB of short-lived things a frame), and shaders without WebGPU's bounds checks (a read past an array's end
+    // isn't clamped to its last element); and the heat and battery reading the engine steps down by (src/kit/power.js)
+    const tune = await p.evaluate(async () => {
+      const gc = await new Promise(res => {
+        if (!performance.memory) return res(null);
+        let last = performance.memory.usedJSHeapSize, drops = 0, keep = null; const t0 = performance.now();
+        const f = now => { for (let i = 0; i < 7000; i++) keep = { x: i, y: [i, i + 1, i + 2] }; const u = performance.memory.usedJSHeapSize; if (u < last - 1e6) drops++; last = u; if (now - t0 < 5000) requestAnimationFrame(f); else res(+(drops / 5).toFixed(1)); };
+        requestAnimationFrame(f);
+      });
+      let oob = null;
+      try {
+        const a = await navigator.gpu?.requestAdapter(), d = a && await a.requestDevice();
+        if (d) {
+          const B = GPUBufferUsage, src = d.createBuffer({ size: 256, usage: B.STORAGE | B.COPY_DST }), out = d.createBuffer({ size: 16, usage: B.STORAGE | B.COPY_SRC }), rd = d.createBuffer({ size: 16, usage: B.MAP_READ | B.COPY_DST }), k = d.createBuffer({ size: 16, usage: B.UNIFORM | B.COPY_DST });
+          d.queue.writeBuffer(src, 0, new Uint32Array(64).map((_, i) => i)); d.queue.writeBuffer(k, 0, new Uint32Array([10, 0, 0, 0]));
+          const m = d.createShaderModule({ code: '@group(0) @binding(0) var<storage, read> a: array<u32>; @group(0) @binding(1) var<storage, read_write> o: array<u32>; @group(0) @binding(2) var<uniform> k: vec4u; @compute @workgroup_size(1) fn main() { o[0] = a[k.x]; }' });
+          const pl = d.createComputePipeline({ layout: 'auto', compute: { module: m, entryPoint: 'main' } });
+          const bg = d.createBindGroup({ layout: pl.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: src, offset: 0, size: 16 } }, { binding: 1, resource: { buffer: out } }, { binding: 2, resource: { buffer: k } }] });
+          const e = d.createCommandEncoder(), c = e.beginComputePass(); c.setPipeline(pl); c.setBindGroup(0, bg); c.dispatchWorkgroups(1); c.end(); e.copyBufferToBuffer(out, 0, rd, 0, 16); d.queue.submit([e.finish()]);
+          await rd.mapAsync(GPUMapMode.READ); oob = new Uint32Array(rd.getMappedRange())[0]; d.destroy();
+        }
+      } catch (err) { oob = 'error ' + err.message; }
+      return { gc, oob, power: await gsDesktop.power() };
+    });
+    ok(tune.gc != null && tune.gc < 2, 'JavaScript\'s young space is a computer\'s size (few sweeps of short-lived things)', `${tune.gc} a second`);
+    ok(tune.oob === null || tune.oob === 10, 'shaders run without WebGPU\'s bounds checks', tune.oob === null ? 'no WebGPU here' : `index 10 of 4 read ${tune.oob}`);
+    ok(tune.power && typeof tune.power.thermal === 'string' && typeof tune.power.battery === 'boolean', 'the app says the computer\'s heat and battery', JSON.stringify(tune.power));
     // a 2D game, played with the mouse
     await p.evaluate(() => __gs.only('sky-drifter', true)); await p.waitForTimeout(400);
     await p.waitForFunction(() => __gs.active && __gs.active.def.id === 'sky-drifter' && !__gs.active.loading, null, { timeout: 30000 });
@@ -121,7 +149,9 @@ async function handheld() {
     for (let i = 0; i < 3 && await id() === first; i++) { await press('down'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, first, { timeout: 5000 }).catch(() => {}); }
     const second = await id();
     ok(second && second !== first, 'the d-pad moves through the feed', `${first} → ${second}`);
-    await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id === was, first, { timeout: 8000 }).catch(() => {});
+    // (back up: a press while the feed is still settling on the card it scrolled to does nothing, as on the way down, so up
+    // to three; one that moved two games would land past the first, not on it)
+    for (let i = 0; i < 3 && await id() === second; i++) { await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, second, { timeout: 5000 }).catch(() => {}); }
     ok(await id() === first, 'one press is one game, though two pads report it', await id());
     const liked = () => p.evaluate(() => __gs.active.el.querySelector('.like').getAttribute('aria-pressed'));
     const l0 = await liked(); await press('y');
