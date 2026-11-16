@@ -116,6 +116,7 @@ jobs:
       app: ${{ steps.parts.outputs.app }}
       app-scenes: ${{ steps.parts.outputs.app-scenes }}
       share-link: ${{ steps.parts.outputs.share-link }}
+      talk: ${{ steps.parts.outputs.talk }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -148,6 +149,8 @@ jobs:
           part app-scenes 'src/(main|saves|gamescroll|game-modules|util|tour|detail-tour|detail-scenes|qa|perf|playstats|hearts|polyfill)\.js|src/kit/(awake|lazy|cleanup|tick|progress|crowd)\.js|scripts/app-test\.cjs|index\.html|vite\.config\.js'
           # the feed, the link code and the games catalogue; and the web version (src/web.js, the board kit's AR chip, Settings)
           part share-link 'src/(main|share|remote|web|settings|style)\.(js|css)|src/kit/tabletop\.js|scripts/(share-link|build-games|web-test)\.mjs|index\.html|vite\.config\.js'
+          # the desktop app's built-in voice (Pocket TTS 7M), its file, casting and the speech path in sound.js
+          part talk 'src/kit/(talk|talk-worker|talk-pack|talk-files|pocket-tts|gemm|voices|voice-fx|sound)\.js|src/desktop\.js|scripts/(talk-pack|talk-test)\.|vite\.config\.js'
 
       - name: Pick the games
         id: plan
@@ -411,6 +414,24 @@ jobs:
 
       - name: SGSR 2 no worse than a plain stretch, and our changes to it no worse than without
         run: node scripts/upscale-compare.cjs --warm 80 --modes plain,sgsr2,sgsr2-plain
+
+  # The desktop app's built-in voice: makes its file from Kyutai's files on Hugging Face (checked against the pinned
+  # SHA-256), then every voice speaks a line at its kind's pitch, the same seed says it the same way, casting, espeak's
+  # list on Linux, and say() in a page through the worker and the mixer.
+  talk:
+    needs: plan
+    if: needs.plan.outputs.talk == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    name: built-in voice
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Node, packages and the test browser
+        uses: ./.github/actions/browser
+
+      - name: Pocket TTS 7M speaks, casts and plays in a page
+        run: npm run talk-test -- --browser
 
   # The app around a game (screen kept on in a round, finer touch, even pixels and the LCD look, the
   # one-line soundtrack, the phone-only save, the font library, 2D looks, the phone test tour, loading,

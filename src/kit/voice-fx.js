@@ -234,3 +234,34 @@ export async function shape(samples, rate, { size = 1, fx = null, outRate = 4800
   if (heard.peak * gain > PEAK) gain = PEAK / heard.peak;
   return { buffer: out, gain, lead, seconds: lead + body, total, cut: a / rate };
 }
+
+/**
+ * The same speech faster or slower at the same pitch (tempo 1.25: a quarter faster): overlapping slices of 30 ms
+ * laid down a fixed step apart, each taken from where it lines up best with the one before (WSOLA). For engines
+ * with no speed of their own (the desktop app's built-in voice). tempo .5 to 2.
+ */
+export function stretch(x, rate, tempo) {
+  tempo = Math.max(.5, Math.min(2, +tempo || 1));
+  if (Math.abs(tempo - 1) < .01 || x.length < rate * .1) return x;
+  const N = Math.round(rate * .03) & ~1, hop = N >> 1, seek = Math.round(rate * .008), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = .5 - .5 * Math.cos(2 * Math.PI * i / N);
+  const len = Math.ceil(x.length / tempo), out = new Float32Array(len + N), wsum = new Float32Array(len + N);
+  let prev = 0;   // where the last slice was taken from
+  for (let o = 0, k = 0; o < len; o += hop, k++) {
+    const want = Math.round(k * hop * tempo);
+    let at = want;
+    if (k) {   // the slice that carries on best from the last one's second half
+      const ref = prev + hop; let best = -Infinity;
+      for (let d = -seek; d <= seek; d += 2) {
+        const s = want + d; if (s < 0 || s + hop > x.length || ref + hop > x.length) continue;
+        let c = 0; for (let i = 0; i < hop; i += 2) c += x[s + i] * x[ref + i];
+        if (c > best) { best = c; at = s; }
+      }
+    }
+    at = Math.max(0, Math.min(x.length - 1, at)); prev = at;
+    for (let i = 0; i < N && at + i < x.length; i++) { out[o + i] += x[at + i] * win[i]; wsum[o + i] += win[i]; }
+  }
+  const y = new Float32Array(len);
+  for (let i = 0; i < len; i++) y[i] = wsum[i] > 1e-3 ? out[i] / wsum[i] : out[i];
+  return y;
+}

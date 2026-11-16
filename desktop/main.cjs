@@ -45,6 +45,9 @@ const webgl = process.argv.includes('--gs-webgl');
 if (process.platform === 'linux') {
   if (webgl) sw('disable-blink-features', 'WebGPU');
   else { sw('enable-unsafe-webgpu'); sw('enable-features', 'Vulkan'); }
+  // The computer's own voices (speech-dispatcher: espeak-ng on SteamOS), which Chromium only lists with this switch.
+  // Characters speak with the app's built-in voice (src/kit/talk.js); these say a line while it loads, or where it can't run.
+  sw('enable-speech-dispatcher');
 }
 // The computer it runs on (desktop/device.cjs): a games handheld, and Steam's games mode (gamescope: SteamOS's Game
 // Mode, Big Picture). There the app is a console's: full screen from the start, drawn bigger to read at a hand's

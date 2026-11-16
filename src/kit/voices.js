@@ -29,6 +29,13 @@ export function describe(v) {
   const first = name.toLowerCase().replace(/^microsoft\s+/, '').split(/[\s(,-]+/)[0];
   let sex = null, tier = 1, joke = false;
   const g = /-x-([a-z]{3})(?:#(female|male)_\d+)?-(local|network)\b/.exec(uri.toLowerCase());
+  // Linux (speech-dispatcher): espeak-ng lists every language with each of its ~100 variants ("English (America)+Max
+  // espeak-ng"), most of them novelty voices. Only the plain voice (a man's) and its numbered male and female ones cast.
+  const es = /^(.*?)(?:\+([\w-]+))?\s+espeak(?:-ng)?$/i.exec(name);
+  if (es) {
+    const k = String(es[2] || '').toLowerCase(), m = /^(female|male)\d*$/.exec(k);
+    return { sex: !k ? 'm' : m ? m[1][0] : null, tier: 1, joke: !!k && !m, lang: norm(v?.lang) };
+  }
   if (g) {
     sex = g[2] ? g[2][0] : GOOGLE_F.has(g[1]) ? 'f' : GOOGLE_M.has(g[1]) ? 'm' : null;
     if (g[3] === 'network') tier = 0;

@@ -302,6 +302,9 @@ export interface SoundPart {
    * With either, the phone writes the line to sound and the kit plays it through the mixer's 'voice' channel, as loud on every phone,
    * with the room's echo, and onWord for every word (the Android and iPhone apps; elsewhere the line is spoken as before, size as a
    * lean of its pitch). It starts a moment later than a plain line: open with a short pause, say([.2, 'Ah. A door.'], { fx: 'tannoy' }).
+   * The Mac, Windows and Linux app speaks every English line with its own built-in voice (Pocket TTS 7M, 19 voices: 9 women, 7 men,
+   * 3 in between that come only by name, like: ['alba'], ['marius'], ['stuart']), shaped or not, through the mixer; other languages,
+   * and lines before its file has downloaded the first time, are said by the computer's voices.
    */
   say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
