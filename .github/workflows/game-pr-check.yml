@@ -150,7 +150,7 @@ jobs:
           # the feed, the link code and the games catalogue; and the web version (src/web.js, the board kit's AR chip, Settings)
           part share-link 'src/(main|share|remote|web|settings|style)\.(js|css)|src/kit/tabletop\.js|scripts/(share-link|build-games|web-test)\.mjs|index\.html|vite\.config\.js'
           # the desktop app's built-in voice (Pocket TTS 7M), its file, casting and the speech path in sound.js
-          part talk 'src/kit/(talk|talk-worker|talk-pack|talk-files|pocket-tts|gemm|voices|voice-fx|say-words|sound)\.js|src/desktop\.js|scripts/(talk-pack|talk-test)\.|vite\.config\.js'
+          part talk 'src/kit/(talk|talk-worker|talk-pack|talk-files|pocket-tts|gemm|voices|voice-fx|say-words|sound)\.js|src/desktop\.js|scripts/(talk-pack\.|talk-test\.|talk-voices/)|vite\.config\.js'
 
       - name: Pick the games
         id: plan
