@@ -274,7 +274,8 @@ export class Reputation {
    * 'avoid', 'ignore', 'stare' (a famous stranger), 'greet', 'bow', 'cheer' (loved and famous). Your game plays it.
    */
   mood(faction) {
-    const f = this.factions[faction] || {}, s = this.with(faction) / 100, fame = this.lean(this.fameAxis), g = this.lean(this.goodAxis);
+    // (this.with in brackets: without them CodeQL's parser reads 'with(...) / 100, ... /' as a regex)
+    const f = this.factions[faction] || {}, s = (this.with(faction)) / 100, fame = this.lean(this.fameAxis), g = this.lean(this.goodAxis);
     if (f.law && this.bounty(faction) > 0) return 'arrest';
     if (s <= -.6) return f.fights ? 'attack' : 'flee';
     if (f.timid && g <= -.5 && fame >= .5) return 'flee';
@@ -285,7 +286,7 @@ export class Reputation {
   }
   /** A price from someone of a faction: dearer when they dislike the hero, cheaper when they like them (spread: .25 at the ends). sell: what they pay the hero (half, moved the other way). */
   price(base, faction = null, { sell = false, spread = .25 } = {}) {
-    const s = faction ? this.with(faction) / 100 : 0;
+    const s = faction ? (this.with(faction)) / 100 : 0;
     return Math.max(sell ? 0 : 1, Math.round(sell ? base * .5 * (1 + spread * s) : base * (1 - spread * s)));
   }
   /** The first title whose every range fits ({ name, good: [50, 100], fame: [40, 100] }), or null. */
