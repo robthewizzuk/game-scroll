@@ -10,10 +10,10 @@ The player's Reduce motion setting (read only), to scale your own big effects.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PrefsPart`, line 1473), where every option and field is described.
+From `src/gamescroll.d.ts` (`PrefsPart`, line 1475), where every option and field is described.
 
-- `readonly reduceMotion: boolean` (:1473)
-- `readonly motion: number` 1 normally, smaller with Reduce motion: scale your own shakes and flashes by it. (:1473)
+- `readonly reduceMotion: boolean` (:1475)
+- `readonly motion: number` 1 normally, smaller with Reduce motion: scale your own shakes and flashes by it. (:1475)
 
 ## In real games
 

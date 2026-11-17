@@ -132,8 +132,9 @@ export const TIERS = [
 // 2026-11-14, and the phone performance report had its Next Gen games at 54 to 58 with 7% of frames slow; it climbs to
 // high by itself where the frames show room)
 const START = { top: 2, mid: 1, low: 1 };
-// (a games handheld, src/desktop.js, runs on a battery in the hands: it is held to high as a phone is, and climbs as one)
-const PC = !!desktop && !handheld;
+// (a games handheld, src/desktop.js: a 'top' one, a ROG Ally, plays as a computer, up to ultra; a 'mid' one, a Steam
+// Deck, runs on a battery in the hands with about a top phone's graphics: it is held to high as a phone is, and climbs as one)
+const PC = !!desktop && (!handheld || handheld.klass === 'top');
 const CAP = PC ? 3 : 2;
 /**
  * The tier a game starts on (pure: tests). saved: where it settled last time (speed.js settledFor), cls: the
@@ -515,7 +516,7 @@ function applyTier() {
   // between rounds: one tier lower while hot, and no higher than the phone holds (each tier's chip work for these
   // frames as a share of what is drawn now: its pixels at full resolution over the drawn tier's at this step)
   const drawn = Math.min(Q.tier, Q.capNow ?? CAP), lv = LEVELS[Q.lvl] ** 2;
-  Q.capNow = Math.min(capFor(PC, hot(), power.onBattery), heat.cap(t => TIERS[t].px / (TIERS[drawn].px * lv), drawn));
+  Q.capNow = Math.min(capFor(PC, hot(), power.onBattery && !handheld), heat.cap(t => TIERS[t].px / (TIERS[drawn].px * lv), drawn));
   if (Q.want == null) return;
   const down = Q.want < Q.tier; Q.tier = Q.want; Q.want = null; Q.lvl = 1; Q.ceil = down ? 1 : 0; Q.out = Q.outCeil = 0; Q.sum = Q.cnt = Q.late = Q.slow = Q.fast = 0;
   if (!down) Q.room = !!Q.wantRoom;   // (room: climbed while the chip's times showed it; kept on the way down, as that climb was)

@@ -5,8 +5,9 @@
 //       build in dist/ (every game built in): the app's address, what the page can reach, the computer's speed
 //       class and frame rate, a 2D game and a Next Gen game played, gamescroll:// links, links out, and
 //       that the page can't leave the app or read its files. (Linux: run it under xvfb-run.) On Linux it then opens it as a
-//       ROG Ally X in Steam's games mode: full screen, drawn bigger, its class, and the feed, Settings and a touch game
-//       played with a controller alone (--no-handheld: not that).
+//       ROG Ally X in Steam's games mode: full screen and the screen's size, drawn bigger, its class, real touches asked
+//       of gamescope, no on-screen sticks, mouse drags that change game, Settings › Check, and the feed, Settings and a
+//       touch game played with a controller alone (--no-handheld: not that).
 //   node scripts/desktop-test.cjs --app "<the built app's program>"
 //       A packaged app (CI, after electron-builder; games stream from the games host, as players get them):
 //       it opens on its own address, streams the catalogue and a game, and its page has no errors.
@@ -118,7 +119,7 @@ async function handheld() {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-hand-'));
   const app = await _electron.launch({
     executablePath: exe, args: ['--no-sandbox', DESK],
-    env: { ...process.env, GS_WEB: path.join(ROOT, 'dist'), GS_USER_DATA: data, GS_HANDHELD: 'ROG Ally X RC72LA_RC72LA', GS_HANDHELD_VENDOR: 'ASUSTeK COMPUTER INC.', GS_HANDHELD_CPU: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics', SDL_GAMECONTROLLER_IGNORE_DEVICES: '0x0b05/0x1b4c' },
+    env: { ...process.env, GS_WEB: path.join(ROOT, 'dist'), GS_USER_DATA: data, GS_HANDHELD: 'ROG Ally X RC72LA_RC72LA', GS_HANDHELD_VENDOR: 'ASUSTeK COMPUTER INC.', GS_HANDHELD_CPU: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics', SDL_GAMECONTROLLER_IGNORE_DEVICES: '0x0b05/0x1b4c', XDG_CURRENT_DESKTOP: 'gamescope' },
   });
   try {
     const p = await app.firstWindow(), errs = watch(p);
@@ -130,7 +131,23 @@ async function handheld() {
     ok(scr.full, 'console mode opens full screen');
     ok(Math.abs(f.dpr - zoomFor(scr.h)) < .01, 'and draws the app bigger to read from a hand\'s length', `zoom ${f.dpr} on a ${scr.h} px screen, ${f.ih} px tall to the page`);
     // (its class is the model's, 'top', unless it draws in software, as the test machine does: then 'low')
-    ok(f.info.handheld === 'top' && !f.info.pc && (f.info.klass === 'low' || f.info.klass === 'top' && f.info.auto3d === 60), 'it plays 3D games as a top phone does (its class from the model, 60 a second)', `handheld ${f.info.handheld}, class ${f.info.klass}, 3D ${f.info.auto3d} fps, 2D ${f.info.auto2d} fps`);
+    ok(f.info.handheld === 'top' && f.info.pc && f.info.auto3d === Math.round(f.info.hz / Math.max(1, Math.floor(f.info.hz / 60))), 'a top handheld plays 3D games as a computer, held near 60 (Rob\'s Ally: 30 a second at a quarter busy, as a phone)', `handheld ${f.info.handheld}, class ${f.info.klass}, 3D ${f.info.auto3d} fps, 2D ${f.info.auto2d} fps`);
+    // Steam's games mode (gamescope; here a bare X server): the window is the screen's size, as the X server sees it, and
+    // gamescope is asked for real touches (STEAM_TOUCH_CLICK_MODE 4 on the screen's root window: desktop/x11.cjs)
+    const x11 = require(path.join(DESK, 'x11.cjs')), X = await x11.open();
+    const win = async () => { const xid = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readUInt32LE(0)); return X.geometry(xid); };
+    const fits = g => g.x === 0 && g.y === 0 && Math.abs(g.width - X.width) <= 2 && Math.abs(g.height - X.height) <= 2;
+    let g = await win();
+    ok(fits(g), 'its window is the whole screen, at its corner', `${g.width}×${g.height} at ${g.x},${g.y} on ${X.width}×${X.height}`);
+    ok((await X.get32(X.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] === 4, 'gamescope is asked to pass touches through as touches');
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setBounds({ x: 200, y: 60, width: 1000, height: 700 }); });
+    await p.waitForTimeout(1500); g = await win();
+    ok(fits(g), 'a window moved off the screen\'s size is put back', `${g.width}×${g.height} at ${g.x},${g.y}`);
+    await X.set32(X.root, 'STEAM_TOUCH_CLICK_MODE', [1]); await p.waitForTimeout(2600);
+    ok((await X.get32(X.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] === 4, 'and touches again after Steam set its mouse clicks back');
+    X.close();
+    const look = await p.evaluate(async () => { const gs = (await __gs.gs()).default; return { cursor: document.documentElement.classList.contains('no-cursor'), sticks: gs.controls.onScreen() }; });
+    ok(look.cursor && !look.sticks, 'no pointer arrow, and no on-screen sticks or buttons (the handheld\'s own are used)', JSON.stringify(look));
     // a made-up controller: buttons by the standard layout's numbers, and the pad Steam stands in for (left out)
     await p.evaluate(() => {
       const mk = (i, id) => ({ index: i, id, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) });
@@ -154,9 +171,18 @@ async function handheld() {
     for (let i = 0; i < 3 && await id() === second; i++) { await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, second, { timeout: 5000 }).catch(() => {}); }
     ok(await id() === first, 'one press is one game, though two pads report it', await id());
     const liked = () => p.evaluate(() => __gs.active.el.querySelector('.like').getAttribute('aria-pressed'));
-    const l0 = await liked(); await press('y');
-    ok(await liked() !== l0, 'Y hearts the game');
-    await press('y');
+    // (the app reads the pads once a frame: a 90 ms press is missed where a frame takes longer, as a Board game's card can
+    // in software graphics on the test machine, so Y is held until the heart changes, up to 1.5 s: still one press)
+    const hold = async (n, until) => {
+      for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: true, value: 1 }; }, [g, B[n]]);
+      const got = await p.waitForFunction(until, null, { timeout: 1500 }).then(() => true, () => false);
+      for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: false, value: 0 }; }, [g, B[n]]);
+      await p.waitForTimeout(160); return got;
+    };
+    const l0 = await liked();
+    await hold('y', `__gs.active.el.querySelector('.like').getAttribute('aria-pressed') !== ${JSON.stringify(l0)}`);
+    ok(await liked() !== l0, 'Y hearts the game', `${l0} → ${await liked()}`);
+    await hold('y', `__gs.active.el.querySelector('.like').getAttribute('aria-pressed') === ${JSON.stringify(l0)}`);
     // the top bar and the game's buttons: View, then → to Settings, A opens it, ↓ moves inside it, B closes it
     await press('select');
     const inBar = await p.evaluate(() => !!document.activeElement && (!!document.activeElement.closest('.top') || !!document.activeElement.closest('.slide')) && document.documentElement.classList.contains('pad-ui'));
@@ -174,6 +200,23 @@ async function handheld() {
     await press('b'); await p.waitForTimeout(300);
     ok(!(await p.evaluate(() => !!document.querySelector('dialog[open]'))), 'B closes it');
     await press('b');
+    // a mouse drag on the feed (a touch gamescope made a mouse) changes game as a finger's swipe does
+    await p.waitForTimeout(600);
+    const m0 = await id(), vw = await p.evaluate(() => [innerWidth, innerHeight]);
+    for (let i = 0; i < 3 && await id() === m0; i++) {
+      await p.mouse.move(vw[0] / 2, vw[1] * .7); await p.mouse.down();
+      for (let k = 1; k <= 8; k++) { await p.mouse.move(vw[0] / 2, vw[1] * (.7 - k * .05)); await p.waitForTimeout(16); }
+      await p.mouse.up();
+      await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, m0, { timeout: 4000 }).catch(() => {});
+    }
+    const m1 = await id(), playing = await p.evaluate(() => __gs.active?.state);
+    ok(m1 && m1 !== m0 && playing !== 'playing', 'a mouse drag up the feed goes to the next game, and doesn\'t start one', `${m0} → ${m1}, ${playing}`);
+    // Settings › Check this handheld: plain lines about touch, the screen, the graphics and the frame rate
+    await p.evaluate(() => document.getElementById('settings').click()); await p.waitForTimeout(300);
+    await p.evaluate(() => document.querySelector('dialog.settings .set-check')?.click());
+    const lines = await p.waitForFunction(() => { const l = [...document.querySelectorAll('.hh-check .hh-lines li')]; return l.length >= 5 && l.map(x => x.textContent); }, null, { timeout: 15000 }).then(h => h.jsonValue(), () => null);
+    ok(lines && lines.some(t => /passthrough/.test(t)) && lines.some(t => /^✓Screen: /.test(t)) && lines.some(t => /Played as: a computer/.test(t)), 'Settings › Check says how touch, the screen and the frame rate are', (lines || []).join(' | ').slice(0, 600));
+    await p.evaluate(() => document.querySelector('.hh-check')?.close());
     // a game played by touch gets a pointer: the stick moves it, A is the finger
     await p.evaluate(() => __gs.only('fly-swatter', true)); await p.waitForTimeout(400);
     await p.waitForFunction(() => __gs.active && __gs.active.def.id === 'fly-swatter' && !__gs.active.loading, null, { timeout: 30000 });

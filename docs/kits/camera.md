@@ -23,26 +23,26 @@ after `rig.update()`; it tells the rig and the view (`v.aiming` softens a Next G
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CameraPart`, line 1878), where every option and field is described.
+From `src/gamescroll.d.ts` (`CameraPart`, line 1880), where every option and field is described.
 
-- `CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; /** Wha…` (:1879)
-- `GunRig: new (view: Loose, model?: Loose | null, o?: { kind?: string; kick?: GunKick; /** [x, y, z] in front of the eye at the hip. */ hip?: number[]; /** [x, y, z] whe…` A gun held in first person that moves like a real one: springs for a shot's kick (back, up, twist, roll), lagging the head's turns, swaying with steps, dipping on landing, lowered to run, raised to aim with the… (:1898)
-  - `root: Loose` The group in front of the camera the model sits in. (:1907)
-  - `model: Loose | null` (:1907)
-  - `kind: string` (:1907)
-  - `hip: number[]` (:1907)
-  - `ads: number[]` (:1907)
-  - `aiming: boolean` Raised to the eye (eased in), and lowered to run. (:1908)
-  - `sprinting: boolean` (:1908)
-  - `hold(model: Loose, kind?: string | null): Loose` Puts another model in the hands (and another kind's pose and kick): the one before. (:1909)
-  - `fire(strength?: number, kind?: string | null): GunRigT` A shot: the kind's kick (strength 1; kind: another kind's), and the eye's punch on the rig. (:1910)
-  - `land(speed?: number): GunRigT` (:1911)
-  - `draw(): GunRigT` Brought up from below (a draw or a switch). (:1911)
-  - `reload(secs?: number): GunRigT` Tipped over and lowered for a reload of secs seconds. (:1911)
-  - `update(dt: number): GunRigT` (:1912)
-  - `dispose(): void` (:1912)
-- `Spring: new (o?: { freq?: number; damp?: number; x?: number; target?: number }) => { x: number; v: number; target: number; freq: number; damp: number; push(v: number):…` A spring worked out exactly (the same at any frame rate): freq Hz, damp (1 no overshoot, below a bounce). (:1900)
-- `KICK: Record<string, GunKick>` Each kind's kick at the hip (aiming takes a little under half). (:1902)
+- `CameraRig: new (view: Loose, o?: { mode?: RigMode; distance?: number; height?: number; side?: number; look?: number; lag?: number; lead?: number; fov?: number; /** Wha…` (:1881)
+- `GunRig: new (view: Loose, model?: Loose | null, o?: { kind?: string; kick?: GunKick; /** [x, y, z] in front of the eye at the hip. */ hip?: number[]; /** [x, y, z] whe…` A gun held in first person that moves like a real one: springs for a shot's kick (back, up, twist, roll), lagging the head's turns, swaying with steps, dipping on landing, lowered to run, raised to aim with the… (:1900)
+  - `root: Loose` The group in front of the camera the model sits in. (:1909)
+  - `model: Loose | null` (:1909)
+  - `kind: string` (:1909)
+  - `hip: number[]` (:1909)
+  - `ads: number[]` (:1909)
+  - `aiming: boolean` Raised to the eye (eased in), and lowered to run. (:1910)
+  - `sprinting: boolean` (:1910)
+  - `hold(model: Loose, kind?: string | null): Loose` Puts another model in the hands (and another kind's pose and kick): the one before. (:1911)
+  - `fire(strength?: number, kind?: string | null): GunRigT` A shot: the kind's kick (strength 1; kind: another kind's), and the eye's punch on the rig. (:1912)
+  - `land(speed?: number): GunRigT` (:1913)
+  - `draw(): GunRigT` Brought up from below (a draw or a switch). (:1913)
+  - `reload(secs?: number): GunRigT` Tipped over and lowered for a reload of secs seconds. (:1913)
+  - `update(dt: number): GunRigT` (:1914)
+  - `dispose(): void` (:1914)
+- `Spring: new (o?: { freq?: number; damp?: number; x?: number; target?: number }) => { x: number; v: number; target: number; freq: number; damp: number; push(v: number):…` A spring worked out exactly (the same at any frame rate): freq Hz, damp (1 no overshoot, below a bounce). (:1902)
+- `KICK: Record<string, GunKick>` Each kind's kick at the hip (aiming takes a little under half). (:1904)
 
 ## From the maker kit
 

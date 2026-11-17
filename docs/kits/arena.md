@@ -8,29 +8,29 @@ Car football: an arena, a ball car, chasing the ball.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ArenaPart`, line 3876), where every option and field is described.
+From `src/gamescroll.d.ts` (`ArenaPart`, line 3878), where every option and field is described.
 
-- `Arena: new (world: Loose, o?: { w?: number; l?: number; h?: number; curve?: number; segments?: number; goal?: { w?: number; h?: number; d?: number }; ball?: Loose; bal…` (:3877)
-- `BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: nu…` (:3882)
-  - `team: number` (:3872)
-  - `boost: number` (:3872)
-  - `maxBoost: number` (:3872)
-  - `readonly pos: P3` (:3872)
-  - `readonly vel: P3` (:3872)
-  - `readonly rot: Loose` (:3872)
-  - `readonly speed: number` (:3872)
-  - `readonly grounded: boolean` (:3872)
-  - `readonly boosting: boolean` (:3872)
-  - `readonly forward: P3` (:3873)
-  - `readonly up: P3` (:3873)
-  - `readonly right: P3` (:3873)
-  - `readonly upsideDown: boolean` (:3873)
-  - `control(i: { throttle?: number; steer?: number; brake?: boolean; boost?: boolean; jump?: boolean; pitch?: number; yaw?: number; roll?: number }): BallCar` (:3874)
-  - `update(dt: number): BallCar` (:3874)
-  - `spawn(s: P3 & { facing?: number }): BallCar` (:3874)
-  - `rightUp(): BallCar` (:3874)
-  - `remove(): void` (:3874)
-- `chaseBall(car: BallCar, arena: Loose, o?: { skill?: Skill }): { throttle: number; steer: number; boost: boolean; jump: boolean }` (:3883)
+- `Arena: new (world: Loose, o?: { w?: number; l?: number; h?: number; curve?: number; segments?: number; goal?: { w?: number; h?: number; d?: number }; ball?: Loose; bal…` (:3879)
+- `BallCar: new (world: Loose, mesh: Loose, o?: { team?: number; at?: P3; wheels?: Loose[]; power?: number; steer?: number; top?: number; boostTop?: number; maxBoost?: nu…` (:3884)
+  - `team: number` (:3874)
+  - `boost: number` (:3874)
+  - `maxBoost: number` (:3874)
+  - `readonly pos: P3` (:3874)
+  - `readonly vel: P3` (:3874)
+  - `readonly rot: Loose` (:3874)
+  - `readonly speed: number` (:3874)
+  - `readonly grounded: boolean` (:3874)
+  - `readonly boosting: boolean` (:3874)
+  - `readonly forward: P3` (:3875)
+  - `readonly up: P3` (:3875)
+  - `readonly right: P3` (:3875)
+  - `readonly upsideDown: boolean` (:3875)
+  - `control(i: { throttle?: number; steer?: number; brake?: boolean; boost?: boolean; jump?: boolean; pitch?: number; yaw?: number; roll?: number }): BallCar` (:3876)
+  - `update(dt: number): BallCar` (:3876)
+  - `spawn(s: P3 & { facing?: number }): BallCar` (:3876)
+  - `rightUp(): BallCar` (:3876)
+  - `remove(): void` (:3876)
+- `chaseBall(car: BallCar, arena: Loose, o?: { skill?: Skill }): { throttle: number; steer: number; boost: boolean; jump: boolean }` (:3885)
 
 ## From the maker kit
 

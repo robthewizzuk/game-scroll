@@ -14,6 +14,7 @@ const { app, BrowserWindow, Menu, ipcMain, net, powerMonitor, protocol, screen, 
 const fs = require('node:fs');
 const path = require('node:path');
 const { thisDevice, zoomFor, linuxPower } = require('./device.cjs');
+const x11 = process.platform === 'linux' ? require('./x11.cjs') : null;
 
 const HOST = 'localhost', ORIGIN = `https://${HOST}`, SCHEME = 'gamescroll';
 const mac = process.platform === 'darwin', win32 = process.platform === 'win32';
@@ -66,6 +67,12 @@ if (process.platform === 'linux') {
 const DEVICE = thisDevice();
 const CONSOLE = DEVICE.gamescope || !!DEVICE.handheld || process.argv.includes('--gs-console');
 if (process.platform === 'linux' && DEVICE.gamescope) sw('ozone-platform', 'x11');
+// Touch in Steam's games mode: gamescope makes every touch a mouse click and a cursor move unless the screen says
+// otherwise, and for a game that isn't one of Steam's own Steam says "left click" (STEAM_TOUCH_CLICK_MODE 1): the
+// feed wouldn't scroll under a finger and a game saw one mouse, not fingers. While the app has the screen it says
+// "passthrough" (4), so touches reach it as touches, as on a phone (gamescopeTouch below). --gs-touch-mouse (a Steam
+// launch option) leaves Steam's choice alone.
+const GS_TOUCH = !!x11 && DEVICE.gamescope && !process.argv.includes('--gs-touch-mouse');
 
 // One copy at a time: a second launch (a gamescroll:// link on Windows) hands its link to the first.
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
@@ -151,13 +158,16 @@ function consoleZoom(d = screen.getPrimaryDisplay()) {
 function show() { if (!main) return; if (main.isMinimized()) main.restore(); main.show(); main.focus(); }
 
 function createWindow() {
-  const st = readState(), area = screen.getPrimaryDisplay().workAreaSize;
+  const st = readState(), disp = screen.getPrimaryDisplay(), area = disp.workAreaSize;
   // first run: most of the screen (the feed lays itself out to any window; Next Gen games fill a wide one)
   const h = Math.round(Math.min(1000, area.height * .88)), w = Math.round(Math.min(area.width * .88, h * 1.45));
-  const b = onScreen(st?.bounds) ? st.bounds : { width: w, height: h };
+  // (a console's games mode: the whole screen from the first frame, with no smallest size: under gamescope the window is
+  // the size it asks for until gamescope sees it full screen, and Chromium lays the page out to the screen's size the
+  // moment it asks, so a window that started smaller had its bottom and right drawn past its edge)
+  const b = CONSOLE ? { ...disp.bounds } : onScreen(st?.bounds) ? st.bounds : { width: w, height: h };
   const zoom = consoleZoom();
   main = new BrowserWindow({
-    ...b, minWidth: 380, minHeight: 600, show: false, title: 'Game Scroll', backgroundColor: '#0c0e12',
+    ...b, ...(CONSOLE ? {} : { minWidth: 380, minHeight: 600 }), show: false, title: 'Game Scroll', backgroundColor: '#0c0e12',
     autoHideMenuBar: true, fullscreenable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -169,11 +179,17 @@ function createWindow() {
       additionalArguments: [`--gs-version=${app.getVersion()}`, `--gs-device=${encodeURIComponent(JSON.stringify({ ...DEVICE, console: CONSOLE, zoom, webgl }))}`],
     },
   });
-  if (st?.maximized) main.maximize();
+  if (st?.maximized && !CONSOLE) main.maximize();
   if (st?.fullScreen || CONSOLE) main.setFullScreen(true);
-  for (const e of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) main.on(e, () => keepState(main));
+  for (const e of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) main.on(e, () => { if (!CONSOLE) keepState(main); });
   main.once('ready-to-show', show);
   main.on('closed', () => { main = null; });
+  if (DEVICE.gamescope && x11) {
+    main.once('show', () => { fitScreenSoon(); gamescopeTouch(); });
+    for (const e of ['resize', 'enter-full-screen', 'leave-full-screen']) main.on(e, fitScreenSoon);
+    main.on('focus', () => { focused = true; gamescopeTouch(); });
+    main.on('blur', () => { focused = false; });
+  }
 
   const wc = main.webContents;
   wc.setVisualZoomLevelLimits(1, 1);   // no pinch zoom: the feed lays itself out to the window
@@ -188,6 +204,66 @@ function createWindow() {
   wc.on('did-finish-load', () => { if (links.length) wc.send('gs:links'); });
   main.loadURL(ORIGIN + '/');
 }
+
+/* ---------- Steam's games mode (gamescope): the window's size and touch, through the X server (desktop/x11.cjs) ---------- */
+let X = null, xTried = 0, focused = true;
+async function xserver() {
+  if (X) return X;
+  if (Date.now() - xTried < 5000) return null;
+  xTried = Date.now();
+  X = await x11.open().catch(() => null);
+  return X;
+}
+const xid = () => { try { return x11.xidOf(main.getNativeWindowHandle()); } catch (_) { return 0; } };
+// What the X server says about the window, the screen and gamescope, and what was done about it (Settings › Check
+// this handheld shows it: src/handcheck.js)
+const GS = { root: null, window: null, chromium: null, fixes: 0, touch: { on: GS_TOUCH, mode: null, steam: null, error: null }, fpsLimit: null, refresh: null };
+let fitTimer = null;
+function fitScreenSoon() { clearTimeout(fitTimer); fitTimer = setTimeout(() => fitScreen().catch(() => {}), 250); }
+// Make the window the screen's size, as the X server sees both. Chromium works out a full screen window's size from
+// the screen the moment it asks to be full screen and lays the page out to it; where gamescope hadn't made the X window
+// that size (yet), the page was bigger than the window, and its bottom drawn below the screen's edge. Setting the
+// bounds moves the X window and Chromium's idea of it to the same place.
+async function fitScreen() {
+  if (!main || main.isDestroyed()) return;
+  const x = await xserver(), id = xid();
+  if (!x || !id) return;
+  const g = await x.geometry(id).catch(() => null), r = await x.geometry(x.root).catch(() => null);
+  if (!g || !r) return;
+  const sf = screen.getPrimaryDisplay().scaleFactor || 1, cb = main.getContentBounds();
+  const chromium = { x: Math.round(cb.x * sf), y: Math.round(cb.y * sf), width: Math.round(cb.width * sf), height: Math.round(cb.height * sf) };
+  Object.assign(GS, { root: { width: r.width, height: r.height }, window: g, chromium });
+  const off = (a, b) => Math.abs(a - b) > 2;
+  const wrong = off(g.width, r.width) || off(g.height, r.height) || off(g.x, 0) || off(g.y, 0) || off(chromium.width, r.width) || off(chromium.height, r.height);
+  if (wrong && GS.fixes < 6) { GS.fixes++; main.setBounds({ x: 0, y: 0, width: Math.round(r.width / sf), height: Math.round(r.height / sf) }); fitScreenSoon(); }
+}
+// Touches as touches while the app has the screen (GS_TOUCH above). Steam writes its own choice again when it moves to
+// another game or its menu, and the app writes passthrough again whenever it has the screen back (every 2 s at most).
+let touchTimer = null;
+async function gamescopeTouch() {
+  if (!touchTimer && DEVICE.gamescope && x11) touchTimer = setInterval(() => gamescopeTouch().catch(() => {}), 2000);
+  const x = await xserver();
+  if (!x) return;
+  // (also how gamescope paces the app: Steam's frame rate limit, 0 = none, and the screen's refresh now)
+  GS.fpsLimit = (await x.get32(x.root, 'GAMESCOPE_FPS_LIMIT').catch(() => null))?.[0] ?? null;
+  GS.refresh = (await x.get32(x.root, 'GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK').catch(() => null))?.[0] ?? null;
+  try {
+    const now = (await x.get32(x.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] ?? null;
+    if (now !== 4) GS.touch.steam = now;
+    if (GS_TOUCH && focused && main && !main.isDestroyed() && main.isVisible() && now !== 4) await x.set32(x.root, 'STEAM_TOUCH_CLICK_MODE', [4]);
+    GS.touch.mode = (await x.get32(x.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] ?? null;
+    GS.touch.error = null;
+  } catch (e) { GS.touch.error = String(e?.message || e); X = null; }
+}
+// (on the way out, Steam's own choice back: Steam writes it again anyway when its menu or the next game comes up)
+let restored = false;
+app.on('will-quit', e => {
+  if (restored || !X || !GS_TOUCH || GS.touch.steam == null) return;
+  restored = true; e.preventDefault();
+  const done = () => { try { X?.close(); } catch (_) { /* gone */ } app.quit(); };
+  X.set32(X.root, 'STEAM_TOUCH_CLICK_MODE', [GS.touch.steam]).then(done, done);
+  setTimeout(done, 400);
+});
 
 /* ---------- menus (the keys people expect; Windows keeps the bar hidden, Alt shows it) ---------- */
 function menu() {
@@ -228,6 +304,21 @@ ipcMain.handle('gs:power', async e => {
   if (process.platform !== 'linux') return { thermal, limit: speedLimit, battery, headroom: null, temp: null };
   try { const l = await linuxPower(); return { thermal, limit: null, battery: battery || l.battery, headroom: l.headroom, temp: l.temp, chip: l.chip }; } catch (_) { return { thermal, limit: null, battery, headroom: null, temp: null }; }
 });
+// Settings › Check this handheld (src/handcheck.js): what the computer, Chromium and gamescope say, read where the page can't
+ipcMain.handle('gs:check', async e => {
+  if (e.sender !== main?.webContents) return null;
+  if (DEVICE.gamescope && x11) { await fitScreen().catch(() => {}); await gamescopeTouch().catch(() => {}); }
+  const d = screen.getPrimaryDisplay();
+  let gpu = null; try { gpu = app.getGPUFeatureStatus(); } catch (_) { /* older Electron */ }
+  let info = null; try { info = await app.getGPUInfo('basic'); } catch (_) { /* none */ }
+  const dev = info?.gpuDevice?.find(x => x.active) || info?.gpuDevice?.[0] || null;
+  return {
+    display: { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor, hz: d.displayFrequency || null },
+    content: main.getContentBounds(), fullScreen: main.isFullScreen(), zoom: main.webContents.getZoomFactor(),
+    gamescope: DEVICE.gamescope ? GS : null, gpu, chip: dev ? { name: String(dev.deviceString || ''), driver: `${dev.driverVendor || ''} ${dev.driverVersion || ''}`.trim(), vendorId: dev.vendorId } : null,
+    switches: ['ozone-platform', 'enable-unsafe-webgpu', 'enable-features', 'disable-blink-features', 'use-angle', 'ignore-gpu-blocklist'].filter(k => app.commandLine.hasSwitch(k)).map(k => { const v = app.commandLine.getSwitchValue(k); return v ? `${k}=${v}` : k; }),
+  };
+});
 // Settings › Quit (a console's games mode is full screen with no window to close; the Steam menu's Exit Game works too)
 ipcMain.handle('gs:quit', e => { if (e.sender === main?.webContents) app.quit(); });
 // the graphics chip in use and its driver, for the phone and driver steering list (src/steer.js): a rule can name a
@@ -250,7 +341,7 @@ app.whenReady().then(() => {
   menu();
   createWindow();
   // docked to a TV, or the games mode's resolution changed: draw to the new screen's size
-  if (CONSOLE) screen.on('display-metrics-changed', () => { if (main && !main.isDestroyed()) main.webContents.setZoomFactor(consoleZoom()); });
+  if (CONSOLE) screen.on('display-metrics-changed', () => { if (main && !main.isDestroyed()) { main.webContents.setZoomFactor(consoleZoom()); if (DEVICE.gamescope && x11) { GS.fixes = 0; fitScreenSoon(); } } });
   app.on('activate', () => { if (!main) createWindow(); else show(); });   // macOS: the Dock icon
 });
 app.on('window-all-closed', () => { app.quit(); });

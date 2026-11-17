@@ -133,7 +133,7 @@ if (!regions.has('fort')) drawLoading(regions.progress);
 
 ## In real games
 
-51 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
+52 games use it (`node scripts/examples.mjs gs.math` lists them). The shortest:
 
 `src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 

@@ -13,8 +13,21 @@
 //   // draw:   stick.draw(c); jump.draw(c);
 //
 // Fingers are tracked by pointer id, so a stick and a button work at the same time (two thumbs).
+//
+// On a games handheld or in Steam's games mode (src/desktop.js consoleMode: a ROG Ally, a Steam Deck) the sticks and
+// buttons aren't drawn: it has real ones, and the game plays with them through key() (Rob, 2026-11-17: "hide any
+// transparent controls like joystick etc as we will use the physical controls"). They come back for a few seconds
+// whenever a finger touches the screen, and still work under a finger all the while. onScreen() says which.
+import { consoleMode } from '../desktop.js';
 
 const TAU = Math.PI * 2;
+let touchAt = -1e9;
+if (consoleMode && typeof addEventListener === 'function') addEventListener('pointerdown', e => { if (e.pointerType === 'touch') touchAt = performance.now(); }, { capture: true, passive: true });
+const SHOW_AFTER_TOUCH = 8000;
+/** Whether on-screen sticks and buttons are drawn now: always on a phone; on a handheld (real controls) only for a few seconds after a touch. */
+export const onScreen = () => !hideOnScreen.on || performance.now() - touchAt < SHOW_AFTER_TOUCH;
+/** (tests) on: hide them, as on a handheld */
+export const hideOnScreen = { on: consoleMode };
 const inZone = (z, x, y) => !z || (x >= z[0] && y >= z[1] && x <= z[0] + z[2] && y <= z[1] + z[3]);
 const now = () => performance.now() / 1000;
 
@@ -58,6 +71,7 @@ export class Stick {
   }
   /** Draws the base ring and knob. Faint while idle so it doesn't cover the game. */
   draw(c, { alpha = this.active ? .55 : .22, pixel = false } = {}) {
+    if (!onScreen()) return;
     c.save(); c.globalAlpha = alpha; c.strokeStyle = this.color; c.fillStyle = this.color;
     const P = v => pixel ? Math.round(v) : v;
     c.lineWidth = pixel ? 1 : 2; c.beginPath(); c.arc(P(this.cx), P(this.cy), this.r, 0, TAU); c.stroke();
@@ -86,6 +100,7 @@ export class Button {
   up(x, y, id = 0) { if (id !== this.id) return false; this.id = null; this.isDown = false; this._r = true; return true; }
   release() { this.id = null; this.isDown = false; this._p = this._r = false; }
   draw(c, { alpha = this.isDown ? .6 : .3, font = '700 14px Rubik, sans-serif' } = {}) {
+    if (!onScreen()) return;
     c.save(); c.globalAlpha = alpha; c.fillStyle = this.color;
     c.beginPath(); c.arc(this.x, this.y, this.isDown ? this.r * .92 : this.r, 0, TAU); c.fill();
     if (this.label) { c.globalAlpha = .9; c.fillStyle = '#000000'; c.font = font; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(this.label, this.x, this.y + 1); }

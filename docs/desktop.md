@@ -61,16 +61,38 @@ A newer build: download it over the old file (same name), and Steam starts the n
   MSI Claw, and others by their handheld chips (Z1, Z2). Its class comes from that (an AMD handheld's chip says only
   "AMD Radeon Graphics"): `top` for the Radeon 780M / 880M / 890M class (Ally, Ally X, Xbox Ally X, Legion Go), `mid`
   for the Steam Deck class (Steam Deck, Xbox Ally, Ally Z1).
-- **Played as a phone** (`speed.handheld` in `src/kit/speed.js`, `PC` in `src/kit/hd3d.js`): it runs on a battery and
-  warms in the hands, so 3D games aim for 60 frames a second with nothing made between, and draw 30 with GSFG making
-  the other 30 where they can't hold 60 (the phones' rule since 2026-11-15); 2D games run at the screen's rate (120 on
-  an Ally). 3D starts on high (`top`) or medium (`mid`) and never climbs to ultra: high draws about 1.3 million pixels
-  and GSSR makes the Ally's 1920 × 1080 from them. A low battery (Chromium reads it through UPower) turns on GSFG's
-  power saving as on a phone. Crash and stutter reports name the handheld ("ROG Ally X") as the model.
+- **Played as a computer, or as a phone** (`speed.handheld`, `bigHandheld()` in `src/kit/speed.js`, `PC` in
+  `src/kit/hd3d.js`): a `top` handheld (an Ally) plays 3D games as a computer does, up to ultra, held near 60 frames a
+  second with nothing made between (stepping down in whole refreshes, 60 to 40, where it can't hold it), and its
+  battery is no reason to step down (it always is on one); it still steps down where its chips run hot (Linux heat
+  reading, `src/kit/power.js`). Until 2026-11-17 it played as a phone, and Rob's Ally ran Parcel Dash at about 30
+  with its processor and graphics a quarter busy. A `mid` handheld (a Steam Deck) plays as a phone: 3D at 60 with
+  nothing made between, 30 with GSFG making the other 30 where it can't hold 60, never above high. 2D games run at
+  the screen's rate (120 on an Ally). A low battery turns on GSFG's power saving as on a phone. Crash and stutter
+  reports name the handheld ("ROG Ally X") as the model.
 - **Console mode** (a handheld, or Steam's games mode: gamescope, `--gs-console`): the window opens full screen, and
   the app is drawn bigger to read from a hand's length or a sofa: the screen's height over 640, in quarter steps
   (1.75 on a 1080p Ally or a TV, 1.25 on a Steam Deck, as Valve's own browser shortcut does). A Steam launch option
-  `GS_ZOOM=1.5 %command%` pins it. Docked to a TV, it follows the new screen. Settings has a **Quit** button.
+  `GS_ZOOM=1.5 %command%` pins it. Docked to a TV, it follows the new screen. Settings has a **Quit** button. In
+  gamescope the window opens at the screen's corner at the screen's size, and the app checks it against the X server
+  (`desktop/x11.cjs`) and puts it right where they differ: a window that started smaller had the page laid out past
+  its bottom edge.
+- **Touch** in Steam's games mode: gamescope turns touches into mouse clicks unless the screen's root window says
+  `STEAM_TOUCH_CLICK_MODE` 4 (passthrough), and Steam says 1 (left click) for a game that isn't one of its own. While
+  the app has the screen it writes 4, so fingers reach it as touches, as on a phone (`desktop/x11.cjs`, a few
+  X11 requests straight down the X server's socket). The launch option `--gs-touch-mouse` leaves Steam's choice alone.
+  Steam's own way, per game: the controller layout › Action Sets › the gear › Add Always-On command › System ›
+  Touchscreen Native Support. Where touches still come as a mouse, a press and drag on the feed changes game as a
+  swipe does (`src/handheld.js`), and there is no pointer arrow in gamescope.
+- **On-screen controls**: `gs.controls` sticks and buttons aren't drawn in console mode (Rob, 2026-11-17: "hide any
+  transparent controls like joystick etc as we will use the physical controls"); they show for a few seconds after a
+  touch. `gs.controls.onScreen()` says which, for a game that draws its own.
+- **Settings › Check this handheld** (`src/handheld.js`): plain lines, read on the handheld itself, on touch (real
+  touches or a mouse; gamescope's mode), the screen (window and page against the screen), the graphics (WebGPU, the
+  chip, Chromium's own WebGPU, Vulkan and Vulkan picture sharing status), how games are played, the rate frames reach
+  the page, Steam's frame rate limit and refresh, each game played this run's frame rate and tier, and heat. A Steam
+  screenshot (Steam + R1) of it is the report.
+
 - **Controllers** (`src/padnav.js`; `src/kit/gamepad.js`): Steam Input stands in for the handheld's own controls with
   a controller of its own and tells games which real ones to leave alone (`SDL_GAMECONTROLLER_IGNORE_DEVICES`); a
   browser reads them all, so the app leaves those out itself, or each press would come twice. Rumble follows the

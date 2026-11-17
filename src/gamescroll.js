@@ -192,6 +192,7 @@ export const HIDDEN = {
   fonts: ['whenFontArrives', 'pixelFont', 'want'],
   moves: ['stopMoves'],
   pad: ['pollPads', 'keepPads', 'KEYS'],
+  controls: ['hideOnScreen'],
   vision: ['stopVision'],
   gen: ['loadGen'],
   words: ['loadWords'],

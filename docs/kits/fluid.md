@@ -12,10 +12,10 @@ foam colours and shader are made with it, so the first splash builds nothing.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`FluidPart`, line 1302), where every option and field is described.
+From `src/gamescroll.d.ts` (`FluidPart`, line 1304), where every option and field is described.
 
-- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1304)
-- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1311)
+- `Fluid: (new (view: Loose, o?: { box?: [number, number, number, number, number, number]; volume?: number; open?: boolean; kind?: FluidKind; colour?: string; foam?: stri…` A liquid in a box of your world: make it once with the scene, and clear() it each round. (:1306)
+- `KINDS: Readonly<Record<FluidKind, { colour: string; foam: string; thick: number; rough: number; glow: number }>>` (:1313)
 
 ## From the maker kit
 
@@ -93,7 +93,7 @@ From [Water you can disturb](../maker-kit.md#water-you-can-disturb):
 
 1 game uses it (`node scripts/examples.mjs gs.fluid` lists them). The shortest:
 
-`src/games/lava-gate.js` (Lava Gate, Next Gen · Strategy, 797 lines):
+`src/games/lava-gate.js` (Lava Gate, Next Gen · Strategy, 799 lines):
 
 ```js
 const { Keys } = gs.controls;

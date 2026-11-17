@@ -30,32 +30,32 @@ All three are numbers in the finishing pass, the same on WebGPU and WebGL, and b
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`HdPart`, line 1656), where every option and field is described.
+From `src/gamescroll.d.ts` (`HdPart`, line 1658), where every option and field is described.
 
-- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1656)
-- `HDView: new (...a: Loose[]) => Loose` (:1656)
-- `HD: Loose` (:1656)
-- `TIERS: Loose` (:1656)
-- `hasHD(): boolean` (:1656)
-- `pbr: Loose` (:1656)
-- `rbox: Loose` (:1656)
-- `surface: Loose` (:1656)
-- `speckle: Loose` (:1656)
-- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1656)
-- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1656)
-- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1656)
-- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1656)
-- `mark(kind: 'hazard' | 'stencil' | 'number' | 'stripes' | 'arrow' | 'logo' | 'grime' | 'rust' | 'leak' | 'oil' | 'scorch' | 'crack' | 'bullet' | 'graffiti', o?: { size?…` mark(kind, o): a ready-made decal picture for v.decal, painted in code and worn by a distress pass: v.decal(mesh, hit.point, hit.normal, gs.hd.mark('hazard', { sign: 'bolt' })). (:1656)
-- `readonly marks: readonly string[]` The kinds gs.hd.mark makes. (:1656)
-- `distress(c: CanvasRenderingContext2D, s: number, o?: { amount?: number; grime?: number; seed?: number; scale?: number }): void` distress(c, s, { amount, grime, seed, scale }): wears a picture you painted (s x s on c) the way marks are: worn through in patches, broken edges, grime low down. (:1656)
-- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1656)
-- `Particles: Loose` (:1656)
-- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1658)
-- `sun: Loose` (:1667)
-- `spot: Loose` (:1667)
-- `THREE: Loose` (:1667)
-- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1669)
-- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1671)
+- `ContactShadows: new (o?: { y?: number; size?: number; blur?: number; darkness?: number; opacity?: number; height?: number }) => Loose` (:1658)
+- `HDView: new (...a: Loose[]) => Loose` (:1658)
+- `HD: Loose` (:1658)
+- `TIERS: Loose` (:1658)
+- `hasHD(): boolean` (:1658)
+- `pbr: Loose` (:1658)
+- `rbox: Loose` (:1658)
+- `surface: Loose` (:1658)
+- `speckle: Loose` (:1658)
+- `panel(col?: string | number, i?: number, w?: number, h?: number, o?: { glow?: boolean }): Loose` panel(colour, intensity, w, h, { glow }): an area light, a glowing w x h rectangle shining out of its front (-z; aim with lookAt). (:1658)
+- `neon(points: (number[] | Loose)[], o?: { colour?: string; thick?: number; glow?: number; i?: number; reach?: number; lights?: number }): Loose` neon(points, { colour, thick, glow, i, reach, lights }): a glowing neon tube along [[x, y, z], ...] (a Group); g.spots(list?) gives its longest runs as lamp spots for v.placeLamps (tube lights: a long tube makes a… (:1658)
+- `sign(w: number, h: number, paint?: (c: CanvasRenderingContext2D, w: number, h: number) => void, o?: { colour?: string; glow?: number; i?: number; reach?: number; px?: …` sign(w, h, paint(ctx, pw, ph), { colour, glow, i, reach, px, picture }): a lit sign w x h metres facing +z (turn the group to aim it) whose face you paint on a canvas; g.spots(list?) gives one lamp spot that lights… (:1658)
+- `lut(look: string | ((r: number, g: number, b: number) => number[]), o?: { size?: number }): Loose` lut(look, { size }): a colour look table for v.lut, from a name, (r, g, b) => [r, g, b] (screen colours 0..1) or .cube file text. (:1658)
+- `mark(kind: 'hazard' | 'stencil' | 'number' | 'stripes' | 'arrow' | 'logo' | 'grime' | 'rust' | 'leak' | 'oil' | 'scorch' | 'crack' | 'bullet' | 'graffiti', o?: { size?…` mark(kind, o): a ready-made decal picture for v.decal, painted in code and worn by a distress pass: v.decal(mesh, hit.point, hit.normal, gs.hd.mark('hazard', { sign: 'bolt' })). (:1658)
+- `readonly marks: readonly string[]` The kinds gs.hd.mark makes. (:1658)
+- `distress(c: CanvasRenderingContext2D, s: number, o?: { amount?: number; grime?: number; seed?: number; scale?: number }): void` distress(c, s, { amount, grime, seed, scale }): wears a picture you painted (s x s on c) the way marks are: worn through in patches, broken edges, grime low down. (:1658)
+- `pulse(m: Loose, o?: { at?: { value: Loose }; radius?: { value: number }; strength?: { value: number }; color?: number[] | Loose; width?: number; fill?: number }): Loose` pulse(material, { at, radius, strength, color, width, fill }): a glowing ring sweeping out from a point (sonar, shockwave). (:1658)
+- `Particles: Loose` (:1658)
+- `GPUParticles: new (view: Loose, o?: { max?: number; additive?: boolean; gravity?: number; drag?: number; bounce?: number; floor?: number | null; turbulence?: { strengt…` Tens of thousands of particles moved on the graphics chip with WebGPU (capped on the CPU with WebGL). (:1660)
+- `sun: Loose` (:1669)
+- `spot: Loose` (:1669)
+- `THREE: Loose` (:1669)
+- `noiseTex(): Loose` A shared 256 x 256 tiling noise texture (four noise sizes in r, g, b, a) for your own shaders: clouds, water, grass. (:1671)
+- `bakeRenderer(): Loose` The shared WebGL renderer for kit bakes (gs.outdoors impostor()); null without 3D. (:1673)
 
 ## From the maker kit
 
@@ -79,7 +79,7 @@ past whatever blocks the sky (not on the lowest tier).
 
 ## In real games
 
-38 games use it (`node scripts/examples.mjs gs.hd` lists them). The shortest:
+39 games use it (`node scripts/examples.mjs gs.hd` lists them). The shortest:
 
 `src/games/ghost-torch.js` (Ghost Torch, AR · Spooky, 119 lines):
 

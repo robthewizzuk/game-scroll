@@ -8,16 +8,16 @@ The front camera: face, hands, body and hand signs; the back camera: everyday th
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`VisionPart`, line 862), where every option and field is described.
+From `src/gamescroll.d.ts` (`VisionPart`, line 864), where every option and field is described.
 
-- `Face: new (o?: { preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement …` (:863)
-- `Hands: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HT…` Each hand in list: x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, and shape: the hand as 40 numbers for gs.brains.Examples (of: 'hand'), the same wherever the hand is, however near, and… (:866)
-- `Body: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; picture: HTMLVideoElement | nu…` The whole body (stand back): joints by name, armsUp, leftUp, rightUp, lean, squat, jump, clap. (:868)
-- `CutOut: new (o?: { soft?: number; size?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; amount: number; soft: number; p…` The player cut out of the camera picture: draw cut.picture (a canvas, see-through round the person). (:874)
-- `Signs: new (o?: { max?: number; sure?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; list: { sign: string; score: numb…` Hand signs: thumbs-up, thumbs-down, victory, open-palm, fist, point-up, love. (:876)
-- `Objects: { new (o?: { /** Names to look for (default: all 80). */ want?: string[]; /** How sure before a thing counts, 0..1 (.5). */ sure?: number; /** How many things…` Spots everyday things with the back camera, 80 of them (Objects.names: 'cup', 'banana', 'book', 'dog', 'chair'...), a few times a second: scavenger hunts and "show me a...". (:881)
-- `Scanner: { new (o?: { /** Which kinds to read (default: all of Scanner.kinds). */ kinds?: VisionCodeKind[]; /** Seconds between looks (.15). */ every?: number; /** Wid…` Reads barcodes and QR codes with the back camera: the same code gives the same `seed` on every phone, to make a creature, a level or loot from anything in the house. (:890)
-- `loadVision(): Promise<Loose>` (:897)
+- `Face: new (o?: { preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HTMLVideoElement …` (:865)
+- `Hands: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; backend?: string; picture: HT…` Each hand in list: x, y, tipX, tipY, pinch, pinchX, pinchY, open, fist, point, side, points, and shape: the hand as 40 numbers for gs.brains.Examples (of: 'hand'), the same wherever the hand is, however near, and… (:868)
+- `Body: new (o?: { max?: number; preview?: boolean }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; picture: HTMLVideoElement | nu…` The whole body (stand back): joints by name, armsUp, leftUp, rightUp, lean, squat, jump, clap. (:870)
+- `CutOut: new (o?: { soft?: number; size?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; amount: number; soft: number; p…` The player cut out of the camera picture: draw cut.picture (a canvas, see-through round the person). (:876)
+- `Signs: new (o?: { max?: number; sure?: number }) => { start(): void; stop(): void; update(): boolean; ready: boolean; found: boolean; list: { sign: string; score: numb…` Hand signs: thumbs-up, thumbs-down, victory, open-palm, fist, point-up, love. (:878)
+- `Objects: { new (o?: { /** Names to look for (default: all 80). */ want?: string[]; /** How sure before a thing counts, 0..1 (.5). */ sure?: number; /** How many things…` Spots everyday things with the back camera, 80 of them (Objects.names: 'cup', 'banana', 'book', 'dog', 'chair'...), a few times a second: scavenger hunts and "show me a...". (:883)
+- `Scanner: { new (o?: { /** Which kinds to read (default: all of Scanner.kinds). */ kinds?: VisionCodeKind[]; /** Seconds between looks (.15). */ every?: number; /** Wid…` Reads barcodes and QR codes with the back camera: the same code gives the same `seed` on every phone, to make a creature, a level or loot from anything in the house. (:892)
+- `loadVision(): Promise<Loose>` (:899)
 
 ## From the maker kit
 

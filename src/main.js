@@ -57,6 +57,7 @@ import { show as showTweaks, knobs as knobList, setKnobs } from './kit/tweak.js'
 import { shareGame, onSharedGame } from './share.js';
 import { canFull, isFull, anyFull, enterFull, leaveFull, toggleFull, onFullChange } from './fullscreen.js';
 import { desktop, consoleMode } from './desktop.js';
+import { startHandheld } from './handheld.js';
 import { WEB, appOnly, getAppHTML, webHint } from './web.js';
 import { update } from './update.js';
 import { onGpuLoss, gpuMending, glStats, webgpu as webgpuNow, gpuWait, GPU_AT_PLAY } from './kit/gpu.js';
@@ -84,6 +85,7 @@ startSteer(STREAM ? remote.steer() : null, BUILD, engine()).then(st => { if (boo
 
 /* ---------- feed engine ---------- */
 const feed=document.getElementById('feed');
+startHandheld(feed);   // (the desktop app: on a handheld, mouse swipes on the feed and Settings › Check this handheld: src/handheld.js)
 let slides=[],active=null,filter='all',lastId=null,io,solo=false;   // (solo, tests: the game picked with __gs.only(id, true) goes on one card, not six)
 // Guest: while the phone test tour's bot plays (src/tour.js; the driver is further down), nothing it does
 // is kept. Cards made meanwhile get saves and brains that go nowhere (guest is the function that makes

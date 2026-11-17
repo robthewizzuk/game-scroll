@@ -3851,17 +3851,30 @@ console.log('physics ok');
     for (let i = 0, t = 40000; i < 80; i++) sp.tick(t += 1000 / 144);
     sp.speed.klass = 'mid';
   }
-  // a games handheld (a ROG Ally, a Steam Deck: desktop/device.cjs) is the desktop app, but plays as a phone: 3D at 60 with
-  // nothing made between (30 with GSFG making the rest where it can't hold 60), 2D at the screen's rate, steps 60 -> 30
+  // a games handheld (desktop/device.cjs) is the desktop app: a 'mid' one (a Steam Deck) plays as a phone: 3D at 60 with
+  // nothing made between (30 with GSFG making the rest where it can't hold 60), 2D at 120, steps 60 -> 30. A 'top' one
+  // (a ROG Ally) plays as a computer held near 60 in 3D with nothing made (Rob's Ally, 2026-11-16: 30 a second at a
+  // quarter busy), 2D at the screen's rate, steps in whole refreshes, on its battery as when plugged in
   {
-    sp.speed.handheld = 'top'; sp.speed.klass = 'top';
-    assert.ok(!sp.computer(), 'a handheld is not played as a computer');
+    const { power: pw } = await import('../src/kit/power.js');
+    sp.speed.handheld = 'mid'; sp.speed.klass = 'top';
+    assert.ok(!sp.computer() && !sp.bigHandheld(), 'a mid handheld is not played as a computer');
     const h3 = { id: 'kt-hand-3d', era: 'nextgen' };
-    assert.equal(sp.fpsFor(h3), 60, 'a handheld\'s 3D game: 60, as a top phone\'s');
+    assert.equal(sp.fpsFor(h3), 60, 'a mid handheld\'s 3D game: 60, as a top phone\'s');
     assert.equal(sp.fpsFor({ id: 'kt-hand-2d' }), 120, 'its 2D games: 120, as a phone\'s');
     assert.equal(sp.stepDown(h3), true); assert.equal(sp.fpsFor(h3), 30, 'stepping down as a phone does: 60 to 30');
     assert.equal(sp.thirtyFor(h3), true, 'and at 30 Auto has GSFG make the other 30 (Rob, 2026-11-15)');
     assert.equal(sp.stepUp(h3), true); assert.equal(sp.fpsFor(h3), 60, 'back to 60');
+    sp.speed.handheld = 'top'; sp.speed.klass = 'top';
+    assert.ok(sp.computer() && sp.bigHandheld(), 'a top handheld is played as a computer');
+    const t3 = { id: 'kt-hand-top-3d', era: 'nextgen' };
+    assert.equal(sp.fpsFor(t3), 72, 'its 3D games: near 60 in whole refreshes (72 on this 144 Hz screen; 60 on an Ally\'s 120)');
+    assert.equal(sp.frameGenFor(t3), false, 'with nothing made between in Auto');
+    assert.equal(sp.thirtyFor(t3, 40), false, 'and never 30 + GSFG by itself');
+    assert.equal(sp.fpsFor({ id: 'kt-hand-top-2d' }), 144, 'its 2D games: the screen\'s rate');
+    assert.equal(sp.stepDown(t3), true); assert.equal(sp.fpsFor(t3), 48, 'stepping down in whole refreshes, as a computer');
+    assert.equal(sp.stepUp(t3), true); assert.equal(sp.fpsFor(t3), 72, 'back up');
+    pw.onBattery = true; assert.equal(sp.fpsFor(t3), 72, 'on its battery: the same'); pw.onBattery = false;
     sp.speed.handheld = null; sp.speed.klass = 'top';
     assert.ok(sp.computer() && sp.fpsFor({ id: 'kt-hand-pc', era: 'nextgen' }) === 144, 'the same desktop app on a computer: the screen\'s own rate');
   }

@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('gsDesktop', Object.freeze({
   gpuInfo: () => ipcRenderer.invoke('gs:gpu').catch(() => null),
   /** Heat and battery: a promise of { thermal: 'unknown' | 'nominal' | 'fair' | 'serious' | 'critical' (macOS), limit: the processor's speed limit in per cent after the system lowered it (macOS, Windows) or null, battery: on a laptop's or handheld's battery, headroom: Linux, the hottest chip's temperature on Android's headroom scale (0 cool, 1 where it slows itself) or null, temp: that chip's degrees C } or null (src/kit/power.js). */
   power: () => ipcRenderer.invoke('gs:power').catch(() => null),
+  /**
+   * What the computer says about the window, the screen, the graphics and Steam's games mode (Settings › Check this
+   * handheld, src/handcheck.js): a promise of { display, content, fullScreen, zoom, gamescope, gpu, chip, switches } or null.
+   */
+  check: () => ipcRenderer.invoke('gs:check').catch(() => null),
   /** Closes the app (Settings › Quit, in a console's games mode). */
   quit: () => ipcRenderer.invoke('gs:quit').catch(() => {}),
   /** fn(url) for each gamescroll:// link the app is opened with, the one it started from included. */

@@ -8,9 +8,9 @@ Sprite animation states with frame events and one-shots.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`AnimPart`, line 1537), where every option and field is described.
+From `src/gamescroll.d.ts` (`AnimPart`, line 1539), where every option and field is described.
 
-- `Animator: new (states: Record<string, AnimState>, start?: string) => { readonly state: string; readonly frame: number; readonly progress: number; done: boolean; prev?:…` (:1538)
+- `Animator: new (states: Record<string, AnimState>, start?: string) => { readonly state: string; readonly frame: number; readonly progress: number; done: boolean; prev?:…` (:1540)
 
 ## From the maker kit
 
