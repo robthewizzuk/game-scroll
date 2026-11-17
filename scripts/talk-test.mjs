@@ -93,7 +93,12 @@ let bytes = null;
 try {
   const { writeTo } = await import('./talk-pack.mjs');
   bytes = readFileSync(await writeTo(join(ROOT, 'ml-cache')));
-} catch (e) { console.log(`no voice file (${e.message}): the checks that speak are left out`); }
+} catch (e) {
+  // a file that came out other than the pinned hash is a fault (talk-files.js changed without a new hash); only a
+  // download that failed (offline) leaves the speaking checks out
+  if (/came out as/.test(e.message)) ok(false, e.message);
+  else console.log(`no voice file (${e.message}): the checks that speak are left out`);
+}
 
 if (bytes) {
   const pack = unpack(bytes), tts = makeTTS(pack, { plain: !!process.env.PLAIN });

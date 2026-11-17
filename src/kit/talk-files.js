@@ -2,11 +2,12 @@
 // the 100M model's decoder, its word pieces and the voices, packed into one file of 8-bit numbers by scripts/talk-pack.mjs from Kyutai's own files at the revision
 // below. The games workflow uploads it to the games host once (ml/<TALK_VERSION>/, beside the face tracking files) and
 // the app downloads it the first time a character speaks, checks it against TALK_SHA256, and keeps it.
-// Bump TALK_VERSION (and the hash: the pack script prints it) whenever the file changes.
+// Bump TALK_VERSION (and the hash: the pack script prints it) whenever the file changes, a voice's hz, kind, lang or
+// credit included (they are packed in: npm run talk-test fails when the hash is out of date).
 
-export const TALK_VERSION = 'pocket-tts-7m-6';
+export const TALK_VERSION = 'pocket-tts-7m-7';
 export const TALK_FILE = 'english-7m.gsv';
-export const TALK_SHA256 = '62b8c808576cca4a7d7153679d85f919c211b593e8cae2f69274e7fac6a4fc88';
+export const TALK_SHA256 = 'daf91acfcdb12a9cc511cbdf5b32c32eeb8d0ebda99c162541a5fe61d02d3397';
 export const TALK_SOURCE = {
   repo: 'kyutai/pocket-tts-without-voice-cloning',
   revision: 'a7056f505a4a8ca72d8b5fb1440071d6f1a35739',
