@@ -8,11 +8,11 @@ About 2,700 quiz questions, seeded, with no repeats.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TriviaPart`, line 5625), where every option and field is described.
+From `src/gamescroll.d.ts` (`TriviaPart`, line 5627), where every option and field is described.
 
-- `Quiz: new (o?: { categories?: string | string[] | null; difficulty?: 'easy' | 'medium' | 'hard' | ('easy' | 'medium' | 'hard')[] | null; kind?: 'choice' | 'truefalse' …` A quiz from the question bank (loads on first use: make it in make() or reset()). (:5627)
-- `categories(): { id: string; name: string; count: number }[]` (:5632)
-- `CREDIT: string` (:5633)
+- `Quiz: new (o?: { categories?: string | string[] | null; difficulty?: 'easy' | 'medium' | 'hard' | ('easy' | 'medium' | 'hard')[] | null; kind?: 'choice' | 'truefalse' …` A quiz from the question bank (loads on first use: make it in make() or reset()). (:5629)
+- `categories(): { id: string; name: string; count: number }[]` (:5634)
+- `CREDIT: string` (:5635)
 
 ## From the maker kit
 

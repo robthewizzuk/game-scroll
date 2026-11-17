@@ -21,7 +21,7 @@ From `src/gamescroll.d.ts` (`UtilPart`, line 472), where every option and field 
 
 ## In real games
 
-187 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
+188 games use it (`node scripts/examples.mjs gs.util` lists them). The shortest:
 
 `src/games/untangle.js` (Untangle, Casual · Puzzle, 56 lines):
 

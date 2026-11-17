@@ -8,15 +8,15 @@ The fixed 60 Hz tick: how far between ticks a frame is, and smooth mixing for dr
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`TickPart`, line 1463), where every option and field is described.
+From `src/gamescroll.d.ts` (`TickPart`, line 1465), where every option and field is described.
 
-- `readonly rate: number` Ticks per second for the game being played; 0 when it runs one update per frame. (:1465)
-- `readonly on: boolean` (:1465)
-- `readonly dt: number` (:1465)
-- `readonly alpha: number` How far the frame being drawn is between the last two ticks (0..1; 1 when off). (:1467)
-- `readonly count: number` Ticks since the round started. (:1469)
-- `mix(before: number, now: number, alpha?: number): number` (:1470)
-- `turn(before: number, now: number, alpha?: number): number` (:1471)
+- `readonly rate: number` Ticks per second for the game being played; 0 when it runs one update per frame. (:1467)
+- `readonly on: boolean` (:1467)
+- `readonly dt: number` (:1467)
+- `readonly alpha: number` How far the frame being drawn is between the last two ticks (0..1; 1 when off). (:1469)
+- `readonly count: number` Ticks since the round started. (:1471)
+- `mix(before: number, now: number, alpha?: number): number` (:1472)
+- `turn(before: number, now: number, alpha?: number): number` (:1473)
 
 ## From the maker kit
 

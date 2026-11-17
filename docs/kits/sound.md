@@ -168,7 +168,7 @@ More in docs/maker-kit.md: "Game kits", "Action and adventure kits", "Feel, soun
 
 ## In real games
 
-248 games use it (`node scripts/examples.mjs gs.sound` lists them). The shortest:
+249 games use it (`node scripts/examples.mjs gs.sound` lists them). The shortest:
 
 `src/games/colour-flood.js` (Colour Flood, Pocket · Puzzle, 47 lines):
 

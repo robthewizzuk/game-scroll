@@ -7,16 +7,19 @@
 //   desktop.device   where it runs (desktop/device.cjs): { handheld, gamescope, steamos, steam, console, zoom, ignorePads, webgl } or null
 //   desktop.power()  a promise of { thermal, limit, battery, headroom, temp } or null: how warm the computer is (macOS's
 //                    word, Linux's chip temperatures), how far it slowed the processor, on a battery (src/kit/power.js)
+//   desktop.check()  a promise of what the computer says about the window, screen, graphics and Steam's games mode, or
+//                    null (Settings › Check this handheld: src/handcheck.js)
 //   desktop.quit()   closes the app (Settings, in a console's games mode)
 // The engine reads it where a computer differs from a phone (src/kit/speed.js, src/kit/hd3d.js): more room before
 // heat matters (but a fanless laptop warms too: src/kit/power.js), screens of 144 Hz and more, and graphics chips named
 // the way desktop browsers name them.
 export const desktop = (typeof globalThis !== 'undefined' && globalThis.gsDesktop) || null;
 /**
- * A games handheld (a ROG Ally, a Steam Deck, a Legion Go...): { id, name, klass } or null. It runs on a battery and
- * warms in the hands, so the engine plays 3D games on it as it does on a phone (src/kit/speed.js, src/kit/hd3d.js):
- * 60 frames a second with nothing made between, 30 with GSFG making the other 30 where it can't hold 60, never
- * above the high tier; its class comes from the model (an AMD handheld's chip says only "AMD Radeon Graphics").
+ * A games handheld (a ROG Ally, a Steam Deck, a Legion Go...): { id, name, klass } or null; its class comes from the
+ * model (an AMD handheld's chip says only "AMD Radeon Graphics"). A 'top' one (a ROG Ally) plays 3D games as a computer
+ * does, up to ultra, at 60 frames a second with nothing made between; a 'mid' one (a Steam Deck) runs on a battery and
+ * warms in the hands, so the engine plays 3D games on it as it does on a phone: 60 with nothing made between, 30 with
+ * GSFG making the other 30 where it can't hold 60, never above the high tier (src/kit/speed.js, src/kit/hd3d.js).
  */
 export const handheld = desktop?.device?.handheld || null;
 /** A console's games mode (SteamOS's Game Mode, Steam Big Picture, a handheld): full screen, played with a controller. */

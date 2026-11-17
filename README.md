@@ -38,7 +38,7 @@ The same app runs on Mac and Windows (`desktop/`, Electron, which carries the Ch
 [Linux and SteamOS](https://github.com/robthewizzuk/game-scroll/releases/download/desktop-latest/Game-Scroll-linux-x64.AppImage).
 They aren't signed yet, so each computer asks once before opening them. How to open them, run the app from source and what is tuned for computers: [docs/desktop.md](docs/desktop.md).
 
-On a games handheld running SteamOS (ROG Ally, Steam Deck, Legion Go), add the AppImage to Steam as a non-Steam game: it opens full screen in Game Mode, plays as a phone does (60, or 30 with GSFG making the other 30) and is used with the handheld's own controls. Steps: [docs/desktop.md, SteamOS](docs/desktop.md#steamos-rog-ally-steam-deck-and-steam).
+On a games handheld running SteamOS (ROG Ally, Steam Deck, Legion Go), add the AppImage to Steam as a non-Steam game: it opens full screen in Game Mode, plays 3D games at 60 up to ultra on an Ally (as a phone does on a Steam Deck: 60, or 30 with GSFG making the other 30), takes real touches and is used with the handheld's own controls. Steps: [docs/desktop.md, SteamOS](docs/desktop.md#steamos-rog-ally-steam-deck-and-steam).
 
 ### Web version on GitHub Pages
 

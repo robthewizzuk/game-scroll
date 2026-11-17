@@ -30,6 +30,7 @@
       "main.cjs",
       "preload.cjs",
       "device.cjs",
+      "x11.cjs",
       "package.json",
       {
         "from": "../dist",

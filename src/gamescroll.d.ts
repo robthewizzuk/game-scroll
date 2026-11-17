@@ -586,6 +586,8 @@ export interface ControlsPart {
   route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] };
   /** Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). */
   twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose;
+  /** Whether on-screen sticks and buttons are drawn now: always on a phone; on a games handheld (a ROG Ally: real controls, played through key()) only for a few seconds after a touch. Stick and Button draw() follow it; a game drawing its own controls can too. */
+  onScreen(): boolean;
 }
 
 export interface PadState { [k: string]: Loose; pressed(button: string): boolean }

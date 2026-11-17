@@ -114,6 +114,11 @@ export function openSettings({ stream, cached, clear, arTest }) {
         </details>
         <p class="set-link"><a href="https://github.com/robthewizzuk/game-scroll/blob/main/LICENSE" target="_blank" rel="noopener">Read the full licence ↗</a></p>
       </section>
+      ${desktop?.check && (handheld || consoleMode || desktop.os === 'linux') ? `<section class="set-row">
+        <h3>Check this ${dev}</h3>
+        <p class="qa-help">Whether touch, the screen, the graphics and the frame rate are working as they should here, in plain lines. Play a game for a minute first.</p>
+        <div class="qa-actions"><button class="set-check">Check</button></div>
+      </section>` : ''}
       ${consoleMode && desktop?.quit ? `<section class="set-row">
         <h3>Quit</h3>
         <p class="qa-help">Closes Game Scroll (the Steam button's Exit game does too). Your saves stay.</p>
@@ -123,6 +128,7 @@ export function openSettings({ stream, cached, clear, arTest }) {
     el.querySelector('.qa-x').onclick = () => el.close();
     el.querySelector('.set-ar')?.addEventListener('click', () => { el.close(); arTest(); });
     el.querySelector('.set-quit')?.addEventListener('click', () => desktop.quit());
+    el.querySelector('.set-check')?.addEventListener('click', () => { el.close(); import('./handheld.js').then(m => m.handheldCheck()); });
     el.querySelectorAll('.set-fps button[data-fps]').forEach(b => b.addEventListener('click', () => { setFpsPick(b.dataset.fps); render(); }));   // (the frame generation rows share the look)
     el.querySelectorAll('.set-fg button').forEach(b => b.addEventListener('click', () => { setFrameGenPick(b.dataset.fg); render(); }));
     el.querySelectorAll('.set-fg-how button').forEach(b => b.addEventListener('click', () => { setFrameGenHow(b.dataset.how); render(); }));

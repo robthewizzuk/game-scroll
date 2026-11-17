@@ -34,10 +34,15 @@
 // near 60). A 3D game that can't keep up steps down a whole number of refreshes at a time (144 -> 72 -> 48 ->
 // 36 on a 144 Hz screen), so its frames always land on refreshes.
 //
-// A games handheld (a ROG Ally, a Steam Deck: src/desktop.js handheld) is played as a phone is: it runs on a battery and
-// warms in the hands. Its class comes from its model (an AMD handheld's chip says only "AMD Radeon Graphics"), and Auto
-// plays 3D games at 60 with nothing made between, and at 30 with GSFG making the other 30 where they can't hold 60
-// (speed.handheld; Rob, 2026-11-15: "60 without frame gen, 30 + GSFG to 60 where needed").
+// A games handheld (a ROG Ally, a Steam Deck: src/desktop.js handheld) takes its class from its model (an AMD handheld's
+// chip says only "AMD Radeon Graphics"). A 'top' one (a ROG Ally's Z1 Extreme, an Ally X, a Legion Go: a Radeon 780M
+// class chip, several times a phone's) is played as a computer, but held to 60 for 3D games with nothing made between:
+// up to ultra, a heat step where its chips run hot (src/kit/power.js), never stepped down for being on its battery (it
+// always is). Played as a phone, as it was, it went to 30 with GSFG at the first slow second and stayed there, and never
+// past high: Rob's ROG Ally, 2026-11-16, Parcel Dash at about 30 with its processor and graphics a quarter busy ("I would
+// expect games to pretty much all run on WebGPU ultra at 60fps"). A 'mid' one (a Steam Deck) is played as a phone is:
+// 3D at 60 with nothing made between, and 30 with GSFG making the other 30 where it can't hold 60 (speed.handheld; Rob,
+// 2026-11-15: "60 without frame gen, 30 + GSFG to 60 where needed").
 //
 // The screen's rate (src/kit/screenrate.js, Android): while a round is played the app asks the screen
 // for the rate that suits the game (screenWant): the fastest that's a whole number of refreshes per real
@@ -50,7 +55,9 @@ import { screen, askRate, pickRate } from './screenrate.js';
 import { desktop, handheld } from '../desktop.js';
 import { steerFor, capKlass } from './steering.js';
 
-const PICK_KEY = 'gs_fps', SETTLE_KEY = 'gs_speed', FG_KEY = 'gs_fg', FG_HOW_KEY = 'gs_fg_how';
+// (a top handheld keeps where games settled apart from where they settled while it was played as a phone: those were
+// 30 a second and high at most, for a day)
+const PICK_KEY = 'gs_fps', SETTLE_KEY = handheld?.klass === 'top' ? 'gs_speed_hh' : 'gs_speed', FG_KEY = 'gs_fg', FG_HOW_KEY = 'gs_fg_how';
 const touchy = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
 let model = '', klass = null;
@@ -181,6 +188,7 @@ export function autoFps(def) {
   // a computer: the screen's own rate (3D games on 'mid' and 'low' near 60 and 30, in whole refreshes); a handheld as a phone.
   // A laptop on its battery (src/kit/power.js onBattery): 3D near 60 and 2D near 120 at most, as a phone plays
   if (computer()) {
+    if (bigHandheld() && is3D(def)) return evenRate(hz, 60);   // (a top handheld: 3D at 60, 2D at the screen's rate)
     const f = !is3D(def) || k === 'top' ? hz : evenRate(hz, k === 'mid' ? 60 : 30);
     return power.onBattery ? Math.min(f, evenRate(hz, is3D(def) ? 60 : 120)) : f;
   }
@@ -288,7 +296,7 @@ export const fgSaving = () => fgPick === 'auto' && power.saving;
 const late = [];
 let shieldUntil = 0;
 export function frameLate(now) {
-  if (autoPhone(speed.game)) return;   // (a phone's Auto fills only to 60, by stepping down: not for a moment, and not past the screen's 60)
+  if (autoPhone(speed.game) || fgPick === 'auto' && bigHandheld() && is3D(speed.game)) return;   // (a phone's Auto fills only to 60, by stepping down: not for a moment, and not past the screen's 60)
   late.push(now); while (late.length && now - late[0] > 1000) late.shift();
   // (not where a made frame wouldn't fit a refresh: frames made then would come late too)
   if (late.length >= 2 && frameGenFits(speed.game, hz / 2)) shieldUntil = now + 2000;
@@ -300,6 +308,7 @@ function fgRate(def) {
   // 30 → 60: about 30 a second, a whole number of refreshes apart
   if (thirtyFor(def)) return thirtyRate(hz);
   if (autoPhone(def)) return 0;   // (Auto on a phone: 60 drawn, nothing made)
+  if (fgPick === 'auto' && bigHandheld() && is3D(def)) return 0;   // (a top handheld's Auto: 60 drawn, nothing made)
   // Auto: a game that can't reach the screen's rate (it settled lower); Always, saving power or riding
   // out a busy spell: half the screen's rate (or the game's own, if lower)
   const real = fgPick === 'always' || fgSaving() || shieldOn() ? Math.min(f, hz / 2) : f < hz * .9 ? f : 0;
@@ -495,10 +504,13 @@ export function screenWish(def) { def ||= speed.standIn; askRate(def ? screenWan
 // shield: the stutter shield is on (frameLate()).
 // standIn: a game definition the engine test scenes stand in for while no round is played (the screen's rate is asked for as for it).
 // desktop: running in the Mac and Windows app (src/desktop.js; tests may set it). klass: a class pinned in place of this phone's (tests)
-// handheld: a games handheld's class ('top' | 'mid'; null: not one): played as a phone, though desktop is true (src/desktop.js)
+// handheld: a games handheld's class ('top' | 'mid'; null: not one; src/desktop.js): a 'top' one is played as a computer held
+// to 60 in 3D, a 'mid' one as a phone, though desktop is true
 export const speed = { game: null, offscreen: false, gpu: false, between: null, forceFrameGen: null, pace: null, standIn: null, inputAt: 0, cost: { id: null, real: null, made: null, nr: 0, nm: 0 }, outMpx: 0, busy: () => false, playing: () => false, desktop: !!desktop, handheld: handheld?.klass || null, klass: null };
-/** Played as a computer: the desktop app, but not a handheld (a handheld plays as a phone). */
-export const computer = () => speed.desktop && !speed.handheld;
+/** Played as a computer: the desktop app, but not a 'mid' handheld (a Steam Deck plays as a phone; a top handheld as a computer held to 60 in 3D). */
+export const computer = () => speed.desktop && (!speed.handheld || speed.handheld === 'top');
+/** A top games handheld (a ROG Ally): a computer, but 3D at 60 with nothing made between, and its battery no reason to step down. */
+export const bigHandheld = () => speed.desktop && speed.handheld === 'top';
 Object.defineProperty(speed, 'shield', { get: shieldOn });
 
 /** The 3D kit settled on a tier and frame rate for this game: start there next time. */

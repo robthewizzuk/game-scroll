@@ -15,13 +15,13 @@ Anything else is drawn as `?`; `node scripts/game-lint.mjs <id>` names any lette
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`PixelPart`, line 623), where every option and field is described.
+From `src/gamescroll.d.ts` (`PixelPart`, line 625), where every option and field is described.
 
-- `text(c: Ctx, str: string, x: number, y: number, o?: { size?: number; font?: PixelFontName; align?: 'left' | 'center' | 'right'; color?: string; outline?: string | null…` Crisp pixel text with its top-left at x, y; returns the width drawn. (:629)
-- `measure(str: string, font?: PixelFontName): { w: number; h: number }` Width and height in pixels at size 1. (:631)
-- `sprite(art: string | string[], palette: Record<string, string> | string[]): Loose` (:632)
-- `anim(frames: (string | string[])[], palette: Record<string, string> | string[], fps?: number): Loose` (:633)
-- `tiles(art: Loose, palette: Loose, tw: number, th: number): Loose` (:634)
+- `text(c: Ctx, str: string, x: number, y: number, o?: { size?: number; font?: PixelFontName; align?: 'left' | 'center' | 'right'; color?: string; outline?: string | null…` Crisp pixel text with its top-left at x, y; returns the width drawn. (:631)
+- `measure(str: string, font?: PixelFontName): { w: number; h: number }` Width and height in pixels at size 1. (:633)
+- `sprite(art: string | string[], palette: Record<string, string> | string[]): Loose` (:634)
+- `anim(frames: (string | string[])[], palette: Record<string, string> | string[], fps?: number): Loose` (:635)
+- `tiles(art: Loose, palette: Loose, tw: number, th: number): Loose` (:636)
 
 ## From the maker kit
 

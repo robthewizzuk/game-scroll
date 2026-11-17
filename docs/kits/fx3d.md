@@ -8,17 +8,17 @@
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`Fx3dPart`, line 1825), where every option and field is described.
+From `src/gamescroll.d.ts` (`Fx3dPart`, line 1827), where every option and field is described.
 
-- `text3d(str: string, o?: { size?: number; color?: Loose; font?: 'regular' | 'bold' | 'pixel' | FontName | [FontName, number]; align?: 'left' | 'center' | 'right'; outli…` Sharp text inside the 3D world: scores over heads, signs, labels. (:1831)
-- `Particles3D: new (scene: Loose, o?: { seed?: number | null; lights?: boolean }) => { /** Your own effect: life, speed and size are [min, max]; colors [from, to]; rate …` Particle effects for one scene: fx = new Particles3D(view.scene), then fx.update(dt) every frame. (:1833)
-- `Impacts: new (view: Loose, o?: { particles?: Loose; marks?: boolean; holes?: number; sounds?: boolean; cases?: number; link?: boolean }) => { /** hit: a World3D ray's …` What a shot does where it lands and what a gun throws out: hits that look and sound of what was hit (sparks off metal, dust and chips off stone, splinters off wood, glints off glass, dirt, sand, a splash on water, a… (:1853)
-- `outline(view: Loose, objects: Loose[], o?: { color?: Loose; hidden?: Loose; strength?: number; thickness?: number; pulse?: number }): { selectedObjects: Loose[]; edgeS…` A glowing edge round things (Next Gen views). (:1866)
-- `glitch(view: Loose, o?: { wild?: boolean }): { goWild: boolean; remove(): void; [k: string]: Loose }` A digital glitch (Next Gen views): const g = glitch(view); a moment later g.remove(). (:1868)
-- `trails(view: Loose, damp?: number): { damp: number; remove(): void; [k: string]: Loose }` Motion trails (Next Gen views). (:1870)
-- `focus(view: Loose, o?: { focus?: number; aperture?: number; maxblur?: number }): { focus: number; remove(): void }` Depth of field (Next Gen views): things `focus` units away are sharp. (:1872)
-- `pixelate(view: Loose, size?: number): { size: number; remove(): void; [k: string]: Loose }` Big chunky pixels (Next Gen views). (:1874)
-- `loadFx3d(): Promise<Loose>` (:1875)
+- `text3d(str: string, o?: { size?: number; color?: Loose; font?: 'regular' | 'bold' | 'pixel' | FontName | [FontName, number]; align?: 'left' | 'center' | 'right'; outli…` Sharp text inside the 3D world: scores over heads, signs, labels. (:1833)
+- `Particles3D: new (scene: Loose, o?: { seed?: number | null; lights?: boolean }) => { /** Your own effect: life, speed and size are [min, max]; colors [from, to]; rate …` Particle effects for one scene: fx = new Particles3D(view.scene), then fx.update(dt) every frame. (:1835)
+- `Impacts: new (view: Loose, o?: { particles?: Loose; marks?: boolean; holes?: number; sounds?: boolean; cases?: number; link?: boolean }) => { /** hit: a World3D ray's …` What a shot does where it lands and what a gun throws out: hits that look and sound of what was hit (sparks off metal, dust and chips off stone, splinters off wood, glints off glass, dirt, sand, a splash on water, a… (:1855)
+- `outline(view: Loose, objects: Loose[], o?: { color?: Loose; hidden?: Loose; strength?: number; thickness?: number; pulse?: number }): { selectedObjects: Loose[]; edgeS…` A glowing edge round things (Next Gen views). (:1868)
+- `glitch(view: Loose, o?: { wild?: boolean }): { goWild: boolean; remove(): void; [k: string]: Loose }` A digital glitch (Next Gen views): const g = glitch(view); a moment later g.remove(). (:1870)
+- `trails(view: Loose, damp?: number): { damp: number; remove(): void; [k: string]: Loose }` Motion trails (Next Gen views). (:1872)
+- `focus(view: Loose, o?: { focus?: number; aperture?: number; maxblur?: number }): { focus: number; remove(): void }` Depth of field (Next Gen views): things `focus` units away are sharp. (:1874)
+- `pixelate(view: Loose, size?: number): { size: number; remove(): void; [k: string]: Loose }` Big chunky pixels (Next Gen views). (:1876)
+- `loadFx3d(): Promise<Loose>` (:1877)
 
 ## From the maker kit
 

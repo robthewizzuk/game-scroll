@@ -8,22 +8,22 @@ Big worlds in parts, made a little each frame while wanted and freed behind.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`RegionsPart`, line 1444), where every option and field is described.
+From `src/gamescroll.d.ts` (`RegionsPart`, line 1446), where every option and field is described.
 
-- `Regions: new (view: Loose, o?: { /** A World3D: solid ground and bodies freed with their parts. Left out: the one the game made before this; false: none. */ world?: Lo…` A big world in parts that are made as they're wanted and let go of behind: named parts (levels made only when picked), squares round the player, land in tiles. (:1450)
-  - `part(name: string, make: RegionMake): this` A named part (a level, a district, the inside of a house): make(r) builds it, all at once or as a generator function that yields between pieces. (:1420)
-  - `want(...names: (string | string[])[]): this` These parts are wanted, and no others. (:1422)
-  - `has(name: string): boolean` Is this part made? has(x, z): is the square under x, z made in every layer? (:1424)
-  - `has(x: number, z: number): boolean` (:1425)
-  - `readonly ready: boolean` Every wanted part made, and the squares round the player. (:1427)
-  - `readonly progress: number` 0..1: how much of what is wanted is made. (:1429)
-  - `cells(o: { size?: number; reach?: number; make: RegionMake; level?: (ring: number) => number; seed?: number }): RegionLayer` Squares round the player: make(r) builds one (r.cx, r.cz, r.x0, r.z0, r.size, r.seed). (:1431)
-  - `land(o: { height: (x: number, z: number) => number; size?: number; reach?: number; segments?: number; solid?: number; material?: Loose; colour?: (x: number, y: number,…` Ground in tiles from height(x, z): finer close by, solid in the regions' world within `solid` squares, skirts so tiles meet. (:1433)
-  - `update(dt?: number, at?: { x: number; y?: number; z?: number } | null): this` Each frame: builds a little of what is wanted (budget ms) and lets go of what is behind. (:1436)
-  - `clear(): this` Lets go of every part and square (they're made again as they're wanted). (:1438)
-  - `dispose(): void` (:1439)
-  - `readonly info: { parts: string[]; cells: number; making: number; ms: number; made: number; dropped: number }` What is in now: parts made, squares made, how many are being made, and this frame's building time in ms. (:1441)
-  - `budget: number` (:1442)
+- `Regions: new (view: Loose, o?: { /** A World3D: solid ground and bodies freed with their parts. Left out: the one the game made before this; false: none. */ world?: Lo…` A big world in parts that are made as they're wanted and let go of behind: named parts (levels made only when picked), squares round the player, land in tiles. (:1452)
+  - `part(name: string, make: RegionMake): this` A named part (a level, a district, the inside of a house): make(r) builds it, all at once or as a generator function that yields between pieces. (:1422)
+  - `want(...names: (string | string[])[]): this` These parts are wanted, and no others. (:1424)
+  - `has(name: string): boolean` Is this part made? has(x, z): is the square under x, z made in every layer? (:1426)
+  - `has(x: number, z: number): boolean` (:1427)
+  - `readonly ready: boolean` Every wanted part made, and the squares round the player. (:1429)
+  - `readonly progress: number` 0..1: how much of what is wanted is made. (:1431)
+  - `cells(o: { size?: number; reach?: number; make: RegionMake; level?: (ring: number) => number; seed?: number }): RegionLayer` Squares round the player: make(r) builds one (r.cx, r.cz, r.x0, r.z0, r.size, r.seed). (:1433)
+  - `land(o: { height: (x: number, z: number) => number; size?: number; reach?: number; segments?: number; solid?: number; material?: Loose; colour?: (x: number, y: number,…` Ground in tiles from height(x, z): finer close by, solid in the regions' world within `solid` squares, skirts so tiles meet. (:1435)
+  - `update(dt?: number, at?: { x: number; y?: number; z?: number } | null): this` Each frame: builds a little of what is wanted (budget ms) and lets go of what is behind. (:1438)
+  - `clear(): this` Lets go of every part and square (they're made again as they're wanted). (:1440)
+  - `dispose(): void` (:1441)
+  - `readonly info: { parts: string[]; cells: number; making: number; ms: number; made: number; dropped: number }` What is in now: parts made, squares made, how many are being made, and this frame's building time in ms. (:1443)
+  - `budget: number` (:1444)
 
 ## From the maker kit
 

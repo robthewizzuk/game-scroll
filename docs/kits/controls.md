@@ -4,6 +4,11 @@ On-screen thumbsticks and buttons, taps, holds, swipes, two-finger gestures, key
 
 `gs.controls`: `Stick`, `Button`, `Gestures` (tap, doubleTap, hold, swipe), `TwoFingers` (pinch, twist, pan), `twoThumb(W, H)`, `Keys`, `route()`.
 
+On a games handheld (a ROG Ally, a Steam Deck: the desktop app in Steam's games mode) `Stick` and `Button` aren't drawn:
+it has real sticks and buttons, which reach the game through `key()`, so a game with on-screen controls should take keys
+too. They show again for a few seconds after a touch, and work under a finger all the while. `onScreen()` says whether
+they are drawn now, for a game that draws its own controls.
+
 <!-- made below: node scripts/kit-guides.mjs remakes everything under this line from src/gamescroll.d.ts, docs/maker-kit.md and src/games; edit those, or the part above -->
 
 ## What's in it
@@ -23,6 +28,7 @@ From `src/gamescroll.d.ts` (`ControlsPart`, line 574), where every option and fi
 - `Keys: new () => { key(k: string, isDown: boolean): void; held(k: string): boolean; axis(): XY; clear(): void }` Keyboard state: keys.held('ArrowLeft'), keys.axis(). (:584)
 - `route(...controls: Loose[]): { down: Game['down']; move: Game['move']; up: Game['up'] }` Hands each finger to the first control that wants it. (:586)
 - `twoThumb(W: number, H: number, o?: { right?: 'stick' | string[]; r?: number }): Loose` Left stick plus a right stick (right: 'stick') or named buttons (right: ['A', 'B']). (:588)
+- `onScreen(): boolean` Whether on-screen sticks and buttons are drawn now: always on a phone; on a games handheld (a ROG Ally: real controls, played through key()) only for a few seconds after a touch. (:590)
 
 ## From the maker kit
 
@@ -79,7 +85,7 @@ finger lands the one-finger gesture is dropped, so a pinch never ends in a stray
 
 ## In real games
 
-19 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
+20 games use it (`node scripts/examples.mjs gs.controls` lists them). The shortest:
 
 `src/games/ladder-climber.js` (Ladder Climber, Pocket · Reflex, 114 lines):
 

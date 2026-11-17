@@ -12,43 +12,43 @@ Vehicles: boats (`rowboat`, `motor`, `fishing`, `patrol`, `police`) have seats t
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`ModelsPart`, line 5048), where every option and field is described.
+From `src/gamescroll.d.ts` (`ModelsPart`, line 5050), where every option and field is described.
 
-- `material(name: string, o?: { colour?: string; color?: string; wear?: number; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean…` A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' (worn paint on metal: chips to the undercoat, stains, rust runs) | 'hull'… (:5050)
-- `readonly materials: readonly string[]` The recipe names. (:5052)
-- `wear<M = Loose>(mesh: M, o?: { edges?: number; edgeColour?: string; dirt?: number; dirtColour?: string; ground?: number; moss?: number; mossColour?: string; snow?: num…` Ages a mesh in place (and returns it), from its own shape: outer edges rubbed lighter, creases and the part near the ground grimy, moss or snow on what faces up. (:5054)
-- `prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | …` An everyday thing built in code from the recipes and aged with wear(): a Group (one mesh per material), foot at y = 0, facing +z. (:5056)
-- `readonly props: readonly string[]` The prop names. (:5058)
-- `sculpt(shapes: SculptShape[] | ((x: number, y: number, z: number) => number), o?: { blend?: number; res?: number; bounds?: [[number, number, number], [number, number, …` A mesh from soft shapes melted together or carved away, made with surface nets: each { ball: r } | { box: [w, h, d], round } | { cylinder: [r, h], round } | { torus: [R, r] } | { cone: [r, h] } | { capsule: [[x, y,… (:5060)
-- `tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush' | 'palm' | 'fan' | 'banana' | 'fern' | 'taro' | 'cypress' | 'reeds' | 'flowers' | 'lily', o?: { size?: 'small' | …` A tree or plant grown in code with the bark recipe and leaves drawn in code that sway and glow with the sun behind. (:5071)
-- `ivy(targets: Loose, o?: { seed?: number; roots?: number; from?: [number, number, number][]; length?: number; size?: number; density?: number; up?: number; leaves?: str…` Ivy grown over meshes (walls, a house, a stump, a statue; their world places as they are now): vines start at the foot of steep faces (or from: points) and climb, keeping to the surface, branching out sideways, going… (:5079)
-- `weeds(o?: { lines?: ([number, number] | [number, number, number])[][]; walls?: Loose; spots?: number[][]; ground?: (x: number, z: number) => number; gap?: number; heig…` Weeds where nobody weeds, in one InstancedMesh (one draw): along cracks and kerbs (lines: [[[x, z], ...], ...] or points with y), at the foot of walls (walls: meshes; where their steep faces meet the ground) and at… (:5084)
-- `readonly trees: readonly string[]` The tree and plant kinds. (:5086)
-- `building(o?: BuildingOptions): Loose` A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials,… (:5088)
-- `readonly looks: readonly LookShape[]` The shapes person.looks can set. (:5097)
-- `readonly CREATOR_SLIDERS: readonly CreatorSlider[]` (:5098)
-- `readonly CREATOR_PICKS: readonly CreatorPick[]` (:5098)
-- `fort(o?: { kind?: 'wall' | 'tower' | 'gate'; length?: number; height?: number; thick?: number; radius?: number; width?: number; roof?: boolean; colour?: string; color?…` (:5099)
-- `readonly forts: readonly string[]` The castle pieces fort() makes. (:5101)
-- `readonly buildings: Record<string, Record<string, Loose>>` The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). (:5103)
-- `relief: { <M = Loose>(target: M, o?: false | { depth?: number; fine?: number; coarse?: number; error?: number; maxTris?: number; height?: Loose; mid?: number }): M; /*…` Real surface detail for a mesh (or every mesh under a group): the bumps its material only paints (the height layer of pbr({ tex: surface() }) or gs.models.material(): roof tiles, mortar, bark) made into real… (:5109)
-- `human: { (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' |…` A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail. (:5140)
-- `fur: { (mesh: Loose, o?: FurOptions): FurCoat; /** The geometry a coat's layers share, by itself (hand it to several coats as `shell`). */ shell(geometry: Loose, o?: F…` Fur or hair on any mesh, in layers: copies of the surface pushed out along its normals, each cut by one picture of strands made in code, so strands seem to stand in the coat. (:5160)
-- `creature: { (o?: CreatureOptions): CreatureT; /** The kinds: 'quad', 'bird', 'fish', 'insect', 'monster'. */ readonly kinds: readonly string[]; /** Every animal a crea…` An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs,… (:5177)
-- `vehicle: { (kind: 'train', o?: VehicleOptions): TrainT; (kind?: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'boat' | 'plane' | 'helicopter', o?: VehicleOptions): Vehic…` A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots. (:5200)
-- `weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean; style?: 'round' | 'heater' | 'kite' | null }): Loose & { points: Record<'grip…` A weapon made in code (no model files), our own designs: 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton'. (:5212)
-- `readonly weapons: readonly WeaponKind[]` The weapons there are. (:5215)
-- `Wield: new (person: Loose, weapon: Loose) => Wield` A weapon in someone's hands: weapon.wield(person) or new Wield(person, weapon). (:5217)
-  - `person: Loose` (:5015)
-  - `gun: Loose` (:5015)
-  - `how: string` (:5015)
-  - `ease: number` (:5015)
-  - `muzzle: Loose` Where shots leave (world) and the way it points (a thing swung: along its length). (:5016)
-  - `dir: Loose` (:5016)
-  - `update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean; keep?: boolean }): Wield` keep: false lets it go into its holder and walls (by default it is turned about the grip out of both: gs.characters.Solid). (:5018)
-  - `readonly turned?: number` How far it was turned out of the body or a wall this frame (radians). (:5019)
-  - `drop(): Loose` Takes it off the person: the weapon. (:5020)
-- `curvature(geometry: Loose): { curve: Float32Array; up: Float32Array }` Per-vertex curvature of a geometry (convex > 0, concave < 0) and how much each vertex faces up. (:5219)
+- `material(name: string, o?: { colour?: string; color?: string; wear?: number; seed?: number; repeat?: [number, number]; size?: number; depth?: number; closeUp?: boolean…` A material from a recipe: 'wood' | 'planks' | 'bark' | 'brick' | 'stone' | 'cobbles' | 'tiles' | 'concrete' | 'metal' | 'rust' | 'paint' (worn paint on metal: chips to the undercoat, stains, rust runs) | 'hull'… (:5052)
+- `readonly materials: readonly string[]` The recipe names. (:5054)
+- `wear<M = Loose>(mesh: M, o?: { edges?: number; edgeColour?: string; dirt?: number; dirtColour?: string; ground?: number; moss?: number; mossColour?: string; snow?: num…` Ages a mesh in place (and returns it), from its own shape: outer edges rubbed lighter, creases and the part near the ground grimy, moss or snow on what faces up. (:5056)
+- `prop(name: 'crate' | 'barrel' | 'drum' | 'pallet' | 'table' | 'chair' | 'bench' | 'shelf' | 'lamp' | 'fence' | 'sign' | 'bucket' | 'sack' | 'chest' | 'cone' | 'bin' | …` An everyday thing built in code from the recipes and aged with wear(): a Group (one mesh per material), foot at y = 0, facing +z. (:5058)
+- `readonly props: readonly string[]` The prop names. (:5060)
+- `sculpt(shapes: SculptShape[] | ((x: number, y: number, z: number) => number), o?: { blend?: number; res?: number; bounds?: [[number, number, number], [number, number, …` A mesh from soft shapes melted together or carved away, made with surface nets: each { ball: r } | { box: [w, h, d], round } | { cylinder: [r, h], round } | { torus: [R, r] } | { cone: [r, h] } | { capsule: [[x, y,… (:5062)
+- `tree(kind?: 'oak' | 'ash' | 'aspen' | 'pine' | 'bush' | 'palm' | 'fan' | 'banana' | 'fern' | 'taro' | 'cypress' | 'reeds' | 'flowers' | 'lily', o?: { size?: 'small' | …` A tree or plant grown in code with the bark recipe and leaves drawn in code that sway and glow with the sun behind. (:5073)
+- `ivy(targets: Loose, o?: { seed?: number; roots?: number; from?: [number, number, number][]; length?: number; size?: number; density?: number; up?: number; leaves?: str…` Ivy grown over meshes (walls, a house, a stump, a statue; their world places as they are now): vines start at the foot of steep faces (or from: points) and climb, keeping to the surface, branching out sideways, going… (:5081)
+- `weeds(o?: { lines?: ([number, number] | [number, number, number])[][]; walls?: Loose; spots?: number[][]; ground?: (x: number, z: number) => number; gap?: number; heig…` Weeds where nobody weeds, in one InstancedMesh (one draw): along cracks and kerbs (lines: [[[x, z], ...], ...] or points with y), at the foot of walls (walls: meshes; where their steep faces meet the ground) and at… (:5086)
+- `readonly trees: readonly string[]` The tree and plant kinds. (:5088)
+- `building(o?: BuildingOptions): Loose` A close-up building from a shape grammar: floors split into bays, each a real window opening (frame, glass set back, sill) or the door; string course, cornice, flat roof with parapet or gable roof; recipe materials,… (:5090)
+- `readonly looks: readonly LookShape[]` The shapes person.looks can set. (:5099)
+- `readonly CREATOR_SLIDERS: readonly CreatorSlider[]` (:5100)
+- `readonly CREATOR_PICKS: readonly CreatorPick[]` (:5100)
+- `fort(o?: { kind?: 'wall' | 'tower' | 'gate'; length?: number; height?: number; thick?: number; radius?: number; width?: number; roof?: boolean; colour?: string; color?…` (:5101)
+- `readonly forts: readonly string[]` The castle pieces fort() makes. (:5103)
+- `readonly buildings: Record<string, Record<string, Loose>>` The building styles (copy one and change it: { ...gs.models.buildings.brick, bay: 3 }). (:5105)
+- `relief: { <M = Loose>(target: M, o?: false | { depth?: number; fine?: number; coarse?: number; error?: number; maxTris?: number; height?: Loose; mid?: number }): M; /*…` Real surface detail for a mesh (or every mesh under a group): the bumps its material only paints (the height layer of pbr({ tex: surface() }) or gs.models.material(): roof tiles, mortar, bark) made into real… (:5111)
+- `human: { (o?: { look?: 'clean' | 'real'; seed?: number | string; age?: number; weight?: number; muscle?: number; sex?: 'm' | 'f'; heritage?: 'african' | 'east-asian' |…` A person to see up close, sculpted in code (a face with eyes, hands with fingers, clothes cut and worn, hats, webbing, a pack; creases in soft shadow, no texture files), on gs.poses' skeleton in three levels of detail. (:5142)
+- `fur: { (mesh: Loose, o?: FurOptions): FurCoat; /** The geometry a coat's layers share, by itself (hand it to several coats as `shell`). */ shell(geometry: Loose, o?: F…` Fur or hair on any mesh, in layers: copies of the surface pushed out along its normals, each cut by one picture of strands made in code, so strands seem to stand in the coat. (:5162)
+- `creature: { (o?: CreatureOptions): CreatureT; /** The kinds: 'quad', 'bird', 'fish', 'insect', 'monster'. */ readonly kinds: readonly string[]; /** Every animal a crea…` An animal or a monster made in code from a seed, sculpted the way gs.models.human is (no model or texture files): one skinned mesh in three levels of detail on a skeleton of its own, with gaits made for its own legs,… (:5179)
+- `vehicle: { (kind: 'train', o?: VehicleOptions): TrainT; (kind?: 'car' | 'truck' | 'tank' | 'bus' | 'bike' | 'boat' | 'plane' | 'helicopter', o?: VehicleOptions): Vehic…` A vehicle made in code (no model or texture files): a shell skinned over cross-sections from a few measures, in paint, glass, chrome and rubber, aged, with the parts that turn on their own pivots. (:5202)
+- `weapon(kind?: WeaponKind, o?: { finish?: string | null; seed?: number; shadows?: boolean; style?: 'round' | 'heater' | 'kite' | null }): Loose & { points: Record<'grip…` A weapon made in code (no model files), our own designs: 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher' | 'grenade' | 'bat' | 'pipe' | 'wrench' | 'baton'. (:5214)
+- `readonly weapons: readonly WeaponKind[]` The weapons there are. (:5217)
+- `Wield: new (person: Loose, weapon: Loose) => Wield` A weapon in someone's hands: weapon.wield(person) or new Wield(person, weapon). (:5219)
+  - `person: Loose` (:5017)
+  - `gun: Loose` (:5017)
+  - `how: string` (:5017)
+  - `ease: number` (:5017)
+  - `muzzle: Loose` Where shots leave (world) and the way it points (a thing swung: along its length). (:5018)
+  - `dir: Loose` (:5018)
+  - `update(dt: number, o?: { how?: 'aim' | 'ready' | 'hip' | 'low' | 'slung' | 'none'; pitch?: number; yaw?: number; hands?: boolean; keep?: boolean }): Wield` keep: false lets it go into its holder and walls (by default it is turned about the grip out of both: gs.characters.Solid). (:5020)
+  - `readonly turned?: number` How far it was turned out of the body or a wall this frame (radians). (:5021)
+  - `drop(): Loose` Takes it off the person: the weapon. (:5022)
+- `curvature(geometry: Loose): { curve: Float32Array; up: Float32Array }` Per-vertex curvature of a geometry (convex > 0, concave < 0) and how much each vertex faces up. (:5221)
 
 ## From the maker kit
 
@@ -157,7 +157,24 @@ More in docs/maker-kit.md: "Action and adventure kits", "Buildings that come apa
 
 ## In real games
 
-1 game uses it (`node scripts/examples.mjs gs.models` lists them). The shortest:
+2 games use it (`node scripts/examples.mjs gs.models` lists them). The shortest:
+
+`src/games/solis-bay.js` (Solis Bay, Next Gen · Action, 872 lines):
+
+```js
+const { Car } = gs.vehicles;
+const { vehicle, human } = gs.models;
+// …
+function setupWorld(api) {
+  human.need([MAKO_LOOK]);
+// …
+
+  mako = human(MAKO_LOOK);
+// …
+
+  barracuda = vehicle('car', { style: 'saloon', colour: '#16969a', inside: true, lit: false });
+  hotCoupe = vehicle('car', { style: 'sports', colour: '#ff6f61', inside: true, lit: false });
+```
 
 `src/games/long-shadow.js` (Long Shadow, village, 4148 lines):
 

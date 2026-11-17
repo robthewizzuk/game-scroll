@@ -8,28 +8,28 @@ Branching dialogue from ink scripts, played by people in 3D with camera shots, a
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`StoryPart`, line 1547), where every option and field is described.
+From `src/gamescroll.d.ts` (`StoryPart`, line 1549), where every option and field is described.
 
-- `Story: new (source: string) => { readonly ended: boolean; readonly choices: StoryLine['choices']; vars: Record<string, Loose>; ink: Loose; next(): StoryLine; choose(in…` Branching dialogue written in ink (lazy: make it in make() or reset()). (:1549)
-- `Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: …` (:1554)
-- `loadStory(): Promise<Loose>` (:1555)
-- `Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number…` A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other, #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide |… (:1561)
-  - `on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this` (:1564)
-  - `start(section?: string | null): this` Starts (at a section of the story, or where it is). (:1565)
-  - `readonly speaker: string | null` The speaker's cast id (null: a narrator). (:1566)
-  - `readonly who: string` Their name to draw. (:1566)
-  - `readonly shown: string` The line so far, typed out. (:1567)
-  - `readonly text: string` (:1567)
-  - `readonly choices: StoryLine['choices']` Choices open once the line is typed out. (:1568)
-  - `line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null` (:1569)
-  - `shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null` The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). (:1571)
-  - `ended: boolean` (:1572)
-  - `tap(): this` Shows the whole line, or goes on. (:1573)
-  - `choose(index: number): this` (:1573)
-  - `stop(): this` (:1573)
-  - `update(dt: number): this` (:1573)
-  - `save(): string` (:1574)
-  - `load(json: string): this` (:1574)
+- `Story: new (source: string) => { readonly ended: boolean; readonly choices: StoryLine['choices']; vars: Record<string, Loose>; ink: Loose; next(): StoryLine; choose(in…` Branching dialogue written in ink (lazy: make it in make() or reset()). (:1551)
+- `Typewriter: new (text?: string, o?: { speed?: number; pause?: number }) => { readonly shown: string; readonly done: boolean; ticked: boolean; text: string; show(text: …` (:1556)
+- `loadStory(): Promise<Loose>` (:1557)
+- `Talk: new (story: InstanceType<StoryPart['Story']>, o?: { cast?: Record<string, { person?: Loose; name?: string; voice?: SayVoice | null; pitch?: number; rate?: number…` A conversation played by people: each line's #who: speaks in their voice with their face moving, faces look at each other, #mood: shows, and camera shots are picked as a film does (#shot:over | close | two | wide |… (:1563)
+  - `on(ev: 'line' | 'choose' | 'do' | 'end', fn: (...a: Loose[]) => void): this` (:1566)
+  - `start(section?: string | null): this` Starts (at a section of the story, or where it is). (:1567)
+  - `readonly speaker: string | null` The speaker's cast id (null: a narrator). (:1568)
+  - `readonly who: string` Their name to draw. (:1568)
+  - `readonly shown: string` The line so far, typed out. (:1569)
+  - `readonly text: string` (:1569)
+  - `readonly choices: StoryLine['choices']` Choices open once the line is typed out. (:1570)
+  - `line: { text: string; tags: Record<string, string | true>; choices: StoryLine['choices']; who: string | null } | null` (:1571)
+  - `shot: (P3 & { look: P3; kind: 'over' | 'close' | 'two' | 'wide'; cut: boolean }) | null` The camera for this line: where it is, what it looks at, the kind of shot, and cut (true on the frame it cut). (:1573)
+  - `ended: boolean` (:1574)
+  - `tap(): this` Shows the whole line, or goes on. (:1575)
+  - `choose(index: number): this` (:1575)
+  - `stop(): this` (:1575)
+  - `update(dt: number): this` (:1575)
+  - `save(): string` (:1576)
+  - `load(json: string): this` (:1576)
 
 ## From the maker kit
 

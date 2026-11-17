@@ -8,10 +8,10 @@ Cutscenes: camera paths, lines, and actors who walk, turn, look, gesture and spe
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`CutscenePart`, line 3824), where every option and field is described.
+From `src/gamescroll.d.ts` (`CutscenePart`, line 3826), where every option and field is described.
 
-- `along(points: P3[], u: number): P3` (:3825)
-- `Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & { playing: boolean; done: boolean; bars: number; line: { text: string;…` (:3826)
+- `along(points: P3[], u: number): P3` (:3827)
+- `Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & { playing: boolean; done: boolean; bars: number; line: { text: string;…` (:3828)
 
 ## From the maker kit
 

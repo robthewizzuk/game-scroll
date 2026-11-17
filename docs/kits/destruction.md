@@ -8,26 +8,26 @@ Things that break: shatter, slice, rubble, buildings that come apart.
 
 ## What's in it
 
-From `src/gamescroll.d.ts` (`DestructionPart`, line 4332), where every option and field is described.
+From `src/gamescroll.d.ts` (`DestructionPart`, line 4334), where every option and field is described.
 
-- `shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; pu…` (:4333)
-- `slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; apart?: number; density…` world: a World3D: both halves become bodies going on as the mesh did (its own body there is given up); apart: m/s they part along the cut. (:4335)
-- `Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; …` (:4336)
-- `Structure: new (scene?: Loose | null, o?: StructureOptions) => StructureT` A building that comes apart (Next Gen). (:4343)
-  - `broke: StructureEvent[]` What happened this frame (after update): feed your dust, sound and shake from it. (:4392)
-  - `readonly standing: number` How much of it still stands, by weight: 1 whole, 0 flat. (:4394)
-  - `readonly falling: number` Pieces about to fall or in the air; busy: true while anything is still coming down (pieces or rubble). (:4396)
-  - `readonly busy: boolean` (:4396)
-  - `readonly pieces: number` How many pieces it is made of, and how many still stand. (:4398)
-  - `readonly left: number` (:4398)
-  - `group: Loose` The standing building (a Group in the scene) and what has come off it. (:4400)
-  - `debris: Loose` (:4400)
-  - `hit(point: number[] | XYZ, o?: { radius?: number; power?: number; dir?: number[] | XYZ | null; push?: number }): number` A hit at a world point (a bullet, a wrecking ball): pieces within radius (.4) are hurt by power (1 breaks a timber wall, 1.5 brick, 2 stone, 2.5 concrete; .1 a window; hurt adds up), and one that breaks goes to… (:4402)
-  - `blast(point: number[] | XYZ, radius?: number, o?: { power?: number; push?: number }): number` An explosion at a world point: every piece within radius (3) is hurt (power at the centre, 4, none at the edge), the nearest go to rubble, the rest of the broken ones are thrown whole at up to push metres a second… (:4404)
-  - `ray(from: number[] | XYZ, dir: number[] | XYZ, max?: number): { point: Loose; normal: Loose; distance: number; kind: string; piece: number } | null` The first standing piece along a ray (for shots without a physics world), or null. (:4406)
-  - `update(dt: number): StructureT` Each frame, after the physics step. (:4408)
-  - `reset(o?: { world?: Loose | null }): StructureT` Whole again, for a new round. (:4410)
-  - `remove(): void` Out of the scene and the physics world. (:4412)
+- `shatter(mesh: Loose, o?: { pieces?: number; at?: P3; flat?: boolean; inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; pu…` (:4335)
+- `slice(mesh: Loose, point: P3, normal: P3, o?: { inside?: Loose; /** Left out: the World3D the game made; false: none. */ world?: Loose | false; apart?: number; density…` world: a World3D: both halves become bodies going on as the mesh did (its own body there is given up); apart: m/s they part along the cut. (:4337)
+- `Rubble: new (scene?: Loose, o?: { max?: number; life?: number; shrink?: number }) => { add(pieces: Loose | Loose[]): Loose; update(dt: number): Loose; clear(): Loose; …` (:4338)
+- `Structure: new (scene?: Loose | null, o?: StructureOptions) => StructureT` A building that comes apart (Next Gen). (:4345)
+  - `broke: StructureEvent[]` What happened this frame (after update): feed your dust, sound and shake from it. (:4394)
+  - `readonly standing: number` How much of it still stands, by weight: 1 whole, 0 flat. (:4396)
+  - `readonly falling: number` Pieces about to fall or in the air; busy: true while anything is still coming down (pieces or rubble). (:4398)
+  - `readonly busy: boolean` (:4398)
+  - `readonly pieces: number` How many pieces it is made of, and how many still stand. (:4400)
+  - `readonly left: number` (:4400)
+  - `group: Loose` The standing building (a Group in the scene) and what has come off it. (:4402)
+  - `debris: Loose` (:4402)
+  - `hit(point: number[] | XYZ, o?: { radius?: number; power?: number; dir?: number[] | XYZ | null; push?: number }): number` A hit at a world point (a bullet, a wrecking ball): pieces within radius (.4) are hurt by power (1 breaks a timber wall, 1.5 brick, 2 stone, 2.5 concrete; .1 a window; hurt adds up), and one that breaks goes to… (:4404)
+  - `blast(point: number[] | XYZ, radius?: number, o?: { power?: number; push?: number }): number` An explosion at a world point: every piece within radius (3) is hurt (power at the centre, 4, none at the edge), the nearest go to rubble, the rest of the broken ones are thrown whole at up to push metres a second… (:4406)
+  - `ray(from: number[] | XYZ, dir: number[] | XYZ, max?: number): { point: Loose; normal: Loose; distance: number; kind: string; piece: number } | null` The first standing piece along a ray (for shots without a physics world), or null. (:4408)
+  - `update(dt: number): StructureT` Each frame, after the physics step. (:4410)
+  - `reset(o?: { world?: Loose | null }): StructureT` Whole again, for a new round. (:4412)
+  - `remove(): void` Out of the scene and the physics world. (:4414)
 
 ## From the maker kit
 
