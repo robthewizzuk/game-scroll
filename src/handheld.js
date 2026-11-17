@@ -89,6 +89,10 @@ export async function checkLines(c) {
   else if (seen.mouse && desktop?.device?.gamescope) L.push(ok(false, 'Touch: touches reach the app as a mouse', 'The app asks Steam for real touches; if this stays, in Steam open this game\'s controller layout › Action Sets › the gear by the set › Add Always-On command › System › Touchscreen Native Support. Swipes on the feed still change game meanwhile.'));
   else L.push(ok(null, 'Touch: not tried yet', 'Touch the screen, then open this again.'));
   if (gsc) L.push(ok(mode === 4 ? true : mode == null ? null : false, `Steam's touch mode: ${mode == null ? 'not known' : TOUCH_MODES[mode] || mode}${steam != null && steam !== 4 ? ` (Steam had ${TOUCH_MODES[steam] || steam})` : ''}${gsc.touch.on ? '' : ' (left as Steam set it: --gs-touch-mouse)'}${gsc.touch.error ? ` (${gsc.touch.error})` : ''}`));
+  if (gsc?.touch?.modes) {   // (each of gamescope's X servers: Steam's and the games'; gamescope goes by the newest write)
+    const sc = gsc.touch.screen, each = Object.entries(gsc.touch.modes).map(([d, v]) => `${d} ${v == null ? 'none' : v}`).join(', ');
+    L.push(ok(null, `Touch mode on each X server: ${each}; the app has the screen: ${sc ? (sc.mine ? 'yes' : 'no') + (sc.by === 'gamescope' ? ` (gamescope shows window ${sc.window} on ${sc.display || '?'})` : ' (by focus)') : 'not known'}; written ${gsc.touch.writes || 0} times`));
+  }
   // the screen
   if (c) {
     const r = gsc?.root, w = gsc?.window, ch = gsc?.chromium, d = c.display;

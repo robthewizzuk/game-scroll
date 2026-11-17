@@ -66,7 +66,7 @@ if (process.platform === 'linux') {
 // Wayland wherever it finds one, and gamescope's own Wayland is newer and less tried.
 const DEVICE = thisDevice();
 const CONSOLE = DEVICE.gamescope || !!DEVICE.handheld || process.argv.includes('--gs-console');
-if (process.platform === 'linux' && DEVICE.gamescope) sw('ozone-platform', 'x11');
+if (process.platform === 'linux' && DEVICE.gamescope) { sw('ozone-platform', 'x11'); sw('touch-events', 'enabled'); }
 // Touch in Steam's games mode: gamescope makes every touch a mouse click and a cursor move unless the screen says
 // otherwise, and for a game that isn't one of Steam's own Steam says "left click" (STEAM_TOUCH_CLICK_MODE 1): the
 // feed wouldn't scroll under a finger and a game saw one mouse, not fingers. While the app has the screen it says
@@ -217,7 +217,7 @@ async function xserver() {
 const xid = () => { try { return x11.xidOf(main.getNativeWindowHandle()); } catch (_) { return 0; } };
 // What the X server says about the window, the screen and gamescope, and what was done about it (Settings › Check
 // this handheld shows it: src/handcheck.js)
-const GS = { root: null, window: null, chromium: null, fixes: 0, touch: { on: GS_TOUCH, mode: null, steam: null, error: null }, fpsLimit: null, refresh: null };
+const GS = { root: null, window: null, chromium: null, fixes: 0, touch: { on: GS_TOUCH, mode: null, steam: null, modes: null, screen: null, writes: 0, error: null }, fpsLimit: null, refresh: null };
 let fitTimer = null;
 function fitScreenSoon() { clearTimeout(fitTimer); fitTimer = setTimeout(() => fitScreen().catch(() => {}), 250); }
 // Make the window the screen's size, as the X server sees both. Chromium works out a full screen window's size from
@@ -237,23 +237,74 @@ async function fitScreen() {
   const wrong = off(g.width, r.width) || off(g.height, r.height) || off(g.x, 0) || off(g.y, 0) || off(chromium.width, r.width) || off(chromium.height, r.height);
   if (wrong && GS.fixes < 6) { GS.fixes++; main.setBounds({ x: 0, y: 0, width: Math.round(r.width / sf), height: Math.round(r.height / sf) }); fitScreenSoon(); }
 }
-// Touches as touches while the app has the screen (GS_TOUCH above). Steam writes its own choice again when it moves to
-// another game or its menu, and the app writes passthrough again whenever it has the screen back (every 2 s at most).
-let touchTimer = null;
-async function gamescopeTouch() {
-  if (!touchTimer && DEVICE.gamescope && x11) touchTimer = setInterval(() => gamescopeTouch().catch(() => {}), 2000);
+// Touches as touches while the app has the screen (GS_TOUCH above). Gamescope runs an X server for Steam (:0) and one
+// for games (:1, the app's), and takes the newest STEAM_TOUCH_CLICK_MODE written on any of them. Steam writes its own
+// choice on :0 when a game comes up (after the app's first write: Rob's Ally kept the mouse) and when it moves to
+// another game or its menu, so reading the app's own root said 4 while gamescope went by Steam's 1. Now the app hears
+// every write on every one of gamescope's X servers and, while it has the screen (gamescope's GAMESCOPE_FOCUSED_WINDOW
+// on :0 is the app's window), writes 4 again straight after; and again each second in case a write went unheard.
+let touchTimer = null, others = new Map(), touchSoon = null, lastWrite = 0, touchBusy = null;
+function gamescopeTouch() {   // (one at a time: a second ask while one runs runs once after it)
+  if (!touchTimer && DEVICE.gamescope && x11) touchTimer = setInterval(() => gamescopeTouch().catch(() => {}), 1000);
+  if (touchBusy) return touchBusy.again ||= touchBusy.then(() => { touchBusy = null; return gamescopeTouch(); });
+  const run = touchOnce().finally(() => { if (touchBusy === run && !run.again) touchBusy = null; });
+  touchBusy = run;
+  return run;
+}
+async function touchOnce() {
   const x = await xserver();
   if (!x) return;
+  await listen(x).catch(() => {});
   // (also how gamescope paces the app: Steam's frame rate limit, 0 = none, and the screen's refresh now)
   GS.fpsLimit = (await x.get32(x.root, 'GAMESCOPE_FPS_LIMIT').catch(() => null))?.[0] ?? null;
   GS.refresh = (await x.get32(x.root, 'GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK').catch(() => null))?.[0] ?? null;
   try {
-    const now = (await x.get32(x.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] ?? null;
-    if (now !== 4) GS.touch.steam = now;
-    if (GS_TOUCH && focused && main && !main.isDestroyed() && main.isVisible() && now !== 4) await x.set32(x.root, 'STEAM_TOUCH_CLICK_MODE', [4]);
+    const modes = {};
+    for (const [d, o] of [[x.display, x], ...others]) modes[d] = (await o.get32(o.root, 'STEAM_TOUCH_CLICK_MODE').catch(() => { if (o !== x) others.delete(d); return null; }))?.[0] ?? null;
+    const steam = Object.values(modes).find(v => v != null && v !== 4);
+    if (steam != null) GS.touch.steam = steam;
+    GS.touch.modes = modes;
+    GS.touch.screen = await haveScreen(x);
+    if (GS_TOUCH && GS.touch.screen.mine && main && !main.isDestroyed() && main.isVisible()) {
+      await x.set32(x.root, 'STEAM_TOUCH_CLICK_MODE', [4]);   // (every time: a write is what gamescope hears)
+      lastWrite = Date.now(); GS.touch.writes = (GS.touch.writes || 0) + 1;
+    }
     GS.touch.mode = (await x.get32(x.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] ?? null;
     GS.touch.error = null;
   } catch (e) { GS.touch.error = String(e?.message || e); X = null; }
+}
+// Whether the app's window is the one gamescope shows: gamescope says which on its first X server's root (the one with
+// GAMESCOPE_FOCUSED_WINDOW). Where none says, Electron's focus.
+async function haveScreen(x) {
+  const id = xid();
+  for (const o of [x, ...others.values()]) {
+    const win = (await o.get32(o.root, 'GAMESCOPE_FOCUSED_WINDOW').catch(() => null))?.[0];
+    if (win == null) continue;
+    const disp = await o.getText(o.root, 'GAMESCOPE_FOCUS_DISPLAY').catch(() => null);
+    return { mine: disp ? disp === x.display && (win === id || focused) : win === id, by: 'gamescope', window: win, display: disp };
+  }
+  return { mine: focused, by: 'focus' };
+}
+// Hear STEAM_TOUCH_CLICK_MODE (and gamescope's focus) change on each of the computer's X servers.
+const heard = new WeakSet(), triedAt = new Map();
+async function listen(x) {
+  await hear(x, x);
+  for (const d of x11.displaysHere()) {
+    if (d === x.display || others.has(d) || Date.now() - (triedAt.get(d) || 0) < 30000) continue;
+    triedAt.set(d, Date.now());
+    const o = await x11.open({ display: d, timeout: 800 }).catch(() => null);
+    if (o) { others.set(d, o); await hear(o, x); }
+  }
+}
+async function hear(o, x) {
+  if (heard.has(o)) return;
+  heard.add(o);
+  const touchAtom = await o.atom('STEAM_TOUCH_CLICK_MODE'), focusAtom = await o.atom('GAMESCOPE_FOCUSED_WINDOW');
+  await o.watch(o.root, ev => {
+    if (ev.window !== o.root || (ev.atom !== touchAtom && ev.atom !== focusAtom)) return;
+    if (o === x && ev.atom === touchAtom && Date.now() - lastWrite < 150) return;   // (the app's own write)
+    clearTimeout(touchSoon); touchSoon = setTimeout(() => gamescopeTouch().catch(() => {}), 60);
+  });
 }
 // (on the way out, Steam's own choice back: Steam writes it again anyway when its menu or the next game comes up)
 let restored = false;
