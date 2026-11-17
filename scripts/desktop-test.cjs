@@ -112,11 +112,23 @@ async function dev() {
   } finally { await app.close().catch(() => {}); fs.rmSync(data, { recursive: true, force: true }); }
 }
 
+// A bare X server to stand in for Steam's own under gamescope, or null where Xvfb isn't here.
+async function steamServer() {
+  let n = 90; while (fs.existsSync(`/tmp/.X11-unix/X${n}`) && n < 120) n++;
+  let proc; try { proc = spawn('Xvfb', [`:${n}`, '-screen', '0', '640x480x24'], { stdio: 'ignore' }); } catch (_) { return null; }
+  let dead = false; proc.on('error', () => { dead = true; }); proc.on('exit', () => { dead = true; });
+  for (let i = 0; i < 50 && !dead && !fs.existsSync(`/tmp/.X11-unix/X${n}`); i++) await new Promise(r => setTimeout(r, 100));
+  if (dead || !fs.existsSync(`/tmp/.X11-unix/X${n}`)) { try { proc.kill(); } catch (_) { /* gone */ } return null; }
+  await new Promise(r => setTimeout(r, 300));
+  return { name: `:${n}`, proc };
+}
+
 // A games handheld in Steam's games mode (a ROG Ally X stood in for: GS_HANDHELD, desktop/device.cjs), played with a
 // controller alone (one made up in the page: navigator.getGamepads). Linux only (the handheld facts are Linux's).
 async function handheld() {
   const exe = require(path.join(DESK, 'node_modules/electron'));
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-hand-'));
+  const steamX = await steamServer();   // (gamescope's other X server, Steam's own)
   const app = await _electron.launch({
     executablePath: exe, args: ['--no-sandbox', DESK],
     env: { ...process.env, GS_WEB: path.join(ROOT, 'dist'), GS_USER_DATA: data, GS_HANDHELD: 'ROG Ally X RC72LA_RC72LA', GS_HANDHELD_VENDOR: 'ASUSTeK COMPUTER INC.', GS_HANDHELD_CPU: 'AMD Ryzen Z1 Extreme w/ Radeon 780M Graphics', SDL_GAMECONTROLLER_IGNORE_DEVICES: '0x0b05/0x1b4c', XDG_CURRENT_DESKTOP: 'gamescope' },
@@ -145,6 +157,31 @@ async function handheld() {
     ok(fits(g), 'a window moved off the screen\'s size is put back', `${g.width}×${g.height} at ${g.x},${g.y}`);
     await X.set32(X.root, 'STEAM_TOUCH_CLICK_MODE', [1]); await p.waitForTimeout(2600);
     ok((await X.get32(X.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] === 4, 'and touches again after Steam set its mouse clicks back');
+    // Gamescope runs an X server for Steam and one for games, and goes by the newest write on either. Steam writes its
+    // mouse clicks on its own (on Rob's Ally, after the app's first write: touches stayed a mouse). Here a second bare X
+    // server stands in for Steam's: the app answers each write there with real touches on its own, at once, while
+    // gamescope says the app's window has the screen, and leaves Steam's choice alone while another has it.
+    if (steamX) {
+      const st = await x11.open({ display: steamX.name }), id = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readUInt32LE(0));
+      const touchAtom = await X.atom('STEAM_TOUCH_CLICK_MODE'), writes = [];
+      await X.watch(X.root, e => { if (e.atom === touchAtom) writes.push(Date.now()); });
+      await st.set32(st.root, 'GAMESCOPE_FOCUSED_WINDOW', [id]); await st.setText(st.root, 'GAMESCOPE_FOCUS_DISPLAY', X.display);
+      await p.waitForTimeout(1200);
+      const answers = [];
+      for (let i = 0; i < 3; i++) {
+        const t0 = Date.now(); await st.set32(st.root, 'STEAM_TOUCH_CLICK_MODE', [1]); await p.waitForTimeout(700);
+        const w = writes.find(t => t >= t0); answers.push(w ? w - t0 : null);
+      }
+      ok(answers.every(a => a != null && a < 300) && (await X.get32(X.root, 'STEAM_TOUCH_CLICK_MODE'))?.[0] === 4, 'Steam writing mouse clicks on its own X server is answered at once with real touches', `${answers.join(', ')} ms`);
+      await st.set32(st.root, 'GAMESCOPE_FOCUSED_WINDOW', [0x1234567]); await st.setText(st.root, 'GAMESCOPE_FOCUS_DISPLAY', steamX.name);
+      await p.waitForTimeout(500); const n0 = writes.length;
+      await st.set32(st.root, 'STEAM_TOUCH_CLICK_MODE', [1]); await p.waitForTimeout(2500);
+      ok(writes.length === n0, 'and is left alone while gamescope shows another window', `${writes.length - n0} writes`);
+      await st.set32(st.root, 'GAMESCOPE_FOCUSED_WINDOW', [id]); await st.setText(st.root, 'GAMESCOPE_FOCUS_DISPLAY', X.display);
+      await p.waitForTimeout(400);
+      ok(writes.length > n0, 'and asked for again as soon as the app has the screen back');
+      st.close();
+    } else console.log('     (no second X server here: Steam\'s own X server not stood in for)');
     X.close();
     const look = await p.evaluate(async () => { const gs = (await __gs.gs()).default; return { cursor: document.documentElement.classList.contains('no-cursor'), sticks: gs.controls.onScreen() }; });
     ok(look.cursor && !look.sticks, 'no pointer arrow, and no on-screen sticks or buttons (the handheld\'s own are used)', JSON.stringify(look));
@@ -213,23 +250,29 @@ async function handheld() {
     ok(m1 && m1 !== m0 && playing !== 'playing', 'a mouse drag up the feed goes to the next game, and doesn\'t start one', `${m0} → ${m1}, ${playing}`);
     // Settings › Check this handheld: plain lines about touch, the screen, the graphics and the frame rate
     await p.evaluate(() => document.getElementById('settings').click()); await p.waitForTimeout(300);
+    const top = await p.evaluate(() => document.querySelector('dialog.settings section')?.textContent.replace(/\s+/g, ' ').trim() || '');
+    ok(/^Check this handheld/.test(top), 'Settings opens with Check this handheld at the top (Rob didn\'t find it at the bottom)', top.slice(0, 160));
     await p.evaluate(() => document.querySelector('dialog.settings .set-check')?.click());
     const lines = await p.waitForFunction(() => { const l = [...document.querySelectorAll('.hh-check .hh-lines li')]; return l.length >= 5 && l.map(x => x.textContent); }, null, { timeout: 15000 }).then(h => h.jsonValue(), () => null);
     ok(lines && lines.some(t => /passthrough/.test(t)) && lines.some(t => /^✓Screen: /.test(t)) && lines.some(t => /Played as: a computer/.test(t)), 'Settings › Check says how touch, the screen and the frame rate are', (lines || []).join(' | ').slice(0, 600));
+    if (steamX) ok(lines && lines.some(t => t.includes('Touch mode on each X server') && t.includes(steamX.name)), 'and the touch mode on each of gamescope\'s X servers', (lines || []).find(t => t.includes('Touch mode on each')));
     await p.evaluate(() => document.querySelector('.hh-check')?.close());
     // a game played by touch gets a pointer: the stick moves it, A is the finger
     await p.evaluate(() => __gs.only('fly-swatter', true)); await p.waitForTimeout(400);
     await p.waitForFunction(() => __gs.active && __gs.active.def.id === 'fly-swatter' && !__gs.active.loading, null, { timeout: 30000 });
     await press('a'); await p.waitForTimeout(600);
     const taps = await p.evaluate(() => { const g = __gs.active.game, log = window.__taps = []; for (const k of ['down', 'move', 'up']) { const f = g[k]; if (f) g[k] = (...a) => { log.push([k, Math.round(a[0]), Math.round(a[1]), a[a.length - 1]]); return f.apply(g, a); }; } return __gs.active.state; });
-    await p.evaluate(() => { window.__pad.axes[0] = 1; }); await p.waitForTimeout(400); await p.evaluate(() => { window.__pad.axes[0] = 0; });
+    // (held till the pointer is past the middle, up to 2 s: pads are read once a frame, and frames come slowly here)
+    await p.evaluate(() => { window.__pad.axes[0] = 1; });
+    await p.waitForFunction(() => { const c = document.querySelector('.pad-cursor'); const r = c?.parentElement?.getBoundingClientRect(); return r && c.getBoundingClientRect().left > r.left + r.width * 0.6; }, null, { timeout: 2000 }).catch(() => {});
+    await p.waitForTimeout(100); await p.evaluate(() => { window.__pad.axes[0] = 0; });
     await press('a', 120);
     const t = await p.evaluate(() => ({ taps: window.__taps, cur: !!document.querySelector('.pad-cursor:not([hidden])'), w: __gs.active.w, hasUp: !!__gs.active.game.up }));
     const down = t.taps.find(x => x[0] === 'down'), up = t.taps.find(x => x[0] === 'up');
     ok(taps === 'playing' && down && (up || !t.hasUp) && down[1] > t.w / 2 && t.cur, 'a touch game gets a pointer: the stick moves it and A taps', JSON.stringify(t.taps.slice(-4)));
     ok(!errs.length, 'no page errors', errs.join(' | '));
     if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT.replace(/(\.png)?$/, '-handheld.png') });
-  } finally { await app.close().catch(() => {}); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await app.close().catch(() => {}); fs.rmSync(data, { recursive: true, force: true }); steamX?.proc.kill(); }
 }
 
 async function packaged() {

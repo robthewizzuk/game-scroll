@@ -7,7 +7,9 @@
 //   - touch: gamescope turns every touch into a mouse click or a cursor move unless the screen's root window says
 //     STEAM_TOUCH_CLICK_MODE = 4 ("passthrough": real touches). Steam writes it for each game from its controller
 //     settings, and for a game that isn't one of Steam's own that is 1, a left click: a finger is a mouse there, and a
-//     swipe drags the mouse instead of scrolling the feed. The app writes 4 while it has the screen.
+//     swipe drags the mouse instead of scrolling the feed. The app writes 4 while it has the screen. Gamescope runs an X
+//     server for Steam (:0) and one for games (:1) and takes the newest write on either: Steam writes on its own, so
+//     the app watches every one of them and writes again straight after Steam does (main.cjs).
 //   - size: the window's real size and the screen's, to put the window right where Chromium's idea of its own size
 //     and the X server's differ (the bottom of the app was drawn below the screen's edge).
 // Nothing here is needed anywhere else; every call fails quietly (null) where there is no X server.
@@ -70,15 +72,22 @@ function changeProperty32(win, atom, type, values) {
   b.writeUInt32LE(win, 4); b.writeUInt32LE(atom, 8); b.writeUInt32LE(type, 12); b[16] = 32; b.writeUInt32LE(values.length, 20);
   values.forEach((v, i) => b.writeUInt32LE(v >>> 0, 24 + i * 4)); return b;
 }
-function getProperty(win, atom, longs = 16) {
+function changeProperty8(win, atom, type, bytes) {
+  const b = req(18, 0, 6 + Math.ceil(bytes.length / 4));
+  b.writeUInt32LE(win, 4); b.writeUInt32LE(atom, 8); b.writeUInt32LE(type, 12); b[16] = 8; b.writeUInt32LE(bytes.length, 20); bytes.copy(b, 24); return b;
+}
+function getProperty(win, atom, longs = 16) {   // (any type)
   const b = req(20, 0, 6); b.writeUInt32LE(win, 4); b.writeUInt32LE(atom, 8); b.writeUInt32LE(0, 12); b.writeUInt32LE(0, 16); b.writeUInt32LE(longs, 20); return b;
 }
+const PROPERTY_CHANGE = 0x400000, PROPERTY_NOTIFY = 28;
+function changeEventMask(win, mask) { const b = req(2, 0, 4); b.writeUInt32LE(win, 4); b.writeUInt32LE(0x800, 8); b.writeUInt32LE(mask, 12); return b; }   // CWEventMask
 function getGeometry(d) { const b = req(14, 0, 2); b.writeUInt32LE(d, 4); return b; }
 function translate(src, dst) { const b = req(40, 0, 4); b.writeUInt32LE(src, 4); b.writeUInt32LE(dst, 8); return b; }
 const sync = () => req(43, 0, 1);   // GetInputFocus: a reply that says every request before it was done
 
 /**
- * A connection to the X server: { root, width, height, atom(name), set32(win, name, values), get32(win, name), geometry(win), close() }.
+ * A connection to the X server: { display, root, width, height, atom(name), set32(win, name, values), get32(win, name),
+ * getText(win, name), setText(win, name, text), watch(win, f), geometry(win), close() }.
  * Requests go one at a time (each waits for its answer, or for the sync after it), which is all the app needs.
  */
 async function open({ display = process.env.DISPLAY, env = process.env, timeout = 1500 } = {}) {
@@ -87,7 +96,7 @@ async function open({ display = process.env.DISPLAY, env = process.env, timeout 
   const ck = cookie(d.n, env);
   for (const p of d.paths) for (const c of ck ? [ck, null] : [null]) {
     const x = await tryOpen(p, c, timeout).catch(() => null);
-    if (x) return x;
+    if (x) { x.display = ':' + d.n; return x; }
   }
   return null;
 }
@@ -95,6 +104,7 @@ function tryOpen(socketPath, ck, timeout) {
   return new Promise((resolve, reject) => {
     const s = net.createConnection({ path: socketPath });
     let buf = Buffer.alloc(0), seq = 0, info = null, waiting = [], dead = null;
+    const heard = new Set();   // (property changes on windows it watches)
     const fail = e => { dead = e; s.destroy(); for (const w of waiting.splice(0)) w.reject(e); if (!info) reject(e); };
     const timer = setTimeout(() => fail(new Error('X server did not answer')), timeout);
     s.on('error', fail);
@@ -114,7 +124,10 @@ function tryOpen(socketPath, ck, timeout) {
         const kind = buf[0], len = kind === 1 ? 32 + buf.readUInt32LE(4) * 4 : 32;
         if (buf.length < len) return;
         const pkt = buf.subarray(0, len); buf = buf.subarray(len);
-        if (kind > 1) continue;   // an event (none are asked for)
+        if (kind > 1) {   // an event: only property changes are asked for
+          if ((kind & 0x7f) === PROPERTY_NOTIFY) for (const f of heard) { try { f({ window: pkt.readUInt32LE(4), atom: pkt.readUInt32LE(8), deleted: pkt[16] === 1 }); } catch (_) { /* the listener's */ } }
+          continue;
+        }
         const sq = pkt.readUInt16LE(2), w = waiting[0];
         if (!w || sq !== (w.seq & 0xffff)) { if (w && kind === 0 && w.sync && sq < (w.seq & 0xffff)) { waiting.shift(); w.reject(new Error(`X error ${pkt[1]}`)); } continue; }
         waiting.shift();
@@ -144,6 +157,15 @@ function tryOpen(socketPath, ck, timeout) {
           for (let i = 0; i < n; i++) out.push(r.readUInt32LE(32 + i * 4));
           return out;
         },
+        /** A property of 8-bit values as text (gamescope's GAMESCOPE_FOCUS_DISPLAY, ":1"), or null. */
+        async getText(win, name) {
+          const r = await ask(getProperty(win, await atom(name)));
+          if (r[1] !== 8) return null;
+          return r.subarray(32, 32 + r.readUInt32LE(16)).toString('latin1').replace(/\0+$/, '');
+        },
+        async setText(win, name, text, type = CARDINAL) { await ask(changeProperty8(win, await atom(name), type, Buffer.from(text + '\0', 'latin1')), true); },
+        /** Hear a window's property changes: f({ window, atom, deleted }) for each, from now on. */
+        async watch(win, f) { heard.add(f); await ask(changeEventMask(win, PROPERTY_CHANGE), true); },
         /** A window's size and its place on the screen: { x, y, width, height } (x and y from the root's corner). */
         async geometry(win) {
           const g = await ask(getGeometry(win)), t = await ask(translate(win, info.root));
@@ -155,7 +177,12 @@ function tryOpen(socketPath, ck, timeout) {
   });
 }
 
+/** The X servers on this computer, as DISPLAY names (":0", ":1"): gamescope runs one for Steam and one for games. */
+function displaysHere(dir = '/tmp/.X11-unix') {
+  try { return fs.readdirSync(dir).map(f => /^X(\d+)$/.exec(f)).filter(Boolean).map(m => ':' + m[1]).sort((a, b) => a.slice(1) - b.slice(1)); } catch (_) { return []; }
+}
+
 /** The X window id in Electron's native handle (a Buffer holding an unsigned long on Linux). */
 const xidOf = handle => (Buffer.isBuffer(handle) && handle.length >= 4 ? handle.readUInt32LE(0) : 0);
 
-module.exports = { open, xidOf, displayOf, cookieIn, setupRequest, parseSetup };
+module.exports = { open, xidOf, displaysHere, displayOf, cookieIn, setupRequest, parseSetup };

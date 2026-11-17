@@ -80,15 +80,19 @@ A newer build: download it over the old file (same name), and Steam starts the n
 - **Touch** in Steam's games mode: gamescope turns touches into mouse clicks unless the screen's root window says
   `STEAM_TOUCH_CLICK_MODE` 4 (passthrough), and Steam says 1 (left click) for a game that isn't one of its own. While
   the app has the screen it writes 4, so fingers reach it as touches, as on a phone (`desktop/x11.cjs`, a few
-  X11 requests straight down the X server's socket). The launch option `--gs-touch-mouse` leaves Steam's choice alone.
+  X11 requests straight down the X server's socket). Gamescope runs an X server for Steam (`:0`) and one for games
+  (`:1`) and goes by the newest write on either; Steam writes its own on `:0` after the game comes up (Rob's Ally kept
+  the mouse with the app watching only its own), so the app hears every write on all of them and writes 4 again
+  straight after, while gamescope's `GAMESCOPE_FOCUSED_WINDOW` is the app's window (and each second besides). The
+  launch option `--gs-touch-mouse` leaves Steam's choice alone.
   Steam's own way, per game: the controller layout › Action Sets › the gear › Add Always-On command › System ›
   Touchscreen Native Support. Where touches still come as a mouse, a press and drag on the feed changes game as a
   swipe does (`src/handheld.js`), and there is no pointer arrow in gamescope.
 - **On-screen controls**: `gs.controls` sticks and buttons aren't drawn in console mode (Rob, 2026-11-17: "hide any
   transparent controls like joystick etc as we will use the physical controls"); they show for a few seconds after a
   touch. `gs.controls.onScreen()` says which, for a game that draws its own.
-- **Settings › Check this handheld** (`src/handheld.js`): plain lines, read on the handheld itself, on touch (real
-  touches or a mouse; gamescope's mode), the screen (window and page against the screen), the graphics (WebGPU, the
+- **Settings › Check this handheld** (`src/handheld.js`, the first thing in Settings there, with the app's version): plain lines, read on the handheld itself, on touch (real
+  touches or a mouse; gamescope's mode on each X server), the screen (window and page against the screen), the graphics (WebGPU, the
   chip, Chromium's own WebGPU, Vulkan and Vulkan picture sharing status), how games are played, the rate frames reach
   the page, Steam's frame rate limit and refresh, each game played this run's frame rate and tier, and heat. A Steam
   screenshot (Steam + R1) of it is the report.
