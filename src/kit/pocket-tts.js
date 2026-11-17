@@ -281,10 +281,10 @@ function convT(H, mm, w, b, cin, cout, k, s) {
 const D = 224, Z = 64, LAT = 32, FD = 192;
 const weightsOf = pack => n => { const t = pack.get(n); if (!t) throw new Error('voice: no ' + n); return t; };
 
-// The noise each latent is drawn from, cut off past .8 (about 1.5 times its spread; Kyutai's noise_clamp): a rare far
-// draw is what makes the one-step head write a frame that isn't speech, heard as a garbled or doubled sound. Measured
-// (11-17, 7 voices x 8 lines): lines with a word heard wrong 4 -> 1 of 56, a speech-quality score 4.430 -> 4.438.
-const CLAMP = .8;
+// The noise each latent is drawn from can be cut off (Kyutai's noise_clamp; 0: not). Measured 11-17: at .8, fewer words
+// heard wrong on plain reads (0.93% -> 0.58% of 112 lines) but acted lines (the movie-line benchmark) flatter, 3.86 ->
+// 3.78 on a speech-quality model, so it stays off.
+const CLAMP = 0;
 
 /**
  * The first half: text and a voice in, latents out (32 numbers each, 12.5 a second). pack: as makeTTS.
