@@ -32,11 +32,12 @@ export function startHandheld(feed) {
 // A press and drag with the mouse on the feed (not while a round is played: the feed is locked then, and drags are the game's)
 function mouseSwipes(feed) {
   let d = null, eat = false;
-  const skip = t => t.closest('button,a,input,select,textarea,label,dialog,summary,[role=button],[role=menu],.top');
+  // (a drag may start on a card's buttons, its Play button too, as a finger's swipe may: the click at its end is eaten)
+  const skip = t => t.closest('input,select,textarea,dialog,[role=menu],.top');
   feed.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'mouse' || e.button !== 0 || feed.classList.contains('locked') || skip(e.target)) return;
     d = { id: e.pointerId, y: e.clientY, top: feed.scrollTop, t: performance.now(), moved: false, vy: 0, ly: e.clientY, lt: performance.now() };
-  }, { passive: true });
+  }, { capture: true, passive: true });
   addEventListener('pointermove', e => {
     if (!d || e.pointerId !== d.id) return;
     const dy = e.clientY - d.y, now = performance.now();
@@ -44,7 +45,7 @@ function mouseSwipes(feed) {
     if (!d.moved) { d.moved = true; feed.style.scrollSnapType = 'none'; }
     d.vy = (e.clientY - d.ly) / Math.max(1, now - d.lt); d.ly = e.clientY; d.lt = now;
     feed.scrollTop = d.top - dy;
-  }, { passive: true });
+  }, { capture: true, passive: true });
   const end = e => {
     if (!d || e.pointerId !== d.id) return;
     const g = d; d = null;
@@ -60,8 +61,8 @@ function mouseSwipes(feed) {
     feed.scrollTo({ top: to.offsetTop, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     setTimeout(() => { feed.style.scrollSnapType = ''; }, 450);
   };
-  addEventListener('pointerup', end);
-  addEventListener('pointercancel', end);
+  addEventListener('pointerup', end, true);
+  addEventListener('pointercancel', end, true);
   // (the click a drag ends with isn't a tap on the card)
   addEventListener('click', e => { if (eat) { eat = false; e.preventDefault(); e.stopPropagation(); } }, true);
 }
