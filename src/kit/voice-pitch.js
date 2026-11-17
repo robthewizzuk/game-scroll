@@ -15,7 +15,7 @@
  * real read speech (106 VCTK speakers: spread 3.7 semitones, 5-95% range 11.6): on 15 lines the 7M's own 2.4 / 8.0 become
  * 3.1 / 10.2 for a score 4.35 -> 4.29 (Rob 11-16: "keep going on making them more human like").
  * shift: the whole pitch moved this many times (lo, hi: how far any moment may go; act.mjs acts moods with these).
- * breathy: air through the voice (0: none). tone: the room's loudness against the voice (0: none, .002: about 54 dB under).
+ * breathy: air through the voice (0: none). tone: the room's loudness against the voice (0: none, .002: about 54 dB under; the built-in voices use .0005).
  * stress: [[from, to] seconds] words said higher (about 2 semitones), louder and longer. tilt: 0..1 effort (more of the
  * upper voice, as people speaking up over noise). pre: 'sigh' | 'gasp' before it, made through the voice's own mouth shape.
  * The pitch is moved only where two readings of it agree (YIN, and how well the sound repeats at that period and not at
@@ -92,13 +92,14 @@ export function pitchOf(x, rate) {
 function breathe(n, rate, level, rnd) {
   const y = new Float32Array(n);
   const bp = (f, q) => { const w = 2 * Math.PI * f / rate, al = Math.sin(w) / (2 * q), a0 = 1 + al; return [al / a0, 0, -al / a0, -2 * Math.cos(w) / a0, (1 - al) / a0]; };
-  const B = [bp(900 + 400 * rnd(), .7), bp(2300 + 500 * rnd(), 1.4)], z = B.map(() => [0, 0, 0, 0]), lp = Math.exp(-2 * Math.PI * 5000 / rate);
+  // (soft: a listener heard the brighter breaths as sharp intakes; little above 3.5 kHz, the hiss band low)
+  const B = [bp(800 + 300 * rnd(), .7), bp(2000 + 400 * rnd(), 1.4)], z = B.map(() => [0, 0, 0, 0]), lp = Math.exp(-2 * Math.PI * 3500 / rate);
   let sum = 0, l1 = 0, l2 = 0;
   const peak = .55 + .2 * rnd();
   for (let i = 0; i < n; i++) {
     const t = i / n, env = t < peak ? Math.sin(t / peak * Math.PI / 2) ** 2 : Math.cos((t - peak) / (1 - peak) * Math.PI / 2) ** 2;
     const w = rnd() * 2 - 1; let v = 0;
-    B.forEach((b, k) => { const s = z[k], o = b[0] * w + b[1] * s[0] + b[2] * s[1] - b[3] * s[2] - b[4] * s[3]; s[1] = s[0]; s[0] = w; s[3] = s[2]; s[2] = o; v += o * (k ? .35 : 1); });
+    B.forEach((b, k) => { const s = z[k], o = b[0] * w + b[1] * s[0] + b[2] * s[1] - b[3] * s[2] - b[4] * s[3]; s[1] = s[0]; s[0] = w; s[3] = s[2]; s[2] = o; v += o * (k ? .2 : 1); });
     l1 = lp * l1 + (1 - lp) * v; l2 = lp * l2 + (1 - lp) * l1;
     y[i] = l2 * env; sum += y[i] * y[i];
   }
@@ -473,7 +474,7 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
     sound = hum(Math.round(rate * (.45 + .15 * rnd())), rate, speech * .35, mid, rnd); gap = Math.round(rate * (.25 + .1 * rnd()));
   } else if (!first && breath > 0) {
     const k = deep(ahead(0));
-    if (rnd() < .15 + .7 * k) { sound = breathe(Math.round(rate * (.16 + .2 * k + .05 * rnd())), rate, level * (.6 + .6 * k), rnd); gap = Math.round(rate * (.06 + .05 * rnd())); }
+    if (rnd() < .15 + .7 * k) { sound = breathe(Math.round(rate * (.24 + .2 * k + .05 * rnd())), rate, level * (.45 + .45 * k), rnd); gap = Math.round(rate * (.06 + .05 * rnd())); }
   }
   if (!sound) return room(done);
   const lead = new Float32Array(sound.length + gap + done.length);
