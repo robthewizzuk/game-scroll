@@ -6,7 +6,7 @@ import gs from '../gamescroll.js';
 
 const { Feel } = gs.effects;
 const { twoThumb, Keys } = gs.controls;
-const { Radio, sounds, bed, noise, score: filmScore, Ears } = gs.sound;
+const { Radio, sounds, bed, noise, score: filmScore, Ears, mixer } = gs.sound;
 const { icon } = gs.icons;
 const { clamp } = gs.util;
 const { rng } = gs.math;
@@ -104,6 +104,8 @@ const MAKO_LOOK = {
   skin: '#c88c68',
   hair: '#1e1918',
   hairStyle: 'short',
+  hairStrands: false,
+  strands: false,
   body: '#1f6e74',
   legs: '#28303d',
   shoes: '#eceae4',
@@ -118,12 +120,14 @@ const NADIA_LOOK = {
   skin: '#d9a484',
   hair: '#3b211a',
   hairStyle: 'long',
+  hairStrands: false,
+  strands: false,
   body: '#c85a3a',
   legs: '#232834',
   shoes: '#22242a',
 };
 
-// Reusable scratch objects (zero per-frame allocations)
+// Reusable scratch & option objects (zero per-frame allocations)
 const camDirVec = new THREE.Vector3();
 const aimOrigin = { x: 0, y: 0, z: 0 };
 const aimDirObj = { x: 0, y: 0, z: -1 };
@@ -132,6 +136,30 @@ const playerQuery = { x: 0, z: 0, y: 0, heading: 0, v: 0, car: false, boat: fals
 const avoidQuery = { x: 0, z: 0, vx: 0, vz: 0 };
 const rigTarget = { position: new THREE.Vector3(), yaw: 0, grounded: true };
 const coverMoveVec = { x: 0, z: 0 };
+const boatInput = { throttle: 0, steer: 0 };
+const carInput = { throttle: 0, steer: 0, brake: false };
+const engOpts = { from: 110, vol: 0 };
+const hideInput = { move: coverMoveVec, aim: false, blind: false };
+const swimInput = { move: coverMoveVec, up: false, down: false, fast: false };
+const swimPlayOpts = { at: 0 };
+const hidePlayOpts = { fade: 0.1 };
+const rigUpdOpts = { speed: 0 };
+const BLEND_OPTS = { idle: 0, walk: 1.8, run: 4.5 };
+const BUMP_OPTS = { keep: 0.45 };
+const COVER_UPD_OPTS = { reach: 12 };
+const LIGHT_FIT_OPTS = { far: 170, tall: 60, near: 28 };
+const MINI_OPTS = { range: 165 };
+const ICON_RAD_ON = { color: '#ffb24a' };
+const ICON_RAD_OFF = { color: '#9aa4b8' };
+const INDOOR_PLACE = { tail: 0.55, wet: 0.22, echo: 0.1, delay: 0.06 };
+/** @type {Record<string, Parameters<HDView['look']>[1]>} */
+const MOOD_OPTS = {
+  'golden hour': { air: { wet: 0.22, macro: 0.6 }, bloom: 0.45 },
+  fog: { air: { haze: 0.0042, mist: 0.006, wet: 0.35, macro: 0.6 }, beams: { density: 0.04, strength: 0.45, glow: 0.4 } },
+  'night rain': { bloom: 0.55, exposure: 1.12, glare: 0.45, air: { haze: 0.0024, wet: 0.78, macro: 0.6 }, weather: { kind: 'rain', amount: 0.65, wet: 0.85, pools: 0.75 } },
+  'rainy dusk': { bloom: 0.48, air: { haze: 0.002, wet: 0.8, macro: 0.6 }, weather: { kind: 'rain', amount: 0.5, wet: 0.85, pools: 0.7 } },
+  overcast: { air: { haze: 0.0018, wet: 0.55, macro: 0.6 }, weather: { kind: 'rain', amount: 0.3, wet: 0.6, pools: 0.45 } },
+};
 const tmpBox = new THREE.Box3();
 const tmpSize = new THREE.Vector3();
 const tmpCenter = new THREE.Vector3();
@@ -160,9 +188,82 @@ function addYardStaticCollider(group, list) {
   });
 }
 
+function makeRiderMover(world, mesh, { radius = 0.38, height = 1.8, step = 0.35, slope = 50, gravity = -20, at } = {}) {
+  const rider = world.rider({ capsule: [radius, height], step, slope, snap: 0.35, push: true, tag: 'mover', at });
+  const _feet = { x: 0, y: 0, z: 0 };
+  let active = true;
+  const syncFeet = () => {
+    const p = rider.to || rider.body.translation();
+    const o = world.at;
+    const rawY = p.y - rider.half - rider.lift;
+    _feet.x = p.x + o.x;
+    _feet.y = rider.grounded && rider.floor != null && Math.abs(rider.floor - rawY) < 0.15 ? rider.floor : rawY;
+    _feet.z = p.z + o.z;
+  };
+  syncFeet();
+  const mover = {
+    world,
+    rider,
+    body: rider.body,
+    collider: rider.collider,
+    mesh: mesh || null,
+    tag: 'mover',
+    kind: 'mover',
+    dead: false,
+    gravity,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    grounded: false,
+    dx: 0,
+    dz: 0,
+    get feet() { return _feet; },
+    walk(vx, vz) { this.vx = vx; this.vz = vz; return this; },
+    jump(speed = 7, force = false) { if (this.grounded || force) { this.vy = speed; this.grounded = false; } return this; },
+    place(x, y, z) {
+      rider.place(x, y, z);
+      this.vy = 0;
+      this.grounded = false;
+      syncFeet();
+      return this;
+    },
+    setActive(on) {
+      const next = !!on;
+      if (active !== next) {
+        active = next;
+        rider.collider.setEnabled(active);
+      }
+    },
+    stepMove(dt) {
+      if (!active || rider.dead) return;
+      if (this.grounded && this.vx === 0 && this.vz === 0 && this.vy <= 0) {
+        this.dx = 0;
+        this.dz = 0;
+        return;
+      }
+      this.vy += this.gravity * dt;
+      if (this.grounded && this.vy < 0) this.vy = Math.max(this.vy, -2);
+      const wy = this.vy * dt;
+      rider.slide(this.vx * dt, wy, this.vz * dt, null, dt);
+      this.grounded = rider.grounded;
+      if (this.grounded && this.vy < 0) this.vy = 0;
+      if (wy > 0 && rider.moved.y < wy * 0.5) this.vy = 0;
+      this.dx = rider.moved.x;
+      this.dz = rider.moved.z;
+      syncFeet();
+    },
+    remove() {
+      this.dead = true;
+      rider.remove();
+    },
+  };
+  return mover;
+}
+
 function make(api) {
   let v, world, light, weather, sky, metro, gps, law, radio, scoreMusic, ears;
   let inside, cover, hide, swim, pickups, yardGround;
+  let yardPropsGroup, beachPropsGroup;
   let mako, nadia, barracuda, hotCoupe, boatMesh, arrowMesh;
   let dropRing, dropBeacon, pickRing, pickBeacon;
   let pickupMeshes = [];
@@ -199,6 +300,13 @@ function make(api) {
   };
 
   const buildPortAndBeachProps = () => {
+    yardPropsGroup = new THREE.Group();
+    yardPropsGroup.name = 'yardProps';
+    v.scene.add(yardPropsGroup);
+    beachPropsGroup = new THREE.Group();
+    beachPropsGroup.name = 'beachProps';
+    v.scene.add(beachPropsGroup);
+
     yardGround = new Ground(v, {
       size: [60, 44],
       kind: 'yard',
@@ -222,11 +330,11 @@ function make(api) {
     // Concrete slab base collider for Pelican Port Container Yard
     shapes.push({ box: [60, 0.34, 44], at: { x: YARD_X, y: -0.005, z: YARD_Z } });
 
-    const placeProp = (kind, x, y, z, rotY = 0, opts = {}, solid = true) => {
+    const placeProp = (kind, x, y, z, rotY = 0, opts = {}, solid = true, targetGroup = yardPropsGroup) => {
       const g = prop(kind, opts);
       g.position.set(x, y, z);
       g.rotation.y = rotY;
-      v.scene.add(g);
+      targetGroup.add(g);
       if (solid) addYardStaticCollider(g, shapes);
       return g;
     };
@@ -237,7 +345,6 @@ function make(api) {
     const c1 = placeProp('container', YARD_X - 12, YARD_Y, YARD_Z - 11, 0, { size: 6.06, colour: '#8b3728', seed: 11 });
     const c2 = placeProp('container', YARD_X + 2, YARD_Y, YARD_Z - 11, 0, { size: 6.06, colour: '#2d5c84', seed: 22 });
     const c3 = placeProp('container', YARD_X + 14, YARD_Y, YARD_Z + 11, Math.PI * 0.5, { size: 12.19, colour: '#3e6948', seed: 33 });
-    const c4 = placeProp('container', YARD_X - 10, YARD_Y, YARD_Z + 12, Math.PI * 0.5, { size: 6.06, colour: '#b46228', seed: 44 });
 
     // Stencils, rust, hazard signs, logos, graffiti on containers
     stampPropDecal(c1, [1.24, 1.35, 0], [1, 0, 0], mark('stencil', { text: 'SB-04', colour: '#ece6d4', size: [1.3, 0.42] }));
@@ -245,25 +352,18 @@ function make(api) {
     stampPropDecal(c2, [-1.24, 1.35, 0.8], [-1, 0, 0], mark('logo', { text: 'SOLIS', colour: '#e6b43c', size: 0.9 }));
     stampPropDecal(c2, [1.24, 1.0, -1.2], [1, 0, 0], mark('rust', { size: [1.2, 1.4] }));
     stampPropDecal(c3, [1.24, 1.2, 1.5], [1, 0, 0], mark('graffiti', { size: [1.6, 0.9] }));
-    stampPropDecal(c4, [0, 1.2, -3.04], [0, 0, -1], mark('oil', { size: 1.1 }));
 
-    // Skip, drums, pallets, cable reel, loose cable, barriers, fencing, bollards
-    const skip = placeProp('skip', YARD_X - 20, YARD_Y, YARD_Z - 12, 0.25, { seed: 5 });
+    // Skip (solid cover) and decorative yard props (drums, barriers, bollards)
+    const skip = placeProp('skip', YARD_X - 20, YARD_Y, YARD_Z - 12, 0.25, { seed: 5 }, true);
     stampPropDecal(skip, [0.95, 0.8, 0], [1, 0, 0], mark('stripes', { size: [1.3, 0.28] }));
-    placeProp('oildrum', YARD_X - 5, YARD_Y, YARD_Z - 7, 0.4, { seed: 7 });
-    placeProp('oildrum', YARD_X - 4.1, YARD_Y, YARD_Z - 7.4, 1.2, { seed: 8 });
-    placeProp('pallets', YARD_X + 9, YARD_Y, YARD_Z - 7, 0.15, { seed: 2 });
-    placeProp('reel', YARD_X - 18, YARD_Y, YARD_Z + 9, 0.7, { seed: 4 });
-    placeProp('cable', YARD_X - 16, YARD_Y + 0.02, YARD_Z + 8, 0.4, { seed: 1 }, false);
-    placeProp('barrier', YARD_X - 24, YARD_Y, YARD_Z - 5, Math.PI * 0.5, { seed: 1 });
-    placeProp('barrier', YARD_X + 24, YARD_Y, YARD_Z + 5, Math.PI * 0.5, { seed: 2 });
-    placeProp('waterbarrier', YARD_X - 24, YARD_Y, YARD_Z + 5, Math.PI * 0.5, { seed: 3 });
-    placeProp('mesh', YARD_X - 28, YARD_Y, YARD_Z - 11, Math.PI * 0.5, { seed: 1 });
-    placeProp('mesh', YARD_X - 28, YARD_Y, YARD_Z + 11, Math.PI * 0.5, { seed: 2 });
+    placeProp('oildrum', YARD_X - 5, YARD_Y, YARD_Z - 7, 0.4, { seed: 7 }, false);
+    placeProp('oildrum', YARD_X - 4.1, YARD_Y, YARD_Z - 7.4, 1.2, { seed: 8 }, false);
+    placeProp('barrier', YARD_X - 24, YARD_Y, YARD_Z - 5, Math.PI * 0.5, { seed: 1 }, false);
+    placeProp('waterbarrier', YARD_X - 24, YARD_Y, YARD_Z + 5, Math.PI * 0.5, { seed: 3 }, false);
 
     // Quay bollards beside Marina Slip 0
     for (let i = 0; i < 3; i++) {
-      placeProp('bollard', DOCK_POS.x - 14, 0.15, DOCK_POS.z + i * 10, 0, { seed: i + 1 });
+      placeProp('bollard', DOCK_POS.x - 14, 0.15, DOCK_POS.z + i * 10, 0, { seed: i + 1 }, false);
     }
 
     // Worn corrugated dock office locker on yard edge using explicit material recipe + wear() + decals
@@ -273,7 +373,7 @@ function make(api) {
     locker.position.set(YARD_X + 21, YARD_Y + 1.25, YARD_Z - 14);
     locker.castShadow = locker.receiveShadow = true;
     wear(locker, { edges: 0.65, dirt: 0.6, ground: 0.55, seed: 14 });
-    v.scene.add(locker);
+    yardPropsGroup.add(locker);
     addYardStaticCollider(locker, shapes);
     v.decal(locker, [YARD_X + 19.08, YARD_Y + 1.4, YARD_Z - 14], [-1, 0, 0], mark('hazard', { sign: 'bolt', word: true, size: 0.62 }));
     v.decal(locker, [YARD_X + 21, YARD_Y + 0.9, YARD_Z - 12.58], [0, 0, 1], mark('scorch', { size: 0.95 }));
@@ -284,15 +384,15 @@ function make(api) {
     shack.position.set(BEACH_LOT.x, BEACH_LOT.y + 1.2, BEACH_LOT.z);
     shack.castShadow = shack.receiveShadow = true;
     wear(shack, { edges: 0.6, dirt: 0.5, ground: 0.45, seed: 8 });
-    v.scene.add(shack);
+    beachPropsGroup.add(shack);
     addYardStaticCollider(shack, shapes);
     v.decal(shack, [BEACH_LOT.x - 1.82, BEACH_LOT.y + 1.3, BEACH_LOT.z], [-1, 0, 0], mark('logo', { text: 'BAYWATCH', colour: '#1f5fa8', size: 0.8 }));
     v.decal(shack, [BEACH_LOT.x, BEACH_LOT.y + 1.1, BEACH_LOT.z + 1.52], [0, 0, 1], mark('rust', { size: 0.85 }));
     decalTargetMeshes.push(shack);
 
-    placeProp('waterbarrier', BEACH_LOT.x - 6, BEACH_LOT.y, BEACH_LOT.z + 5, 0.1, { seed: 6 });
-    placeProp('oildrum', BEACH_LOT.x - 3.2, BEACH_LOT.y, BEACH_LOT.z + 4.5, 0.3, { seed: 9 });
-    placeProp('bollard', BEACH_LOT.x + 8, BEACH_LOT.y, BEACH_LOT.z - 6, 0, { seed: 11 });
+    placeProp('waterbarrier', BEACH_LOT.x - 6, BEACH_LOT.y, BEACH_LOT.z + 5, 0.1, { seed: 6 }, false, beachPropsGroup);
+    placeProp('oildrum', BEACH_LOT.x - 3.2, BEACH_LOT.y, BEACH_LOT.z + 4.5, 0.3, { seed: 9 }, false, beachPropsGroup);
+    placeProp('bollard', BEACH_LOT.x + 8, BEACH_LOT.y, BEACH_LOT.z - 6, 0, { seed: 11 }, false, beachPropsGroup);
 
     yardBoundsShapes = world.shapes(shapes, { tag: 'yard', sound: 'metal' });
   };
@@ -303,7 +403,6 @@ function make(api) {
 
     human.need([MAKO_LOOK, NADIA_LOOK]);
     v = new HDView({ bg: '#7aa8d8', fog: 0.00018, env: 0.5, amb: 0.55, fov: 60 });
-    v.lampLights(6);
     v.autoOcclude = false;
     v.occluders?.(null);
 
@@ -314,7 +413,7 @@ function make(api) {
     v.onTier(T => light.setTier(T));
 
     weather = new Weather(v, { kind: 'rain', amount: 0 });
-    v.look('golden hour', { air: { wet: 0.2, macro: 0.6 }, bloom: 0.45 });
+    v.look('golden hour', MOOD_OPTS['golden hour']);
 
     sky = new Sky(v, {
       time: 17.55,
@@ -334,26 +433,35 @@ function make(api) {
       coast: 'bay',
       bay: 380,
       climate: 'tropical',
+      live: 130,
+      budget: 0.2,
+      keep: 250,
       sea: true,
       far: true,
       hills: 0.1,
       river: true,
       highway: true,
       sky,
-      traffic: 0.06,
-      people: 0.04,
+      traffic: 0.005,
+      people: 0.005,
+      crowd: false,
+      paint: false,
       fleet: false,
       sound: false,
     });
     v.occluders?.(null);
-    metro.solid(world, { cars: 4, people: 4, within: 45, furniture: true, parked: true });
+    v.lampLights?.(26);
+    metro.solid(world, { cars: 0, people: 0, within: 0, furniture: false, parked: true });
+    for (const c of metro.cities) if (c.people) c.people.fullMax = 0;
 
-    ears = new Ears({ level: world, rays: 4, hard: 0.58 });
+    ears = new Ears({ level: world, rays: 1, hard: 0.58, auto: false });
 
-    gps = new Gps(metro, { off: 20, arrive: 12, icon, colour: '#38f8b0' });
+    gps = new Gps(metro, { off: 48, arrive: 14, icon, colour: '#38f8b0' });
     law = new Wanted(metro, api, { max: 3, cars: 2, officers: true, brains: true, armed: true, air: true, water: true });
-    inside = new Interiors(metro, { world: false, link: false, reach: 20, people: true, auto: true, seed: 77 });
-    cover = new Cover3D({ world, ms: 0.4, space: 1.2 });
+    warmupCop = law?.cops?.[0]?.twin() || null;
+    if (warmupCop) warmupCop.lod = 0;
+    inside = new Interiors(metro, { world: false, link: false, reach: 3.0, people: 1, auto: true, seed: 77 });
+    cover = new Cover3D({ world, ms: 0.25, space: 2.0, floors: 1, cell: 4 });
     hide = new TakeCover(cover);
     swim = new Swimmer({ height: 1.8, water: metro.water, world });
     pickups = new Pickups({ reach: 1.8 });
@@ -365,8 +473,16 @@ function make(api) {
 
     mako = human(MAKO_LOOK);
     nadia = human(NADIA_LOOK);
-    mako.mesh.userData.detail = false;
-    nadia.mesh.userData.detail = false;
+    mako.lod = 0;
+    nadia.lod = 1;
+    if (mako.rig) mako.rig.steps = false;
+    if (nadia.rig) nadia.rig.steps = false;
+    if (mako.breath) mako.breath.on = false;
+    if (nadia.breath) nadia.breath.on = false;
+    if (mako.idle) mako.idle.on = false;
+    if (nadia.idle) nadia.idle.on = false;
+    if (mako.rig?.follow) mako.rig.follow.amount = 0;
+    if (nadia.rig?.follow) nadia.rig.follow.amount = 0;
     v.scene.add(mako, nadia);
 
     // Pre-warm third-person and first-person weapon models behind Play loading screen
@@ -396,6 +512,7 @@ function make(api) {
     hotCoupe.visible = false;
     boatMesh = vehicle('boat', { style: 'motor', colour: '#d8473c', lit: true });
     v.scene.add(barracuda, hotCoupe, boatMesh);
+    v.detail([barracuda, hotCoupe, boatMesh], false);
 
     camRig = new CameraRig(v, { mode: 'chase', distance: 5.8, height: 2.3, look: 1.35, lag: 0.14, walls: world, fov: 60 });
     gunRig = new GunRig(v, fpWeapons.pistol, { kind: 'pistol', rig: camRig });
@@ -462,10 +579,16 @@ function make(api) {
   let mover, leads, leadIdx, activeLead, otherLead;
   let phase, jobIdx, job, targetPos, pickupPos;
   let bannerText, bannerCol, bannerT, hitT, rideCooldown, engineSound, radioStarted;
-  let lastDistrictName, skyTick, gpsShown, hudSub, currentMood;
+  let lastDistrictName, skyTick, poseTick, lawTick, lawDt, gpsDt, lastCityCount = 0;
+  let pendingRadioOn = 0, pendingGpsGoal = null, pendingGpsLabel = '', pendingGpsKind = 'target', pendingGpsDelay = 0, pendingPickupLaw = null;
+  let gpsShown, hudSub, currentMood, wasIndoor, warmupCop = null, warmedCop = false;
+  let lastScoreThreat = -1, lastScoreFinal = false;
+  let lastCarLights = null, lastActiveCarMesh = null, lastActiveCarLit = null;
   let rideKey = false, coverKey = false, swapKey = false, gunKey = false, aimKey = false;
   let aimMode = false, fireHeld = false, lawWired = false, scoreStarted = false;
   let lastClockStr, lastClockMin, lookDragId = null, lookLastX = 0, lookLastY = 0;
+  let lastDistHud = '', lastDistClock = '', lastDistText = '';
+  let lastAmmoKind = '', lastAmmoClip = -1, lastAmmoPool = -1, lastAmmoText = '';
 
   const say = (txt, col = '#ffffff', dur = 3.2) => {
     bannerText = txt;
@@ -475,26 +598,15 @@ function make(api) {
 
   const applyMood = (distName, hour, force = false) => {
     let mood = 'golden hour';
-    /** @type {Parameters<typeof v.look>[1]} */
-    let opts = { air: { wet: 0.22, macro: 0.6 }, bloom: 0.45 };
     const night = hour >= 20.0 || hour < 5.5;
     const dusk = hour >= 18.4 && hour < 20.0;
-    if (distName === 'Sawgrass Edge') {
-      mood = 'fog';
-      opts = { air: { haze: 0.0042, mist: 0.006, wet: 0.35, macro: 0.6 }, beams: { density: 0.04, strength: 0.45, glow: 0.4 } };
-    } else if (night) {
-      mood = 'night rain';
-      opts = { bloom: 0.55, exposure: 1.12, glare: 0.45, air: { haze: 0.0024, wet: 0.78, macro: 0.6 }, weather: { kind: 'rain', amount: 0.65, wet: 0.85, pools: 0.75 } };
-    } else if (dusk) {
-      mood = 'rainy dusk';
-      opts = { bloom: 0.48, air: { haze: 0.002, wet: 0.8, macro: 0.6 }, weather: { kind: 'rain', amount: 0.5, wet: 0.85, pools: 0.7 } };
-    } else if (distName === 'Pelican Marina') {
-      mood = 'overcast';
-      opts = { air: { haze: 0.0018, wet: 0.55, macro: 0.6 }, weather: { kind: 'rain', amount: 0.3, wet: 0.6, pools: 0.45 } };
-    }
+    if (distName === 'Sawgrass Edge') mood = 'fog';
+    else if (night) mood = 'night rain';
+    else if (dusk) mood = 'rainy dusk';
+    else if (distName === 'Pelican Marina') mood = 'overcast';
     if (!force && mood === currentMood) return;
     currentMood = mood;
-    v.look(mood, opts);
+    v.look(mood, MOOD_OPTS[mood]);
   };
 
   const placeAtDistrict = (name, nearPos = null, minD = 30, maxD = 120, kind = 'street') => {
@@ -614,6 +726,7 @@ function make(api) {
     mover.mesh = null;
     mover.gravity = 0;
     mover.walk(0, 0);
+    mover.setActive(false);
     mover.place(cx, -120, cz);
 
     carCtrl = new Car({
@@ -629,12 +742,10 @@ function make(api) {
       reverse: 0.38,
     });
     driveBy = new DriveBy(activeCarMesh, { seat: 'driver' });
-    camRig.to('chase', 0.25, { distance: 9.2, height: 4.2, look: 1.2 });
+    camRig.to('chase', 0.25, { distance: 9.2, height: 4.2, look: 1.2, walls: false });
 
     if (!radioStarted) {
-      radioStarted = true;
-      radio.on();
-      scoreMusic?.pause();
+      pendingRadioOn = 2;
     }
     radio.listen({ inside: true });
     updateWieldModels();
@@ -644,10 +755,11 @@ function make(api) {
       score = Math.min(100, score + 15);
       api.score(score);
       feel.coin(W * 0.5, H * 0.35, { color: '#ffcf5c', text: '+15 REP' });
-      law.crime('theft', { x: cx, z: cz });
-      if (law.stars < job.heat) law.set(job.heat);
-      gps.clear().add({ at: targetPos, kind: 'target', text: job.toDistrict, pinned: true });
-      gps.to(targetPos);
+      pendingPickupLaw = { x: cx, z: cz, heat: job.heat };
+      pendingGpsGoal = targetPos;
+      pendingGpsLabel = job.toDistrict;
+      pendingGpsKind = 'target';
+      pendingGpsDelay = 3;
       hudSub = `Deliver to ${job.toDistrict}`;
       say(`Hot ride boosted! Run to ${job.toDistrict}`, '#68f8c4', 3.5);
       if (score >= 100) {
@@ -667,10 +779,11 @@ function make(api) {
     mover.mesh = null;
     mover.gravity = 0;
     mover.walk(0, 0);
+    mover.setActive(false);
     mover.place(boatCtrl.x, -120, boatCtrl.z);
     boatMesh.putIn?.(activeLead.body, 'helm', { from: swim.state !== 'out' ? 'water' : undefined });
     driveBy = new DriveBy(boatMesh, { seat: 'helm', open: true });
-    camRig.to('chase', 0.25, { distance: 10.5, height: 4.5, look: 1.3 });
+    camRig.to('chase', 0.25, { distance: 10.5, height: 4.5, look: 1.3, walls: false });
     updateWieldModels();
 
     if (phase === 'board_boat') {
@@ -698,8 +811,9 @@ function make(api) {
       activeLead.inVehicle = false;
       mover.mesh = activeLead.body;
       mover.gravity = -20;
+      mover.setActive(true);
       mover.place(f.x, f.y + 0.1, f.z);
-      camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35 });
+      camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
       updateWieldModels();
       say('Stepped off Flamingo 24', '#d8e6ff', 2.0);
       return;
@@ -719,15 +833,17 @@ function make(api) {
     activeLead.inVehicle = false;
     mover.mesh = activeLead.body;
     mover.gravity = -20;
+    mover.setActive(true);
     mover.place(f.x, f.y + 0.05, f.z);
     activeLead.body.position.set(f.x, f.y, f.z);
     activeLead.body.rotation.set(0, f.heading, 0);
-    activeLead.body.rig.blend({ idle: 0, walk: 1.8, run: 4.5 }, 0);
-    activeLead.body.rig.update(0, { speed: 0 });
+    activeLead.body.rig.blend(BLEND_OPTS, 0);
+    rigUpdOpts.speed = 0;
+    activeLead.body.rig.update(0, rigUpdOpts);
     radio.listen({ inside: false });
     if (!radio.now.on) scoreMusic?.resume();
     if (engineSound) engineSound.set({ vol: 0 }, 0.08);
-    camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35 });
+    camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
     updateWieldModels();
   };
 
@@ -783,8 +899,12 @@ function make(api) {
     otherLead = leads[1 - leadIdx];
 
     mover.mesh = activeLead.body;
+    mover.setActive(true);
     mover.place(activeLead.foot.x, activeLead.foot.y + 0.05, activeLead.foot.z);
-    metro.switchTo(activeLead.foot, { reset: true });
+    const jumpDist = Math.hypot(activeLead.foot.x - otherLead.foot.x, activeLead.foot.z - otherLead.foot.z);
+    if (jumpDist > 260 || !metro.districtAt(activeLead.foot.x, activeLead.foot.z, 40)) {
+      metro.switchTo(activeLead.foot, { reset: true });
+    }
     v.cut?.();
     camRig.yaw = 0;
     camRig.pitch = 0;
@@ -850,7 +970,7 @@ function make(api) {
         feel.hit?.(W * 0.5, H * 0.45, { power: 0.45 });
         continue;
       }
-      const wHit = world.ray(s.from, s.dir, range, c => c !== mover);
+      const wHit = world.ray(s.from, s.dir, range, c => c !== mover.rider && c !== mover);
       if (wHit && wHit.point) {
         const hitMesh = decalTargetMeshes.find(m => m === wHit.mesh) || yardGround?.mesh;
         if (wHit.mesh === hitMesh && wHit.normal) {
@@ -866,6 +986,7 @@ function make(api) {
   const swapRect = { x: 8, y: 80, w: 72, h: 22 };
   const gunRect = { x: 84, y: 80, w: 96, h: 22 };
   const covRect = { x: 8, y: 106, w: 74, h: 22 };
+  const hudLayout = { mr: mrRect, maxHudW: 160, topY: 8 };
 
   const layoutTopHud = () => {
     const s = Math.min(80, W * 0.25);
@@ -884,7 +1005,9 @@ function make(api) {
     gunRect.w = Math.max(70, maxW - swapRect.w - 4);
     covRect.x = 8;
     covRect.y = topY + 96;
-    return { mr: mrRect, maxHudW: maxW, topY };
+    hudLayout.maxHudW = maxW;
+    hudLayout.topY = topY;
+    return hudLayout;
   };
 
   const radioRect = () => {
@@ -952,14 +1075,34 @@ function make(api) {
       radioStarted = false;
       radio.off();
       radio.listen({ inside: false, distance: 0 });
+      try { mixer.place(null, 0.05); } catch {}
       scoreStarted = false;
-      skyTick = 0;
+      skyTick = 1;
+      poseTick = 0;
+      lawTick = 1;
+      lawDt = 0;
+      gpsDt = 0;
+      pendingRadioOn = 0;
+      pendingGpsGoal = null;
+      pendingGpsLabel = '';
+      pendingGpsDelay = 0;
+      pendingPickupLaw = null;
+      lastScoreThreat = -1;
+      lastScoreFinal = false;
+      lastCarLights = null;
+      lastActiveCarMesh = null;
+      lastActiveCarLit = null;
+      wasIndoor = false;
       gpsShown = false;
       currentMood = null;
       lastClockStr = '17:33';
       lastClockMin = -1;
+      lastDistHud = '';
+      lastAmmoKind = '';
       lastDistrictName = 'Coral Strip';
       hudSub = 'Board Barracuda or boost hot ride';
+      if (yardPropsGroup) yardPropsGroup.visible = true;
+      if (yardGround?.mesh) yardGround.mesh.visible = true;
 
       if (!engineSound) {
         engineSound = bed({ vol: 0, from: 110, filter: 'lowpass', q: 4 });
@@ -969,7 +1112,11 @@ function make(api) {
       }
 
       const makoSpot = placeAtDistrict('Coral Strip');
-      const nadiaSpot = { x: YARD_X - 18, y: YARD_Y, z: YARD_Z, heading: 0.6 };
+      const mh = makoSpot.heading || 0;
+      const nx = makoSpot.x + Math.sin(mh) * 4.5 - Math.cos(mh) * 2.0;
+      const nz = makoSpot.z + Math.cos(mh) * 4.5 + Math.sin(mh) * 2.0;
+      const nadiaSpot = { x: nx, y: metro.ground(nx, nz), z: nz, heading: mh + Math.PI };
+      metro.collide(nadiaSpot, 0.45, nadiaSpot.y);
 
       const mkPouch = new Pouch({ pistol: 60, rifle: 60, shells: 16 });
       const ndPouch = new Pouch({ pistol: 84, rifle: 60, shells: 12 });
@@ -1009,15 +1156,23 @@ function make(api) {
       otherLead = leads[1];
 
       metro.prepare(activeLead.foot).reset(activeLead.foot);
+      for (const c of metro.cities) if (c.people) c.people.fullMax = 0;
+      lastCityCount = metro.cities.length;
       law.reset();
       hide.reset();
       swim.reset();
+      if (inside?.regions) {
+        inside.regions.want([]);
+        inside.regions.trim(0);
+        inside.room = null;
+      }
       resetPickups();
 
-      if (!mover) mover = world.mover(mako, { radius: 0.38, height: 1.8 });
+      if (!mover) mover = makeRiderMover(world, mako, { radius: 0.38, height: 1.8 });
       mover.mesh = mako;
       mover.gravity = -20;
       mover.walk(0, 0);
+      mover.setActive(true);
       mover.place(activeLead.foot.x, activeLead.foot.y + 0.05, activeLead.foot.z);
 
       if (boatCtrl?.rider) boatCtrl.rider.remove();
@@ -1037,14 +1192,36 @@ function make(api) {
       inCar = false;
       inBoat = false;
 
+      mako.lod = warmedCop ? 1 : 0;
+      nadia.lod = 1;
       mako.position.set(activeLead.foot.x, activeLead.foot.y, activeLead.foot.z);
       mako.rotation.set(0, activeLead.foot.heading, 0);
-      mako.rig.blend({ idle: 0, walk: 1.8, run: 4.5 }, 0);
-      mako.rig.update(0, { speed: 0 });
-      nadia.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
+      mako.rig.blend(BLEND_OPTS, 0);
+      rigUpdOpts.speed = 0;
+      mako.rig.update(0, rigUpdOpts);
+      if (!warmedCop) {
+        nadia.position.set(
+          activeLead.foot.x + Math.sin(activeLead.foot.heading) * 1.9 - Math.cos(activeLead.foot.heading) * 0.6,
+          activeLead.foot.y,
+          activeLead.foot.z + Math.cos(activeLead.foot.heading) * 1.9 + Math.sin(activeLead.foot.heading) * 0.6
+        );
+      } else {
+        nadia.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
+      }
       nadia.rotation.set(0, otherLead.foot.heading, 0);
-      nadia.rig.blend({ idle: 0, walk: 1.8, run: 4.5 }, 0);
-      nadia.rig.update(0, { speed: 0 });
+      nadia.rig.blend(BLEND_OPTS, 0);
+      nadia.rig.update(0, rigUpdOpts);
+      if (!warmedCop && warmupCop) {
+        warmupCop.lod = 0;
+        warmupCop.position.set(
+          activeLead.foot.x + Math.sin(activeLead.foot.heading) * 1.4,
+          activeLead.foot.y,
+          activeLead.foot.z + Math.cos(activeLead.foot.heading) * 1.4
+        );
+        warmupCop.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
+        warmupCop.visible = true;
+        if (!warmupCop.parent) v.scene.add(warmupCop);
+      }
 
       playerQuery.x = activeLead.foot.x;
       playerQuery.y = activeLead.foot.y;
@@ -1059,15 +1236,17 @@ function make(api) {
       const bz = activeLead.foot.z + Math.cos(activeLead.foot.heading) * 2.6 - Math.sin(activeLead.foot.heading) * 2.1;
       barracuda.position.set(bx, metro.ground(bx, bz), bz);
       barracuda.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
-      barracuda.lights?.(false);
-      hotCoupe.lights?.(false);
+      const initLit = !warmedCop || sky.night > 0.2;
+      barracuda.lights?.(initLit);
+      hotCoupe.lights?.(initLit);
+      lastCarLights = initLit;
       barracuda.visible = true;
 
       v.health = 1;
       v.aiming = 0;
       camRig.yaw = 0;
       camRig.pitch = 0;
-      camRig.to('chase', 0.01, { distance: 5.8, height: 2.3, look: 1.35 });
+      camRig.to('chase', 0.01, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
       rigTarget.position.set(activeLead.foot.x, activeLead.foot.y, activeLead.foot.z);
       rigTarget.yaw = activeLead.foot.heading;
       camRig.update(0.016, rigTarget);
@@ -1076,6 +1255,13 @@ function make(api) {
       updateWieldModels();
 
       assignJob(0);
+      if (!warmedCop) {
+        const hx = activeLead.foot.x + Math.sin(activeLead.foot.heading) * 3.8 - Math.cos(activeLead.foot.heading) * 2.2;
+        const hz = activeLead.foot.z + Math.cos(activeLead.foot.heading) * 3.8 + Math.sin(activeLead.foot.heading) * 2.2;
+        hotCoupe.position.set(hx, metro.ground(hx, hz), hz);
+        hotCoupe.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
+        hotCoupe.visible = true;
+      }
       gps.update(0, activeLead.foot);
       if (!gpsShown) {
         gps.show(v);
@@ -1166,6 +1352,28 @@ function make(api) {
       if (feel.frozen) return;
 
       t += sdt;
+      if (!warmedCop && t > 0.04) {
+        warmedCop = true;
+        warmupCop?.removeFromParent();
+        warmupCop = null;
+        mako.visible = false;
+        mako.lod = 1;
+        mako.visible = true;
+        nadia.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
+        const nl = sky.night > 0.2;
+        if (lastCarLights !== nl) {
+          lastCarLights = nl;
+          barracuda.lights?.(nl);
+          hotCoupe.lights?.(nl);
+        }
+        if (pickupPos && phase === 'pickup') {
+          hotCoupe.position.set(pickupPos.x, metro.ground(pickupPos.x, pickupPos.z), pickupPos.z);
+          hotCoupe.rotation.set(0, (pickupPos.heading || 0) + Math.PI, 0);
+          hotCoupe.visible = true;
+        } else {
+          hotCoupe.visible = activeCarMesh === hotCoupe;
+        }
+      }
       hitT = Math.max(0, hitT - sdt);
       bannerT = Math.max(0, bannerT - sdt);
       rideCooldown = Math.max(0, rideCooldown - sdt);
@@ -1175,18 +1383,45 @@ function make(api) {
         scoreMusic?.start();
       }
 
-      // Dynamic Sky & Weather + v.look mood switching
+      // Dynamic Sky & Weather + v.look mood switching (staggered across disjoint phases mod 8)
       sky.speed = K.daySpeed;
-      if ((skyTick++ & 3) === 0) {
-        sky.update(sdt * 4);
-        weather?.update(sdt * 4);
-        const nl = sky.night > 0.2;
-        barracuda.lights?.(nl);
-        hotCoupe.lights?.(nl);
+      const st = skyTick++ & 7;
+      if (st === 0) {
+        sky.update(sdt * 8);
+        if (warmedCop) {
+          const nl = sky.night > 0.2;
+          if (lastCarLights !== nl) {
+            lastCarLights = nl;
+            barracuda.lights?.(nl);
+            hotCoupe.lights?.(nl);
+          }
+        }
         applyMood(lastDistrictName, sky.time);
+      } else if (st === 4) {
+        weather?.update(sdt * 8);
       }
 
-      if (radioStarted || radio.power) radio.update(sdt);
+      if (pendingPickupLaw) {
+        const pl = pendingPickupLaw;
+        pendingPickupLaw = null;
+        if (pl.heat > 0) {
+          if (law.stars < pl.heat) law.set(pl.heat);
+        } else {
+          law.crime('theft', pl);
+        }
+      }
+      if (pendingRadioOn > 0 && --pendingRadioOn === 0 && !radioStarted) {
+        radioStarted = true;
+        radio.on();
+        scoreMusic?.pause();
+      }
+      if (pendingGpsGoal && --pendingGpsDelay <= 0) {
+        gps.clear().add({ at: pendingGpsGoal, kind: pendingGpsKind, text: pendingGpsLabel, pinned: true });
+        gps.to(pendingGpsGoal);
+        pendingGpsGoal = null;
+      }
+
+      if ((radioStarted || radio.power) && st === 2) radio.update(sdt * 8);
 
       const k = keys.axis();
       const sx = pad.left.active ? pad.left.x : k.x;
@@ -1201,7 +1436,10 @@ function make(api) {
         coverKey = false;
         if (!inCar && !inBoat) {
           if (hide.busy) hide.leave();
-          else if (hide.take(mover.feet, activeLead.foot.heading)) say('In Cover · AIM to peek', '#8ef5c8', 2.0);
+          else {
+            cover.around(mover.feet, 6);
+            if (hide.take(mover.feet, activeLead.foot.heading)) say('In Cover · AIM to peek', '#8ef5c8', 2.0);
+          }
         }
       }
       if (swapKey) {
@@ -1222,10 +1460,13 @@ function make(api) {
       v.health = activeLead.health.frac;
 
       if (inBoat && boatCtrl) {
-        const throttle = (pad.left.active || k.x || k.y) ? clamp(-sy * 1.3 + (pad.left.active ? 0.35 : 0), -1, 1) : 0;
-        boatCtrl.update(sdt, { throttle, steer: sx });
+        boatInput.throttle = (pad.left.active || k.x || k.y) ? clamp(-sy * 1.3 + (pad.left.active ? 0.35 : 0), -1, 1) : 0;
+        boatInput.steer = sx;
+        boatCtrl.update(sdt, boatInput);
         driveBy?.update(sdt);
-        engineSound?.set({ from: 95 + boatCtrl.speed * 14, vol: 0.012 + Math.min(1, boatCtrl.speed / 16) * 0.02 }, 0.1);
+        engOpts.from = 95 + boatCtrl.speed * 14;
+        engOpts.vol = 0.012 + Math.min(1, boatCtrl.speed / 16) * 0.02;
+        engineSound?.set(engOpts, 0.1);
 
         playerQuery.x = boatCtrl.x;
         playerQuery.z = boatCtrl.z;
@@ -1240,14 +1481,18 @@ function make(api) {
         rigTarget.yaw = boatCtrl.heading + Math.PI;
         rigTarget.grounded = true;
       } else if (inCar && carCtrl && activeCarMesh) {
-        const throttle = (pad.left.active || k.x || k.y) ? clamp(-sy * 1.4 + (pad.left.active ? 0.3 : 0), -1, 1) : 0;
+        carInput.throttle = (pad.left.active || k.x || k.y) ? clamp(-sy * 1.4 + (pad.left.active ? 0.3 : 0), -1, 1) : 0;
+        carInput.steer = sx;
+        carInput.brake = actBrake;
         carCtrl.top = K.carTop;
         carCtrl.accel = K.carAccel;
         carCtrl.turn = K.carTurn;
         carCtrl.grip = K.carGrip;
-        carCtrl.update(sdt, { throttle, steer: sx, brake: actBrake });
+        carCtrl.update(sdt, carInput);
         driveBy?.update(sdt);
-        engineSound?.set({ from: 110 + Math.abs(carCtrl.speed) * 16, vol: 0.012 + carCtrl.pace * 0.02 }, 0.1);
+        engOpts.from = 110 + Math.abs(carCtrl.speed) * 16;
+        engOpts.vol = 0.012 + carCtrl.pace * 0.02;
+        engineSound?.set(engOpts, 0.1);
 
         const px = carCtrl.x, pz = carCtrl.y;
         const heading = Math.PI / 2 - carCtrl.angle;
@@ -1272,7 +1517,7 @@ function make(api) {
             hitT = 0.45;
             feel.hit?.(W * 0.5, H * 0.5, { power: 0.5 });
           }
-          carCtrl.bump(nx / len, nz / len, { keep: 0.45 });
+          carCtrl.bump(nx / len, nz / len, BUMP_OPTS);
         }
 
         if (hitT <= 0) {
@@ -1298,7 +1543,18 @@ function make(api) {
         activeCarMesh.rotation.set(0, Math.PI / 2 - carCtrl.angle + Math.PI, 0);
         activeCarMesh.roll?.(carCtrl.speed * sdt);
         activeCarMesh.steer?.(sx * 0.45);
-        activeCarMesh.lights?.(sky.night > 0.2);
+        const nl = sky.night > 0.2;
+        if (activeCarMesh === barracuda || activeCarMesh === hotCoupe) {
+          if (lastCarLights !== nl) {
+            lastCarLights = nl;
+            barracuda.lights?.(nl);
+            hotCoupe.lights?.(nl);
+          }
+        } else if (lastActiveCarMesh !== activeCarMesh || lastActiveCarLit !== nl) {
+          lastActiveCarMesh = activeCarMesh;
+          lastActiveCarLit = nl;
+          activeCarMesh.lights?.(nl);
+        }
 
         avoidQuery.x = carCtrl.x;
         avoidQuery.z = carCtrl.y;
@@ -1336,27 +1592,36 @@ function make(api) {
         if (aimMode) f.heading = camYaw;
 
         if (hide.busy) {
-          hide.update(sdt, { move: coverMoveVec, aim: aimMode, blind: actFire && !aimMode }, mover.feet);
+          hideInput.aim = aimMode;
+          hideInput.blind = actFire && !aimMode;
+          hide.update(sdt, hideInput, mover.feet);
           mover.walk(hide.walk.x, hide.walk.z);
           f.heading = hide.facing;
           f.v = Math.hypot(hide.walk.x, hide.walk.z);
         }
 
-        swim.update(sdt, { move: coverMoveVec, up: keys.held(' '), down: keys.held('c'), fast: sprinting }, mover);
-        if (swim.hurt > 0) {
-          activeLead.health.hurt(swim.hurt);
-          v.hit?.(swim.hurt);
-          v.health = activeLead.health.frac;
-          if (activeLead.health.dead) {
-            scoreMusic?.sting('lose');
-            feel.lose();
-            api.over();
-            return;
+        if (swim.state !== 'out' || f.y < -0.15) {
+          swimInput.up = keys.held(' ');
+          swimInput.down = keys.held('c');
+          swimInput.fast = sprinting;
+          swim.update(sdt, swimInput, mover);
+          if (swim.hurt > 0) {
+            activeLead.health.hurt(swim.hurt);
+            v.hit?.(swim.hurt);
+            v.health = activeLead.health.frac;
+            if (activeLead.health.dead) {
+              scoreMusic?.sting('lose');
+              feel.lose();
+              api.over();
+              return;
+            }
           }
+          if (swim.facing != null && swim.state !== 'out' && !aimMode) f.heading = swim.facing;
         }
-        if (swim.facing != null && swim.state !== 'out' && !aimMode) f.heading = swim.facing;
 
-        cover.update(mover.feet, { reach: 16 });
+        if ((aimMode || hide.busy) && st === 7) {
+          cover.update(mover.feet, COVER_UPD_OPTS);
+        }
         if (gunRig) {
           gunRig.aiming = aimMode;
           gunRig.sprinting = sprinting;
@@ -1364,8 +1629,10 @@ function make(api) {
         rigTarget.grounded = mover.grounded;
       }
 
-      // Step Rapier 3D world & boat riders
-      world.step(sdt);
+      // Step Rider mover, Rapier 3D world & boat riders (skip Rapier step while driving kinematic Car; run on phase 1 when walking)
+      if (!inCar && !inBoat) mover.stepMove(sdt);
+      if (inBoat) world.step(sdt);
+      else if (!inCar && st === 1) world.step(0.016);
 
       if (!inCar && !inBoat) {
         const f = activeLead.foot;
@@ -1391,22 +1658,33 @@ function make(api) {
 
         activeLead.body.position.set(f.x, f.y, f.z);
         activeLead.body.rotation.set(0, f.heading, 0);
-        if (swim.pose) {
-          activeLead.body.rig.play?.(swim.pose, swim.at != null ? { at: swim.at } : {});
-        } else if (hide.busy && hide.pose) {
-          activeLead.body.rig.play?.(hide.pose, { fade: 0.1 });
-          activeLead.body.rig.upper?.(hide.upper);
-        } else {
-          activeLead.body.rig.upper?.(aimMode ? 'aim' : null);
-          activeLead.body.rig.blend({ idle: 0, walk: 1.8, run: 4.5 }, f.v);
+        const rigActive = f.v > 0.01 || aimMode || hide.busy || swim.state !== 'out';
+        if (rigActive ? ((poseTick++ & 1) === 0) : st === 7) {
+          if (swim.pose) {
+            if (swim.at != null) {
+              swimPlayOpts.at = swim.at;
+              activeLead.body.rig.play?.(swim.pose, swimPlayOpts);
+            } else {
+              activeLead.body.rig.play?.(swim.pose);
+            }
+          } else if (hide.busy && hide.pose) {
+            activeLead.body.rig.play?.(hide.pose, hidePlayOpts);
+            activeLead.body.rig.upper?.(hide.upper);
+          } else {
+            activeLead.body.rig.upper?.(aimMode ? 'aim' : null);
+            activeLead.body.rig.blend(BLEND_OPTS, f.v);
+          }
+          rigUpdOpts.speed = f.v;
+          activeLead.body.rig.update(rigActive ? sdt * 2 : sdt * 8, rigUpdOpts);
         }
-        activeLead.body.rig.update(sdt, { speed: f.v });
 
-        avoidQuery.x = f.x;
-        avoidQuery.z = f.z;
-        avoidQuery.vx = Math.sin(f.heading) * f.v;
-        avoidQuery.vz = Math.cos(f.heading) * f.v;
-        metro.avoid(avoidQuery, 0.9);
+        if (f.v > 0.1) {
+          avoidQuery.x = f.x;
+          avoidQuery.z = f.z;
+          avoidQuery.vx = Math.sin(f.heading) * f.v;
+          avoidQuery.vz = Math.cos(f.heading) * f.v;
+          metro.avoid(avoidQuery, 0.9);
+        }
 
         rigTarget.position.set(f.x, f.y, f.z);
         rigTarget.yaw = aimMode ? camRig.targetYaw : f.heading;
@@ -1434,20 +1712,55 @@ function make(api) {
       // Update camera rig & first-person gun rig & acoustic Ears
       camRig.update(sdt, rigTarget);
       if (aimMode && !inCar && !inBoat) gunRig.update(sdt);
-      v.cam.getWorldDirection(camDirVec);
-      ears.place(v.cam.position, camDirVec);
 
       if (actFire) fireShot();
 
       metro.update(sdt, playerQuery);
-      inside.update(sdt, playerQuery);
-      law.update(sdt, playerQuery);
-      gps.update(sdt, playerQuery);
+      if (metro.cities.length !== lastCityCount) {
+        lastCityCount = metro.cities.length;
+        for (const c of metro.cities) if (c.people && c.people.fullMax !== 0) c.people.fullMax = 0;
+      }
+      if (inside.room || wasIndoor || (!inCar && !inBoat && st === 3)) {
+        inside.update((inside.room || wasIndoor) ? sdt : sdt * 8, playerQuery);
+        if (inside.entered && !wasIndoor) {
+          wasIndoor = true;
+          try { mixer.place(INDOOR_PLACE, 0.3); } catch {}
+        } else if (inside.left && wasIndoor) {
+          wasIndoor = false;
+          try { mixer.place(null, 0.3); } catch {}
+        }
+      }
+      if (st === 5 || inside.entered || inside.left) {
+        v.cam.getWorldDirection(camDirVec);
+        ears.place(v.cam.position, camDirVec);
+      }
+      lawDt += sdt;
+      const lawIdle = law.stars === 0 && !law.units.length && !law.officers.length && !law.calls.length && !metro.events.length && !law.search && !actFire;
+      const lawDue = !lawIdle ? ((lawTick++ & 1) === 0 || metro.events.length > 0 || actFire) : st === 6;
+      if (lawDue) {
+        law.update(lawDt, playerQuery);
+        lawDt = 0;
+      }
+      gpsDt += sdt;
+      if (!gps.route || st === 7) {
+        gps.update(gpsDt, playerQuery);
+        gpsDt = 0;
+      } else {
+        if (gps.player) { gps.player.x = playerQuery.x; gps.player.z = playerQuery.z; }
+        gps.heading = playerQuery.heading;
+      }
 
       // Update adaptive score intensity cleanly
       const threat = clamp(law.stars / 3 + (aimMode ? 0.15 : 0), 0, 1);
-      scoreMusic?.intensity(threat, 0.8);
-      scoreMusic?.final(law.stars >= 3);
+      if (Math.abs(threat - lastScoreThreat) >= 0.02) {
+        lastScoreThreat = threat;
+        scoreMusic?.intensity(threat, 0.8);
+      }
+      const isFinal = law.stars >= 3;
+      if (isFinal !== lastScoreFinal) {
+        lastScoreFinal = isFinal;
+        scoreMusic?.final(isFinal);
+      }
 
       const dist = metro.districtAt(playerQuery.x, playerQuery.z);
       lastDistrictName = dist ? dist.name : 'Solis Bay';
@@ -1527,9 +1840,16 @@ function make(api) {
         arrowMesh.visible = false;
       }
 
-      // Paint Pelican Port Container Yard puddles/slabs/oil before rendering
-      yardGround?.update(v.cam.position);
-      light.fit(v, { far: 170, tall: 60, near: 28 });
+      // Distance-cull distant Pelican Port props & puddles and Coral Strip beach props after Play shader warmup
+      const dxY = v.cam.position.x - YARD_X, dzY = v.cam.position.z - YARD_Z;
+      const nearYard = t <= 0.25 || (dxY * dxY + dzY * dzY < 210 * 210);
+      if (yardPropsGroup) yardPropsGroup.visible = nearYard;
+      if (yardGround?.mesh) yardGround.mesh.visible = nearYard;
+      if (nearYard) yardGround?.update(v.cam.position);
+      const dxB = v.cam.position.x - BEACH_LOT.x, dzB = v.cam.position.z - BEACH_LOT.z;
+      if (beachPropsGroup) beachPropsGroup.visible = t <= 0.25 || (dxB * dxB + dzB * dzB < 280 * 280);
+
+      light.fit(v, LIGHT_FIT_OPTS);
       v.fit(W, H);
       feel.begin(c);
       v.render(c, W, H);
@@ -1566,6 +1886,11 @@ function make(api) {
         const mm = String(clockMin % 60).padStart(2, '0');
         lastClockStr = `${hh}:${mm}`;
       }
+      if (lastDistrictName !== lastDistHud || lastClockStr !== lastDistClock) {
+        lastDistHud = lastDistrictName;
+        lastDistClock = lastClockStr;
+        lastDistText = `${lastDistrictName} · ${lastClockStr}`;
+      }
 
       c.save();
       c.fillStyle = 'rgba(10, 14, 24, 0.78)';
@@ -1576,7 +1901,7 @@ function make(api) {
       c.font = '700 11px Rubik, sans-serif';
       c.textAlign = 'left';
       c.fillStyle = '#e8f4ff';
-      c.fillText(fitText(c, 'dist', `${lastDistrictName} · ${lastClockStr}`, maxHudW - 14), 15, topY + 15);
+      c.fillText(fitText(c, 'dist', lastDistText, maxHudW - 14), 15, topY + 15);
 
       if (law.stars > 0) {
         let starsStr = '';
@@ -1611,11 +1936,18 @@ function make(api) {
       c.fillText(fitText(c, 'swap', `SWAP (${otherLead.name})`, swapRect.w - 10), swapRect.x + 6, swapRect.y + 14);
 
       const ld = activeLead.loadout;
-      const ammoStr = ld.gun ? `${ld.kind.toUpperCase()} ${ld.gun.ammo}/${ld.pouch.count(ARSENAL[ld.kind].ammo)}` : ld.kind.toUpperCase();
+      const ammoClip = ld.gun ? ld.gun.ammo : -1;
+      const ammoPool = ld.gun ? ld.pouch.count(ARSENAL[ld.kind].ammo) : -1;
+      if (ld.kind !== lastAmmoKind || ammoClip !== lastAmmoClip || ammoPool !== lastAmmoPool) {
+        lastAmmoKind = ld.kind;
+        lastAmmoClip = ammoClip;
+        lastAmmoPool = ammoPool;
+        lastAmmoText = ld.gun ? `${ld.kind.toUpperCase()} ${ammoClip}/${ammoPool}` : ld.kind.toUpperCase();
+      }
       c.fillStyle = 'rgba(10, 14, 24, 0.78)';
       c.beginPath(); c.roundRect(gunRect.x, gunRect.y, gunRect.w, gunRect.h, 6); c.fill();
       c.fillStyle = '#ffd166';
-      c.fillText(fitText(c, 'gun', ammoStr, gunRect.w - 10), gunRect.x + 6, gunRect.y + 14);
+      c.fillText(fitText(c, 'gun', lastAmmoText, gunRect.w - 10), gunRect.x + 6, gunRect.y + 14);
 
       if (!inCar && !inBoat) {
         c.fillStyle = hide.busy ? 'rgba(56, 248, 176, 0.25)' : 'rgba(10, 14, 24, 0.78)';
@@ -1628,7 +1960,7 @@ function make(api) {
       // Top-right minimap & turn instruction
       c.save();
       c.globalAlpha = 0.92;
-      gps.mini(c, mr.x, mr.y, mr.w, mr.h, { range: 165 });
+      gps.mini(c, mr.x, mr.y, mr.w, mr.h, MINI_OPTS);
       c.globalAlpha = 1;
       const nx = gps.next;
       if (nx && nx.turn !== 'arrive' && nx.in < 160) {
@@ -1656,7 +1988,7 @@ function make(api) {
       c.strokeStyle = rn.on ? 'rgba(255, 178, 74, 0.45)' : 'rgba(255, 255, 255, 0.2)';
       c.lineWidth = 1;
       c.stroke();
-      icon(c, rn.on ? 'musical-notes' : 'speaker-off', rd.x + 14, rd.y + rd.h * 0.5, 15, { color: rn.on ? '#ffb24a' : '#9aa4b8' });
+      icon(c, rn.on ? 'musical-notes' : 'speaker-off', rd.x + 14, rd.y + rd.h * 0.5, 15, rn.on ? ICON_RAD_ON : ICON_RAD_OFF);
       c.textAlign = 'left';
       const rtx = rd.x + 26, rtw = rd.w - 32;
       if (!rn.on) {
