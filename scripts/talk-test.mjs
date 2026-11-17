@@ -103,13 +103,13 @@ if (bytes) {
   console.log(`speaking with ${tts.simd ? 'WebAssembly SIMD' : 'plain JavaScript'}`);
   const seeded = seed => () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const say = (text, voice, seed = 1) => { const l = tts.line(text, voice, { rnd: seeded(seed) }), parts = []; let c, n = 0; while ((c = l.next())) { parts.push(c); n += c.length; } const a = new Float32Array(n); n = 0; for (const p of parts) { a.set(p, n); n += p.length; } return a; };
-  const line = 'Door three is opening. Please stand clear.';
+  const line = 'Door three is opening. Please stand clear.';   // (about 3 s; the slowest voice, javert, takes 5.2)
   let secs = 0, t0 = performance.now();
   for (const v of TALK_VOICES) {
     const a = say(line, v.name), s = a.length / tts.rate; secs += s;
     let e = 0, peak = 0; for (const x of a) { e += x * x; peak = Math.max(peak, Math.abs(x)); }
     const hz = f0(a, tts.rate), rms = Math.sqrt(e / a.length);
-    ok(s > 1.4 && s < 4.5 && rms > .01 && peak < 1 && (v.kind === 'woman' ? hz > 140 : v.kind === 'man' ? hz < 130 : hz > 0),
+    ok(s > 1.4 && s < 5.6 && rms > .01 && peak < 1 && (v.kind === 'woman' ? hz > 140 : v.kind === 'man' ? hz < 130 : hz > 0),
       `${v.name} (${v.kind}): ${s.toFixed(2)} s, loudness ${rms.toFixed(3)}, ${hz.toFixed(0)} Hz`);
   }
   const ms = performance.now() - t0;

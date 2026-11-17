@@ -20,6 +20,7 @@
  * upper voice, as people speaking up over noise). pre: 'sigh' | 'gasp' before it, made through the voice's own mouth shape.
  * The pitch is moved only where two readings of it agree (YIN, and how well the sound repeats at that period and not at
  * half of it): a wrong reading moved is a warble or a crackle.
+ * clean: 0..1 the model's own noises in pauses turned down. deess: 0..1 its shimmer on s, f and sh taken down.
  * breath: 0..1 how loud the breaths are (0: none), each as deep as what follows it is long. first: true for the first part of a line, which takes no breath
  * before it (that would hold up the first word). seed: the same part, seed and settings come out the same.
  */
@@ -243,8 +244,8 @@ const WH = /^\W*(who|what|where|when|why|how|which|whose|whom)\b/i;
 export const endOf = text => /\?\W*$/.test(String(text || '').trim()) && !WH.test(String(text)) ? '?' : '.';
 
 export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1, first = false, drift: driftAmt = .014, jitter = .0022, driftHz = 1,
-  end = '.', fall = 0, rise = 0, shimmer = 0, endJitter = 0, breathy = 0, lengthen = 1, tone = 0, shift = 1, lo = .72, hi = 1.35,
-  stress = null, tilt = 0, pre = null } = {}) {
+  end = '.', fall = 0, rise = 0, shimmer = 0, endJitter = 0, breathy = 0, lengthen = 1, tone = 0, shift = 1, lo = .9, hi = 1.35,
+  stress = null, tilt = 0, pre = null, deess = 0, clean = 0 } = {}) {
   if (!x || x.length < rate * .15) return x;
   const rnd = seeded(seed * 2654435761 + x.length), hopF = rate * .01, f0 = pitchOf(x, rate), F = f0.length;
   // how loud the voice is (for the breaths): the average of its louder 10 ms frames
@@ -268,6 +269,9 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
   // `wide` times as far from it, then a slow drift and a little jitter on top
   let sx = 0, sy = 0, sxx = 0, sxy = 0, nv = 0;
   for (let f = 0; f < F; f++) if (f0[f]) { const y = Math.log(f0[f]); sx += f; sy += y; sxx += f * f; sxy += f * y; nv++; }
+  // (a voice moved down stretches the decoder's own buzz into a warble, most of all a deep one: lo is how far down any
+  // moment may go, about 1.8 semitones, and a voice under 120 Hz half that)
+  { const hz = Array.from(f0).filter(Boolean).sort((a, b) => a - b); if (hz.length && hz[hz.length >> 1] < 120) lo = Math.max(lo, Math.min(1, (1 + lo) / 2)); }
   const ratio = new Float32Array(F).fill(Math.max(lo, Math.min(hi, shift)));
   if (nv >= 8) {
     const den = nv * sxx - sx * sx, slope = den ? (nv * sxy - sx * sy) / den : 0, icpt = (sy - slope * sx) / nv;
@@ -367,6 +371,33 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
   // (where less than a whole window landed, at the edges of the voice, the sound as it was makes up the rest: dividing
   // by a thin edge of window there made the tail of a grain many times louder, a click)
   for (let i = 0; i < x.length; i++) out[i] = ws[i] >= 1 ? out[i] / ws[i] : out[i] + x[i] * (1 - ws[i]);
+  // the model's own noises in the pauses (a sharp breath, a click between sentences: it makes them itself) turned down
+  // 12 dB, from 100 ms after the voice stops to 60 ms before it starts again (clean 0..1); the soft breaths below are ours
+  if (clean > 0) {
+    const g = new Float32Array(F).fill(1);
+    for (let f = 0; f < F;) {
+      if (fr[f] >= said) { f++; continue; }
+      let e = f; while (e < F && fr[e] < said) e++;
+      const a = f === 0 ? 0 : f + 10, b = e >= F ? F : e - 6;
+      for (let k = a; k < b; k++) g[k] = 1 - .75 * clean;
+      f = e;
+    }
+    const k = 1 - Math.exp(-1 / (rate * .015)); let v = g[0];
+    for (let i = 0; i < out.length; i++) { v += (g[Math.min(F - 1, Math.floor(i / hopF))] - v) * k; out[i] *= v; }
+  }
+  // a gentle de-esser (deess 0..1): the decoder's metallic shimmer sits on s, f and sh, above 6 kHz: that band about 2 dB
+  // down always, and up to 6 dB more where it is most of the sound (the band split so the two halves add back exactly)
+  if (deess > 0) {
+    const kl = Math.exp(-2 * Math.PI * 6000 / rate), ke = 1 - Math.exp(-1 / (rate * .004)), ka = 1 - Math.exp(-1 / (rate * .03));
+    let lp = 0, eh = 0, ea = 0, gv = 1;
+    for (let i = 0; i < out.length; i++) {
+      lp = kl * lp + (1 - kl) * out[i]; const hi = out[i] - lp;
+      eh += (hi * hi - eh) * ke; ea += (out[i] * out[i] - ea) * ke;
+      const share = ea > 1e-12 ? eh / ea : 0, want = 1 - deess * (.2 + .3 * Math.min(1, Math.max(0, (share - .2) / .3)));
+      gv += (want - gv) * (want < gv ? ke : ka);
+      out[i] = lp + hi * gv;
+    }
+  }
   // effort (tilt 0..1, speaking up over noise): more of the voice above 1.5 kHz, about 4 dB at full effort
   if (tilt > 0) { const k = Math.exp(-2 * Math.PI * 1500 / rate); let a = 0, p = 0; for (let i = 0; i < out.length; i++) { a = k * (a + out[i] - p); p = out[i]; out[i] += a * .6 * tilt; } }
 

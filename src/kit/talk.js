@@ -41,14 +41,14 @@ export const ownVoices = () => TALK_VOICES.map(v => ({
 }));
 
 const NUDGE = [1, .9, 1.1, .84];
-// How natural each voice sounds (UTMOS, a speech-quality model, over 6 lines each through the app, 11-16): within an accent
+// How natural each voice sounds (UTMOS, a speech-quality model, over 6 lines each from the model, 11-17): within an accent
 // the most natural is cast first. Measure again when the voices change (a voice not listed goes after the ones that are).
-const NATURAL = { sam: 4.35, vera: 4.32, thandi: 4.31, george: 4.30, bill_boerst: 4.26, michael: 4.25, walt: 4.25,
-  eponine: 4.23, priya: 4.22, mary: 4.21, paul: 4.21, jane: 4.19, conor: 4.17, kiri: 4.17, oliver: 4.17, lola: 4.16,
-  ruth: 4.16, alba: 4.14, anna: 4.14, charles: 4.14, eve: 4.11, june: 4.10, fantine: 4.08, harry: 4.08, niamh: 4.08,
-  caro_davy: 4.07, daan: 4.07, angus: 4.06, jack: 4.04, pieter: 4.02, orla: 4.01, frank: 3.99, declan: 3.98,
-  hank: 3.98, arjun: 3.95, peter_yearsley: 3.94, azelma: 3.92, stuart_bell: 3.92, giovanni: 3.91, bronwen: 3.88,
-  javert: 3.82, lucy: 3.74, luc: 3.72, estelle: 3.36, marius: 2.96 };
+const NATURAL = { lola: 4.50, azelma: 4.49, bill_boerst: 4.49, eponine: 4.49, eve: 4.49, jane: 4.49, mary: 4.49,
+  sam: 4.49, alba: 4.48, caro_davy: 4.48, george: 4.48, june: 4.48, michael: 4.48, vera: 4.48, jack: 4.47,
+  kiri: 4.47, anna: 4.46, ruth: 4.45, stuart_bell: 4.45, thandi: 4.45, oliver: 4.44, walt: 4.44, charles: 4.43,
+  orla: 4.43, declan: 4.41, harry: 4.41, paul: 4.41, javert: 4.40, luc: 4.40, niamh: 4.40, peter_yearsley: 4.40,
+  conor: 4.38, daan: 4.38, hank: 4.38, priya: 4.38, frank: 4.37, pieter: 4.37, arjun: 4.36, fantine: 4.36,
+  angus: 4.35, giovanni: 4.34, estelle: 4.31, bronwen: 4.27, lucy: 4.22, marius: 4.22 };
 /**
  * Casts a built-in voice for what a game asked for (voices.js wantOf): { at (in ownVoices()), pitch, voiceURI } or null
  * for a language it doesn't speak. Like voices.js cast(), but a cast bigger than the voices in the accent asked for goes

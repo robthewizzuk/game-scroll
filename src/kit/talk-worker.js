@@ -106,10 +106,14 @@ const piece = (id, pcm, text, last, speed = 0) => {
  * its voice, its pace, a quiet room under it, and a soft breath before most sentences after the first and in some long pauses. Change HUMAN with them, so
  * lines kept from before are made again.
  */
-const HUMAN = 'h5', LIVELY_WIDE = .3;
+const HUMAN = 'h6', LIVELY_WIDE = .3;
+// Second listening notes (Rob 11-17): the model alone was heard as cleaner than after this file's processing. Measured
+// (UTMOS, the same takes with one thing left out at a time): the added air cost .13, shimmer .09 and the slowest tunes
+// (pace under .95) .09; so the air and shimmer each voice was tuned to are used at a part, and no voice is slowed past .95.
+const AIR = .35, SHIMMER = .5, SLOWEST = .95;
 // Another way of saying the same words (act.take 1 to 3, sound.js picks one a character hasn't used lately): a new take
 // from the model, and its tune moved a little each its own way: [pitch range x, semitones, pace x]
-const TAKES = [[1, 0, 1], [1.12, .7, .97], [.9, -.6, 1.03], [1.06, -.3, .95]];
+const TAKES = [[1, 0, 1], [1.12, .7, .97], [.92, .35, 1.03], [1.06, .2, .95]];   // (never lower: see voice-pitch.js lo)
 /**
  * Speaking up over noise (act.effort 0..1, the Lombard effect): people raise their pitch (about 2.5 semitones at full
  * effort), speak a touch slower and push more into the upper voice (talk-worker passes tilt to voice-pitch.js).
@@ -138,10 +142,10 @@ function writer() {
   const flush = last => {
     if (!frames.length && !last) return;
     const x = join(frames), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0, [ust, uw, upace, ub] = urgencyOf(text) || [0, 1, 1, 0];
-    const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * uw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + ust + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e, breathy: Math.max(fit.breathy, ub),
-      seed: seed + part, first: part === 0, end: endOf(text), pre: part === 0 ? act?.pre ?? null : null, stress: stressAt(text, x, act?.stress, used) });
+    const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * uw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + ust + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e, breathy: Math.max(fit.breathy * AIR, ub), shimmer: (fit.shimmer || 0) * SHIMMER,
+      seed: seed + part, first: part === 0, end: endOf(text), clean: 1, deess: 1, pre: part === 0 ? act?.pre ?? null : null, stress: stressAt(text, x, act?.stress, used) });
     part++;
-    const pcm = stretch(said, 24000, tempo * fit.tempo * tpace * upace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
+    const pcm = stretch(said, 24000, tempo * Math.max(SLOWEST, fit.tempo) * tpace * upace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much

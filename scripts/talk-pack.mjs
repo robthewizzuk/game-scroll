@@ -4,6 +4,8 @@
 //                                                instead of downloading them (Hugging Face, at the pinned revision)
 //   --from-big <dir>                             the 100M model's folder, for its decoder (TALK_SOURCE.decoderDir;
 //                                                downloaded, only the decoder's part of its 219 MB file is fetched)
+//   --from-base <dir>                            the 7M before its reward tuning (TALK_SOURCE.baseDir), whose step to
+//                                                the tuned 7M is taken TALK_SOURCE.nudge times (nudged() below)
 // Each voice is packed as what Kyutai's voice-cloning model heard of its speaker, calm and in four acted moods
 // (scripts/talk-voices/prompt.py writes them to scripts/talk-voices/prompts/<name>.safetensors from the recordings in
 // sources.json, and checks each against the voice as Kyutai ships it); a voice with no recording to hear (daan) is
@@ -69,9 +71,50 @@ async function source(from) {
   return { weights, tok, voices };
 }
 
+/**
+ * The tuned 7M's weights taken `a` times as far from the 7M before its tuning: before + a (tuned - before), for each
+ * weight the tuning changed. A voice's prompt is the recording through the speaker projection, so it moves with it:
+ * rows + (P' - P) lat, with lat = P+ rows (P is 224 x 32; what of a row P can't make, rounding, is kept as it is). Its first row is the marker the
+ * model puts before a voice (bos_before_voice), nudged with the rest.
+ */
+export function nudged(tuned, before, a) {
+  const out = {};
+  for (const [k, w] of Object.entries(tuned)) {
+    const b = before[k];
+    if (a === 1 || !k.startsWith('flow_lm.') || !b || b.length !== w.length) { out[k] = w; continue; }
+    const x = new Float32Array(w.length); for (let i = 0; i < w.length; i++) x[i] = w[i] + (a - 1) * (w[i] - b[i]);
+    x.shape = w.shape; out[k] = x;
+  }
+  const P = tuned['flow_lm.speaker_proj_weight'], Q = out['flow_lm.speaker_proj_weight'], n = 224, r = 32;
+  // P+ = (P'P)^-1 P' (in doubles), then M = Q P+ (224 x 224): what a prompt row becomes
+  const G = new Float64Array(r * r), I = new Float64Array(r * r);
+  for (let i = 0; i < r; i++) { I[i * r + i] = 1; for (let j = 0; j < r; j++) { let s = 0; for (let t = 0; t < n; t++) s += P[t * r + i] * P[t * r + j]; G[i * r + j] = s; } }
+  for (let c = 0; c < r; c++) {   // Gauss-Jordan (G is symmetric and well conditioned)
+    const p = G[c * r + c];
+    for (let j = 0; j < r; j++) { G[c * r + j] /= p; I[c * r + j] /= p; }
+    for (let i = 0; i < r; i++) if (i !== c) { const f = G[i * r + c]; if (f) for (let j = 0; j < r; j++) { G[i * r + j] -= f * G[c * r + j]; I[i * r + j] -= f * I[c * r + j]; } }
+  }
+  const Pp = new Float64Array(r * n);
+  for (let i = 0; i < r; i++) for (let t = 0; t < n; t++) { let s = 0; for (let j = 0; j < r; j++) s += I[i * r + j] * P[t * r + j]; Pp[i * n + t] = s; }
+  const bos = tuned['flow_lm.bos_before_voice'];
+  const prompt = rows => {
+    if (a === 1) return rows;
+    const T = rows.length / n, y = new Float32Array(rows.length), lat = new Float64Array(r);
+    for (let t = 0; t < T; t++) {
+      if (t === 0 && bos.every((b, u) => Math.abs(rows[u] - b) < 1e-3)) { y.set(out['flow_lm.bos_before_voice'], 0); continue; }   // (the voice starts with the model's own marker)
+      for (let i = 0; i < r; i++) { let s = 0; for (let u = 0; u < n; u++) s += Pp[i * n + u] * rows[t * n + u]; lat[i] = s; }
+      for (let u = 0; u < n; u++) { let s = 0; for (let i = 0; i < r; i++) s += (Q[u * r + i] - P[u * r + i]) * lat[i]; y[t * n + u] = rows[t * n + u] + s; }
+    }
+    y.shape = rows.shape; return y;
+  };
+  return { weights: out, prompt };
+}
+
 /** The file's bytes, from Kyutai's files. */
-export async function build(from = null, fromBig = null) {
-  const { weights: w7, tok, voices } = await source(from), big = await decoderWeights(fromBig);
+export async function build(from = null, fromBig = null, fromBase = null) {
+  const { weights: tuned, tok, voices } = await source(from), big = await decoderWeights(fromBig);
+  const before = safetensors(fromBase ? readFileSync(join(fromBase, 'model.safetensors')) : await download(urlOf(TALK_SOURCE.baseDir, 'model.safetensors')));
+  const { weights: w7, prompt } = nudged(tuned, before, TALK_SOURCE.nudge);
   const weights = n => n.startsWith('mimi.') ? big[n] : w7[n];
   // only what speaking needs: the engine says which weights it reads (the voice-cloning encoder and the 7M's own
   // decoder stay out)
@@ -84,7 +127,7 @@ export async function build(from = null, fromBig = null) {
     const by = own ? 'Kyutai\'s voice-cloning model' : 'Kyutai TTS voices';
     if (heard) {
       for (const m of MOODS) if (!heard[m] || heard[m].shape[1] !== 224) throw new Error(`talk-pack: ${name} has no ${m} prompt`);
-      return { name, kind, lang, hz, credit: `${credit}; voice from ${by}, moods acted as measured from CREMA-D`, prompts: Object.fromEntries(MOODS.map(m => [m, heard[m]])) };
+      return { name, kind, lang, hz, credit: `${credit}; voice from ${by}, moods acted as measured from CREMA-D`, prompts: Object.fromEntries(MOODS.map(m => [m, prompt(heard[m])])) };
     }
     const k = [], v = []; let pos = 0;
     for (let l = 0; ; l++) {
@@ -127,11 +170,11 @@ async function made(dir, version, file, want, make, check) {
   return dest;
 }
 /** Writes <dir>/<TALK_VERSION>/<TALK_FILE> unless it is there already with the right hash. */
-export const writeTo = (dir, from = null, { check = true, fromBig = null } = {}) => made(dir, TALK_VERSION, TALK_FILE, TALK_SHA256, () => build(from, fromBig), check);
+export const writeTo = (dir, from = null, { check = true, fromBig = null, fromBase = null } = {}) => made(dir, TALK_VERSION, TALK_FILE, TALK_SHA256, () => build(from, fromBig, fromBase), check);
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2), opt = name => { const at = args.indexOf(name); return at >= 0 ? args.splice(at, 2)[1] : null; };
-  const from = opt('--from'), fromBig = opt('--from-big'), check = !args.includes('--new');
+  const from = opt('--from'), fromBig = opt('--from-big'), fromBase = opt('--from-base'), check = !args.includes('--new');
   const dir = resolve(args.find(a => !a.startsWith('--')) || join(ROOT, 'ml-cache'));
-  await writeTo(dir, from, { check, fromBig });
+  await writeTo(dir, from, { check, fromBig, fromBase });
 }
