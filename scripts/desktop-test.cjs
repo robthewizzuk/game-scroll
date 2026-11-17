@@ -171,9 +171,18 @@ async function handheld() {
     for (let i = 0; i < 3 && await id() === second; i++) { await press('up'); await p.waitForFunction(was => __gs.active && __gs.active.def.id !== was, second, { timeout: 5000 }).catch(() => {}); }
     ok(await id() === first, 'one press is one game, though two pads report it', await id());
     const liked = () => p.evaluate(() => __gs.active.el.querySelector('.like').getAttribute('aria-pressed'));
-    const l0 = await liked(); await press('y');
-    ok(await liked() !== l0, 'Y hearts the game');
-    await press('y');
+    // (the app reads the pads once a frame: a 90 ms press is missed where a frame takes longer, as a Board game's card can
+    // in software graphics on the test machine, so Y is held until the heart changes, up to 1.5 s: still one press)
+    const hold = async (n, until) => {
+      for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: true, value: 1 }; }, [g, B[n]]);
+      const got = await p.waitForFunction(until, null, { timeout: 1500 }).then(() => true, () => false);
+      for (const g of ['__pad', '__real']) await p.evaluate(([g, i]) => { window[g].buttons[i] = { pressed: false, value: 0 }; }, [g, B[n]]);
+      await p.waitForTimeout(160); return got;
+    };
+    const l0 = await liked();
+    await hold('y', `__gs.active.el.querySelector('.like').getAttribute('aria-pressed') !== ${JSON.stringify(l0)}`);
+    ok(await liked() !== l0, 'Y hearts the game', `${l0} → ${await liked()}`);
+    await hold('y', `__gs.active.el.querySelector('.like').getAttribute('aria-pressed') === ${JSON.stringify(l0)}`);
     // the top bar and the game's buttons: View, then → to Settings, A opens it, ↓ moves inside it, B closes it
     await press('select');
     const inBar = await p.evaluate(() => !!document.activeElement && (!!document.activeElement.closest('.top') || !!document.activeElement.closest('.slide')) && document.documentElement.classList.contains('pad-ui'));
