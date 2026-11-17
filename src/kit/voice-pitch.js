@@ -15,7 +15,7 @@
  * real read speech (106 VCTK speakers: spread 3.7 semitones, 5-95% range 11.6): on 15 lines the 7M's own 2.4 / 8.0 become
  * 3.1 / 10.2 for a score 4.35 -> 4.29 (Rob 11-16: "keep going on making them more human like").
  * shift: the whole pitch moved this many times (lo, hi: how far any moment may go; act.mjs acts moods with these).
- * breathy: air through the voice (0: none). tone: the room's loudness against the voice (0: none, .003: about 50 dB under).
+ * breathy: air through the voice (0: none). tone: the room's loudness against the voice (0: none, .002: about 54 dB under).
  * stress: [[from, to] seconds] words said higher (about 2 semitones), louder and longer. tilt: 0..1 effort (more of the
  * upper voice, as people speaking up over noise). pre: 'sigh' | 'gasp' before it, made through the voice's own mouth shape.
  * The pitch is moved only where two readings of it agree (YIN, and how well the sound repeats at that period and not at
@@ -107,13 +107,14 @@ function breathe(n, rate, level, rnd) {
 }
 
 /**
- * A quiet room under the voice, as a microphone hears one: soft, low noise (mostly under 500 Hz, falling away above),
+ * A quiet room under the voice, as a microphone hears one: soft noise between about 120 Hz and 2 kHz, most of it
+ * under 400 (nothing lower, which was heard as a rumble),
  * steady through the words and the pauses, so a pause is a room and not digital silence. level: its loudness (RMS).
  */
 function roomTone(n, rate, level, rnd) {
-  const y = new Float32Array(n), a = Math.exp(-2 * Math.PI * 180 / rate), b = Math.exp(-2 * Math.PI * 900 / rate);
-  let u = 0, v = 0, sum = 0;
-  for (let i = 0; i < n; i++) { const w = rnd() * 2 - 1; u = a * u + (1 - a) * w; v = b * v + (1 - b) * w; y[i] = u * 3 + v * .6; sum += y[i] * y[i]; }
+  const y = new Float32Array(n), a = Math.exp(-2 * Math.PI * 120 / rate), b = Math.exp(-2 * Math.PI * 1800 / rate), c = Math.exp(-2 * Math.PI * 400 / rate);
+  let u = 0, v = 0, w2 = 0, sum = 0;
+  for (let i = 0; i < n; i++) { const w = rnd() * 2 - 1; u = a * u + (1 - a) * w; v = b * v + (1 - b) * w; w2 = c * w2 + (1 - c) * w; y[i] = (v - u) + (w2 - u) * 1.5; sum += y[i] * y[i]; }
   const k = sum > 0 ? level / Math.sqrt(sum / n) : 0, fade = Math.min(n >> 1, Math.round(rate * .01));
   for (let i = 0; i < n; i++) y[i] *= k * Math.min(1, i / fade, (n - 1 - i) / fade);
   return y;
@@ -148,28 +149,50 @@ function tractOf(x, f0, rate) {
   for (let k = 1; k <= P; k++) a[k] *= .985 ** k;
   return a;
 }
-/** Air through the voice's tract (tractOf), as a whisper: noise in, filtered by it, the voice's fall above put back. */
+/**
+ * Air through the voice's tract (tractOf), as a whisper: noise in, filtered by it. (Air has none of the voice's own fall
+ * above, so that isn't put back: put back, it was a low thump heard as wind or thunder.)
+ */
 function whisper(n, rate, a, rnd, open = 1) {
   const y = new Float32Array(n), P = a ? a.length - 1 : 0, h = new Float64Array(P + 1);
-  let d = 0;
   for (let i = 0; i < n; i++) {
     let v = rnd() * 2 - 1;
     if (a) { for (let k = 1; k <= P; k++) v -= (open === 1 ? a[k] : a[k] * open ** k) * h[k]; for (let k = P; k > 1; k--) h[k] = h[k - 1]; h[1] = v; }
-    d = .9 * d + v; y[i] = d;   // (de-emphasis: the -0.9 taken off in tractOf put back)
+    y[i] = v;
   }
   return y;
+}
+/**
+ * "Hmm": a hum with the mouth closed, at the voice's own pitch (f0: its middle), falling a little as a thought does; a
+ * nasal murmur (most of it near 250 Hz, a little at 1.1 and 2.4 kHz), each period a pulse with a small unsteadiness.
+ */
+function hum(n, rate, level, f0, rnd) {
+  const y = new Float32Array(n), res = (f, q) => { const w = 2 * Math.PI * f / rate, r = Math.exp(-w / (2 * q)); return { a1: 2 * r * Math.cos(w), a2: -r * r, y1: 0, y2: 0 }; };
+  const R = [[res(250, 2.5), 1], [res(1100, 4), .12], [res(2400, 5), .04]];
+  let ph = 1, g = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / n, hz = f0 * (1.04 - .12 * t) * (1 + .004 * (rnd() * 2 - 1));
+    ph += hz / rate; let e = 0; if (ph >= 1) { ph -= 1; e = 1; }
+    g = .96 * g + e;   // (each pulse a short swell, not a click)
+    let v = 0; for (const [r, w] of R) { const o = g + r.a1 * r.y1 + r.a2 * r.y2; r.y2 = r.y1; r.y1 = o; v += o * w; }
+    const env = Math.min(1, t / .12) ** 2 * Math.min(1, (1 - t) / .25);
+    y[i] = v * env;
+  }
+  // (the swell's own steady part taken off, so it doesn't sit under the hum as a drift)
+  let m = 0; for (let i = 0; i < n; i++) m += y[i]; m /= n; for (let i = 0; i < n; i++) y[i] -= m * Math.min(1, i / (n * .12)) ** 2 * Math.min(1, (n - 1 - i) / (n * .25));
+  return fit(y, level);
 }
 const fit = (y, level) => { let s = 0; for (let i = 0; i < y.length; i++) s += y[i] * y[i]; const k = s > 0 ? level / Math.sqrt(s / y.length) : 0; for (let i = 0; i < y.length; i++) y[i] *= k; return y; };
 /**
  * A sigh: a long breath out through the voice's own mouth ("haah"), swelling quickly and dying away slowly, its top
- * closing down as it goes (from about 5 kHz to 1.2), the way a sigh trails off. level: its loudness (RMS).
+ * closing down as it goes (from about 4.5 kHz to 1.6; nothing under 450 Hz, where it would rumble), the way a sigh trails off. level: its loudness (RMS).
  */
 function sigh(n, rate, level, a, rnd) {
   const y = whisper(n, rate, a, rnd);
-  const hp = Math.exp(-2 * Math.PI * 150 / rate); let u = 0, p = 0, l = 0;
+  const hp = Math.exp(-2 * Math.PI * 450 / rate); let u = 0, p = 0, l = 0;
   for (let i = 0; i < n; i++) {
     const t = i / n, env = t < .18 ? Math.sin(t / .18 * Math.PI / 2) ** 2 : (1 - (t - .18) / .82) ** 1.8;
-    const fc = 5000 * (1.2 / 5) ** t, k = Math.exp(-2 * Math.PI * fc / rate);
+    const fc = 4500 * (1.6 / 4.5) ** t, k = Math.exp(-2 * Math.PI * fc / rate);
     u = hp * (u + y[i] - p); p = y[i]; l = k * l + (1 - k) * u;
     y[i] = l * env;
   }
@@ -178,7 +201,7 @@ function sigh(n, rate, level, a, rnd) {
 /** A gasp: a quick, sharp breath in through the voice's own mouth, starting at once and stopped short. */
 function gasp(n, rate, level, a, rnd) {
   const y = whisper(n, rate, a, rnd, .96);
-  const hp = Math.exp(-2 * Math.PI * 700 / rate); let u = 0, p = 0;
+  const hp = Math.exp(-2 * Math.PI * 1000 / rate); let u = 0, p = 0;
   for (let i = 0; i < n; i++) {
     const t = i / n, env = Math.min(1, t / .1) * (.7 + .3 * t) * Math.min(1, (1 - t) / .12);
     u = hp * (u + y[i] - p); p = y[i]; y[i] = u * env;
@@ -397,25 +420,29 @@ export function humanize(x, rate, { wide = 1.6, wobble = 1, breath = 1, seed = 1
     const q = f < F && fr[f] < quiet;
     if (q && a < 0) a = f;
     if (!q && a >= 0) {
-      const k = f < F && a > 0 && f - a >= 45 ? deep(ahead(f)) : -1;
-      if (k >= 0 && rnd() < .35 + .45 * k) {
+      const k = f < F && a > 0 && f - a >= 60 ? deep(ahead(f)) : -1;
+      if (k >= .2 && rnd() < .3 + .4 * k) {
         const len = Math.round(Math.min(.18 + .2 * k + .04 * rnd(), (f - a) * .01 - .16) * rate), end = Math.round(f * hopF) - Math.round(rate * (.06 + .04 * rnd()));
-        if (len > rate * .14) adds.push([end - len, breathe(len, rate, level * (.6 + .6 * k) * (.85 + .3 * rnd()), rnd)]);
+        if (len > rate * .14) adds.push([end - len, breathe(len, rate, level * (.5 + .5 * k) * (.85 + .3 * rnd()), rnd)]);
       }
       a = -1;
     }
   }
   for (const [at, b] of adds) for (let i = 0; i < b.length; i++) if (at + i >= 0 && at + i < out.length) out[at + i] += b[i];
   const done = drawOut(out);
-  // before it: a sigh or a gasp (pre), made from the voice's own sound; else, after the first part, mostly a breath
+  // before it: a sigh, a gasp or a "hmm" (pre), made from the voice's own sound; else, after the first part, a breath
+  // when what follows is long enough to want one (a short answer after "Halt!" takes none, mostly)
   let sound = null, gap = 0;
   if (pre === 'sigh' || pre === 'gasp') {
     const tract = tractOf(x, f0, rate);
-    sound = pre === 'sigh' ? sigh(Math.round(rate * (.6 + .25 * rnd())), rate, speech * .08, tract, rnd) : gasp(Math.round(rate * (.2 + .08 * rnd())), rate, speech * .07, tract, rnd);
+    sound = pre === 'sigh' ? sigh(Math.round(rate * (.6 + .25 * rnd())), rate, speech * .05, tract, rnd) : gasp(Math.round(rate * (.2 + .08 * rnd())), rate, speech * .04, tract, rnd);
     gap = Math.round(rate * (pre === 'sigh' ? .2 + .1 * rnd() : .08 + .05 * rnd()));
+  } else if (pre === 'hmm') {
+    const hz = Array.from(f0).filter(Boolean).sort((a, b) => a - b), mid = hz.length ? hz[hz.length >> 1] : 140;
+    sound = hum(Math.round(rate * (.45 + .15 * rnd())), rate, speech * .35, mid, rnd); gap = Math.round(rate * (.25 + .1 * rnd()));
   } else if (!first && breath > 0) {
     const k = deep(ahead(0));
-    if (rnd() < .35 + .55 * k) { sound = breathe(Math.round(rate * (.16 + .2 * k + .05 * rnd())), rate, level * (.6 + .6 * k), rnd); gap = Math.round(rate * (.06 + .05 * rnd())); }
+    if (rnd() < .15 + .7 * k) { sound = breathe(Math.round(rate * (.16 + .2 * k + .05 * rnd())), rate, level * (.6 + .6 * k), rnd); gap = Math.round(rate * (.06 + .05 * rnd())); }
   }
   if (!sound) return room(done);
   const lead = new Float32Array(sound.length + gap + done.length);

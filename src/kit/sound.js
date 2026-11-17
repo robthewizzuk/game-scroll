@@ -1312,10 +1312,11 @@ const MOODS = { angry: [1.1, 1.1, 1], happy: [1.1, 1.1, 1], scared: [1.1, 1.07, 
 const TAKE_DEV = [[1, 1], [1.04, .97], [.96, 1.03], [1.02, .95]];
 const moodOf = p => { const m = MOODS[p.mood] || [1, 1, 1], t = TAKE_DEV[p.take || 0], e = p.effort || 0; return [m[0] * t[0] * (1 + .06 * e), m[1] * t[1] * (1 - .05 * e), m[2] * (1 + .3 * e)]; };
 const hashOf = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193); return h >>> 0; };
-// Sounds a person makes: [sigh] and [gasp] go before the line (the built-in voice makes them from its own voice's sound,
-// voice-pitch.js), [hmm] and [laugh] are said where they are; and with a mood, now and then by itself (sad: a sigh
-// before about a third of lines, scared: a gasp, happy: a little laugh before a third of its exclaimed lines).
-const SAID_SOUNDS = { hmm: 'Hmm.', laugh: 'Ha ha!' };
+// Sounds a person makes: [sigh], [gasp] and [hmm] go before the line (the built-in voice makes them from its own voice's
+// sound, voice-pitch.js: the model can't say "hmm", it drops it or spells it), [laugh] is said where it is ("Ha ha ha!",
+// which the voice then says high, wide and breathy); and with sounds: true and a mood, now and then by itself (sad: a
+// sigh before about a third of lines, scared: a gasp, happy: a little laugh before a third of its exclaimed lines).
+const SAID_SOUNDS = { laugh: 'Ha ha ha!' };
 function soundsOf(t, mood, auto, h) {
   let pre = null;
   t = t.replace(/\[(sigh|gasp|hmm|laugh)\]\s*/gi, (m, w) => { w = w.toLowerCase(); if (SAID_SOUNDS[w]) return SAID_SOUNDS[w] + ' '; pre = w; return ''; }).replace(/\s+/g, ' ').trim();
@@ -1323,7 +1324,7 @@ function soundsOf(t, mood, auto, h) {
   if (auto && !pre && !/\b(ha|hmm)\b/i.test(t)) {
     if (mood === 'sad' && r < .33) pre = 'sigh';
     else if (mood === 'scared' && r < .33) pre = 'gasp';
-    else if (mood === 'happy' && /!/.test(t) && r < .33) t = `Ha ha! ${t}`;
+    else if (mood === 'happy' && /!/.test(t) && r < .33) t = `${SAID_SOUNDS.laugh} ${t}`;
   }
   return { t, pre };
 }
@@ -1359,13 +1360,13 @@ function gameLoudness() {
   return Math.max(0, Math.min(1, (10 * Math.log10(s / b.length + 1e-12) + 40) / 22));
 }
 /** The parts of a line for say() and prepare(): strings (or { text, pitch, ... }) and pauses in seconds. */
-function partsOf(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, size = null, fx = null, respell: names = null, lively = null, fresh = false, casual = 0, after = null, mood = null, take = null, effort = null, sounds: noises = true } = {}) {
+function partsOf(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, size = null, fx = null, respell: names = null, lively = null, fresh = false, casual = 0, after = null, mood = null, take = null, effort = null, sounds: noises = false } = {}) {
   const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false, heard = null;
   for (const raw of Array.isArray(text) ? text : [text]) {
     if (typeof raw === 'number') { if (raw > 0) parts.push(Math.min(5, raw)); continue; }
     const o = raw && typeof raw === 'object' ? raw : { text: raw };
     const t0 = String(o.text ?? '').replace(/\s+/g, ' ').trim().slice(0, Math.min(300, room)), md = Object.hasOwn(MOODS, o.mood ?? mood ?? '') ? o.mood ?? mood : null;
-    const sn = soundsOf(t0, md, (o.sounds ?? noises) !== false, hashOf(`${t0}|${JSON.stringify(o.voice ?? voice)}`)), st = stressOf(sn.t), t = st.t;
+    const sn = soundsOf(t0, md, (o.sounds ?? noises) === true, hashOf(`${t0}|${JSON.stringify(o.voice ?? voice)}`)), st = stressOf(sn.t), t = st.t;
     if (!t) continue;
     const e = o.effort ?? effort ?? (heard ??= gameLoudness());
     room -= t.length; any = true;
@@ -1423,14 +1424,21 @@ function turnAt(gap) {
     }, 15);
   });
 }
+// (answers wait in line: each for the one before it to start, then for that line to end; stopTalking() clears the line)
+let turnTail = Promise.resolve(), turnsWaiting = 0, turnEpoch = 0;
 export function say(text, { onWord = null, ...o } = {}) {
-  if (o.after && talkingNow > 0 && o.turned == null) {
-    const gap = turnGap(text, o);
+  if (o.after && (talkingNow > 0 || turnsWaiting > 0) && o.turned == null) {
+    const gap = turnGap(text, o), before = turnTail, epoch = turnEpoch;
+    let started = null; turnTail = new Promise(r => { started = r; }); turnsWaiting++;
     if (OWN) prepare(text, o).catch(() => {});   // (written while the other line ends)
-    return turnAt(gap).then(() => say(text, { onWord, ...o, turned: gap }));
+    return before.then(() => epoch === turnEpoch ? turnAt(gap) : null).then(() => {
+      turnsWaiting = Math.max(0, turnsWaiting - 1);
+      const p = epoch === turnEpoch ? say(text, { onWord, ...o, turned: gap }) : Promise.resolve(false);
+      started(); return p;
+    });
   }
   const parts = partsOf(text, o) || [], any = parts.length > 0;
-  stopTalking(o.turned != null);   // (taking a turn: the line before rings out, not cut)
+  hushTalk(o.turned != null);   // (taking a turn: the line before rings out, not cut)
   speakingUntil = Infinity;   // (until its last piece is playing: playClip says when it ends)
   for (const p of parts) if (typeof p !== 'number' && !p.fresh) bankOf(p).said(p.said, p.take);
   if (!any || sound.muted || !sound.volume) return Promise.resolve(false);
@@ -1453,8 +1461,9 @@ export function say(text, { onWord = null, ...o } = {}) {
     return gen === talkGen ? done(ok) : false;
   })().catch(() => done(false));
 }
-/** Stops speaking straight away. */
-export function stopTalking(ringOut = false) {
+/** Stops speaking straight away (and drops the answers waiting their turn). */
+export function stopTalking() { turnEpoch++; turnsWaiting = 0; turnTail = Promise.resolve(); hushTalk(false); }
+function hushTalk(ringOut) {
   talkGen++; speakingUntil = 0;
   if (cancelTalk) { cancelTalk(); cancelTalk = null; }
   if (talkingNow) { talkingNow = 0; const g = mix?.buses.get('music'); if (g) setLevel(g, g.level, .3); }

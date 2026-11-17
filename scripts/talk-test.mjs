@@ -173,10 +173,10 @@ if (bytes) {
     const loud = 20 * Math.log10(rms(wide) / rms(plain));
     ok(wide.length === plain.length && spread(wide) > spread(plain) * 1.12 && Math.abs(loud) < 1 && wide.every((v, i) => v === again[i]),
       `voice-pitch: pitch spread ${spread(plain).toFixed(2)} -> ${spread(wide).toFixed(2)} semitones, ${loud.toFixed(2)} dB, the same each time`);
-    // (before most later sentences, not every one: over eight seeds, some, and each soft)
+    // (before some later sentences, more often the longer what follows: over eight seeds, some, each soft)
     const laters = [1, 2, 3, 4, 5, 6, 7, 8].map(seed => humanize(plain, R, { seed })), took = laters.filter(l => l.length > plain.length);
     const later = took[0] || laters[0], pre = later.length - plain.length, under = 20 * Math.log10(rms(later.subarray(0, Math.max(1, Math.round(pre * .8)))) / rms(plain));
-    ok(took.length >= 3 && took.length <= 7 && pre > R * .28 && pre < R * .5 && under < -25 && under > -45,
+    ok(took.length >= 1 && took.length <= 7 && pre > R * .2 && pre < R * .5 && under < -25 && under > -45,
       `voice-pitch: a breath before ${took.length} of 8 later sentences (${(pre / R).toFixed(2)} s, ${under.toFixed(0)} dB under the voice)`);
     // a person's endings: the last syllable drawn out (longer), the end falling further, air in the voice (more noise above 4 kHz)
     const fit = { breath: 0, first: true, seed: 3 }, longer = humanize(plain, R, { ...fit, lengthen: 1.4 });
@@ -191,6 +191,8 @@ if (bytes) {
     const sighed = humanize(plain, R, { ...fit, pre: 'sigh' }), gasped = humanize(plain, R, { ...fit, pre: 'gasp' }), lead = (y, k) => 20 * Math.log10(rms(y.subarray(0, Math.round((y.length - plain.length) * k))) / rms(plain));
     ok(sighed.length - plain.length > R * .7 && sighed.length - plain.length < R * 1.1 && lead(sighed, .6) < -12 && lead(sighed, .6) > -30 && gasped.length - plain.length > R * .25 && gasped.length - plain.length < R * .5 && lead(gasped, .6) < -12,
       `voice-pitch: a sigh before it (${((sighed.length - plain.length) / R).toFixed(2)} s, ${lead(sighed, .6).toFixed(0)} dB), a gasp (${((gasped.length - plain.length) / R).toFixed(2)} s, ${lead(gasped, .6).toFixed(0)} dB)`);
+    const hummed = humanize(plain, R, { ...fit, pre: 'hmm' }), hmmHz = pitches(hummed.subarray(0, Math.round(R * .4)), R), hmmMid = hmmHz.length ? hmmHz[hmmHz.length >> 1] : 0, ownHz = pitches(plain, R).sort((x, y) => x - y)[pitches(plain, R).length >> 1];
+    ok(hummed.length - plain.length > R * .65 && hummed.length - plain.length < R * 1 && hmmMid > ownHz * .8 && hmmMid < ownHz * 1.25, `voice-pitch: "hmm" before it, hummed at the voice's own pitch (${hmmMid.toFixed(0)} Hz, the voice ${ownHz.toFixed(0)} Hz)`);
     const midHz = (a, t0, t1) => { const hz = pitches(a.subarray(Math.round(t0 * R), Math.round(t1 * R)), R); return hz.length ? hz.reduce((x, y) => x + y, 0) / hz.length : 0; };
     const stressed = humanize(plain, R, { ...fit, stress: [[.5, .9]] }), up = 12 * Math.log2(midHz(stressed, .6, .8) / midHz(plain, .6, .8));
     ok(up > 1 && up < 3.5 && stressed.length > plain.length, `voice-pitch: a stressed word ${up.toFixed(1)} semitones higher, and longer`);

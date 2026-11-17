@@ -3310,9 +3310,9 @@ pace, as people in a conversation do: a `Cutscene` gives each line the one befor
 `after: { text, voice }` yourself. A `Cutscene` step takes `sayMood` (a step with `mood: 'smile'` is said happy).
 
 **Like a person, by itself.** An answer to a line still being said waits its turn, then comes in about a fifth of a
-second after it (now and then a short or heated answer a moment early). With a mood a character now and then sighs,
-gasps or gives a little laugh (`sounds: false` to never); write them yourself as `'[sigh] I suppose so.'`,
-`'[gasp] Behind you!'`, `'[hmm] Maybe.'`, `'[laugh] Got you!'`. `'You did *what*?'` or `'I said NOW.'` stresses the
+second after it (now and then a short or heated answer a moment early). Write the sounds people make as
+`'[sigh] I suppose so.'`, `'[gasp] Behind you!'`, `'[hmm] Maybe.'` (these three go before the line) and
+`'[laugh] Got you!'`; `sounds: true` lets a mood add them now and then. A line ending in "!" is said with urgency. `'You did *what*?'` or `'I said NOW.'` stresses the
 word (the built-in voice says it higher, longer and louder; the stars aren't said). A character remembers its last
 few lines, so a line it says again soon (a guard's "Halt!") comes out another of its four ways (`take: 0..3` to
 choose). Over a loud game, voices speak up as people do: a little higher, slower and louder (`effort: 0..1` to set it).

@@ -19,10 +19,10 @@ VCTK = [n for n, c in VOICES if 'speaker p' in c and REF.get(n) and REF[n]['n'] 
 SCALE = {k: max(1e-3, float(np.std([REF[n][k] for n in VCTK]))) for k in KEYS}
 # humanize()'s settings tuned, each with its range (voice-pitch.js says what each does)
 # (breathy: air through the voice, gated by its own cycle and as loud as its own top end; added as plain hiss on top it
-# was heard as noise. The room under it all is the same quiet one for every voice, TONE: low, about 50 dB down.)
+# was heard as noise. The room under it all is the same quiet one for every voice, TONE: low, about 54 dB down.)
 P = [('wide', 1, 2.4), ('drift', 0, .03), ('jitter', 0, .006), ('fall', 0, 4), ('shimmer', 0, .25), ('endJitter', 0, 4),
      ('breathy', 0, 1), ('lengthen', 1, 1.6)]
-TONE = .003
+TONE = .002
 def unpack(u): return {**{n: lo + (hi - lo) * float(np.clip(x, 0, 1)) for (n, lo, hi), x in zip(P, u)}, 'tone': TONE}
 def target(v):
     """Its own speaker's features; a speaker with few recordings is drawn toward the middle of the speakers of its kind."""

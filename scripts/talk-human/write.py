@@ -9,11 +9,11 @@ for f in sorted(glob.glob(f'{WORK}/tuned/*.json')):
     r = json.load(open(f)); p = r['params']; v = r['voice']
     own = REF.get(v); share = min(1, max(.3, (own['npause'] if own else .4) / .36))
     rows[v] = dict(wide=p['wide'], drift=p['drift'], jitter=p['jitter'], fall=p['fall'], shimmer=p['shimmer'], endJitter=p['endJitter'],
-                   breathy=p.get('breathy', 0), lengthen=p['lengthen'], tone=p.get('tone', 0), tempo=p['tempo'], pause=share)
+                   breathy=p.get('breathy', 0), lengthen=p['lengthen'], tone=.002 if p.get('tone', 0) else 0, tempo=p['tempo'], pause=share)
 KEYS = ['wide', 'drift', 'jitter', 'fall', 'shimmer', 'endJitter', 'breathy', 'lengthen', 'tone', 'tempo', 'pause']
 RND = dict(wide=2, drift=4, jitter=4, fall=2, shimmer=3, endJitter=2, breathy=3, lengthen=2, tone=4, tempo=2, pause=2)
 med = {k: round(float(np.median([r[k] for r in rows.values()])), RND[k]) if rows else None for k in KEYS}
-if not rows: med = dict(wide=1.6, drift=.014, jitter=.0022, fall=0, shimmer=0, endJitter=0, breathy=0, lengthen=1, tone=.003, tempo=1, pause=1)
+if not rows: med = dict(wide=1.6, drift=.014, jitter=.0022, fall=0, shimmer=0, endJitter=0, breathy=0, lengthen=1, tone=.002, tempo=1, pause=1)
 fmt = lambda d: '[' + ', '.join(str(round(d[k], RND[k])) for k in KEYS) + ']'
 body = ',\n'.join(f'  {v}: {fmt(r)}' for v, r in rows.items())
 js = f"""// How each built-in voice is made more like the real person it came from (voice-pitch.js humanize(), in talk-worker.js):

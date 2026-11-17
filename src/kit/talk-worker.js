@@ -112,9 +112,14 @@ const HUMAN = 'h5', LIVELY_WIDE = .3;
 const TAKES = [[1, 0, 1], [1.12, .7, .97], [.9, -.6, 1.03], [1.06, -.3, .95]];
 /**
  * Speaking up over noise (act.effort 0..1, the Lombard effect): people raise their pitch (about 2.5 semitones at full
- * effort), speak a little slower and push more into the upper voice (talk-worker passes tilt to voice-pitch.js).
+ * effort), speak a touch slower and push more into the upper voice (talk-worker passes tilt to voice-pitch.js).
  */
-const EFFORT = { st: 2.5, wide: .1, pace: -.07, tilt: 1 };
+const EFFORT = { st: 2, wide: .1, pace: -.03, tilt: 1 };
+// A sentence that ends in "!" said with urgency (a 7M model reads "Run!" much as it reads "Sit."): higher, its tune
+// wider, a touch quicker. A part that is only laughter ("Ha ha ha!", say()'s [laugh]) said as a laugh: high, wide
+// and breathy. [semitones, range x, pace x, breathy at least]
+const URGENT = [1.5, 1.15, 1.05, 0], LAUGH = [3, 1.5, 1.08, .8];
+const urgencyOf = text => /^\W*(ha[\s,!.-]*)+$/i.test(text || '') ? LAUGH : /!\W*$/.test(text || '') ? URGENT : null;
 /** Where each stressed word of a part is said: [[from, to] seconds, ...] (its words timed from the sound: voice-fx.js marksFrom). */
 function stressAt(partText, x, words, used) {
   if (!words?.length || !partText) return null;
@@ -132,11 +137,11 @@ function writer() {
   let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf(''), act = null, used = new Set();
   const flush = last => {
     if (!frames.length && !last) return;
-    const x = join(frames), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0;
-    const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e,
+    const x = join(frames), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0, [ust, uw, upace, ub] = urgencyOf(text) || [0, 1, 1, 0];
+    const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * uw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + ust + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e, breathy: Math.max(fit.breathy, ub),
       seed: seed + part, first: part === 0, end: endOf(text), pre: part === 0 ? act?.pre ?? null : null, stress: stressAt(text, x, act?.stress, used) });
     part++;
-    const pcm = stretch(said, 24000, tempo * fit.tempo * tpace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
+    const pcm = stretch(said, 24000, tempo * fit.tempo * tpace * upace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much

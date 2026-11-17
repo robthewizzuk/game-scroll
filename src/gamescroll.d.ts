@@ -317,9 +317,9 @@ export interface SoundPart {
    * ({ text, voice, rate, lively }, as said): the built-in voice drifts a little toward it in liveliness and pace, as people in a
    * conversation do (a Cutscene gives it by itself; left out, a line answers the last one said by another voice in the last 8 s).
    * mood ('angry', 'happy', 'scared', 'sad'): the built-in voice says it as its own speaker sounds in that mood (pitch, range,
-   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only. With a mood
-   * a character now and then sighs (sad), gasps (scared) or gives a little laugh (happy); sounds: false never does. In the
-   * text, [sigh] and [gasp] go before the line, [hmm] and [laugh] are said where they are, and *word* (or a word in capitals
+   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only. In the text,
+   * [sigh], [gasp] and [hmm] go before the line and [laugh] is said where it is (sounds: true lets a mood add them now and
+   * then: sad sighs, scared gasps, happy laughs), and *word* (or a word in capitals
    * in a line that isn't) is stressed: said higher, longer and louder (the built-in voice; the stars aren't said).
    * A line said again, or one much like it, comes out another way of the character's four (take: 0..3 to choose one). effort
    * (0..1): how hard they speak up, as people do over noise (higher, slower, louder); left out, it follows how loud the game
