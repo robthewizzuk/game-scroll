@@ -10,7 +10,7 @@
 //   ownVoice()            true where the built-in voice is used (the desktop app and the phone apps; window.__gsOwnVoice = true or false in tests)
 //   ownVoices()           its voices for casting, listed as a phone lists its own: [{ name, voiceURI, lang, localService }]
 //   speak({ text, voiceURI, rate, pitch, lively, fresh, lang, keep })   -> a promise of the first piece
-//                         { ok, samples: Float32Array, rate, text, last, more: promise of the next piece or null }, or null
+//                         { ok, samples: Float32Array, rate, text, last, kept (all of it written before), more: promise of the next piece or null }, or null
 //   readyNow()            a promise: true once the voice can speak (it starts loading then), false where it can't
 //   cancel()              ends the lines being written (not those written ahead: keep); hurry(ticket) one of those is wanted now
 //   ownCores()            1, 2 or 3 workers writing it (0 until ready); ownSpeed() how fast, timed at the start
@@ -165,7 +165,7 @@ export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively =
   waiting.set(id, { keep, put(m, last) {
     if (!m) { cur.put(null); return; }
     const nxt = last ? null : link();
-    cur.put({ ok: true, samples: m.pcm, rate: Math.round(RATE * pitch), text: m.text || '', last: !!last, more: nxt ? nxt.p : Promise.resolve(null) });
+    cur.put({ ok: true, samples: m.pcm, rate: Math.round(RATE * pitch), text: m.text || '', last: !!last, kept: m.speed === 99, more: nxt ? nxt.p : Promise.resolve(null) });
     if (nxt) cur = nxt;
   } });
   worker.postMessage({ type: 'say', id, text: String(text), voice, lang: String(lang || 'en-GB'), tempo: rate / pitch, lively, seed, ahead: !!keep, act: actOf(act) });

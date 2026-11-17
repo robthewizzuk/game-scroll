@@ -19,8 +19,8 @@
 //   to the page, from whichever writes the sound: { type: 'piece', id, pcm: Float32Array (24 kHz) | null, text, last, speed }
 import { unpack } from './talk-pack.js';
 import { makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from './pocket-tts.js';
-import { stretch, marksFrom } from './voice-fx.js';
-import { humanize, endOf } from './voice-pitch.js';
+import { stretch, marksFrom, dehum } from './voice-fx.js';
+import { humanize, endOf, clarify } from './voice-pitch.js';
 import { humanOf } from './voice-human.js';
 import { spoken } from './say-words.js';
 
@@ -106,13 +106,15 @@ const piece = (id, pcm, text, last, speed = 0) => {
  * its voice, its pace, a quiet room under it, and a soft breath before most sentences after the first and in some long pauses. Change HUMAN with them, so
  * lines kept from before are made again.
  */
-const HUMAN = 'h7', LIVELY_WIDE = .3;
+const HUMAN = 'h8', LIVELY_WIDE = .3;
 // Second listening notes (Rob 11-17): the model alone was heard as cleaner than after this file's processing. Measured
 // (UTMOS, the same takes with one thing left out at a time): the added air cost .13, shimmer .09 and the slowest tunes
 // (pace under .95) .09; so the air and shimmer each voice was tuned to are used at a part, and no voice is slowed past .95.
 // A last pass (11-17) found the room tone under the voice the largest cost left (.05 of the .1 to the model alone): at a
 // quarter (about 66 dB under) it costs .01 and still fills the silence between words.
 const AIR = .35, SHIMMER = .5, SLOWEST = .95, ROOM = .25;
+// the formants made a little sharper (voice-pitch.js clarify): words heard right through noise 6.4% wrong -> 4.1%
+const CLEAR = .3;
 // Another way of saying the same words (act.take 1 to 3, sound.js picks one a character hasn't used lately): a new take
 // from the model, and its tune moved a little each its own way: [pitch range x, semitones, pace x]
 const TAKES = [[1, 0, 1], [1.12, .7, .97], [.92, .35, 1.03], [1.06, .2, .95]];   // (never lower: see voice-pitch.js lo)
@@ -143,11 +145,11 @@ function writer() {
   let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf(''), act = null, used = new Set();
   const flush = last => {
     if (!frames.length && !last) return;
-    const x = join(frames), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0, [ust, uw, upace, ub] = urgencyOf(text) || [0, 1, 1, 0];
+    const x = dehum(join(frames), 24000), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0, [ust, uw, upace, ub] = urgencyOf(text) || [0, 1, 1, 0];
     const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * uw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + ust + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e, breathy: Math.max(fit.breathy * AIR, ub), shimmer: (fit.shimmer || 0) * SHIMMER, tone: (fit.tone || 0) * ROOM,
       seed: seed + part, first: part === 0, end: endOf(text), clean: 1, deess: 1, pre: part === 0 ? act?.pre ?? null : null, stress: stressAt(text, x, act?.stress, used) });
     part++;
-    const pcm = stretch(said, 24000, tempo * Math.max(SLOWEST, fit.tempo) * tpace * upace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
+    const pcm = stretch(clarify(said, 24000, CLEAR), 24000, tempo * Math.max(SLOWEST, fit.tempo) * tpace * upace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much

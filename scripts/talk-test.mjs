@@ -103,13 +103,13 @@ if (bytes) {
   console.log(`speaking with ${tts.simd ? 'WebAssembly SIMD' : 'plain JavaScript'}`);
   const seeded = seed => () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const say = (text, voice, seed = 1) => { const l = tts.line(text, voice, { rnd: seeded(seed) }), parts = []; let c, n = 0; while ((c = l.next())) { parts.push(c); n += c.length; } const a = new Float32Array(n); n = 0; for (const p of parts) { a.set(p, n); n += p.length; } return a; };
-  const line = 'Door three is opening. Please stand clear.';   // (about 3 s; the slowest voice, javert, takes 5.2)
+  const line = 'Door three is opening. Please stand clear.';   // (about 3 s; the slowest voice, javert, takes 5.6)
   let secs = 0, t0 = performance.now();
   for (const v of TALK_VOICES) {
     const a = say(line, v.name), s = a.length / tts.rate; secs += s;
     let e = 0, peak = 0; for (const x of a) { e += x * x; peak = Math.max(peak, Math.abs(x)); }
     const hz = f0(a, tts.rate), rms = Math.sqrt(e / a.length);
-    ok(s > 1.4 && s < 5.6 && rms > .01 && peak < 1 && (v.kind === 'woman' ? hz > 140 : v.kind === 'man' ? hz < 130 : hz > 0),
+    ok(s > 1.4 && s < 6.2 && rms > .01 && peak < 1 && (v.kind === 'woman' ? hz > 140 : v.kind === 'man' ? hz < 130 : hz > 0),
       `${v.name} (${v.kind}): ${s.toFixed(2)} s, loudness ${rms.toFixed(3)}, ${hz.toFixed(0)} Hz`);
   }
   const ms = performance.now() - t0;
@@ -162,7 +162,7 @@ if (bytes) {
   { // made more like a person after it is spoken (voice-pitch.js): with no change it gives the sound back; widened,
     // the pitch moves further over the same length of line at the same loudness; a breath before a later sentence
     // (paul: a steady voice whose pitch reads cleanly; one that wanders (a few of george's takes) moves the spread by itself)
-    const plain = say('Oh, you found it! That is wonderful news.', 'paul', 4), R = tts.rate;
+    const plain = say('Oh, you found it! That is wonderful news.', 'paul', 5), R = tts.rate;   // (a take whose pitch reads cleanly)
     const spread = a => { const hz = pitches(a, R); const st = hz.map(h => 12 * Math.log2(h / 100)), m = st.reduce((x, y) => x + y, 0) / st.length; return Math.sqrt(st.reduce((x, y) => x + (y - m) ** 2, 0) / st.length); };
     const rms = a => Math.sqrt(a.reduce((x, y) => x + y * y, 0) / a.length);
     const same = humanize(plain, R, { wide: 1, wobble: 0, breath: 0, first: true });

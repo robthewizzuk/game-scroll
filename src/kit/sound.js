@@ -18,7 +18,7 @@ import { register, own } from './cleanup.js';
 import { SETS, VOICES, KITS, voiceFor, makeVoice, makeKit } from './instruments.js';
 import { cast as castVoice, wantOf, describe as describeVoice } from './voices.js';
 import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks, marksFrom } from './voice-fx.js';
-import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, hurry as ownHurry, readyNow as ownReady } from './talk.js';
+import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, hurry as ownHurry, readyNow as ownReady, ownSpeed } from './talk.js';
 import { respell, spoken, casual as chatty } from './say-words.js';
 import { deliveries } from './voice-memory.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
@@ -1230,6 +1230,10 @@ async function ownLine(p, gen, stopped, a, o) {
     };
     const head = await one(r, true);
     if (stale()) return null;
+    // where the rest of the line will take longer to write than this first piece takes to say (a slow phone, a busy one,
+    // a short first sentence before a long one), it starts that much later, so it never stops mid-line to wait
+    const sp = ownSpeed();
+    if (!r.last && !r.kept && sp > 0) head.wait = clampN(head.seconds * Math.max(0, L - r.text.length) / Math.max(1, r.text.length) * 1.3 / sp - head.seconds - .3, 0, 2.5, 0);
     // the pieces after it, shaped as they come (each clip's more: a promise of the next); the whole line is kept once it is all in
     const link = () => { let put = null; const pr = new Promise(r2 => { put = r2; }); return { pr, put }; };
     let l = link(), cur = head; head.more = l.pr;
@@ -1242,7 +1246,7 @@ async function ownLine(p, gen, stopped, a, o) {
           const c = await one(nx, false), l2 = link(); c.more = l2.pr; l.put(c); l = l2; cur = c;
         }
       } catch { /* the line ends where it got to */ }
-      l.put(null);
+      l.put(null); head.wait = 0;   // (all in: said again, it starts at once)
       if (cur.last && !p.fresh) { head.chainTotal = total; keepClip(o.key, head); }
       return head;
     })();
@@ -1265,7 +1269,7 @@ function playClip(clip, p, gen, from, onWord, stopped) {
   const a = audio(); if (!a) return Promise.resolve(false);
   return new Promise(res => {
     const { ctx } = a, words = typeof onWord === 'function', marks = [];
-    let i = 0, done = false, tick = null, guard = null, end = Infinity, at = ctx.currentTime + .02;
+    let i = 0, done = false, tick = null, guard = null, end = Infinity, at = ctx.currentTime + .02 + (clip.wait || 0);
     const finish = ok => { if (done) return; done = true; clearInterval(tick); clearTimeout(guard); res(ok); };
     const hold = secs => { clearTimeout(guard); guard = setTimeout(() => finish(true), (secs + 1.5) * 1000); };   // (sound that isn't running, say before the first touch, must not hold the line up)
     const play = c => {
