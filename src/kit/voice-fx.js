@@ -333,9 +333,9 @@ export function dehum(x, rate, { lines = 8, bw = 12 } = {}) {
 }
 
 /**
- * The same speech faster or slower at the same pitch (tempo 1.25: a quarter faster), as people change their pace: the
- * vowels and other steady voiced sound take the change, while onsets, stops and hiss keep their own length (slices of
- * them laid twice or skipped are heard as a stutter: a "t" said twice). Overlapping slices of 30 ms, each taken from
+ * The same speech faster or slower at the same pitch (tempo 1.25: a quarter faster), as people change their pace:
+ * slowed, the vowels and other steady voiced sound take the change, while onsets, stops and hiss keep their own length
+ * (slices of them laid twice are heard as a stutter: a "t" said twice). Overlapping slices of 30 ms, each taken from
  * where it lines up best with the one before (WSOLA, matched by normalised correlation so a louder slice is not
  * preferred over a better fitting one). For engines with no speed of their own (the desktop app's built-in voice).
  * tempo .5 to 2. Measured on 56 takes of 7 voices slowed to .95 (11-17): a speech-quality score 4.333 -> 4.347 (4.362
@@ -357,8 +357,9 @@ export function stretch(x, rate, tempo) {
   for (let f = 0; f < F; f++) steady[f] = en[f] > peak - 30 && zc[f] < 2500 ? 1 : 0;
   for (let f = 1; f < F; f++) if (Math.abs(en[f] - en[f - 1]) > 4) for (let g = Math.max(0, f - 2); g <= Math.min(F - 1, f + 2); g++) steady[g] = 2;
   let nS = 0; for (let f = 0; f < F; f++) if (steady[f] === 1) nS++;
-  // the steady parts' speed, so the whole comes out 1 / tempo as long (everything at tempo where too little is steady)
-  const some = nS > F * .15, v = some ? Math.max(1 / 1.8, Math.min(1.8, nS / Math.max(1, F / tempo - (F - nS)))) : tempo;
+  // slowed, the steady parts' speed, so the whole comes out 1 / tempo as long; sped up, or where too little is steady,
+  // everything at tempo (people hurry the consonants too: sped up by the vowels alone measured 4.286 against 4.312)
+  const some = tempo < 1 && nS > F * .15, v = some ? Math.max(1 / 1.8, Math.min(1.8, nS / Math.max(1, F / tempo - (F - nS)))) : tempo;
   const sm = new Float32Array(F);   // (eased over 70 ms, so the speed never jumps)
   for (let f = 0; f < F; f++) { let s = 0, n = 0; for (let g = f - 3; g <= f + 3; g++) if (g >= 0 && g < F) { s += some && steady[g] !== 1 ? 1 : 1 / v; n++; } sm[f] = n / s; }
   // where each 10 ms of it lands in the result, scaled so the whole comes out exactly 1 / tempo as long
