@@ -899,6 +899,7 @@ function setLevel(g, v, fade) { const t = g.context.currentTime; g.gain.cancelSc
 // The place's own echo, set from the level by Ears (mixer.place): effects and voices only, never the music.
 // Two reverbs: the idle one is given the new tail and the two cross over, so walking from a cupboard
 // into a hall never clicks; and one delay for the slap back off far walls outdoors.
+const VOICE_ECHO = .45;
 function placeGraph() {
   const m = mixGraph(); if (!m) return null;
   if (m.place) return m.place;
@@ -906,7 +907,9 @@ function placeGraph() {
   const slot = () => { const cv = ctx.createConvolver(), g = ctx.createGain(); cv.normalize = false; g.gain.value = 0; send.connect(cv); cv.connect(g); g.connect(out); return { cv, g, tail: 0 }; };
   dlp.type = 'lowpass'; dlp.frequency.value = 2600; dg.gain.value = 0; send.connect(dl); dl.connect(dlp); dlp.connect(dg); dg.connect(out);
   out.connect(m.muffle);   // (so the echo is dulled with everything else: under water, inside a box)
-  for (const b of ['sfx', 'voice']) channelNode(b).connect(send);
+  // voices reach the echo at under half the effects' level, as games mix dialogue drier than the world, so the words stay
+  // clear in a hall or a cave (a listener heard the full send smear them and colour the voice)
+  const vs = ctx.createGain(); vs.gain.value = VOICE_ECHO; channelNode('voice').connect(vs); vs.connect(send); channelNode('sfx').connect(send);
   return m.place = { ctx, send, out, dl, dg, slots: [slot(), slot()], on: 0, busy: 0, irs: new Map() };
 }
 // an echo tail made in code: it dies away evenly (60 dB down at `secs`), the top end first, after a few
@@ -1126,12 +1129,16 @@ async function clipFor(p, gen, stopped) {
  * shaped as it comes: the clip is the first piece, and clip.more a promise of the next (null after the last), so it
  * starts playing while the rest is written. gen -1: written ahead (prepare()), for a say() to come.
  */
+const OWN_SIZE = .5;
 function ownClip(p, gen, stopped) {
   const a = audio(); if (!a) return Promise.resolve(null);
   const list = ownVoices(), pick = castOwn(wantOf(p.voice || 'any', p.lang));
   if (!pick) return Promise.resolve(null);
   // (a mood: the voice as heard in that mood, 'gs-voice:anna~sad')
-  const uri = pick.voiceURI || list[pick.at].voiceURI, o = { uri: p.mood ? `${uri}~${p.mood}` : uri, pitch: clampN(p.pitch * pick.pitch, .5, 2, 1), rate: clampN(p.rate * p.size, .3, 3, 1), lively: livelyOf(p, uri) };
+  // (size moves the built-in voice half as far: played slower or faster, its decoder's grain is stretched with it, and a
+  // listener heard a big size's buzz turn into a warble; a bigger character is better cast a deeper voice)
+  const size = Math.pow(p.size, OWN_SIZE);
+  const uri = pick.voiceURI || list[pick.at].voiceURI, o = { uri: p.mood ? `${uri}~${p.mood}` : uri, pitch: clampN(p.pitch * pick.pitch, .5, 2, 1), rate: clampN(p.rate * size, .3, 3, 1), lively: livelyOf(p, uri), size };
   // (which take, how hard it pushes over the noise, the words stressed and a sigh or gasp before it: talk.js speak() act)
   o.act = p.take || p.effort || p.stress.length || p.pre ? { take: p.take, effort: p.effort, stress: p.stress, pre: p.pre } : null;
   const keyOf = () => JSON.stringify([p.said, o.uri, p.rate, o.pitch, p.size, p.fx, p.joined, p.join, o.lively, o.rate, [].concat(p.lang)[0], o.act]);
@@ -1211,13 +1218,13 @@ async function ownLine(p, gen, stopped, a, o) {
     };
     const one = async (r2, first) => {
       const last = !!r2.last;
-      const made = await shape(r2.samples, r2.rate, { size: p.size, fx: p.fx, outRate: a.ctx.sampleRate, open: first && !p.joined, close: last && p.join == null,
+      const made = await shape(r2.samples, r2.rate, { size: o.size, fx: p.fx, outRate: a.ctx.sampleRate, open: first && !p.joined, close: last && p.join == null,
         hold: last && p.join != null ? p.join + .06 : 0, trimStart: first, trimEnd: last });
       // each piece as loud as its own words, but kept near the first so the line doesn't jump between sentences
       if (first) gain0 = made.gain; else made.gain = Math.max(gain0 * .75, Math.min(gain0 * 1.33, made.gain));
       // its words when they are heard (sound.js marksFrom): in the shaped time (less what was cut off the front, slowed by size)
       const { w, at } = words(r2), marks = marksFrom(w, r2.samples, r2.rate);
-      for (let i = 0; i < marks.length; i += 2) { marks[i] = p.at(at + marks[i]); marks[i + 1] = made.lead + Math.max(0, marks[i + 1] - made.cut) * p.size; }
+      for (let i = 0; i < marks.length; i += 2) { marks[i] = p.at(at + marks[i]); marks[i + 1] = made.lead + Math.max(0, marks[i + 1] - made.cut) * o.size; }
       total += made.total;
       return { buffer: made.buffer, gain: made.gain, seconds: made.seconds, total: made.total, marks, last, more: null };
     };
