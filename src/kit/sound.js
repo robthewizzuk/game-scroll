@@ -20,6 +20,7 @@ import { cast as castVoice, wantOf, describe as describeVoice } from './voices.j
 import { fxOf, pcm16, shape, canShape, wordTimes, goodMarks, marksFrom } from './voice-fx.js';
 import { ownVoice, ownVoices, castOwn, speak as ownSpeak, cancel as ownCancel, hurry as ownHurry, readyNow as ownReady } from './talk.js';
 import { respell, spoken, casual as chatty } from './say-words.js';
+import { deliveries } from './voice-memory.js';
 import { caster, blocked, muffleOf, Room } from './acoustics.js';
 import { linksFor } from './links.js';
 
@@ -853,14 +854,16 @@ function mixGraph() {
   input.connect(muffle); muffle.connect(dry); dry.connect(a.out);
   verbGain.gain.value = 0; muffle.connect(verb); verb.connect(verbGain); verbGain.connect(a.out);
   echoGain.gain.value = 0; fb.gain.value = 0; muffle.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(echoGain); echoGain.connect(a.out);
-  mix = { ctx, input, muffle, verb, verbGain, delay, fb, echoGain, buses: new Map(), roomKey: '' };
+  // (how loud the game is, everything but the voices: a voice speaks up over it, say()'s effort)
+  const meter = ctx.createAnalyser(); meter.fftSize = 32768;
+  mix = { ctx, input, muffle, verb, verbGain, delay, fb, echoGain, meter, buses: new Map(), roomKey: '' };
   for (const b of BUSES) channelNode(b);
   return mix;
 }
 function channelNode(name) {
   const m = mixGraph(); if (!m) return null;
   let g = m.buses.get(name);
-  if (!g) { g = m.ctx.createGain(); g.connect(m.input); m.buses.set(name, g); g.level = 1; }
+  if (!g) { g = m.ctx.createGain(); g.connect(m.input); if (name !== 'voice') g.connect(m.meter); m.buses.set(name, g); g.level = 1; }
   return g;
 }
 /** The input of a channel (kit use: where tone(), noise() and zzfx() play into). */
@@ -1105,7 +1108,9 @@ function ownClip(p, gen, stopped) {
   if (!pick) return Promise.resolve(null);
   // (a mood: the voice as heard in that mood, 'gs-voice:anna~sad')
   const uri = pick.voiceURI || list[pick.at].voiceURI, o = { uri: p.mood ? `${uri}~${p.mood}` : uri, pitch: clampN(p.pitch * pick.pitch, .5, 2, 1), rate: clampN(p.rate * p.size, .3, 3, 1), lively: livelyOf(p, uri) };
-  const keyOf = () => JSON.stringify([p.said, o.uri, p.rate, o.pitch, p.size, p.fx, p.joined, p.join, o.lively, o.rate, [].concat(p.lang)[0]]);
+  // (which take, how hard it pushes over the noise, the words stressed and a sigh or gasp before it: talk.js speak() act)
+  o.act = p.take || p.effort || p.stress.length || p.pre ? { take: p.take, effort: p.effort, stress: p.stress, pre: p.pre } : null;
+  const keyOf = () => JSON.stringify([p.said, o.uri, p.rate, o.pitch, p.size, p.fx, p.joined, p.join, o.lively, o.rate, [].concat(p.lang)[0], o.act]);
   const found = (key = o.key) => {
     if (p.fresh || !key) return null;
     const have = clips.get(key);
@@ -1164,7 +1169,7 @@ async function ownLine(p, gen, stopped, a, o) {
     if (up !== true) return null;   // still loading: this line in the device's voice
     const lang = [].concat(p.lang)[0];
     // the first piece is the first sentence: it has this long to come
-    const r = await Promise.race([ownSpeak({ text: p.said, voiceURI: o.uri, rate: o.rate, pitch: o.pitch, lively: o.lively, fresh: p.fresh, lang, keep: ahead, ticket: o.ticket }), stopped, late(3000 + Math.min(p.text.length, 120) * 40)]);
+    const r = await Promise.race([ownSpeak({ text: p.said, voiceURI: o.uri, rate: o.rate, pitch: o.pitch, lively: o.lively, fresh: p.fresh, lang, keep: ahead, ticket: o.ticket, act: o.act }), stopped, late(3000 + Math.min(p.text.length, 120) * 40)]);
     if (stale()) return null;
     if (r === 'late') ownCancel();
     if (!r || r === 'late' || !r.ok) { shapeFailed(o.uri); return null; }
@@ -1235,15 +1240,16 @@ function playClip(clip, p, gen, from, onWord, stopped) {
     const play = c => {
       if (done || gen !== talkGen) return;
       const src = ctx.createBufferSource(), g = ctx.createGain(), mine = { src, g }, t0 = Math.max(at, ctx.currentTime + .01);
-      src.buffer = c.buffer; g.gain.value = c.gain * p.vol; src.connect(g); g.connect(busIn('voice'));
+      src.buffer = c.buffer; g.gain.value = c.gain * p.vol * (1 + .4 * (p.effort || 0)); src.connect(g); g.connect(busIn('voice'));
       src.onended = () => { live.delete(mine); try { g.disconnect(); } catch { /* gone */ } };
       live.add(mine); src.start(t0);
       for (let k = 0; k < c.marks.length; k += 2) marks.push(c.marks[k], t0 + c.marks[k + 1]);
       at = t0 + c.seconds;
       hold(at - ctx.currentTime + c.total - c.seconds);
+      speakingUntil = c.more ? Infinity : at;
       if (!c.more) { end = at; return; }
       end = Infinity;
-      c.more.then(nx => { if (nx) play(nx); else end = at; }, () => { end = at; });
+      c.more.then(nx => { if (nx) play(nx); else { end = at; speakingUntil = at; } }, () => { end = at; speakingUntil = at; });
     };
     shapedOk = true;
     play(clip);
@@ -1301,23 +1307,78 @@ async function sayPart(p, gen, from, onWord, stopped) {
 // a mood for the device's own voices, where a built-in voice isn't speaking: pitch, pace and loudness moved part of the
 // way the built-in voice's acted moods move (the device can't change how the voice itself sounds)
 const MOODS = { angry: [1.1, 1.1, 1], happy: [1.1, 1.1, 1], scared: [1.1, 1.07, .95], sad: [.98, .9, .85] };
-const moodOf = p => MOODS[p.mood] || [1, 1, 1];
+// and for them, another take of a line (voice-memory.js) is a little higher or lower and quicker or slower; speaking
+// up over noise, a little higher, slower and louder: [pitch, rate, volume]
+const TAKE_DEV = [[1, 1], [1.04, .97], [.96, 1.03], [1.02, .95]];
+const moodOf = p => { const m = MOODS[p.mood] || [1, 1, 1], t = TAKE_DEV[p.take || 0], e = p.effort || 0; return [m[0] * t[0] * (1 + .06 * e), m[1] * t[1] * (1 - .05 * e), m[2] * (1 + .3 * e)]; };
 const hashOf = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193); return h >>> 0; };
+// Sounds a person makes: [sigh] and [gasp] go before the line (the built-in voice makes them from its own voice's sound,
+// voice-pitch.js), [hmm] and [laugh] are said where they are; and with a mood, now and then by itself (sad: a sigh
+// before about a third of lines, scared: a gasp, happy: a little laugh before a third of its exclaimed lines).
+const SAID_SOUNDS = { hmm: 'Hmm.', laugh: 'Ha ha!' };
+function soundsOf(t, mood, auto, h) {
+  let pre = null;
+  t = t.replace(/\[(sigh|gasp|hmm|laugh)\]\s*/gi, (m, w) => { w = w.toLowerCase(); if (SAID_SOUNDS[w]) return SAID_SOUNDS[w] + ' '; pre = w; return ''; }).replace(/\s+/g, ' ').trim();
+  const r = (h >>> 8) % 1000 / 1000;
+  if (auto && !pre && !/\b(ha|hmm)\b/i.test(t)) {
+    if (mood === 'sad' && r < .33) pre = 'sigh';
+    else if (mood === 'scared' && r < .33) pre = 'gasp';
+    else if (mood === 'happy' && /!/.test(t) && r < .33) t = `Ha ha! ${t}`;
+  }
+  return { t, pre };
+}
+// Words to stress: *word* (the stars are taken out), and a word in capitals in a line that isn't all capitals ("I said
+// NOW"). The built-in voice says them higher, longer and louder (voice-pitch.js); the device's voices can't.
+const SHORT_CAPS = new Set(['no', 'go', 'now', 'you', 'me', 'we', 'he', 'she', 'it', 'is', 'not', 'yes', 'run', 'him', 'her', 'all', 'out', 'up', 'mine', 'my', 'do', 'did', 'was', 'are', 'off', 'get', 'stop', 'here', 'this', 'that', 'never', 'ever', 'one']);
+function stressOf(t) {
+  const words = [];
+  t = t.replace(/\*([^*\s][^*]*?)\*/g, (m, w) => { for (const x of w.match(/[\p{L}\p{N}']+/gu) || []) words.push(x.toLowerCase()); return w; }).replace(/\*/g, '');
+  const letters = t.replace(/[^A-Za-z]/g, ''), caps = letters.replace(/[^A-Z]/g, '').length;
+  if (letters.length && caps / letters.length < .5) {
+    for (const w of t.match(/\b[A-Z][A-Z']+\b/g) || []) {
+      const l = w.toLowerCase();
+      if (SHORT_CAPS.has(l) || (w.length >= 4 && /[AEIOU][^AEIOU']|[^AEIOU'][AEIOU]/.test(w) && !/^(NASA|NATO|ASAP|UNESCO|UNICEF)$/.test(w))) words.push(l);
+    }
+  }
+  return { t, words: [...new Set(words)].slice(0, 8) };
+}
+// What each character said lately and how (voice-memory.js), so the same line again comes out another way
+const banks = new Map();
+const bankOf = p => {
+  const k = JSON.stringify([p.voice ?? null, [].concat(p.lang)[0]]);
+  let b = banks.get(k); if (b) { banks.delete(k); banks.set(k, b); return b; }
+  b = deliveries(); banks.set(k, b); if (banks.size > 64) banks.delete(banks.keys().next().value);
+  return b;
+};
+// How loud the game is, everything but the voices (the mixer's meter): quiet under -40 dB, a voice at full effort over -18
+const meterBuf = { b: null };
+function gameLoudness() {
+  const m = mix?.meter; if (!m) return 0;
+  const b = meterBuf.b ||= new Float32Array(m.fftSize); m.getFloatTimeDomainData(b);
+  let s = 0; for (let i = 0; i < b.length; i++) s += b[i] * b[i];
+  return Math.max(0, Math.min(1, (10 * Math.log10(s / b.length + 1e-12) + 40) / 22));
+}
 /** The parts of a line for say() and prepare(): strings (or { text, pitch, ... }) and pauses in seconds. */
-function partsOf(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, size = null, fx = null, respell: names = null, lively = null, fresh = false, casual = 0, after = null, mood = null } = {}) {
-  const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false;
+function partsOf(text, { pitch = 1, rate = 1, volume = 1, lang = 'en-GB', voice = null, size = null, fx = null, respell: names = null, lively = null, fresh = false, casual = 0, after = null, mood = null, take = null, effort = null, sounds: noises = true } = {}) {
+  const parts = []; let room = Array.isArray(text) ? 600 : 300, any = false, heard = null;
   for (const raw of Array.isArray(text) ? text : [text]) {
     if (typeof raw === 'number') { if (raw > 0) parts.push(Math.min(5, raw)); continue; }
     const o = raw && typeof raw === 'object' ? raw : { text: raw };
-    const t = String(o.text ?? '').replace(/\s+/g, ' ').trim().slice(0, Math.min(300, room));
+    const t0 = String(o.text ?? '').replace(/\s+/g, ' ').trim().slice(0, Math.min(300, room)), md = Object.hasOwn(MOODS, o.mood ?? mood ?? '') ? o.mood ?? mood : null;
+    const sn = soundsOf(t0, md, (o.sounds ?? noises) !== false, hashOf(`${t0}|${JSON.stringify(o.voice ?? voice)}`)), st = stressOf(sn.t), t = st.t;
     if (!t) continue;
+    const e = o.effort ?? effort ?? (heard ??= gameLoudness());
     room -= t.length; any = true;
     const vol = clampN(o.volume ?? volume, 0, 1, 1), sz = o.size ?? size, f = o.fx ?? fx, lv = o.lively ?? lively;
     // casual: a person chatting, not reading (now and then a "well," an "um," a word said twice), the same each time
     const cs = chatty(t, clampN(o.casual ?? casual, 0, 1, 0), hashOf(`${t}|${JSON.stringify(o.voice ?? voice)}`));
     const rs0 = respell(cs.text, o.respell || names ? { ...names, ...o.respell } : null), rs = { text: rs0.text, at: i => cs.at(rs0.at(i)) };
-    parts.push({ text: t, said: rs.text, at: rs.at, lively: lv == null ? null : clampN(lv, 0, 1, 0), fresh: !!(o.fresh ?? fresh), after: o.after ?? after, mood: Object.hasOwn(MOODS, o.mood ?? mood ?? '') ? o.mood ?? mood : null, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
-      size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: OWN || sz != null || (f != null && f !== false) });
+    const part = { text: t, said: rs.text, at: rs.at, lively: lv == null ? null : clampN(lv, 0, 1, 0), fresh: !!(o.fresh ?? fresh), after: o.after ?? after, mood: md, pitch: clampN(o.pitch ?? pitch, .5, 2, 1), rate: clampN(o.rate ?? rate, .5, 2, 1), volume: vol * sound.volume, vol, voice: o.voice ?? voice, lang: o.lang ?? lang,
+      size: sz == null ? 1 : clampN(sz, .6, 1.6, 1), fx: fxOf(f), shape: OWN || sz != null || (f != null && f !== false),
+      effort: Math.round(clampN(e, 0, 1, 0) * 2) / 2, stress: st.words, pre: sn.pre };
+    // (which take: o.take where the game says, else the way this character hasn't said it lately)
+    const tk = o.take ?? take; part.take = tk != null ? Math.max(0, Math.min(3, tk | 0)) : part.fresh ? 0 : bankOf(part).pick(part.said);
+    parts.push(part);
   }
   // a line said in parts through one radio stays keyed up between them: its static comes before the first part and after the last only
   for (let i = 0, last = null, gap = 0; i < parts.length; i++) {
@@ -1341,9 +1402,37 @@ export function prepare(text, o = {}) {
   return Promise.all(parts.filter(p => typeof p !== 'number').map(p => ownClip(p, -1, never).then(c => c ? c.all || c : null).catch(() => null)))
     .then(cs => cs.every(Boolean));
 }
+// Taking turns: an answer (after) to a line still being said waits for it to end, then comes in about a fifth of a
+// second later, as people do (sooner after a question, later when sad), and now and then (a short or heated answer)
+// a moment before it ends. How long, from the words: the same line answers the same way.
+let speakingUntil = 0;
+function turnGap(text, o) {
+  const t = [].concat(text).filter(x => typeof x !== 'number').map(x => x?.text ?? x).join(' '), h = hashOf(t), r = (h % 1000) / 1000, r2 = (h >>> 10) % 1000 / 1000;
+  const short = (t.match(/[\p{L}']+/gu) || []).length <= 3, asked = /\?\W*$/.test(String(o.after?.text ?? o.after ?? ''));
+  if ((short || o.mood === 'angry' || o.mood === 'scared') && r2 < .35) return -.08 - .1 * r;
+  return Math.max(.06, .2 + .12 * (r - .5) - (asked ? .06 : 0) + (o.mood === 'sad' ? .25 : 0));
+}
+function turnAt(gap) {
+  return new Promise(res => {
+    const t0 = performance.now(); let quietAt = null;
+    const tick = setInterval(() => {
+      const ctx = mix?.ctx, now = ctx ? ctx.currentTime : performance.now() / 1000;
+      if (!talkingNow) quietAt ??= now;
+      const go = quietAt != null ? now >= quietAt + Math.max(0, gap) - .02 : speakingUntil !== Infinity && now >= speakingUntil + gap;
+      if (go || performance.now() - t0 > 8000) { clearInterval(tick); res(); }
+    }, 15);
+  });
+}
 export function say(text, { onWord = null, ...o } = {}) {
+  if (o.after && talkingNow > 0 && o.turned == null) {
+    const gap = turnGap(text, o);
+    if (OWN) prepare(text, o).catch(() => {});   // (written while the other line ends)
+    return turnAt(gap).then(() => say(text, { onWord, ...o, turned: gap }));
+  }
   const parts = partsOf(text, o) || [], any = parts.length > 0;
-  stopTalking();
+  stopTalking(o.turned != null);   // (taking a turn: the line before rings out, not cut)
+  speakingUntil = Infinity;   // (until its last piece is playing: playClip says when it ends)
+  for (const p of parts) if (typeof p !== 'number' && !p.fresh) bankOf(p).said(p.said, p.take);
   if (!any || sound.muted || !sound.volume) return Promise.resolve(false);
   const gen = ++talkGen;
   talkingNow++;
@@ -1365,12 +1454,11 @@ export function say(text, { onWord = null, ...o } = {}) {
   })().catch(() => done(false));
 }
 /** Stops speaking straight away. */
-export function stopTalking() {
-  talkGen++;
+export function stopTalking(ringOut = false) {
+  talkGen++; speakingUntil = 0;
   if (cancelTalk) { cancelTalk(); cancelTalk = null; }
   if (talkingNow) { talkingNow = 0; const g = mix?.buses.get('music'); if (g) setLevel(g, g.level, .3); }
-  for (const v of live) hush(v);
-  live.clear();
+  if (ringOut !== true) { for (const v of live) hush(v); live.clear(); }
   try { if (rendering && RENDER) Promise.resolve(RENDER.cancel()).catch(() => {}); if (OWN) ownCancel(); } catch { /* none */ }
   try { if (TTS) TTS.stop(); else globalThis.speechSynthesis?.cancel(); } catch { /* none */ }
 }

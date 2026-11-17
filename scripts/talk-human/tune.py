@@ -18,11 +18,12 @@ W = dict(sd=2, rng=1, micro=1, fall=1.5, rate=1.5, lengthen=.7, jit=1, shim=1, j
 VCTK = [n for n, c in VOICES if 'speaker p' in c and REF.get(n) and REF[n]['n'] > 20]
 SCALE = {k: max(1e-3, float(np.std([REF[n][k] for n in VCTK]))) for k in KEYS}
 # humanize()'s settings tuned, each with its range (voice-pitch.js says what each does)
-# (not breathy or tone: added noise, they brought the noise in the voice nearer a real speaker's, but were heard as hiss
-# and cost the most quality: 4.27 to 4.13 over eight voices)
+# (breathy: air through the voice, gated by its own cycle and as loud as its own top end; added as plain hiss on top it
+# was heard as noise. The room under it all is the same quiet one for every voice, TONE: low, about 50 dB down.)
 P = [('wide', 1, 2.4), ('drift', 0, .03), ('jitter', 0, .006), ('fall', 0, 4), ('shimmer', 0, .25), ('endJitter', 0, 4),
-     ('creak', 0, 1), ('lengthen', 1, 1.6)]
-def unpack(u): return {n: lo + (hi - lo) * float(np.clip(x, 0, 1)) for (n, lo, hi), x in zip(P, u)}
+     ('breathy', 0, 1), ('lengthen', 1, 1.6)]
+TONE = .003
+def unpack(u): return {**{n: lo + (hi - lo) * float(np.clip(x, 0, 1)) for (n, lo, hi), x in zip(P, u)}, 'tone': TONE}
 def target(v):
     """Its own speaker's features; a speaker with few recordings is drawn toward the middle of the speakers of its kind."""
     own = REF.get(v); n = own['n'] if own else 0
@@ -46,7 +47,7 @@ def main(v, N=8):
     def cost(u):
         tries[0] += 1; r, m = run(unpack(u), TEMPO)
         return feat(r) + 800 * max(0, floor - m) ** 2, r, m
-    x = np.array([(1.3 - 1) / 1.4, .014 / .03, .0022 / .006, .25, .2, .2, .2, .2]); best = cost(x)
+    x = np.array([(1.3 - 1) / 1.4, .014 / .03, .0022 / .006, .25, .2, .2, .25, .2]); best = cost(x)
     z = np.zeros(len(P)); c = cost(z)   # (or from nothing added, where that is nearer)
     if c[0] < best[0]: best, x = c, z
     for d in (.25, .12, .06):

@@ -317,15 +317,22 @@ export interface SoundPart {
    * ({ text, voice, rate, lively }, as said): the built-in voice drifts a little toward it in liveliness and pace, as people in a
    * conversation do (a Cutscene gives it by itself; left out, a line answers the last one said by another voice in the last 8 s).
    * mood ('angry', 'happy', 'scared', 'sad'): the built-in voice says it as its own speaker sounds in that mood (pitch, range,
-   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only.
+   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only. With a mood
+   * a character now and then sighs (sad), gasps (scared) or gives a little laugh (happy); sounds: false never does. In the
+   * text, [sigh] and [gasp] go before the line, [hmm] and [laugh] are said where they are, and *word* (or a word in capitals
+   * in a line that isn't) is stressed: said higher, longer and louder (the built-in voice; the stars aren't said).
+   * A line said again, or one much like it, comes out another way of the character's four (take: 0..3 to choose one). effort
+   * (0..1): how hard they speak up, as people do over noise (higher, slower, louder); left out, it follows how loud the game
+   * is. An answer (after) to a line still being said waits for it, then comes in as people take turns (about a fifth of a
+   * second later; now and then a short or heated answer a moment before it ends).
    */
-  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null }): Promise<boolean>;
+  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean }): Promise<boolean>;
   /**
    * Writes a line to sound ahead of time with the built-in voice, so a say() with the same words and options starts at once (a
    * cutscene's next lines while this one plays; a Cutscene does its actors' lines itself). Resolves true once written, false
    * where there is no built-in voice (then say() works as usual). Never stops the line being said, and is written after it.
    */
-  prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; casual?: number; after?: SayAfter | null; mood?: SayMood | null }): Promise<boolean>;
+  prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
   voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>;
   stopTalking(): void;
@@ -387,7 +394,7 @@ export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
 /** The line a say() answers: its words and how it was said. */
 export type SayAfter = { text: string; voice?: SayVoice | null; rate?: number; lively?: number | null; lang?: string };
-export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null };
+export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean };
 export type SayMood = 'angry' | 'happy' | 'scared' | 'sad';
 /** A treatment for a shaped voice (gs.sound.say's fx), by name or as a recipe that can start from a named one. */
 export type SayFxName = 'clean' | 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny';

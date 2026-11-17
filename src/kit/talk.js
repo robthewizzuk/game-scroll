@@ -148,8 +148,10 @@ export function readyNow() { if (!ownVoice() || failed) return Promise.resolve(f
  * words in the same voice come out the same each time, and are kept for the next launch; fresh: true for a new take.
  * lang: how to read dates (en-US: month first). keep: a line written ahead of time: not ended by cancel(), and
  * written after the lines wanted now unless hurry(ticket) (ticket: an object speak() puts the line's id on).
+ * act: how this saying of it differs (talk-worker.js): { take (0..3: another way of saying the same words), effort (0..1:
+ * speaking up over noise), stress (words to stress), pre ('sigh' | 'gasp' before it) }; null: as it comes.
  */
-export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively = 0, fresh = false, lang = 'en-GB', keep = false, ticket = null }) {
+export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively = 0, fresh = false, lang = 'en-GB', keep = false, ticket = null, act = null }) {
   if (!(await readyNow()) || !worker) return null;
   const voice = String(voiceURI).replace(/^gs-voice:/, '') || TALK_VOICES[0].name, id = nextId++;
   if (ticket) ticket.id = id;
@@ -166,8 +168,17 @@ export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively =
     cur.put({ ok: true, samples: m.pcm, rate: Math.round(RATE * pitch), text: m.text || '', last: !!last, more: nxt ? nxt.p : Promise.resolve(null) });
     if (nxt) cur = nxt;
   } });
-  worker.postMessage({ type: 'say', id, text: String(text), voice, lang: String(lang || 'en-GB'), tempo: rate / pitch, lively, seed, ahead: !!keep });
+  worker.postMessage({ type: 'say', id, text: String(text), voice, lang: String(lang || 'en-GB'), tempo: rate / pitch, lively, seed, ahead: !!keep, act: actOf(act) });
   return head;
+}
+
+/** act as the worker takes it: only what changes the sound, in a fixed order (it is part of the line's key). */
+function actOf(a) {
+  if (!a) return null;
+  const take = Math.max(0, Math.min(3, a.take | 0)), effort = Math.round(Math.max(0, Math.min(1, +a.effort || 0)) * 2) / 2;
+  const stress = Array.isArray(a.stress) ? a.stress.map(w => String(w).toLowerCase()).filter(Boolean).slice(0, 8) : [];
+  const pre = a.pre === 'sigh' || a.pre === 'gasp' ? a.pre : null;
+  return take || effort || stress.length || pre ? { take, effort, stress, pre } : null;
 }
 
 /** How many workers write the voice (2 or 3 where the computer has cores to spare), 0 before it is ready. */

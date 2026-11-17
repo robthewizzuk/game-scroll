@@ -15,7 +15,7 @@ Each prompt also has four moods: `angry`, `happy`, `scared` and `sad`, the same 
 again. How a mood moves a voice was measured in [CREMA-D](https://github.com/CheyneyComputerScience/CREMA-D) (Open
 Database License: its clips are not shipped, only these measurements): its ten actors whose moods listeners named best,
 each mood against the same actor's calm reading, gives pitch (semitones), pitch range, pace and loudness. `prompt.py`
-moves the recording that way at 0.6 of an actor's strength (loudness at half of that again) with Praat. Cloning the
+moves the recording that way at 0.6 of an actor's strength (loudness at half of that again) with the app's own pitch code (`act.mjs`: PSOLA for pitch, WSOLA for pace). Cloning the
 acted clips themselves sounded worse (a speech-quality model: 1.7 to 3.6 against 3.9 to 4.4 for the voice's own
 recording acted), and so did moving one voice's state by another's mood (1.3).
 

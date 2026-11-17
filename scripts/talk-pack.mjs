@@ -103,7 +103,7 @@ export async function build(from = null, fromBig = null) {
  * The 100M model's decoder weights (mimi.*): from a folder, or downloaded at the pinned revision. Its file is 219 MB, so
  * a download fetches the header, then only the decoder's part of it.
  */
-async function decoderWeights(from = null) {
+export async function decoderWeights(from = null) {
   const want = n => /^mimi\.(decoder|decoder_transformer|quantizer\.output_proj|upsample)\./.test(n);
   if (from) return safetensors(readFileSync(join(from, 'model.safetensors')));
   const url = urlOf(TALK_SOURCE.decoderDir, 'model.safetensors'), n = Number((await download(url, [0, 8])).readBigUInt64LE(0));

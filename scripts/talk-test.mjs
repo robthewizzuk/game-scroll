@@ -15,6 +15,7 @@ import { spoken, respell, casual } from '../src/kit/say-words.js';
 import { stretch, marksFrom, resample } from '../src/kit/voice-fx.js';
 import { humanize, endOf } from '../src/kit/voice-pitch.js';
 import { humanOf } from '../src/kit/voice-human.js';
+import { deliveries } from '../src/kit/voice-memory.js';
 import { cast, wantOf, describe } from '../src/kit/voices.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -172,9 +173,11 @@ if (bytes) {
     const loud = 20 * Math.log10(rms(wide) / rms(plain));
     ok(wide.length === plain.length && spread(wide) > spread(plain) * 1.12 && Math.abs(loud) < 1 && wide.every((v, i) => v === again[i]),
       `voice-pitch: pitch spread ${spread(plain).toFixed(2)} -> ${spread(wide).toFixed(2)} semitones, ${loud.toFixed(2)} dB, the same each time`);
-    const later = humanize(plain, R, { seed: 3 }), pre = later.length - plain.length, br = rms(later.subarray(0, Math.round(pre * .8)));
-    const under = 20 * Math.log10(br / rms(plain));
-    ok(pre > R * .3 && pre < R * .5 && under < -20 && under > -45, `voice-pitch: a breath before a later sentence (${(pre / R).toFixed(2)} s, ${under.toFixed(0)} dB under the voice)`);
+    // (before most later sentences, not every one: over eight seeds, some, and each soft)
+    const laters = [1, 2, 3, 4, 5, 6, 7, 8].map(seed => humanize(plain, R, { seed })), took = laters.filter(l => l.length > plain.length);
+    const later = took[0] || laters[0], pre = later.length - plain.length, under = 20 * Math.log10(rms(later.subarray(0, Math.max(1, Math.round(pre * .8)))) / rms(plain));
+    ok(took.length >= 3 && took.length <= 7 && pre > R * .28 && pre < R * .5 && under < -25 && under > -45,
+      `voice-pitch: a breath before ${took.length} of 8 later sentences (${(pre / R).toFixed(2)} s, ${under.toFixed(0)} dB under the voice)`);
     // a person's endings: the last syllable drawn out (longer), the end falling further, air in the voice (more noise above 4 kHz)
     const fit = { breath: 0, first: true, seed: 3 }, longer = humanize(plain, R, { ...fit, lengthen: 1.4 });
     ok(longer.length > plain.length + R * .05 && longer.length < plain.length + R * .4, `voice-pitch: the last syllables drawn out (${(plain.length / R).toFixed(2)} -> ${(longer.length / R).toFixed(2)} s)`);
@@ -182,9 +185,24 @@ if (bytes) {
     const fell = humanize(plain, R, { ...fit, fall: 3 });
     ok(tailHz(fell) < tailHz(plain) * .95, `voice-pitch: the end falls further (${tailHz(plain).toFixed(0)} -> ${tailHz(fell).toFixed(0)} Hz)`);
     const air = a => { let h = 0, y = 0, p = 0; for (let i = 0; i < a.length; i++) { y = .6 * (y + a[i] - p); p = a[i]; h += y * y; } return h / a.reduce((x, v) => x + v * v, 0); };
-    const breathy = humanize(plain, R, { ...fit, breathy: .25 });
+    const breathy = humanize(plain, R, { ...fit, breathy: 1 });
     ok(air(breathy) > air(plain) * 1.15, `voice-pitch: air in the voice (high share ${air(plain).toFixed(3)} -> ${air(breathy).toFixed(3)})`);
+    // a sigh or a gasp before it, made through the voice's own mouth; a stressed word higher; effort brighter
+    const sighed = humanize(plain, R, { ...fit, pre: 'sigh' }), gasped = humanize(plain, R, { ...fit, pre: 'gasp' }), lead = (y, k) => 20 * Math.log10(rms(y.subarray(0, Math.round((y.length - plain.length) * k))) / rms(plain));
+    ok(sighed.length - plain.length > R * .7 && sighed.length - plain.length < R * 1.1 && lead(sighed, .6) < -12 && lead(sighed, .6) > -30 && gasped.length - plain.length > R * .25 && gasped.length - plain.length < R * .5 && lead(gasped, .6) < -12,
+      `voice-pitch: a sigh before it (${((sighed.length - plain.length) / R).toFixed(2)} s, ${lead(sighed, .6).toFixed(0)} dB), a gasp (${((gasped.length - plain.length) / R).toFixed(2)} s, ${lead(gasped, .6).toFixed(0)} dB)`);
+    const midHz = (a, t0, t1) => { const hz = pitches(a.subarray(Math.round(t0 * R), Math.round(t1 * R)), R); return hz.length ? hz.reduce((x, y) => x + y, 0) / hz.length : 0; };
+    const stressed = humanize(plain, R, { ...fit, stress: [[.5, .9]] }), up = 12 * Math.log2(midHz(stressed, .6, .8) / midHz(plain, .6, .8));
+    ok(up > 1 && up < 3.5 && stressed.length > plain.length, `voice-pitch: a stressed word ${up.toFixed(1)} semitones higher, and longer`);
+    const pushed = humanize(plain, R, { ...fit, tilt: 1 });
+    ok(air(pushed) > air(plain) * 1.15, `voice-pitch: effort pushes into the upper voice (high share ${air(plain).toFixed(3)} -> ${air(pushed).toFixed(3)})`);
     ok(endOf('Have you seen it?') === '?' && endOf('Where did it go?') === '.' && endOf('Stop.') === '.', 'voice-pitch: a yes-or-no question rises, a "where" question falls');
+    { // a character's memory of its deliveries (voice-memory.js): a line said again soon comes out another way
+      const bank = deliveries(), halt = 'Halt! Who goes there?', first = bank.pick(halt); bank.said(halt, first);
+      const again = bank.pick(halt); bank.said(halt, again);
+      const third = bank.pick(halt), other = bank.pick('The bakery opens at nine on Sundays.'), like = bank.pick('Halt! Who is there?');
+      ok(first === 0 && again !== 0 && third !== again && third !== 0 && other === 0 && like !== 0, `voice-memory: takes ${first}, ${again}, ${third} for a line said three times; ${other} for another line, ${like} for one much like it`);
+    }
     const tuned = humanOf('anna'), mid = humanOf('anna+vera'), b = humanOf('vera');
     ok(tuned.wide >= 1 && tuned.tempo > .7 && Math.abs(mid.wide - (tuned.wide + b.wide) / 2) < 1e-9 && humanOf('nobody').wide > 0, `voice-human: settings per voice (anna wide ${tuned.wide}, pace ${tuned.tempo}), a blend halfway`);
     let t = performance.now(); for (let k = 0; k < 3; k++) humanize(plain, R, { seed: k }); t = (performance.now() - t) / 3;
@@ -247,7 +265,8 @@ async function inBrowser() {
       // a line of numbers and a made-up name, lively, said twice: the second time it is ready at once (the same take, kept)
       const o = { voice: 'man', lively: 1, respell: { Zorblax: 'zor blacks' } }, line3 = 'Zorblax pays £5.99 at 3:30 pm on the 14th.';
       let t1 = performance.now(); const said3 = await s.say(line3, o); const ms3 = performance.now() - t1;
-      t1 = performance.now(); const again = await s.say(line3, o); const ms4 = performance.now() - t1;
+      // (take 0: the same way again; left out, said again this soon it would come out another way, voice-memory.js)
+      t1 = performance.now(); const again = await s.say(line3, { ...o, take: 0 }); const ms4 = performance.now() - t1;
       // a long line comes in pieces: the first (its first sentence) well before the last
       const long = 'Right. The bridge is out, the river is high, and the only other way round is the old mine road, which nobody has used in years.';
       t1 = performance.now(); const head = await t.speak({ text: long, voiceURI: 'gs-voice:daan', fresh: true }); const firstMs = performance.now() - t1;

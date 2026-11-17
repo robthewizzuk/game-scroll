@@ -6,7 +6,7 @@
 
 export const TALK_VERSION = 'pocket-tts-7m-5';
 export const TALK_FILE = 'english-7m.gsv';
-export const TALK_SHA256 = '5ec806afb50fd3a38e34c14027ad1979d2473c522aa09fe0aac79c0ee339b4d2';
+export const TALK_SHA256 = 'a8ec308c9b4e594b05e033f1c74b083aca4652868839feba1215381950a9c51d';
 export const TALK_SOURCE = {
   repo: 'kyutai/pocket-tts-without-voice-cloning',
   revision: 'a7056f505a4a8ca72d8b5fb1440071d6f1a35739',

@@ -413,8 +413,11 @@ try {
     const r0 = S.renders[0] || {}, r1 = S.renders[1] || {};
     ok(S.renders.length === 2 && r0.text === 'Ah. A door.' && r1.text === 'At last.' && r0.voiceURI === 'en-gb-x-gbd-local' && r0.lang === 'en-GB' && r0.rate === .99 && r0.pitch === 1, `in the cast voice, asked to speak size times faster (${JSON.stringify(r0)})`);
     ok(JSON.stringify(words) === '[0,4,6,12,15]', 'onWord gets every word of every part as it is heard: ' + JSON.stringify(words));
+    await snd.say('Ah. A door.', { voice: 'man', size: 1.1, fx: 'tannoy', rate: .9, take: 0 });
+    ok(S.renders.length === 2, 'the same line again, the same way (take 0), is not written twice');
     await snd.say('Ah. A door.', { voice: 'man', size: 1.1, fx: 'tannoy', rate: .9 });
-    ok(S.renders.length === 2, 'the same line again is not written twice');
+    const r2 = S.renders[2] || {};
+    ok(S.renders.length === 3 && r2.text === 'Ah. A door.' && (r2.pitch !== r0.pitch || r2.rate !== r0.rate), `said again soon, it comes out another way (voice-memory.js: ${JSON.stringify(r2)})`);
     S.marks = false; const guessed = []; await snd.say('One two three.', { voice: 'man', fx: 'clean', onWord: at => guessed.push(at) }); S.marks = true;
     ok(JSON.stringify(guessed) === '[0,4,8]', 'an engine that gives no word marks: the words are timed from the text: ' + JSON.stringify(guessed));
     // stopping

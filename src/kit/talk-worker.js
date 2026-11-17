@@ -9,8 +9,9 @@
 //   lead:  { type: 'load', url, sha, port?, cores }
 //                                               -> { type: 'ready', simd, cores, speed } | { type: 'failed', why }
 //                                               (speed: seconds of speech it writes a second, timed on a line of its own)
-//          { type: 'say', id, text, voice, lang, tempo, lively, seed, ahead }   seed null: a fresh take, not kept;
-//                                               ahead: written ahead of time, after the lines wanted now
+//          { type: 'say', id, text, voice, lang, tempo, lively, seed, ahead, act }   seed null: a fresh take, not kept;
+//                                               ahead: written ahead of time, after the lines wanted now;
+//                                               act: { take, effort, stress, pre } or null (talk.js speak())
 //          { type: 'stop', id }                 ends that line early
 //          { type: 'soon', id }                 a line written ahead is wanted now
 //   stage: { type: 'stage', from: port, to: port | null, i }   (the i-th after the lead) then works from what comes
@@ -18,7 +19,7 @@
 //   to the page, from whichever writes the sound: { type: 'piece', id, pcm: Float32Array (24 kHz) | null, text, last, speed }
 import { unpack } from './talk-pack.js';
 import { makeFlow, makeMimi, seeded, cutsFor, MIMI_BIG } from './pocket-tts.js';
-import { stretch } from './voice-fx.js';
+import { stretch, marksFrom } from './voice-fx.js';
 import { humanize, endOf } from './voice-pitch.js';
 import { humanOf } from './voice-human.js';
 import { spoken } from './say-words.js';
@@ -47,7 +48,7 @@ const LINES = 'gs-talk-lines', KEEP = 400;   // (about 6 MB for 400 lines of a f
 const lineUrl = key => `https://gs-talk.invalid/line/${key}`;
 async function keyOf(m, words) {
   if (m.seed == null || !crypto?.subtle) return null;
-  const s = JSON.stringify([fileUrl, HUMAN, m.voice, m.lively || 0, m.tempo || 1, m.seed, words]);
+  const s = JSON.stringify([fileUrl, HUMAN, m.voice, m.lively || 0, m.tempo || 1, m.seed, words, m.act || null]);
   return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
 }
 /** [{ text, pcm }] kept for this line, or null. */
@@ -101,19 +102,41 @@ const piece = (id, pcm, text, last, speed = 0) => {
 /**
  * How each part is made more like a person once it is spoken (voice-pitch.js), with each voice's own settings, tuned
  * against the real person it came from (voice-human.js): how far its pitch moves (further with lively, up to 0.3 more),
- * its unsteadiness, how its sentences end (falling further, rough or breathy, the last syllable drawn out), the air in
- * its voice, its pace, and a breath before each sentence after the first and in long pauses. Change HUMAN with them, so
+ * its unsteadiness, how its sentences end (falling further, a little rough, the last syllable drawn out), the air in
+ * its voice, its pace, a quiet room under it, and a soft breath before most sentences after the first and in some long pauses. Change HUMAN with them, so
  * lines kept from before are made again.
  */
-const HUMAN = 'h4', LIVELY_WIDE = .3;
+const HUMAN = 'h5', LIVELY_WIDE = .3;
+// Another way of saying the same words (act.take 1 to 3, sound.js picks one a character hasn't used lately): a new take
+// from the model, and its tune moved a little each its own way: [pitch range x, semitones, pace x]
+const TAKES = [[1, 0, 1], [1.12, .7, .97], [.9, -.6, 1.03], [1.06, -.3, .95]];
+/**
+ * Speaking up over noise (act.effort 0..1, the Lombard effect): people raise their pitch (about 2.5 semitones at full
+ * effort), speak a little slower and push more into the upper voice (talk-worker passes tilt to voice-pitch.js).
+ */
+const EFFORT = { st: 2.5, wide: .1, pace: -.07, tilt: 1 };
+/** Where each stressed word of a part is said: [[from, to] seconds, ...] (its words timed from the sound: voice-fx.js marksFrom). */
+function stressAt(partText, x, words, used) {
+  if (!words?.length || !partText) return null;
+  const marks = marksFrom(partText, x, 24000), out = [];
+  for (let i = 0; i < marks.length; i += 2) {
+    const w = (partText.slice(marks[i]).match(/^\S+/) || [''])[0].toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+    if (!w || !words.includes(w) || used.has(w)) continue;
+    used.add(w);
+    out.push([marks[i + 1], i + 3 < marks.length ? marks[i + 3] : Math.min(x.length / 24000, marks[i + 1] + .45)]);
+  }
+  return out.length ? out : null;
+}
 /** Where the sound is made: frames in, a piece out at the end of each part, the line kept at the end. */
 function writer() {
-  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf('');
+  let id = -1, tempo = 1, key = null, t0 = 0, frames = [], text = '', done = [], secs = 0, broken = false, probe = false, lively = 0, seed = 1, part = 0, fit = humanOf(''), act = null, used = new Set();
   const flush = last => {
     if (!frames.length && !last) return;
-    const said = humanize(join(frames), 24000, { ...fit, wide: fit.wide + LIVELY_WIDE * lively, seed: seed + part, first: part === 0, end: endOf(text) });
+    const x = join(frames), [tw, tst, tpace] = TAKES[act?.take || 0], e = act?.effort || 0;
+    const said = humanize(x, 24000, { ...fit, wide: (fit.wide + LIVELY_WIDE * lively) * tw * (1 + EFFORT.wide * e), shift: 2 ** ((tst + EFFORT.st * e) / 12), tilt: EFFORT.tilt * e,
+      seed: seed + part, first: part === 0, end: endOf(text), pre: part === 0 ? act?.pre ?? null : null, stress: stressAt(text, x, act?.stress, used) });
     part++;
-    const pcm = stretch(said, 24000, tempo * fit.tempo), copy = key ? pcm.slice() : null;
+    const pcm = stretch(said, 24000, tempo * fit.tempo * tpace * (1 + EFFORT.pace * e)), copy = key ? pcm.slice() : null;
     secs += pcm.length / 24000;
     if (key) done.push({ text, pcm: copy });
     // how fast it was written (seconds of sound a second), on lines long enough that the start-up doesn't count much
@@ -121,7 +144,7 @@ function writer() {
     frames = [];
   };
   return {
-    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; lively = m.lively || 0; seed = m.seed ?? (Math.random() * 2 ** 31) | 0; part = 0; fit = humanOf(m.voice); },
+    line(m) { id = m.id; tempo = m.tempo || 1; key = m.key || null; t0 = m.t0 || Date.now(); frames = []; text = ''; done = []; secs = 0; broken = false; probe = !!m.probe; lively = m.lively || 0; seed = m.seed ?? (Math.random() * 2 ** 31) | 0; part = 0; fit = humanOf(m.voice); act = m.act || null; used = new Set(); },
     frame(m, pcm, partText) {
       if (m.id !== id || broken) return;
       if (m.first && frames.length) flush(false);
@@ -141,13 +164,15 @@ function writer() {
 }
 
 async function speak(m) {
-  const { id } = m, words = spoken(String(m.text), { lang: m.lang }), key = await keyOf(m, words);
+  const { id } = m, words = spoken(sayCaps(String(m.text), m.act?.stress), { lang: m.lang }), key = await keyOf(m, words);
   if (key) {   // said before, the same way: from the cache, at once
     const have = await kept(key);
     if (have?.length) { have.forEach((p, i) => piece(id, p.pcm, p.text, i === have.length - 1, 99)); return; }
   }
-  const opts = { quick: true, rnd: m.seed == null ? Math.random : seeded(m.seed) };
-  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe, lively: m.lively || 0, seed: m.seed, voice: m.voice };
+  // (another take: the model's own take of it differs too)
+  const take = m.act?.take || 0, s0 = m.seed == null ? null : (m.seed + take * 0x9e3779b1) >>> 0;
+  const opts = { quick: true, rnd: s0 == null ? Math.random : seeded(s0) };
+  const head = { id, tempo: m.tempo || 1, key, t0: Date.now(), probe: !!m.probe, lively: m.lively || 0, seed: s0, voice: m.voice, act: m.act || null };
   const l = flow.line(pauses(words, humanOf(m.voice).pause, m.seed), m.voice, opts), out = next || null, w = out ? null : writer();
   if (out) out.postMessage({ type: 'line', ...head }); else w.line(head);
   let S = null, lat, t0 = performance.now();
@@ -161,6 +186,8 @@ async function speak(m) {
   }
   if (out) out.postMessage({ type: 'end', id }); else w.end({ id });
 }
+/** A stressed word written in capitals ("I said NOW") said as a word, not spelled out: the model reads capitals as letters. */
+const sayCaps = (text, stress) => stress?.length ? text.replace(/\b[A-Z][A-Z']+\b/g, w => stress.includes(w.toLowerCase()) ? w.toLowerCase() : w) : text;
 /**
  * Pauses where a person reading would take one: the model runs straight through a comma, so some commas (each voice
  * its own share: humanOf().pause, from its real speaker) are given to it as a dash, which it pauses at.
