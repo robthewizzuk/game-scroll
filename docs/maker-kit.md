@@ -3302,6 +3302,22 @@ so cast first and keep `pitch` near 1. `voices()` resolves to what this phone ha
 **Timing** is most of a line's character. An array is said part by part, with pauses in seconds
 between, and a part can have its own delivery: `say(['Bold.', .3, 'Visionary.', .5, { text: 'Rectangular.', rate: .85 }], { voice: 'woman' })`.
 
+**Mood and manner.** `say('Get out of my shop!', { voice: 'man', mood: 'angry' })`: `'angry'`, `'happy'`,
+`'scared'` or `'sad'`. The app's built-in voice says it as its own speaker sounds in that mood (higher or lower,
+faster or slower, louder or softer, as actors move them); the phone's voices move pitch, pace and
+loudness only. `casual: .6` makes a character chat rather than read: now and then a "well," or "um," or "I - I",
+the same ones each time the line is said. A line that answers another drifts a little toward its liveliness and
+pace, as people in a conversation do: a `Cutscene` gives each line the one before it, or pass
+`after: { text, voice }` yourself. A `Cutscene` step takes `sayMood` (a step with `mood: 'smile'` is said happy).
+
+**Like a person, by itself.** An answer to a line still being said waits its turn, then comes in about a fifth of a
+second after it (now and then a short or heated answer a moment early). Write the sounds people make as
+`'[sigh] I suppose so.'`, `'[gasp] Behind you!'`, `'[hmm] Maybe.'` (these three go before the line) and
+`'[laugh] Got you!'`; `sounds: true` lets a mood add them now and then. A line ending in "!" is said with urgency. `'You did *what*?'` or `'I said NOW.'` stresses the
+word (the built-in voice says it higher, longer and louder; the stars aren't said). A character remembers its last
+few lines, so a line it says again soon (a guard's "Halt!") comes out another of its four ways (`take: 0..3` to
+choose). Over a loud game, voices speak up as people do: a little higher, slower and louder (`effort: 0..1` to set it).
+
 **A shaped voice** makes the same phone voice into a character: `say('Door three is opening.', { voice: 'woman', fx: 'tannoy' })`,
 `say('Copy that.', { voice: 'man', size: 1.15, fx: 'radio' })`. `size` is the build of the speaker: 1.15 is a
 bigger person (deeper in every way, at the same pace), .85 a smaller one (.6 to 1.6). `fx` is what the voice

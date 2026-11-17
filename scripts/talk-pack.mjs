@@ -4,8 +4,11 @@
 //                                                instead of downloading them (Hugging Face, at the pinned revision)
 //   --from-big <dir>                             the 100M model's folder, for its decoder (TALK_SOURCE.decoderDir;
 //                                                downloaded, only the decoder's part of its 219 MB file is fetched)
-// Voices marked own: true in talk-files.js are not Kyutai's: Kyutai's voice-cloning model heard them from a licensed
-// recording (scripts/talk-voices/clone.py), and they are kept in scripts/talk-voices/<name>.safetensors.
+// Each voice is packed as what Kyutai's voice-cloning model heard of its speaker, calm and in four acted moods
+// (scripts/talk-voices/prompt.py writes them to scripts/talk-voices/prompts/<name>.safetensors from the recordings in
+// sources.json, and checks each against the voice as Kyutai ships it); a voice with no recording to hear (daan) is
+// packed as Kyutai ships it. Voices marked own: true in talk-files.js are not Kyutai's: the model heard them from a
+// licensed recording (scripts/talk-voices/clone.py chose them).
 // scripts/fetch-ml.mjs runs it too, so the games workflow uploads the file with the face tracking files. The file
 // comes out the same every time; its SHA-256 must match TALK_SHA256 (the app checks it too), or this stops.
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -16,6 +19,7 @@ import { TALK_VERSION, TALK_FILE, TALK_SHA256, TALK_SOURCE, TALK_VOICES, TALK_AB
 import { pack } from '../src/kit/talk-pack.js';
 import { makeTTS, MIMI_BIG } from '../src/kit/pocket-tts.js';
 
+const MOODS = ['calm', 'angry', 'happy', 'scared', 'sad'];   // (the order they are packed in)
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** { name: Float32Array with .shape } from a safetensors file (32-bit or bfloat16 floats; whole numbers as plain numbers). */
@@ -58,7 +62,10 @@ async function source(from) {
   const weights = safetensors(await read('model.safetensors'));
   const tok = JSON.parse((await read('tokenizer.json')).toString());
   const voices = [];
-  for (const v of TALK_VOICES) voices.push({ ...v, file: safetensors(v.own ? readFileSync(join(ROOT, 'scripts/talk-voices', `${v.name}.safetensors`)) : await read(`embeddings/${v.name}.safetensors`)) });
+  for (const v of TALK_VOICES) {
+    const heard = join(ROOT, 'scripts/talk-voices/prompts', `${v.name}.safetensors`);
+    voices.push(existsSync(heard) ? { ...v, heard: safetensors(readFileSync(heard)) } : { ...v, file: safetensors(await read(`embeddings/${v.name}.safetensors`)) });
+  }
   return { weights, tok, voices };
 }
 
@@ -73,7 +80,12 @@ export async function build(from = null, fromBig = null) {
   const tensors = {};
   for (const n of [...used].sort()) { if (!weights(n)) throw new Error(`talk-pack: no ${n}`); tensors[n] = weights(n); }
   if (tok.model?.type !== 'Unigram' || !tok.model.byte_fallback) throw new Error('talk-pack: the word pieces are not the kind the engine reads');
-  const cast = voices.map(({ name, kind, hz, lang, credit, own, file }) => {
+  const cast = voices.map(({ name, kind, hz, lang, credit, own, file, heard }) => {
+    const by = own ? 'Kyutai\'s voice-cloning model' : 'Kyutai TTS voices';
+    if (heard) {
+      for (const m of MOODS) if (!heard[m] || heard[m].shape[1] !== 224) throw new Error(`talk-pack: ${name} has no ${m} prompt`);
+      return { name, kind, lang, hz, credit: `${credit}; voice from ${by}, moods acted as measured from CREMA-D`, prompts: Object.fromEntries(MOODS.map(m => [m, heard[m]])) };
+    }
     const k = [], v = []; let pos = 0;
     for (let l = 0; ; l++) {
       const c = file[`transformer.layers.${l}.self_attn/cache`]; if (!c) break;
@@ -82,7 +94,7 @@ export async function build(from = null, fromBig = null) {
       pos = Math.min(L, at);
       k.push(c.subarray(0, pos * 128)); v.push(c.subarray(n, n + pos * 128));
     }
-    return { name, kind, lang, credit: `${credit}; voice state from ${own ? 'Kyutai\'s voice-cloning model' : 'Kyutai TTS voices'}`, hz, pos, k, v };
+    return { name, kind, lang, credit: `${credit}; voice state from ${by}`, hz, pos, k, v };
   });
   return pack({ tensors, pieces, scores, voices: cast, about: TALK_ABOUT, mimi: MIMI_BIG });
 }
@@ -91,7 +103,7 @@ export async function build(from = null, fromBig = null) {
  * The 100M model's decoder weights (mimi.*): from a folder, or downloaded at the pinned revision. Its file is 219 MB, so
  * a download fetches the header, then only the decoder's part of it.
  */
-async function decoderWeights(from = null) {
+export async function decoderWeights(from = null) {
   const want = n => /^mimi\.(decoder|decoder_transformer|quantizer\.output_proj|upsample)\./.test(n);
   if (from) return safetensors(readFileSync(join(from, 'model.safetensors')));
   const url = urlOf(TALK_SOURCE.decoderDir, 'model.safetensors'), n = Number((await download(url, [0, 8])).readBigUInt64LE(0));

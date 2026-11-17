@@ -323,23 +323,37 @@ export interface SoundPart {
    * With either, the phone writes the line to sound and the kit plays it through the mixer's 'voice' channel, as loud on every phone,
    * with the room's echo, and onWord for every word (the Android and iPhone apps; elsewhere the line is spoken as before, size as a
    * lean of its pitch). It starts a moment later than a plain line: open with a short pause, say([.2, 'Ah. A door.'], { fx: 'tannoy' }).
-   * The Mac, Windows and Linux app and the phone apps speak every English line with their own built-in voice (Pocket TTS 7M, 23
-   * voices: 11 women, 9 men, with British, Scottish, Canadian, American and French, Spanish, Italian, Dutch accents (lang 'en-FR',
-   * 'en-ES', 'en-IT', 'en-NL'), 3 in between that come only by name, like: ['alba'], ['marius'], ['stuart']; a bigger cast gets
-   * voices made between two), shaped or not, through the mixer, starting once its first sentence is written; other languages,
+   * The Mac, Windows and Linux app and the phone apps speak every English line with their own built-in voice (Pocket TTS 7M, 45
+   * voices: 20 women, 22 men, with English, Scottish, Welsh, Northern Irish, Irish, American, Canadian, Indian, South African,
+   * Australian, New Zealand and French, Spanish, Italian, Dutch accents (lang 'en-US', 'en-IE', 'en-IN'..., 'en-FR'), 3 in between
+   * that come only by name, like: ['alba'], ['marius'], ['stuart']; a bigger cast gets voices made between two; each voice tuned to
+   * sound like the real person it came from), shaped or not, through the mixer, starting once its first sentence is written; other languages,
    * and lines before its file has downloaded the first time, are said by the device's voices. It reads numbers, money, times and
    * dates as words ('£5.99 at 3:30 pm on 01/02' -> 'five pounds ninety-nine at three thirty p m on the first of February'; lang
    * 'en-US' reads month first), says a line the same way each time it is said and keeps it for the next launch (fresh: true for a
    * new take), and lively (0 to 1) widens its intonation for an excitable character (left out: each voice its own, more on a shout).
    * respell: how made-up names are said, for every voice: { Zorblax: 'zor blacks', "Qa'tik": 'ka teek' } (whole words, any case).
+   * casual (0 to 1): a character who chats rather than reads: now and then a "well," or "um," or the first word said twice
+   * ("I - I think"), the same ones each time the line is said (every voice, the device's too). after: the line this one answers
+   * ({ text, voice, rate, lively }, as said): the built-in voice drifts a little toward it in liveliness and pace, as people in a
+   * conversation do (a Cutscene gives it by itself; left out, a line answers the last one said by another voice in the last 8 s).
+   * mood ('angry', 'happy', 'scared', 'sad'): the built-in voice says it as its own speaker sounds in that mood (pitch, range,
+   * pace, loudness and steadiness as actors move them); the device's voices move pitch, pace and loudness only. In the text,
+   * [sigh], [gasp] and [hmm] go before the line and [laugh] is said where it is (sounds: true lets a mood add them now and
+   * then: sad sighs, scared gasps, happy laughs), and *word* (or a word in capitals
+   * in a line that isn't) is stressed: said higher, longer and louder (the built-in voice; the stars aren't said).
+   * A line said again, or one much like it, comes out another way of the character's four (take: 0..3 to choose one). effort
+   * (0..1): how hard they speak up, as people do over noise (higher, slower, louder); left out, it follows how loud the game
+   * is. An answer (after) to a line still being said waits for it, then comes in as people take turns (about a fifth of a
+   * second later; now and then a short or heated answer a moment before it ends).
    */
-  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean }): Promise<boolean>;
+  say(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; onWord?: (at: number) => void; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean }): Promise<boolean>;
   /**
    * Writes a line to sound ahead of time with the built-in voice, so a say() with the same words and options starts at once (a
    * cutscene's next lines while this one plays; a Cutscene does its actors' lines itself). Resolves true once written, false
    * where there is no built-in voice (then say() works as usual). Never stops the line being said, and is written after it.
    */
-  prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null }): Promise<boolean>;
+  prepare(text: string | SayPart[], o?: { pitch?: number; rate?: number; volume?: number; lang?: string | string[]; voice?: SayVoice | null; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean }): Promise<boolean>;
   /** The voices this phone has to cast from (joke voices left out). kind is null when the phone doesn't say. */
   voices(): Promise<{ name: string; lang: string; kind: 'woman' | 'man' | null }[]>;
   stopTalking(): void;
@@ -399,7 +413,10 @@ export interface SoundPlace { size: number; walls: number; roof: number; enclose
 /** A character's voice for gs.sound.say: a kind, or which accents to try, which take of that kind, and voices to prefer by name. */
 export type SayVoice = 'woman' | 'man' | 'any' | { kind?: 'woman' | 'man' | 'any'; lang?: string | string[]; take?: number; like?: string | string[] };
 /** One part of a spoken line: words, a pause in seconds, or words with their own delivery. */
-export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean };
+/** The line a say() answers: its words and how it was said. */
+export type SayAfter = { text: string; voice?: SayVoice | null; rate?: number; lively?: number | null; lang?: string };
+export type SayPart = string | number | { text: string; pitch?: number; rate?: number; volume?: number; voice?: SayVoice | null; lang?: string | string[]; size?: number | null; fx?: SayFx | null; respell?: Record<string, string> | null; lively?: number | null; fresh?: boolean; casual?: number; after?: SayAfter | null; mood?: SayMood | null; take?: number | null; effort?: number | null; sounds?: boolean };
+export type SayMood = 'angry' | 'happy' | 'scared' | 'sad';
 /** A treatment for a shaped voice (gs.sound.say's fx), by name or as a recipe that can start from a named one. */
 export type SayFxName = 'clean' | 'radio' | 'tannoy' | 'phone' | 'megaphone' | 'box' | 'bright' | 'warm' | 'robot' | 'tiny';
 export type SayFx = SayFxName | {
@@ -3822,7 +3839,7 @@ export interface MissionsPart {
  * focus now), stops (the exposure it adds).
  */
 export interface Lens { fstop?: number; focal?: number; focus?: number | 'auto' | P3 | Loose; spot?: [number, number]; pull?: number; blades?: number; turn?: number; bokeh?: number; max?: number; blur?: number; sensor?: number; shutter?: number; iso?: number | 'auto'; ev?: number; key?: number; night?: number; speed?: number; readonly at?: number; readonly stops?: number }
-export interface CutsceneStep { /** A person it directs: walk to { x, z } at speed, turn (an angle or a point), look (a point or thing; null: free), play (a gesture or move), mood + amount, and say in voice with the mouth moving. */ actor?: Loose; walk?: { x: number; z: number }; speed?: number; turn?: number | P3; play?: string; mood?: string; amount?: number; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
+export interface CutsceneStep { /** A person it directs: walk to { x, z } at speed, turn (an angle or a point), look (a point or thing; null: free), play (a gesture or move), mood + amount, and say in voice with the mouth moving. */ actor?: Loose; walk?: { x: number; z: number }; speed?: number; turn?: number | P3; play?: string; mood?: string; amount?: number; voice?: SayVoice | null; pitch?: number; rate?: number; fx?: SayFx | null; size?: number; at?: number; cam?: P3[]; look?: P3 | ((t: number) => P3); time?: number; ease?: 'linear' | 'in' | 'out' | 'inOut'; say?: string; who?: string; /** The voice's mood for say (a smile on the step is said happy). */ sayMood?: SayMood; do?: (c: Loose) => void; shake?: number; bars?: number; /** a Next Gen lens from then on (the game sets v.lens = cutscene.lens), null for none */ lens?: Lens | null }
 export interface CutscenePart {
   along(points: P3[], u: number): P3;
   Cutscene: new (steps: CutsceneStep[], o?: { bars?: number; skippable?: boolean }) => On<Loose> & {

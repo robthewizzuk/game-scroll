@@ -2,7 +2,7 @@
 // "robotic twang"), built in, so a character sounds the same on a Mac, a Windows PC, a SteamOS handheld (whose own
 // voice is espeak's) and a phone, and every line goes through the mixer. Kit use (sound.js).
 // It runs in background workers (talk-worker.js): one, or a production line of 2 (4 threads) or 3 (8 threads) that
-// each run part of the model on the same line. The voice file (about 21 MB, talk-files.js) downloads from the games
+// each run part of the model on the same line. The voice file (about 22 MB, talk-files.js) downloads from the games
 // host the first time a character speaks and stays in the cache; the first time, the worker times a line of its own,
 // and a device that can't write speech well ahead of playing it keeps its own voices. A line comes back a piece at a
 // time (the first sentence first) and is kept for the next launch. Until the file is in, or where it can't run (a
@@ -25,7 +25,7 @@ const URL_OF = () => {
 const RATE = 24000;
 
 // the phone apps too (Capacitor sets window.Capacitor), but not on a phone saving data or with little memory: the
-// file is 21 MB and the model wants about 90 MB while it speaks; those keep the phone's own voices
+// file is 22 MB and the model wants about 90 MB while it speaks; those keep the phone's own voices
 const phone = () => {
   const cap = globalThis.Capacitor; if (!cap?.isNativePlatform?.()) return false;
   const nav = globalThis.navigator || {};
@@ -148,8 +148,10 @@ export function readyNow() { if (!ownVoice() || failed) return Promise.resolve(f
  * words in the same voice come out the same each time, and are kept for the next launch; fresh: true for a new take.
  * lang: how to read dates (en-US: month first). keep: a line written ahead of time: not ended by cancel(), and
  * written after the lines wanted now unless hurry(ticket) (ticket: an object speak() puts the line's id on).
+ * act: how this saying of it differs (talk-worker.js): { take (0..3: another way of saying the same words), effort (0..1:
+ * speaking up over noise), stress (words to stress), pre ('sigh' | 'gasp' | 'hmm' before it) }; null: as it comes.
  */
-export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively = 0, fresh = false, lang = 'en-GB', keep = false, ticket = null }) {
+export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively = 0, fresh = false, lang = 'en-GB', keep = false, ticket = null, act = null }) {
   if (!(await readyNow()) || !worker) return null;
   const voice = String(voiceURI).replace(/^gs-voice:/, '') || TALK_VOICES[0].name, id = nextId++;
   if (ticket) ticket.id = id;
@@ -166,8 +168,17 @@ export async function speak({ text, voiceURI = '', rate = 1, pitch = 1, lively =
     cur.put({ ok: true, samples: m.pcm, rate: Math.round(RATE * pitch), text: m.text || '', last: !!last, more: nxt ? nxt.p : Promise.resolve(null) });
     if (nxt) cur = nxt;
   } });
-  worker.postMessage({ type: 'say', id, text: String(text), voice, lang: String(lang || 'en-GB'), tempo: rate / pitch, lively, seed, ahead: !!keep });
+  worker.postMessage({ type: 'say', id, text: String(text), voice, lang: String(lang || 'en-GB'), tempo: rate / pitch, lively, seed, ahead: !!keep, act: actOf(act) });
   return head;
+}
+
+/** act as the worker takes it: only what changes the sound, in a fixed order (it is part of the line's key). */
+function actOf(a) {
+  if (!a) return null;
+  const take = Math.max(0, Math.min(3, a.take | 0)), effort = Math.round(Math.max(0, Math.min(1, +a.effort || 0)) * 2) / 2;
+  const stress = Array.isArray(a.stress) ? a.stress.map(w => String(w).toLowerCase()).filter(Boolean).slice(0, 8) : [];
+  const pre = a.pre === 'sigh' || a.pre === 'gasp' || a.pre === 'hmm' ? a.pre : null;
+  return take || effort || stress.length || pre ? { take, effort, stress, pre } : null;
 }
 
 /** How many workers write the voice (2 or 3 where the computer has cores to spare), 0 before it is ready. */

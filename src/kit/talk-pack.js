@@ -5,8 +5,11 @@
 // Layout: 'GSVOICE1', a u32 (little end) header length, the header (JSON), then the numbers, each run starting on
 // 16 bytes. A weight is 'f32' (small ones: norms, biases) or 'i8' with an f32 scale for each `group` numbers along a
 // row (row = its first axis; no group: one a row);
-// a voice is its key/value cache after hearing the speaker (8 layers x keys and values x positions x 128),
-// 8-bit with a scale for each 128.
+// a voice is what the model heard of its speaker (its prompt: a row of 224 numbers for each 80 ms of the recording,
+// after Kyutai's speaker projection), 8-bit with a scale for each row, once for each mood it has ('calm' and the
+// acted ones: scripts/talk-voices/prompt.py); the app runs it through the model to make the voice (pocket-tts.js
+// prompt()). A voice with no recording to hear is its key/value cache after hearing the speaker instead (8 layers x
+// keys and values x positions x 128), 8-bit with a scale for each 128.
 
 const MAGIC = 'GSVOICE1';
 const align = n => (n + 15) & ~15;
@@ -25,10 +28,11 @@ function quantise(a, rows, group = 0) {
 // the decoder's weights get a scale for every 64 numbers along a row (measured: half the error of one a row, for 0.6 MB
 // more); the flow's keep one a row (so its takes stay as they were), and a voice's cache one a row of 128
 const GROUP = 64;
+const PROMPT = 224;   // numbers in a row of a voice's prompt (the flow's width)
 
 /**
  * Writes the file: tensors { name: Float32Array with .shape }, pieces, scores, voices [{ name, kind, hz, lang, credit,
- * pos, k: [8 layers of Float32Array], v }], about (shown in credits); mimi: the shape of the decoder where it is not
+ * and prompts: { calm, angry, ... : Float32Array of rows of 224 } or pos, k: [8 layers of Float32Array], v }], about (shown in credits); mimi: the shape of the decoder where it is not
  * the 7M's own (pocket-tts.js MIMI_BIG: the 100M model's). Small tensors stay 32-bit.
  */
 export function pack({ tensors, pieces = [], scores = [], voices = [], about, mimi }) {
@@ -44,10 +48,17 @@ export function pack({ tensors, pieces = [], scores = [], voices = [], about, mi
     }
   }
   for (const v of voices) {
+    const about = { name: v.name, kind: v.kind, hz: v.hz, lang: v.lang, credit: v.credit };
+    if (v.prompts) {
+      const prompts = {};
+      for (const [mood, a] of Object.entries(v.prompts)) { const T = a.length / PROMPT, { q, s } = quantise(a, T); prompts[mood] = { T, at: add(q), scales: add(s) }; }
+      header.voices.push({ ...about, prompts });
+      continue;
+    }
     const rows = v.k.length * 2 * v.pos, all = new Float32Array(rows * 128);
     v.k.forEach((k, l) => { all.set(k.subarray(0, v.pos * 128), (2 * l) * v.pos * 128); all.set(v.v[l].subarray(0, v.pos * 128), (2 * l + 1) * v.pos * 128); });
     const { q, s } = quantise(all, rows);
-    header.voices.push({ name: v.name, kind: v.kind, hz: v.hz, lang: v.lang, credit: v.credit, pos: v.pos, layers: v.k.length, at: add(q), scales: add(s) });
+    header.voices.push({ ...about, pos: v.pos, layers: v.k.length, at: add(q), scales: add(s) });
   }
   const head = new TextEncoder().encode(JSON.stringify(header)), start = align(12 + head.length);
   const out = new Uint8Array(start + at);
@@ -58,7 +69,7 @@ export function pack({ tensors, pieces = [], scores = [], voices = [], about, mi
   return out;
 }
 
-/** Reads the file: { get(name) -> Float32Array, pieces, scores, voices: { name: { pos, k, v } }, cast: [{ name, kind, hz, lang, credit }], about, mimi, forget() (drops the weights read so far: read again if wanted) }. */
+/** Reads the file: { get(name) -> Float32Array, pieces, scores, voices: { name: { prompts: { calm, ...: () -> Float32Array } } or { pos, k, v } }, cast: [{ name, kind, hz, lang, credit }], about, mimi, forget() (drops the weights read so far: read again if wanted) }. */
 export function unpack(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   if (new TextDecoder().decode(u8.subarray(0, 8)) !== MAGIC) throw new Error('voice: not a voice file');
@@ -82,6 +93,10 @@ export function unpack(bytes) {
   };
   const voices = {};
   for (const v of header.voices) {
+    if (v.prompts) {
+      voices[v.name] = { prompts: Object.fromEntries(Object.entries(v.prompts).map(([mood, p]) => [mood, () => deq(p.at, p.scales, p.T, p.T * PROMPT)])) };
+      continue;
+    }
     let all = null; const k = [], vv = [], per = v.pos * 128;
     const load = () => { all ||= deq(v.at, v.scales, v.layers * 2 * v.pos, v.layers * 2 * per); };
     voices[v.name] = {

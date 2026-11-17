@@ -4,9 +4,9 @@
 // the app downloads it the first time a character speaks, checks it against TALK_SHA256, and keeps it.
 // Bump TALK_VERSION (and the hash: the pack script prints it) whenever the file changes.
 
-export const TALK_VERSION = 'pocket-tts-7m-4';
+export const TALK_VERSION = 'pocket-tts-7m-5';
 export const TALK_FILE = 'english-7m.gsv';
-export const TALK_SHA256 = 'aebfaccee290a3f666d4ece13582a6663573effb5b9b7d81e7d371334b217006';
+export const TALK_SHA256 = 'a8ec308c9b4e594b05e033f1c74b083aca4652868839feba1215381950a9c51d';
 export const TALK_SOURCE = {
   repo: 'kyutai/pocket-tts-without-voice-cloning',
   revision: 'a7056f505a4a8ca72d8b5fb1440071d6f1a35739',
@@ -79,4 +79,4 @@ export const TALK_VOICES = [
   { name: 'daan', kind: 'man', hz: 88, lang: 'en-NL', credit: 'CML-TTS dataset, Dutch, speaker 11290 (CC BY 4.0)' },
 ];
 
-export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai, with the decoder of Pocket TTS 100M (models CC BY 4.0, code MIT), run in the app in plain JavaScript';
+export const TALK_ABOUT = 'Pocket TTS 7M by Kyutai, with the decoder of Pocket TTS 100M (models CC BY 4.0, code MIT), run in the app in plain JavaScript; its moods acted as measured from CREMA-D (Cao et al., Open Database License)';
