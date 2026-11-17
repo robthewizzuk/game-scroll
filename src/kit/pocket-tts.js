@@ -281,6 +281,11 @@ function convT(H, mm, w, b, cin, cout, k, s) {
 const D = 224, Z = 64, LAT = 32, FD = 192;
 const weightsOf = pack => n => { const t = pack.get(n); if (!t) throw new Error('voice: no ' + n); return t; };
 
+// The noise each latent is drawn from can be cut off (Kyutai's noise_clamp; 0: not). Measured 11-17: at .8, fewer words
+// heard wrong on plain reads (0.93% -> 0.58% of 112 lines) but acted lines (the movie-line benchmark) flatter, 3.86 ->
+// 3.78 on a speech-quality model, so it stays off.
+const CLAMP = 0;
+
 /**
  * The first half: text and a voice in, latents out (32 numbers each, 12.5 a second). pack: as makeTTS.
  * line(text, voice, opts).next() -> Float32Array(32) or null at the end; line.first is true when that latent starts
@@ -348,14 +353,14 @@ export function makeFlow(pack, { plain = false } = {}) {
   let busy = null;
 
   /** One line in a voice (one at a time: a new one ends the last). Options as makeTTS's line(). */
-  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, quick = false } = {}) {
+  function line(text, voice, { temp = .3, rnd = Math.random, noise = null, eos = -1, quick = false, clamp = CLAMP } = {}) {
     // (a livelier delivery is made after, from the sound: voice-pitch.js. Moving the latents apart here widened the
     // pitch too, but measured as a worse voice: 4.44 to 3.75 on a speech-quality model at its widest.)
     if (busy) busy.stop();
     const V = voiceOf(voice);
     const parts = chunks(tok, text, 50, quick);
     let pi = -1, cur = null, stopped = false;
-    const draw = () => { if (noise) F.set(noise(), nB); else { const sd = Math.sqrt(temp); for (let i = 0; i < LAT; i++) F[nB + i] = gauss(rnd) * sd; } };
+    const draw = () => { if (noise) F.set(noise(), nB); else { const sd = Math.sqrt(temp); for (let i = 0; i < LAT; i++) { let z; do z = gauss(rnd) * sd; while (clamp > 0 && Math.abs(z) > clamp); F[nB + i] = z; } } };
     const start = () => {
       H.reset(base);
       const p = prepareText(parts[pi]), ids = tok.encode(p.text);
