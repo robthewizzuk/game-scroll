@@ -14,9 +14,10 @@ const { rng } = gs.math;
 const { Sky, Weather } = gs.sky;
 const { Metro, Gps, Wanted, Interiors } = gs.city;
 const { Car } = gs.vehicles;
-const { Boat } = gs.craft;
+const { Boat, Hover } = gs.craft;
 const { Swimmer } = gs.climb;
-const { arm, Pouch, Pickups, Health, DriveBy, Markers, Explosives, ARSENAL, weaponSound } = gs.combat;
+const { arm, Pouch, Pickups, Health, DriveBy, Markers, Explosives, Shots, ARSENAL, weaponSound } = gs.combat;
+const { Reputation } = gs.rpg;
 const { Cover3D, TakeCover } = gs.tactics;
 const { CameraRig, GunRig } = gs.camera;
 const { World3D } = gs.physics3d;
@@ -45,6 +46,8 @@ const YARD_Y = 0.165;
 const SLIP_POS = { x: 1099.06, y: 0, z: -439.19, heading: 0 };
 const DOCK_POS = { x: 1095.86, y: 0.15, z: -439.19 };
 const BEACH_LOT = { x: 1656.5, y: 0.15, z: -220.0 };
+const BIKE_POS = { x: 1662.0, y: 0.15, z: -221.0 };         // Coral Strip beachfront lot
+const HELI_POS = { x: YARD_X + 24.0, y: YARD_Y, z: YARD_Z - 2.0 }; // Pelican Marina quay helipad
 const RESPRAY_POS = { x: -70.0, y: 0.15, z: 2.0 };      // Old Naranja Block 1 Plaza
 const ARMS_POS = { x: 1504.0, y: 0.15, z: -296.0 };       // Coral Strip Block 1 Plaza
 
@@ -52,9 +55,32 @@ const ARMS_POS = { x: 1504.0, y: 0.15, z: -296.0 };       // Coral Strip Block 1
 const GLADES_RECT = { x0: 255.3, x1: 525.2, z0: -133.5, z1: 133.5 };
 const MARINA_RECT = { x0: 822.1, x1: 1081.3, z0: -423.2, z1: -167.8 };
 
-const WEAPON_ORDER = /** @type {const} */ (['baton', 'pistol', 'smg', 'shotgun', 'rifle', 'sniper']);
-const WEAPON_COSTS = { baton: 0, pistol: 0, smg: 200, shotgun: 350, rifle: 600, sniper: 900 };
-const WEAPON_LABELS = { baton: 'BATON', pistol: 'PISTOL', smg: 'SMG', shotgun: 'SHOTGUN', rifle: 'RIFLE', sniper: 'SNIPER' };
+const WEAPON_ORDER = /** @type {const} */ (['baton', 'pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'grenade', 'launcher']);
+const WEAPON_COSTS = { baton: 0, pistol: 0, smg: 200, shotgun: 350, rifle: 600, sniper: 900, grenade: 450, launcher: 1200 };
+const WEAPON_LABELS = { baton: 'BATON', pistol: 'PISTOL', smg: 'SMG', shotgun: 'SHOTGUN', rifle: 'RIFLE', sniper: 'SNIPER', grenade: 'GRENADE', launcher: 'RPG' };
+
+const CUSTOMS_PAINTS = [
+  { name: 'BAY TEAL', hex: '#16969a' },
+  { name: 'CORAL FLAME', hex: '#ff5e57' },
+  { name: 'SOLIS GOLD', hex: '#ffd32a' },
+  { name: 'NEON VIOLET', hex: '#7d5fff' },
+  { name: 'MIAMI MINT', hex: '#0be881' },
+  { name: 'PEARL WHITE', hex: '#eef2f7' },
+  { name: 'SUNSET ORANGE', hex: '#ff9f1a' },
+  { name: 'MIDNIGHT', hex: '#262f3d' },
+];
+
+const CREWS = {
+  pastel: { id: 'pastel', name: 'Pastel Crew' },
+  flota: { id: 'flota', name: 'La Flota Roja' },
+  salvage: { id: 'salvage', name: 'Sawgrass Salvage' },
+};
+
+function crewForDistrict(distName) {
+  if (distName === 'Pelican Marina') return CREWS.flota;
+  if (distName === 'Sawgrass Edge' || distName === 'Old Naranja') return CREWS.salvage;
+  return CREWS.pastel;
+}
 
 /** @type {import('../gamescroll.js').RadioStation[]} */
 const STATIONS = [
@@ -108,15 +134,14 @@ const JOBS = [
     pay: 480,
   },
   {
-    name: 'Sawgrass Salvage',
-    kind: 'vehicle',
+    name: 'Sawgrass Extraction',
+    kind: 'shootout',
     caller: 'MAKO',
-    fromDistrict: 'Glass Quarter',
     toDistrict: 'Sawgrass Edge',
-    call: 'Clean out the stash and run a hot wheel west to Sawgrass Edge!',
-    heat: 2,
-    rep: 35,
-    pay: 520,
+    call: 'Hold Sawgrass Salvage off, swap leads or take the chopper to break 4★ SBPD!',
+    heat: 4,
+    rep: 40,
+    pay: 650,
   },
 ];
 
@@ -241,7 +266,7 @@ const mapPtScratch = [0, 0];
 const barrelBoomHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), mesh: null };
 const wieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: true, keep: true };
 const gangWieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: false, keep: false };
-const GUN_KEYS = ['pistol', 'smg', 'shotgun', 'rifle', 'sniper'];
+const GUN_KEYS = ['pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'launcher'];
 
 const tmpBox = new THREE.Box3();
 const tmpSize = new THREE.Vector3();
@@ -288,11 +313,12 @@ function smoothWindow(val, a, b, c, d) {
   return 1;
 }
 
-function carProfileFor(mesh, barracuda, hotCoupe) {
-  if (mesh === hotCoupe) return { topMult: 1.18, accelMult: 1.22, gripMult: 1.12, label: 'Palma GT', cop: false };
-  if (mesh === barracuda) return { topMult: 1.0, accelMult: 1.02, gripMult: 1.0, label: 'Barracuda', cop: false };
-  if (typeof mesh?.siren === 'function') return { topMult: 1.14, accelMult: 1.15, gripMult: 1.08, label: 'SBPD Cruiser', cop: true };
-  return { topMult: 0.92, accelMult: 0.92, gripMult: 0.96, label: 'Street Ride', cop: false };
+function carProfileFor(mesh, barracuda, hotCoupe, bikeMesh) {
+  if (mesh === bikeMesh) return { topMult: 1.24, accelMult: 1.32, gripMult: 1.15, label: 'Solis Fang', cop: false, bike: true };
+  if (mesh === hotCoupe) return { topMult: 1.18, accelMult: 1.22, gripMult: 1.12, label: 'Palma GT', cop: false, bike: false };
+  if (mesh === barracuda) return { topMult: 1.0, accelMult: 1.02, gripMult: 1.0, label: 'Barracuda', cop: false, bike: false };
+  if (typeof mesh?.siren === 'function') return { topMult: 1.14, accelMult: 1.15, gripMult: 1.08, label: 'SBPD Cruiser', cop: true, bike: false };
+  return { topMult: 0.92, accelMult: 0.92, gripMult: 0.96, label: 'Street Ride', cop: false, bike: false };
 }
 
 function makeRiderMover(world, mesh, { radius = 0.38, height = 1.8, step = 0.35, slope = 50, gravity = -20, at } = {}) {
@@ -370,10 +396,16 @@ function makeRiderMover(world, mesh, { radius = 0.38, height = 1.8, step = 0.35,
 function make(api) {
   let v, world, light, weather, sky, metro, gps, law, radio, scoreMusic, ears;
   let inside, cover, hide, swim, pickups, yardGround;
-  let fx3d, impacts, markers, explosives, worldSave;
+  let fx3d, impacts, markers, explosives, shots, rep, worldSave;
   let yardPropsGroup, beachPropsGroup, serviceGroup;
-  let mako, nadia, barracuda, hotCoupe, boatMesh, arrowMesh;
-  let dropRing, dropBeacon, pickRing, pickBeacon, resprayRing, armsRing;
+  let mako, nadia, barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh, arrowMesh;
+  let dropRing, dropBeacon, pickRing, pickBeacon, resprayRing, armsRing, dinerRing, heliRing;
+  let dinerPos = { x: -24.0, y: 0.15, z: -42.0 };
+  let stuntJumps = [];
+  let bayCrateMeshes = [];
+  let bayCrates = [];
+  let grenadePool = [];
+  let rocketPool = [];
   let pickupMeshes = [];
   let tracerPool = [];
   let barrelPool = [];
@@ -430,8 +462,42 @@ function make(api) {
     serviceGroup.name = 'servicePads';
     v.scene.add(serviceGroup);
 
+    const oldNaranja = metro.districts.find(d => d.name === 'Old Naranja');
+    const dinerDoor = oldNaranja?.plan?.spots?.door?.[Math.floor((oldNaranja.plan.spots.door.length || 0) * 0.45)];
+    if (dinerDoor) {
+      dinerPos.x = dinerDoor.x + (dinerDoor.nx || 0) * 1.8;
+      dinerPos.z = dinerDoor.z + (dinerDoor.nz || 0) * 1.8;
+      dinerPos.y = metro.ground(dinerPos.x, dinerPos.z);
+    }
+
     resprayRing = makeServicePad('#3cd8ff', RESPRAY_POS.x, RESPRAY_POS.y, RESPRAY_POS.z);
     armsRing = makeServicePad('#ffb24a', ARMS_POS.x, ARMS_POS.y, ARMS_POS.z);
+    dinerRing = makeServicePad('#ffcf5c', dinerPos.x, dinerPos.y, dinerPos.z);
+    heliRing = makeServicePad('#f4b938', HELI_POS.x, HELI_POS.y, HELI_POS.z);
+
+    const rampGeo = new THREE.BoxGeometry(4.4, 0.14, 2.2);
+    const rampMat = pbr('#ffae38', { glow: 0.9, rough: 0.35, metal: 0.25 });
+    stuntJumps = [];
+    for (const distName of ['Coral Strip', 'Glass Quarter', 'Sawgrass Edge']) {
+      const distObj = metro.districts.find(d => d.name === distName);
+      const edges = distObj?.plan?.edges || [];
+      const nodes = distObj?.plan?.nodes || [];
+      let bestEdge = null;
+      for (const e of edges) {
+        if (!bestEdge || e.len > bestEdge.len) bestEdge = e;
+      }
+      if (bestEdge && nodes[bestEdge.a] && nodes[bestEdge.b]) {
+        const a = nodes[bestEdge.a], b = nodes[bestEdge.b];
+        const sx = (a.x + b.x) * 0.5, sz = (a.z + b.z) * 0.5;
+        const sy = metro.ground(sx, sz);
+        const rotY = Math.atan2(bestEdge.dx, bestEdge.dz);
+        const rampMesh = new THREE.Mesh(rampGeo, rampMat);
+        rampMesh.position.set(sx, sy + 0.08, sz);
+        rampMesh.rotation.y = rotY;
+        serviceGroup.add(rampMesh);
+        stuntJumps.push({ district: distName, x: sx, y: sy, z: sz, mesh: rampMesh, cd: 0 });
+      }
+    }
 
     yardGround = new Ground(v, {
       size: [60, 44],
@@ -589,6 +655,7 @@ function make(api) {
     impacts = new Impacts(v, { particles: fx3d, marks: true, holes: 36, cases: 40, link: false });
     markers = new Markers();
     explosives = new Explosives({ fuse: 0.14, radius: 7.5, damage: 95, world: false, link: false });
+    shots = new Shots({ gravity: 0, push: 12, link: false });
     worldSave = new WorldSave(api, { every: 10, link: false });
 
     radio = new Radio({ stations: STATIONS, seed: 'solis-bay', sky, on: false });
@@ -639,6 +706,7 @@ function make(api) {
         body: gb,
         wield: gw,
         react,
+        crew: CREWS.pastel,
         x: 0,
         y: 0,
         z: 0,
@@ -676,12 +744,46 @@ function make(api) {
       tracerPool.push({ mesh: tm, life: 0 });
     }
 
+    // Pooled thrown grenades & flying rockets
+    const grGeo = new THREE.SphereGeometry(0.11, 8, 6);
+    const grMat = pbr('#3d5a3b', { rough: 0.5, metal: 0.4 });
+    for (let i = 0; i < 4; i++) {
+      const gm = new THREE.Mesh(grGeo, grMat);
+      gm.castShadow = true;
+      gm.visible = false;
+      v.scene.add(gm);
+      grenadePool.push({ mesh: gm, active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fuse: 0 });
+    }
+
+    const rktGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.55, 8);
+    rktGeo.rotateX(Math.PI * 0.5);
+    const rktMat = pbr('#ff7b38', { glow: 1.4, rough: 0.3, metal: 0.35 });
+    for (let i = 0; i < 4; i++) {
+      const rm = new THREE.Mesh(rktGeo, rktMat);
+      rm.visible = false;
+      v.scene.add(rm);
+      rocketPool.push({ mesh: rm, active: false, smokeT: 0 });
+    }
+
+    // Pooled floating contraband crates for Pelican Cut
+    const bayGeo = new THREE.BoxGeometry(0.95, 0.72, 0.95);
+    const bayMat = pbr('#2ef2b8', { glow: 0.85, rough: 0.35, metal: 0.25 });
+    for (let i = 0; i < 3; i++) {
+      const bm = new THREE.Mesh(bayGeo, bayMat);
+      bm.castShadow = true;
+      bm.visible = false;
+      v.scene.add(bm);
+      bayCrateMeshes.push(bm);
+    }
+
     barracuda = vehicle('car', { style: 'saloon', colour: '#16969a', inside: true, lit: false });
     hotCoupe = vehicle('car', { style: 'sports', colour: '#ff6f61', inside: true, lit: false });
     hotCoupe.visible = false;
+    bikeMesh = vehicle('bike', { style: 'sport', colour: '#ff3b7f', lit: false });
+    heliMesh = vehicle('helicopter', { style: 'light', colour: '#f4b938', lit: true });
     boatMesh = vehicle('boat', { style: 'motor', colour: '#d8473c', lit: true });
-    v.scene.add(barracuda, hotCoupe, boatMesh);
-    v.detail([barracuda, hotCoupe, boatMesh], false);
+    v.scene.add(barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh);
+    v.detail([barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh], false);
 
     camRig = new CameraRig(v, { mode: 'chase', distance: 5.8, height: 2.3, look: 1.35, lag: 0.14, walls: world, fov: 60 });
     gunRig = new GunRig(v, fpWeapons.pistol, { kind: 'pistol', rig: camRig });
@@ -745,7 +847,7 @@ function make(api) {
     return out;
   };
 
-  let R, t, score, cash, inCar, inBoat, carCtrl, boatCtrl, driveBy, activeCarMesh;
+  let R, t, score, cash, inCar, inBoat, inHeli, carCtrl, boatCtrl, heliCtrl, driveBy, activeCarMesh;
   let mover, leads, leadIdx, activeLead, otherLead;
   let phase, jobIdx, job, targetPos, pickupPos, jobsDoneCount = 0;
   let bannerText, bannerCol, bannerT, hitT, rideCooldown, engineSound, radioStarted, savedStationIdx = 0;
@@ -754,10 +856,11 @@ function make(api) {
   let gpsShown, hudSub, wasIndoor, warmupCop = null, warmedCop = false;
   let lastScoreThreat = -1, lastScoreFinal = false;
   let lastCarLights = null, lastActiveCarMesh = null, lastActiveCarLit = null, lastWantedStars = 0;
-  let activeCarProfile = { topMult: 1, accelMult: 1, gripMult: 1, label: 'Barracuda', cop: false };
+  let activeCarProfile = { topMult: 1, accelMult: 1, gripMult: 1, label: 'Barracuda', cop: false, bike: false };
   let rideKey = false, coverKey = false, swapKey = false, gunKey = false, aimKey = false;
   let aimMode = false, fpsAim = false, fireHeld = false, lawWired = false, expWired = false, saveWired = false, scoreStarted = false;
-  let recentShotT = 0, batonCd = 0, driftSec = 0, driftSkidCd = 0, driftSmokeAcc = 0, newsCooldown = 0;
+  let recentShotT = 0, batonCd = 0, grenadeCd = 0, driftSec = 0, driftSkidCd = 0, driftSmokeAcc = 0, newsCooldown = 0;
+  let carJumpT = 0, paintIdx = 0, shakedownOpen = false, cratesLeft = 0;
   let hipShoulder = false, hasLitBarrel = false, radioDirty = true;
   let lockedTarget = null;
   let weaponWheelOpen = false, radioWheelOpen = false;
@@ -901,16 +1004,31 @@ function make(api) {
     }
   };
 
+  const applyVehiclePaint = (veh, hex) => {
+    if (!veh) return;
+    const shared = veh !== barracuda && veh !== hotCoupe && veh !== bikeMesh;
+    veh.traverse?.(m => {
+      if (m.isMesh && m.name === 'paint' && m.material?.color) {
+        if (shared && !m.userData._ownPaint) {
+          m.material = m.material.clone();
+          m.userData._ownPaint = true;
+        }
+        m.material.color.set(hex);
+      }
+    });
+  };
+
   const activeGun = (lead = activeLead) => (lead ? lead.guns[lead.weaponKind] || null : null);
 
   const equipWeapon = (lead, kind) => {
     if (!lead || !lead.unlocked.has(kind)) return false;
     lead.weaponKind = kind;
     if (lead === activeLead) {
-      const hasGun = !!ARSENAL[kind]?.gun;
-      if (aimMode && !hasGun) setAimMode(false);
+      const hasAim = !!ARSENAL[kind]?.gun || kind === 'grenade';
+      if (aimMode && !hasAim) setAimMode(false);
+      else if (camRig) camRig.opts.fovAim = kind === 'sniper' ? 22 : null;
       updateWieldModels();
-      if (gunRig && hasGun && fpWeapons[kind]) gunRig.draw?.();
+      if (gunRig && ARSENAL[kind]?.gun && fpWeapons[kind]) gunRig.draw?.();
     }
     return true;
   };
@@ -934,6 +1052,7 @@ function make(api) {
     gps.clear();
     gps.add({ at: RESPRAY_POS, kind: 'shop', text: 'Customs' });
     gps.add({ at: ARMS_POS, kind: 'shop', text: 'Arms' });
+    gps.add({ at: dinerPos, kind: 'home', text: 'Diner' });
     if (goalPos) {
       gps.add({ at: goalPos, kind, text, pinned: true });
       gps.to(goalPos);
@@ -954,24 +1073,29 @@ function make(api) {
       if (fpWeapons[k] && gunRig.model !== fpWeapons[k] && hasGun) {
         gunRig.hold(fpWeapons[k], k);
       }
-      gunRig.root.visible = !!aimMode && fpsAim && !inCar && !inBoat && hasGun;
+      gunRig.root.visible = !!aimMode && fpsAim && !inCar && !inBoat && !inHeli && hasGun;
     }
   };
 
   const setAimMode = (on) => {
-    if (inCar || inBoat) on = false;
+    if (inCar || inBoat || inHeli) on = false;
     aimMode = !!on;
     hipShoulder = false;
     if (aimMode) {
-      const k = activeLead.weaponKind;
-      if (!ARSENAL[k]?.gun) {
-        if (activeLead.unlocked.has('pistol')) activeLead.weaponKind = 'pistol';
+      let k = activeLead.weaponKind;
+      if (!ARSENAL[k]?.gun && k !== 'grenade') {
+        if (activeLead.unlocked.has('pistol')) {
+          activeLead.weaponKind = 'pistol';
+          k = 'pistol';
+        }
       }
-      const hasGun = !!ARSENAL[activeLead.weaponKind]?.gun;
-      if (hasGun) {
+      const hasGun = !!ARSENAL[k]?.gun;
+      const canAim = hasGun || k === 'grenade';
+      if (canAim) {
         const f = activeLead.foot;
         f.heading = camRig.targetYaw + camRig.yaw;
       }
+      camRig.opts.fovAim = k === 'sniper' ? 22 : null;
       if (fpsAim && hasGun) {
         camRig.to('first', 0.14, { height: 1.62, walls: world });
         gunRig.aiming = true;
@@ -983,6 +1107,7 @@ function make(api) {
       v.aiming = 1;
     } else {
       camRig.aiming = false;
+      camRig.opts.fovAim = null;
       gunRig.aiming = false;
       v.aiming = 0;
       camRig.to('chase', 0.2, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
@@ -990,8 +1115,9 @@ function make(api) {
     updateWieldModels();
   };
 
-  const spawnEncounter = (cx, cz, radius = 16) => {
+  const spawnEncounter = (cx, cz, radius = 16, districtName = lastDistrictName) => {
     const aliveNeeded = Math.min(3, 1 + Math.floor(jobIdx / 1.5));
+    const crew = crewForDistrict(districtName);
     for (let i = 0; i < gangPool.length; i++) {
       const g = gangPool[i];
       if (i >= aliveNeeded) {
@@ -1006,6 +1132,7 @@ function make(api) {
       const tmp = { x: gx, z: gz };
       metro.collide(tmp, 0.45, 0.2);
       const gy = metro.ground(tmp.x, tmp.z);
+      g.crew = crew;
       g.x = g.homeX = tmp.x;
       g.z = g.homeZ = tmp.z;
       g.y = gy;
@@ -1029,7 +1156,12 @@ function make(api) {
   const assignJob = (idx) => {
     jobIdx = idx % JOBS.length;
     job = JOBS[jobIdx];
-    const startRef = inCar && carCtrl ? { x: carCtrl.x, z: carCtrl.y } : activeLead.foot;
+    shakedownOpen = false;
+    bayCrates = [];
+    cratesLeft = 0;
+    for (const bm of bayCrateMeshes) bm.visible = false;
+
+    const startRef = inCar && carCtrl ? { x: carCtrl.x, z: carCtrl.y } : inHeli && heliCtrl ? heliCtrl.pos : activeLead.foot;
 
     if (job.kind === 'vehicle') {
       if (inCar) {
@@ -1039,7 +1171,7 @@ function make(api) {
         if (activeCarMesh !== hotCoupe) hotCoupe.visible = false;
         setGpsGoal(targetPos, 'target', job.toDistrict);
         hudSub = `Deliver ride to ${job.toDistrict}`;
-        spawnEncounter(targetPos.x, targetPos.z, 14);
+        spawnEncounter(targetPos.x, targetPos.z, 14, job.toDistrict);
       } else {
         phase = 'pickup';
         pickupPos = placeAtDistrict(job.fromDistrict, startRef, 22, 85);
@@ -1049,7 +1181,7 @@ function make(api) {
         hotCoupe.visible = true;
         setGpsGoal(pickupPos, 'job', 'Hot Ride');
         hudSub = `Board ride on ${job.fromDistrict}`;
-        spawnEncounter(targetPos.x, targetPos.z, 14);
+        spawnEncounter(targetPos.x, targetPos.z, 14, job.toDistrict);
       }
     } else if (job.kind === 'interior') {
       phase = 'interior';
@@ -1057,43 +1189,161 @@ function make(api) {
       targetPos = placeAtDistrict('Old Naranja', startRef, 35, 130, 'door');
       setGpsGoal(targetPos, 'target', 'Shop Door');
       hudSub = 'Walk inside Old Naranja shop';
-      spawnEncounter(targetPos.x + 8, targetPos.z + 8, 12);
+      spawnEncounter(targetPos.x + 8, targetPos.z + 8, 12, 'Old Naranja');
     } else if (job.kind === 'boat') {
       phase = inBoat ? 'deliver_boat' : 'board_boat';
       pickupPos = { x: DOCK_POS.x, y: DOCK_POS.y, z: DOCK_POS.z, heading: 0 };
       targetPos = { x: YARD_X, y: YARD_Y, z: YARD_Z, heading: 0 };
+      for (let i = 0; i < 3; i++) {
+        const u = 0.25 + i * 0.25;
+        let cx = SLIP_POS.x + (YARD_X - SLIP_POS.x) * u;
+        let cz = SLIP_POS.z + (YARD_Z - SLIP_POS.z) * u;
+        for (let probe = 0; probe < 8 && !metro.water?.wet(cx, cz); probe++) {
+          cx += 10;
+          cz -= 8;
+        }
+        const cy = metro.water?.height ? metro.water.height(cx, cz) : 0;
+        bayCrates.push({ x: cx, y: cy > -50 ? cy : 0, z: cz, taken: false, mesh: bayCrateMeshes[i] });
+        if (bayCrateMeshes[i]) {
+          bayCrateMeshes[i].position.set(cx, 0.25, cz);
+          bayCrateMeshes[i].visible = true;
+        }
+      }
+      cratesLeft = bayCrates.length;
       const navPt = phase === 'board_boat' ? pickupPos : targetPos;
       setGpsGoal(navPt, 'target', phase === 'board_boat' ? 'Marina Boat' : 'Port Yard');
-      hudSub = phase === 'board_boat' ? 'Board boat at Pelican Marina' : 'Pilot bay & land at Port Yard';
-      spawnEncounter(YARD_X, YARD_Z, 18);
+      hudSub = phase === 'board_boat' ? 'Board boat at Pelican Marina' : 'Scoop 3 bay crates -> Port Yard';
+      spawnEncounter(YARD_X, YARD_Z, 18, 'Pelican Marina');
     } else {
       phase = 'deliver';
       pickupPos = null;
       targetPos = placeAtDistrict(job.toDistrict, startRef, 70, 200);
       setGpsGoal(targetPos, 'target', job.toDistrict);
       if (law.stars < job.heat) law.set(job.heat);
-      hudSub = `Clear crew in ${job.toDistrict}`;
-      spawnEncounter(targetPos.x, targetPos.z, 16);
+      const crew = crewForDistrict(job.toDistrict);
+      hudSub = `Clear ${crew.name} in ${job.toDistrict}`;
+      spawnEncounter(targetPos.x, targetPos.z, 16, job.toDistrict);
     }
     ringPhone(`${job.caller} · ${job.name}`, job.call, 4.4);
   };
 
+  const koGangMember = (g, head = false, labelTag = 'KO') => {
+    g.alive = false;
+    g.body.visible = false;
+    const pay = activeLead.name === 'Nadia' ? 145 : 120;
+    cash += pay;
+    const crewName = g.crew?.name || 'Rival';
+    const crewId = g.crew?.id;
+    if (rep && crewId) rep.did('crewKo', { seen: [crewId] });
+    awardRep(8, `+8 ${crewName} ${labelTag} · +$${pay}`, '#ff9f43');
+    markers.add(head, true);
+  };
+
+  const detonateAt = (ax, ay, az, radius = 8.0, damage = 110) => {
+    const boomAt = { x: ax, y: ay, z: az };
+    fx3d.boom(boomAt, { size: 1.7 });
+    sounds.boom?.();
+    camRig.shake(0.55);
+    const dmgAt = (px, py, pz, rMax) => {
+      const d = Math.hypot(px - ax, (py - ay) * 0.6, pz - az);
+      return d < rMax ? damage * (1 - d / rMax) : 0;
+    };
+    for (const g of gangPool) {
+      if (!g.alive) continue;
+      const dmg = dmgAt(g.x, g.y + 0.8, g.z, radius);
+      if (dmg > 0) {
+        g.hp -= dmg;
+        _pushVec.x = (g.x - ax) * 2.5; _pushVec.y = 3.5; _pushVec.z = (g.z - az) * 2.5;
+        g.react.hit(_pushVec, boomAt);
+        if (g.hp <= 0) koGangMember(g, false, 'BLAST KO');
+      }
+    }
+    for (const o of law.officers) {
+      if (o.gone || o.alive === false) continue;
+      const oy = o.body?.position?.y ?? 0;
+      const dmg = dmgAt(o.x, oy + 0.8, o.z, radius);
+      if (dmg > 0) law.hitOfficer(o, dmg, boomAt, boomAt);
+    }
+    for (const b of law.boats || []) {
+      if (b.down || !b.model) continue;
+      const bx = b.craft?.x ?? b.model.position.x, bz = b.craft?.z ?? b.model.position.z;
+      const dmg = dmgAt(bx, 0.8, bz, radius + 4);
+      if (dmg > 0) b.model.harm?.(clamp(dmg / 95, 0.35, 1.2));
+    }
+    if (law.heli && !law.heli.down && law.heli.model) {
+      const hp = law.heli.model.position;
+      const dmg = dmgAt(hp.x, hp.y, hp.z, radius + 6);
+      if (dmg > 0) law.heli.model.harm?.(clamp(dmg / 85, 0.45, 1.2));
+    }
+    for (const b of explosives.list) {
+      if (b.gone) continue;
+      if (Math.hypot(b.x - ax, b.z - az) < radius * 0.85 && Math.hypot(b.x - ax, b.z - az) > 0.25) {
+        explosives.light(b, true);
+        hasLitBarrel = true;
+      }
+    }
+    for (const pv of [barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh, activeCarMesh]) {
+      if (!pv || pv.wrecked || pv.visible === false) continue;
+      if (pv === activeCarMesh && [barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh].includes(pv)) continue;
+      const d = Math.hypot(pv.position.x - ax, pv.position.y - ay, pv.position.z - az);
+      if (d > 0.5 && d < radius) pv.harm?.(clamp((1 - d / radius) * 0.55, 0.12, 0.6));
+    }
+    if (activeLead && !overKind) {
+      const selfDmg = dmgAt(playerQuery.x, playerQuery.y + 0.7, playerQuery.z, radius);
+      if (selfDmg > 0) {
+        const lost = activeLead.health.hurt(selfDmg * 0.55, { from: boomAt, at: activeLead.foot, facing: activeLead.foot.heading });
+        v.hit?.(lost);
+        v.health = activeLead.health.frac;
+        if (activeLead.health.dead) triggerOver('WASTED');
+      }
+    }
+    law.crime('shots', boomAt);
+  };
+
+  const wireVehicleWreck = (veh) => {
+    if (!veh || veh._wreckWired || typeof veh.on !== 'function') return;
+    veh._wreckWired = true;
+    veh.on('fire', () => {
+      if ((inCar && activeCarMesh === veh) || (inHeli && veh === heliMesh) || (inBoat && veh === boatMesh)) {
+        say('ENGINE ON FIRE — BAIL OUT!', '#ff5a52', 3.0);
+        try { sounds.alarm?.(1.1); } catch {}
+      }
+    });
+    veh.on('blow', e => {
+      const at = e?.at || veh.position;
+      if ((inCar && activeCarMesh === veh) || (inHeli && veh === heliMesh) || (inBoat && veh === boatMesh)) {
+        stepOut(true);
+        if (!overKind) {
+          const lost = activeLead.health.hurt(68, { from: at, at: activeLead.foot, facing: activeLead.foot.heading });
+          v.hit?.(lost);
+          v.health = activeLead.health.frac;
+          if (activeLead.health.dead) triggerOver('WASTED');
+        }
+      }
+      detonateAt(at.x, at.y, at.z, e?.radius || 8.5, 110);
+    });
+  };
+
   const seatLeadInCar = (vehMesh, cx, cz, heading) => {
-    if (activeCarMesh && activeCarMesh !== barracuda && activeCarMesh !== hotCoupe && activeCarMesh !== vehMesh) {
+    if (activeCarMesh && activeCarMesh !== barracuda && activeCarMesh !== hotCoupe && activeCarMesh !== bikeMesh && activeCarMesh !== vehMesh) {
       activeCarMesh.visible = false;
     }
+    wireVehicleWreck(vehMesh);
     setAimMode(false);
     hipShoulder = false;
     hide.leave();
     activeCarMesh = vehMesh;
-    activeCarProfile = carProfileFor(vehMesh, barracuda, hotCoupe);
+    activeCarProfile = carProfileFor(vehMesh, barracuda, hotCoupe, bikeMesh);
     activeCarMesh.visible = true;
     activeCarMesh.position.set(cx, metro.ground(cx, cz), cz);
     activeCarMesh.rotation.set(0, heading + Math.PI, 0);
-    activeCarMesh.putIn?.(activeLead.body, 'driver');
+    const seatName = activeCarProfile.bike ? 'rider' : 'driver';
+    activeCarMesh.putIn?.(activeLead.body, seatName);
     activeLead.inVehicle = true;
     inCar = true;
     inBoat = false;
+    inHeli = false;
+    carJumpT = 0;
     mover.mesh = null;
     mover.gravity = 0;
     mover.walk(0, 0);
@@ -1105,16 +1355,20 @@ function make(api) {
       x: cx,
       y: cz,
       angle: Math.PI / 2 - heading,
-      top: K.carTop * activeCarProfile.topMult,
+      top: K.carTop * activeCarProfile.topMult * (activeCarMesh._tuned ? 1.08 : 1),
       accel: K.carAccel * activeCarProfile.accelMult * (makoBonus ? 1.06 : 1),
       brakes: 34,
       turn: K.carTurn,
-      roll: 0.35,
+      roll: activeCarProfile.bike ? 0.25 : 0.35,
       grip: K.carGrip * activeCarProfile.gripMult * (makoBonus ? 1.12 : 1),
       reverse: 0.42,
     });
-    driveBy = new DriveBy(activeCarMesh, { seat: 'driver' });
-    camRig.to('chase', 0.25, { distance: 9.0, height: 4.0, look: 1.25, walls: false });
+    driveBy = new DriveBy(activeCarMesh, { seat: seatName, open: !!activeCarProfile.bike });
+    if (activeCarProfile.bike) {
+      camRig.to('chase', 0.22, { distance: 6.4, height: 2.5, look: 1.2, walls: false });
+    } else {
+      camRig.to('chase', 0.25, { distance: 9.0, height: 4.0, look: 1.25, walls: false });
+    }
 
     if (!radioStarted) {
       pendingRadioOn = 2;
@@ -1132,15 +1386,19 @@ function make(api) {
       pendingGpsDelay = 3;
       hudSub = `Deliver to ${job.toDistrict}`;
       say(`${activeCarProfile.label} boosted! Go to ${job.toDistrict}`, '#68f8c4', 3.4);
+    } else if (activeCarProfile.bike) {
+      say('Solis Fang mounted!', '#ff9ff3', 2.0);
     }
   };
 
   const boardBoat = () => {
+    wireVehicleWreck(boatMesh);
     setAimMode(false);
     hipShoulder = false;
     hide.leave();
     if (inCar && activeCarMesh) activeCarMesh.takeOut?.(activeLead.body);
     inCar = false;
+    inHeli = false;
     inBoat = true;
     activeLead.inVehicle = true;
     mover.mesh = null;
@@ -1151,15 +1409,43 @@ function make(api) {
     boatMesh.putIn?.(activeLead.body, 'helm', { from: swim.state !== 'out' ? 'water' : undefined });
     driveBy = new DriveBy(boatMesh, { seat: 'helm', open: true });
     camRig.to('chase', 0.25, { distance: 10.5, height: 4.4, look: 1.3, walls: false });
+    if (!radioStarted) pendingRadioOn = 2;
+    radio.listen({ inside: true });
     updateWieldModels();
 
     if (phase === 'board_boat') {
       phase = 'deliver_boat';
       if (law.stars < 2) law.set(2);
       setGpsGoal(targetPos, 'target', 'Port Yard');
-      hudSub = 'Dodge SBPD launches & dock at Port Yard';
-      say('Flamingo 24 underway! Clear the bay to Port Yard!', '#68f8c4', 3.5);
+      hudSub = `Bay Crates ${3 - cratesLeft}/3 -> Port Yard`;
+      say('Flamingo 24 underway! Scoop 3 crates to Port Yard!', '#68f8c4', 3.5);
     }
+  };
+
+  const boardHeli = () => {
+    if (!heliCtrl || heliMesh.wrecked) return;
+    wireVehicleWreck(heliMesh);
+    setAimMode(false);
+    hipShoulder = false;
+    hide.leave();
+    if (inCar && activeCarMesh) activeCarMesh.takeOut?.(activeLead.body);
+    if (inBoat) boatMesh.takeOut?.(activeLead.body);
+    inCar = false;
+    inBoat = false;
+    inHeli = true;
+    activeLead.inVehicle = true;
+    mover.mesh = null;
+    mover.gravity = 0;
+    mover.walk(0, 0);
+    mover.setActive(false);
+    mover.place(heliCtrl.pos.x, -120, heliCtrl.pos.z);
+    heliMesh.putIn?.(activeLead.body, 'pilot');
+    driveBy = null;
+    camRig.to('chase', 0.25, { distance: 13.5, height: 5.8, look: 1.2, walls: false });
+    if (!radioStarted) pendingRadioOn = 2;
+    radio.listen({ inside: true });
+    updateWieldModels();
+    say('Solis Chopper airborne · UP/DOWN to climb!', '#ffd166', 3.2);
   };
 
   const findSafeExit = (bx, bz, baseHeading, candOffsets, preferDry) => {
@@ -1187,15 +1473,49 @@ function make(api) {
     return best || { x: bx, y: metro.ground(bx, bz), z: bz };
   };
 
-  const stepOut = () => {
-    if (inBoat && boatCtrl) {
-      boatMesh.takeOut?.(activeLead.body);
-      const safe = findSafeExit(boatCtrl.x, boatCtrl.z, boatCtrl.heading, [[2.4, 0], [-2.4, 0], [0, 2.8]], true);
+  const stepOut = (force = false) => {
+    if (inHeli && heliCtrl) {
+      const hx = heliCtrl.pos.x, hz = heliCtrl.pos.z;
+      const gy = metro.ground(hx, hz, heliCtrl.pos.y + 1.5);
+      const alt = heliCtrl.pos.y - gy;
+      const wet = !!metro.water?.wet(hx, hz);
+      if (!force && !heliCtrl.onGround && !wet && alt > 4.0) {
+        say('Descend lower to exit chopper!', '#ffd166', 2.0);
+        return;
+      }
+      heliMesh.takeOut?.(activeLead.body);
+      const safe = findSafeExit(hx, hz, Math.PI - heliCtrl.heading, [[2.8, 0], [-2.8, 0], [0, 3.2]], true);
       const f = activeLead.foot;
       f.x = safe.x;
       f.y = safe.y;
       f.z = safe.z;
-      f.heading = boatCtrl.heading + Math.PI;
+      f.heading = Math.PI - heliCtrl.heading;
+      f.v = 0;
+      inHeli = false;
+      activeLead.inVehicle = false;
+      mover.mesh = activeLead.body;
+      mover.gravity = -20;
+      mover.setActive(true);
+      world.queries?.();
+      mover.place(f.x, f.y + 0.08, f.z);
+      activeLead.body.position.set(f.x, f.y, f.z);
+      activeLead.body.rotation.set(0, f.heading, 0);
+      radio.listen({ inside: false, distance: 4 });
+      if (!radio.now.on) scoreMusic?.resume();
+      if (engineSound) engineSound.set({ vol: 0 }, 0.08);
+      camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
+      updateWieldModels();
+      say('Stepped out of Solis Chopper', '#d8e6ff', 2.0);
+      return;
+    }
+    if (inBoat && boatCtrl) {
+      boatMesh.takeOut?.(activeLead.body);
+      const safe = findSafeExit(boatCtrl.x, boatCtrl.z, Math.PI - boatCtrl.heading, [[2.4, 0], [-2.4, 0], [0, 2.8]], true);
+      const f = activeLead.foot;
+      f.x = safe.x;
+      f.y = safe.y;
+      f.z = safe.z;
+      f.heading = Math.PI - boatCtrl.heading;
       f.v = 0;
       inBoat = false;
       activeLead.inVehicle = false;
@@ -1204,6 +1524,9 @@ function make(api) {
       mover.setActive(true);
       world.queries?.();
       mover.place(f.x, f.y + 0.08, f.z);
+      radio.listen({ inside: false, distance: 4 });
+      if (!radio.now.on) scoreMusic?.resume();
+      if (engineSound) engineSound.set({ vol: 0 }, 0.08);
       camRig.to('chase', 0.25, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
       updateWieldModels();
       say('Stepped off Flamingo 24', '#d8e6ff', 2.0);
@@ -1242,21 +1565,30 @@ function make(api) {
   const tryBoardOrExit = () => {
     if (rideCooldown > 0) return;
     rideCooldown = 0.35;
-    if (inCar || inBoat) {
+    if (inCar || inBoat || inHeli) {
       stepOut();
       return;
     }
     const p = { x: activeLead.foot.x, z: activeLead.foot.z };
-    if (boatCtrl && Math.hypot(boatCtrl.x - p.x, boatCtrl.z - p.z) < 6.0) {
+    if (heliCtrl && !heliMesh.wrecked && Math.hypot(heliCtrl.pos.x - p.x, heliCtrl.pos.z - p.z) < 6.2) {
+      boardHeli();
+      return;
+    }
+    if (bikeMesh && !bikeMesh.wrecked && Math.hypot(bikeMesh.position.x - p.x, bikeMesh.position.z - p.z) < 4.8) {
+      const h = Math.atan2(-Math.sin(bikeMesh.rotation.y), -Math.cos(bikeMesh.rotation.y));
+      seatLeadInCar(bikeMesh, bikeMesh.position.x, bikeMesh.position.z, h);
+      return;
+    }
+    if (boatCtrl && !boatMesh.wrecked && Math.hypot(boatCtrl.x - p.x, boatCtrl.z - p.z) < 6.0) {
       boardBoat();
       return;
     }
-    if (Math.hypot(barracuda.position.x - p.x, barracuda.position.z - p.z) < 4.8) {
+    if (!barracuda.wrecked && Math.hypot(barracuda.position.x - p.x, barracuda.position.z - p.z) < 4.8) {
       const h = Math.atan2(-Math.sin(barracuda.rotation.y), -Math.cos(barracuda.rotation.y));
       seatLeadInCar(barracuda, barracuda.position.x, barracuda.position.z, h);
       return;
     }
-    if (hotCoupe.visible && Math.hypot(hotCoupe.position.x - p.x, hotCoupe.position.z - p.z) < 5.5) {
+    if (hotCoupe.visible && !hotCoupe.wrecked && Math.hypot(hotCoupe.position.x - p.x, hotCoupe.position.z - p.z) < 5.5) {
       const h = Math.atan2(-Math.sin(hotCoupe.rotation.y), -Math.cos(hotCoupe.rotation.y));
       seatLeadInCar(hotCoupe, hotCoupe.position.x, hotCoupe.position.z, h);
       return;
@@ -1272,11 +1604,11 @@ function make(api) {
         return;
       }
     }
-    say('Move closer to a car or boat to board', '#ffd166', 1.8);
+    say('Move closer to a car, bike, boat or chopper', '#ffd166', 1.8);
   };
 
   const swapLead = () => {
-    if (inCar || inBoat) stepOut();
+    if (inCar || inBoat || inHeli) stepOut(true);
     setAimMode(false);
     hide.leave();
     activeLead.foot.x = mover.feet.x;
@@ -1391,7 +1723,7 @@ function make(api) {
     const f = activeLead.foot;
 
     // Melee baton swing on foot
-    if (k === 'baton' && !inCar && !inBoat) {
+    if (k === 'baton' && !inCar && !inBoat && !inHeli) {
       if (batonCd > 0) return;
       batonCd = 0.42;
       recentShotT = 0.5;
@@ -1419,16 +1751,8 @@ function make(api) {
           g.hp -= 40;
           _pushVec.x = fwdX * 3.2; _pushVec.y = 0.8; _pushVec.z = fwdZ * 3.2;
           g.react.hit(_pushVec, g);
-          if (g.hp <= 0) {
-            g.alive = false;
-            g.body.visible = false;
-            const pay = activeLead.name === 'Nadia' ? 145 : 120;
-            cash += pay;
-            awardRep(8, `+8 KO · +$${pay}`, '#ff9f43');
-            markers.add(false, true);
-          } else {
-            markers.add(false, false);
-          }
+          if (g.hp <= 0) koGangMember(g, false, 'KO');
+          else markers.add(false, false);
           hitAny = true;
         }
       }
@@ -1436,6 +1760,39 @@ function make(api) {
         weaponSound('baton', 'bash', f);
         law.crime('fight', playerQuery);
       }
+      return;
+    }
+
+    // Thrown grenade on foot
+    if (k === 'grenade' && !inCar && !inBoat && !inHeli) {
+      if (grenadeCd > 0) return;
+      if (activeLead.pouch.count('grenades') <= 0) {
+        grenadeCd = 0.6;
+        say('Out of Grenades — visit Bayside Arms!', '#ff6b6b', 2.0);
+        return;
+      }
+      const gSlot = grenadePool.find(g => !g.active);
+      if (!gSlot) return;
+      activeLead.pouch.take('grenades', 1);
+      grenadeCd = 0.75;
+      recentShotT = 0.6;
+      f.heading = camRig.targetYaw + camRig.yaw;
+      activeLead.body.rig.play?.('punch', { fade: 0.06 });
+      weaponSound('grenade', 'pin', f);
+      v.cam.getWorldDirection(camDirVec);
+      gSlot.active = true;
+      gSlot.x = f.x + Math.sin(f.heading) * 0.55;
+      gSlot.y = f.y + 1.48;
+      gSlot.z = f.z + Math.cos(f.heading) * 0.55;
+      gSlot.vx = camDirVec.x * 16.5;
+      gSlot.vy = camDirVec.y * 16.5 + 4.8;
+      gSlot.vz = camDirVec.z * 16.5;
+      gSlot.fuse = 1.75;
+      gSlot.mesh.position.set(gSlot.x, gSlot.y, gSlot.z);
+      gSlot.mesh.visible = true;
+      law.crime('shots', playerQuery);
+      metro.people.scare(playerQuery, 22);
+      if (law.stars < 1) law.set(1);
       return;
     }
 
@@ -1460,7 +1817,7 @@ function make(api) {
       shootTargetVec.copy(camPosVec).addScaledVector(camDirVec, convDist);
     }
 
-    let shots = [];
+    let fired = [];
     const activeWield = activeLead.wields[k];
     if ((inCar || inBoat) && driveBy) {
       const df = driveBy.from;
@@ -1470,8 +1827,8 @@ function make(api) {
       const dl = Math.hypot(aimDirObj.x, aimDirObj.y, aimDirObj.z) || 1;
       aimDirObj.x /= dl; aimDirObj.y /= dl; aimDirObj.z /= dl;
       driveBy.aim(aimDirObj);
-      shots = driveBy.fire(gun, true);
-      if (shots.length) {
+      fired = driveBy.fire(gun, true);
+      if (fired.length) {
         weaponSound(k, 'fire', driveBy.from);
         if (driveBy.glass && activeCarMesh?.hit) activeCarMesh.hit(driveBy.glass, { power: 0.2 });
       }
@@ -1484,8 +1841,8 @@ function make(api) {
       aimDirObj.z = shootTargetVec.z - aimOrigin.z;
       const dl = Math.hypot(aimDirObj.x, aimDirObj.y, aimDirObj.z) || 1;
       aimDirObj.x /= dl; aimDirObj.y /= dl; aimDirObj.z /= dl;
-      shots = gun.pull(aimOrigin, aimDirObj, true);
-      if (shots.length) weaponSound(k, 'fire', aimOrigin);
+      fired = gun.pull(aimOrigin, aimDirObj, true);
+      if (fired.length) weaponSound(k, 'fire', aimOrigin);
     } else if (aimMode && fpsAim) {
       aimOrigin.x = camPosVec.x + camDirVec.x * 0.45;
       aimOrigin.y = camPosVec.y + camDirVec.y * 0.45;
@@ -1495,8 +1852,8 @@ function make(api) {
       aimDirObj.z = shootTargetVec.z - aimOrigin.z;
       const dl = Math.hypot(aimDirObj.x, aimDirObj.y, aimDirObj.z) || 1;
       aimDirObj.x /= dl; aimDirObj.y /= dl; aimDirObj.z /= dl;
-      shots = gun.pull(aimOrigin, aimDirObj, true);
-      if (shots.length) weaponSound(k, 'fire', aimOrigin);
+      fired = gun.pull(aimOrigin, aimDirObj, true);
+      if (fired.length) weaponSound(k, 'fire', aimOrigin);
     } else {
       f.heading = camRig.targetYaw + camRig.yaw;
       recentShotT = 0.7;
@@ -1516,11 +1873,11 @@ function make(api) {
       aimDirObj.z = shootTargetVec.z - aimOrigin.z;
       const dl = Math.hypot(aimDirObj.x, aimDirObj.y, aimDirObj.z) || 1;
       aimDirObj.x /= dl; aimDirObj.y /= dl; aimDirObj.z /= dl;
-      shots = gun.pull(aimOrigin, aimDirObj, true);
-      if (shots.length) weaponSound(k, 'fire', aimOrigin);
+      fired = gun.pull(aimOrigin, aimDirObj, true);
+      if (fired.length) weaponSound(k, 'fire', aimOrigin);
     }
 
-    if (!shots.length) return;
+    if (!fired.length) return;
     recentShotT = 0.7;
     law.crime('shots', playerQuery);
     metro.people.scare(playerQuery, 26);
@@ -1531,13 +1888,28 @@ function make(api) {
     camRig.shake(aimMode ? 0.07 : 0.05);
     if (aimMode && fpsAim && gunRig) gunRig.fire(1, k);
 
-    impacts.muzzle(shots[0].from, shots[0].dir, { kind: k });
+    impacts.muzzle(fired[0].from, fired[0].dir, { kind: k });
     const ejectNode = activeWield?.gun?.points?.eject;
     if (ARSENAL[k]?.shell) {
-      impacts.shell(ejectNode || shots[0].from, { kind: k });
+      impacts.shell(ejectNode || fired[0].from, { kind: k });
     }
 
-    for (const s of shots) {
+    // RPG launcher fires tracked physical rockets via gs.combat.Shots
+    if (k === 'launcher') {
+      for (const s of fired) {
+        const rSlot = rocketPool.find(r => !r.active) || rocketPool[0];
+        rSlot.active = true;
+        rSlot.smokeT = 0;
+        rSlot.mesh.position.set(s.from.x, s.from.y, s.from.z);
+        tracerDirVec.set(s.dir.x, s.dir.y, s.dir.z).normalize();
+        rSlot.mesh.quaternion.setFromUnitVectors(zForwardAxis, tracerDirVec);
+        rSlot.mesh.visible = true;
+        shots.add(s, { rocketSlot: rSlot, not: mover?.rider });
+      }
+      return;
+    }
+
+    for (const s of fired) {
       let endDist = Math.min(range, 55);
       let hitHandled = false;
 
@@ -1585,16 +1957,8 @@ function make(api) {
             barrelBoomHit.point.set(s.from.x + s.dir.x * tg, s.from.y + s.dir.y * tg, s.from.z + s.dir.z * tg);
             g.react.hit(_pushVec, barrelBoomHit.point);
             impacts.hit(barrelBoomHit, { surface: 'cloth', from: s.from, mark: false });
-            if (g.hp <= 0) {
-              g.alive = false;
-              g.body.visible = false;
-              const pay = activeLead.name === 'Nadia' ? 145 : 120;
-              cash += pay;
-              awardRep(8, `+8 KO · +$${pay}`, '#ff9f43');
-              markers.add(head, true);
-            } else {
-              markers.add(head, false);
-            }
+            if (g.hp <= 0) koGangMember(g, head, 'KO');
+            else markers.add(head, false);
             hitHandled = true;
             break;
           }
@@ -1702,7 +2066,7 @@ function make(api) {
     const pw = Math.min(264, W - 28);
     wheelPanelRect.w = pw;
     wheelPanelRect.x = Math.round((W - pw) * 0.5);
-    wheelPanelRect.h = weaponWheelOpen ? 236 : 262;
+    wheelPanelRect.h = weaponWheelOpen ? 248 : 262;
     wheelPanelRect.y = Math.round(Math.max(topY + 30, (H - wheelPanelRect.h) * 0.44));
 
     const sbW = Math.min(210, W - 100);
@@ -1790,14 +2154,48 @@ function make(api) {
     const px = playerQuery.x, pz = playerQuery.z;
     if (Math.hypot(px - RESPRAY_POS.x, pz - RESPRAY_POS.z) < 8.5) return 'respray';
     if (Math.hypot(px - ARMS_POS.x, pz - ARMS_POS.z) < 8.5) return 'arms';
+    if (Math.hypot(px - dinerPos.x, pz - dinerPos.z) < 8.5) return 'diner';
     return null;
   };
 
   const nextLockedWeapon = () => WEAPON_ORDER.find(k => !activeLead.unlocked.has(k)) || null;
 
+  const completeEscrowShakedown = (pressured) => {
+    shakedownOpen = false;
+    jobsDoneCount++;
+    const bonus = pressured ? 150 : 0;
+    const basePay = job.pay + bonus;
+    const pay = activeLead.name === 'Nadia' ? Math.round(basePay * 1.2) : basePay;
+    cash += pay;
+    rep?.did('mission');
+    if (law.stars < job.heat) law.set(job.heat);
+    say(pressured ? `Adjuster squeezed! +${job.rep} Rep · +$${pay}` : `Ledger secured! +${job.rep} Rep · +$${pay}`, '#68f8c4', 3.4);
+    if (awardRep(job.rep, `+${job.rep} REP · +$${pay}`, '#68f8c4')) return;
+    announceNews('Old Naranja shopkeepers report a ledger heist', false);
+    assignJob(jobIdx + 1);
+  };
+
   const useServiceAction = (slot) => {
     const shop = nearServiceShop();
     if (!shop) return false;
+    if (shop === 'diner') {
+      if (slot === 0) {
+        activeLead.health.heal(100);
+        sky.time = (sky.time + 4) % 24;
+        sky.update(0);
+        updateAtmosphere(0, true);
+        worldSave?.soon(0.1);
+        sounds.confirm?.();
+        feel.coin(W * 0.5, H * 0.42, { color: '#ffcf5c', text: 'RESTED · FULL HP' });
+        say("Rested at Tia Carmen's Diner (+4h · Full HP)", '#ffcf5c', 2.8);
+        return true;
+      }
+      if (slot === 1) {
+        swapLead();
+        return true;
+      }
+      return false;
+    }
     if (shop === 'respray') {
       const cost = cash >= 250 ? 250 : law.stars > 0 && jobsDoneCount === 0 ? 0 : 250;
       if (cash < cost) {
@@ -1806,11 +2204,16 @@ function make(api) {
       }
       cash -= cost;
       law.set(0);
-      if (inCar && activeCarMesh) activeCarMesh.mend?.();
-      fx3d.sparks(playerQuery, { color: '#45e0ff', count: 24, power: 1.1 });
+      paintIdx = (paintIdx + 1) % CUSTOMS_PAINTS.length;
+      const paint = CUSTOMS_PAINTS[paintIdx];
+      const paintTarget = inCar && activeCarMesh ? activeCarMesh : barracuda;
+      paintTarget?.mend?.();
+      paintTarget._tuned = true;
+      applyVehiclePaint(paintTarget, paint.hex);
+      fx3d.sparks(playerQuery, { color: paint.hex, count: 24, power: 1.1 });
       sounds.confirm?.();
-      feel.coin(W * 0.5, H * 0.42, { color: '#3cd8ff', text: cost ? 'CLEANED -$250' : 'FREE RESPRAY' });
-      say('Wanted Cleared & Vehicle Repaired!', '#3cd8ff', 2.6);
+      feel.coin(W * 0.5, H * 0.42, { color: '#3cd8ff', text: cost ? `${paint.name} -$250` : paint.name });
+      say(`Painted ${paint.name} · +8% Tune · Heat Cleared!`, '#3cd8ff', 2.8);
       worldSave?.soon(0.4);
       return true;
     }
@@ -1822,9 +2225,11 @@ function make(api) {
         activeLead.pouch.add('pistol', 36);
         activeLead.pouch.add('shells', 12);
         activeLead.pouch.add('rifle', 45);
+        activeLead.pouch.add('grenades', 2);
+        activeLead.pouch.add('rockets', 2);
         sounds.reload?.();
         feel.coin(W * 0.5, H * 0.42, { color: '#48e08a', text: '+50 ARMOR & AMMO' });
-        say('Armor & Ammo Restocked!', '#48e08a', 2.2);
+        say('Armor, Ammo & Heavy Gear Restocked!', '#48e08a', 2.2);
         worldSave?.soon(0.4);
         return true;
       }
@@ -1846,6 +2251,8 @@ function make(api) {
   };
 
   const wireEvents = () => {
+    for (const veh of [barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh]) wireVehicleWreck(veh);
+
     if (!lawWired) {
       lawWired = true;
       law.on('escaped', () => {
@@ -1888,42 +2295,10 @@ function make(api) {
     if (!expWired) {
       expWired = true;
       explosives.on('boom', e => {
-        fx3d.boom(e.at, { size: 1.5 });
-        sounds.boom?.();
-        camRig.shake(0.45);
         for (const bp of barrelPool) {
           if (bp.exp && bp.exp.gone) bp.mesh.visible = false;
         }
-        for (const g of gangPool) {
-          if (!g.alive) continue;
-          const d = e.hurt(g);
-          if (d > 0) {
-            g.hp -= d;
-            _pushVec.x = (g.x - e.at.x) * 2.5; _pushVec.y = 3.5; _pushVec.z = (g.z - e.at.z) * 2.5;
-            g.react.hit(_pushVec, e.at);
-            if (g.hp <= 0) {
-              g.alive = false;
-              g.body.visible = false;
-              cash += 120;
-              awardRep(8, '+8 BLAST KO', '#ff9f43');
-            }
-          }
-        }
-        for (const o of law.officers) {
-          if (o.gone || o.alive === false) continue;
-          const d = e.hurt({ x: o.x, y: o.body?.position?.y ?? 0, z: o.z });
-          if (d > 0) law.hitOfficer(o, d, e.at, e.at);
-        }
-        if (activeLead && !overKind) {
-          const selfDmg = e.hurt(playerQuery);
-          if (selfDmg > 0) {
-            const lost = activeLead.health.hurt(selfDmg * 0.65, { from: e.at, at: activeLead.foot, facing: activeLead.foot.heading });
-            v.hit?.(lost);
-            v.health = activeLead.health.frac;
-            if (activeLead.health.dead) triggerOver('WASTED');
-          }
-        }
-        law.crime('shots', e.at);
+        detonateAt(e.at.x, e.at.y, e.at.z, e.radius || 7.5, e.damage || 95);
       });
     }
   };
@@ -1942,10 +2317,21 @@ function make(api) {
       rideCooldown = 0;
       recentShotT = 0;
       batonCd = 0;
+      grenadeCd = 0;
       driftSec = 0;
       driftSkidCd = 0;
       driftSmokeAcc = 0;
       newsCooldown = 0;
+      carJumpT = 0;
+      paintIdx = 0;
+      shakedownOpen = false;
+      cratesLeft = 0;
+      bayCrates = [];
+      for (const sj of stuntJumps) sj.cd = 0;
+      for (const bm of bayCrateMeshes) bm.visible = false;
+      for (const gm of grenadePool) { gm.active = false; gm.mesh.visible = false; }
+      for (const rm of rocketPool) { rm.active = false; rm.mesh.visible = false; }
+      shots.list.length = 0;
       lockedTarget = null;
       aimMode = false;
       fpsAim = false;
@@ -2011,8 +2397,13 @@ function make(api) {
         engineSound.set({ vol: 0 }, 0.02);
       }
 
-      const mkPouch = new Pouch({ pistol: 72, rifle: 60, shells: 18 });
-      const ndPouch = new Pouch({ pistol: 96, rifle: 60, shells: 16 });
+      rep = new Reputation({
+        factions: { pastel: { start: -10 }, flota: { start: -15 }, salvage: { start: -15 }, civ: { start: 10 } },
+        deeds: { crewKo: { fame: 5 }, mission: { fame: 12, civ: 5 }, stunt: { fame: 8 } },
+      });
+
+      const mkPouch = new Pouch({ pistol: 72, rifle: 60, shells: 18, grenades: 3, rockets: 3 }, { max: { pistol: 240, shells: 60, rifle: 240, grenades: 8, rockets: 6 } });
+      const ndPouch = new Pouch({ pistol: 96, rifle: 60, shells: 16, grenades: 3, rockets: 3 }, { max: { pistol: 240, shells: 60, rifle: 240, grenades: 8, rockets: 6 } });
       const mkHp = new Health({ max: 100, regen: 2.2, delay: 6, armour: 25, maxArmour: 100 });
       const ndHp = new Health({ max: 100, regen: 2.2, delay: 6, armour: 50, maxArmour: 100 });
 
@@ -2022,6 +2413,7 @@ function make(api) {
         shotgun: arm('shotgun', { pouch }),
         rifle: arm('rifle', { pouch }),
         sniper: arm('sniper', { pouch }),
+        launcher: arm('launcher', { pouch }),
       });
 
       const savedUnlocks = new Set(['baton', 'pistol']);
@@ -2065,13 +2457,17 @@ function make(api) {
             cash,
             stationIdx: savedStationIdx,
             jobsDone: jobsDoneCount,
+            paintIdx,
             unlocks: [...activeLead.unlocked],
+            rep: rep?.pack(),
           }),
           (d) => {
             if (!d) return;
             if (typeof d.cash === 'number') cash = Math.max(250, d.cash);
             if (typeof d.stationIdx === 'number') savedStationIdx = ((d.stationIdx % STATIONS.length) + STATIONS.length) % STATIONS.length;
             if (typeof d.jobsDone === 'number') jobsDoneCount = d.jobsDone;
+            if (typeof d.paintIdx === 'number') paintIdx = ((d.paintIdx % CUSTOMS_PAINTS.length) + CUSTOMS_PAINTS.length) % CUSTOMS_PAINTS.length;
+            if (d.rep) rep?.unpack(d.rep);
             if (Array.isArray(d.unlocks)) {
               for (const u of d.unlocks) {
                 if (WEAPON_ORDER.includes(u)) {
@@ -2128,6 +2524,22 @@ function make(api) {
       if (boatCtrl?.rider) boatCtrl.rider.remove();
       boatCtrl = new Boat(metro.water, { at: SLIP_POS, heading: SLIP_POS.heading, world, vehicle: boatMesh, power: 12, top: 21 });
 
+      if (heliCtrl?.rider) heliCtrl.rider.remove();
+      const heliGroundY = metro.ground(HELI_POS.x, HELI_POS.z);
+      heliCtrl = new Hover({
+        at: { x: HELI_POS.x, y: heliGroundY, z: HELI_POS.z },
+        heading: 0,
+        climb: 9,
+        speed: 24,
+        accel: 15,
+        turn: 2.1,
+        tilt: 0.26,
+        world,
+        vehicle: heliMesh,
+        ground: (x, z) => metro.ground(x, z),
+        crashSpeed: 7.5,
+      });
+
       sky.time = 15.6;
       sky.speed = K.daySpeed;
       sky.update(0);
@@ -2136,10 +2548,17 @@ function make(api) {
       activeCarMesh?.takeOut?.(nadia);
       boatMesh?.takeOut?.(mako);
       boatMesh?.takeOut?.(nadia);
+      heliMesh?.takeOut?.(mako);
+      heliMesh?.takeOut?.(nadia);
+      for (const veh of [barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh]) {
+        veh?.mend?.();
+        veh._tuned = false;
+      }
       activeCarMesh = null;
       driveBy = null;
       inCar = false;
       inBoat = false;
+      inHeli = false;
 
       mako.lod = warmedCop ? 1 : 0;
       nadia.lod = 1;
@@ -2198,9 +2617,14 @@ function make(api) {
       const bz = activeLead.foot.z + Math.cos(activeLead.foot.heading) * 2.6 - Math.sin(activeLead.foot.heading) * 2.1;
       barracuda.position.set(bx, metro.ground(bx, bz), bz);
       barracuda.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
+      if (paintIdx > 0) applyVehiclePaint(barracuda, CUSTOMS_PAINTS[paintIdx].hex);
+      bikeMesh.position.set(BIKE_POS.x, metro.ground(BIKE_POS.x, BIKE_POS.z), BIKE_POS.z);
+      bikeMesh.rotation.set(0, Math.PI * 0.25, 0);
+      bikeMesh.visible = true;
       const initLit = sky.night > 0.2;
       barracuda.lights?.(initLit);
       hotCoupe.lights?.(initLit);
+      bikeMesh.lights?.(initLit);
       lastCarLights = initLit;
       barracuda.visible = true;
 
@@ -2209,6 +2633,7 @@ function make(api) {
       camRig.yaw = 0;
       camRig.pitch = 0;
       camRig.aiming = false;
+      camRig.opts.fovAim = null;
       camRig.to('chase', 0.01, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
       rigTarget.position.set(activeLead.foot.x, activeLead.foot.y, activeLead.foot.z);
       rigTarget.yaw = activeLead.foot.heading;
@@ -2226,6 +2651,23 @@ function make(api) {
         hotCoupe.position.set(hx, metro.ground(hx, hz), hz);
         hotCoupe.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
         hotCoupe.visible = true;
+
+        const bkx0 = activeLead.foot.x + Math.sin(activeLead.foot.heading) * 3.0;
+        const bkz0 = activeLead.foot.z + Math.cos(activeLead.foot.heading) * 3.0;
+        bikeMesh.position.set(bkx0, metro.ground(bkx0, bkz0), bkz0);
+        bikeMesh.visible = true;
+
+        const hlx0 = activeLead.foot.x - Math.cos(activeLead.foot.heading) * 4.5;
+        const hlz0 = activeLead.foot.z + Math.sin(activeLead.foot.heading) * 4.5;
+        heliMesh.position.set(hlx0, metro.ground(hlx0, hlz0) + 0.1, hlz0);
+        heliMesh.visible = true;
+
+        grenadePool[0].mesh.position.set(activeLead.foot.x, activeLead.foot.y + 1.0, activeLead.foot.z + 1.8);
+        grenadePool[0].mesh.visible = true;
+        rocketPool[0].mesh.position.set(activeLead.foot.x, activeLead.foot.y + 1.1, activeLead.foot.z + 2.2);
+        rocketPool[0].mesh.visible = true;
+        bayCrateMeshes[0].position.set(activeLead.foot.x, activeLead.foot.y + 0.5, activeLead.foot.z + 2.5);
+        bayCrateMeshes[0].visible = true;
       }
       gps.update(0, activeLead.foot);
       if (!gpsShown) {
@@ -2272,11 +2714,23 @@ function make(api) {
         impacts.clear();
         fx3d.clear();
         tracerPool[0].mesh.visible = false;
+        grenadePool[0].mesh.visible = false;
+        rocketPool[0].mesh.visible = false;
+        if (bayCrateMeshes[0]) bayCrateMeshes[0].visible = bayCrates.length > 0 && !bayCrates[0].taken;
+        if (activeCarMesh !== bikeMesh) {
+          bikeMesh.position.set(BIKE_POS.x, metro.ground(BIKE_POS.x, BIKE_POS.z), BIKE_POS.z);
+          bikeMesh.rotation.set(0, Math.PI * 0.25, 0);
+        }
+        if (!inHeli && heliCtrl) {
+          heliMesh.position.set(heliCtrl.pos.x, heliCtrl.pos.y, heliCtrl.pos.z);
+          heliMesh.quaternion.set(heliCtrl.quat.x, heliCtrl.quat.y, heliCtrl.quat.z, heliCtrl.quat.w);
+        }
         const nl = sky.night > 0.2;
         if (lastCarLights !== nl) {
           lastCarLights = nl;
           barracuda.lights?.(nl);
           hotCoupe.lights?.(nl);
+          bikeMesh.lights?.(nl);
         }
         if (pickupPos && phase === 'pickup') {
           hotCoupe.position.set(pickupPos.x, metro.ground(pickupPos.x, pickupPos.z), pickupPos.z);
@@ -2292,8 +2746,11 @@ function make(api) {
       rideCooldown = Math.max(0, rideCooldown - sdt);
       recentShotT = Math.max(0, recentShotT - sdt);
       batonCd = Math.max(0, batonCd - sdt);
+      grenadeCd = Math.max(0, grenadeCd - sdt);
       driftSkidCd = Math.max(0, driftSkidCd - sdt);
       newsCooldown = Math.max(0, newsCooldown - sdt);
+      for (const sj of stuntJumps) if (sj.cd > 0) sj.cd = Math.max(0, sj.cd - sdt);
+      rep?.update(sdt);
       if (phoneT > 0) phoneT = Math.max(0, phoneT - sdt);
       if (phoneHoldLeft > 0) {
         phoneHoldLeft -= sdt;
@@ -2355,16 +2812,16 @@ function make(api) {
       const k = keys.axis();
       const sx = pad.left.active ? pad.left.x : k.x;
       const sy = pad.left.active ? pad.left.y : k.y;
-      const modalOpen = weaponWheelOpen || radioWheelOpen || gps.opened;
+      const modalOpen = weaponWheelOpen || radioWheelOpen || gps.opened || shakedownOpen;
       const actRide = !modalOpen && (pad.buttons.RIDE.pressed() || rideKey);
       const actAimTap = !modalOpen && (pad.buttons.AIM.pressed() || aimKey);
-      const actFire = !modalOpen && (pad.buttons.FIRE.isDown || fireHeld || keys.held('f') || keys.held('Enter'));
+      const actFire = !modalOpen && !inHeli && (pad.buttons.FIRE.isDown || fireHeld || keys.held('f') || keys.held('Enter'));
       const actBrake = !modalOpen && (pad.buttons.AIM.isDown || keys.held(' ') || keys.held('Shift'));
       rideKey = aimKey = false;
 
       if (coverKey) {
         coverKey = false;
-        if (!inCar && !inBoat) {
+        if (!inCar && !inBoat && !inHeli) {
           if (hide.busy) hide.leave();
           else {
             cover.around(mover.feet, 6);
@@ -2386,18 +2843,57 @@ function make(api) {
       }
 
       if (actRide) tryBoardOrExit();
-      if (actAimTap && !inCar && !inBoat) setAimMode(!aimMode);
+      if (actAimTap && !inCar && !inBoat && !inHeli) setAimMode(!aimMode);
 
       // Dynamic button labels
-      pad.buttons.RIDE.label = (inCar || inBoat) ? 'EXIT' : 'RIDE';
-      pad.buttons.FIRE.label = (!inCar && !inBoat && activeLead.weaponKind === 'baton') ? 'HIT' : 'FIRE';
-      pad.buttons.AIM.label = inCar ? 'DRIFT' : inBoat ? 'BRAKE' : aimMode ? 'HIP' : 'AIM';
+      pad.buttons.RIDE.label = (inCar || inBoat || inHeli) ? 'EXIT' : 'RIDE';
+      pad.buttons.FIRE.label = inHeli ? 'UP' : (!inCar && !inBoat && activeLead.weaponKind === 'baton') ? 'HIT' : (!inCar && !inBoat && activeLead.weaponKind === 'grenade') ? 'TOSS' : 'FIRE';
+      pad.buttons.AIM.label = inHeli ? 'DOWN' : inCar ? 'DRIFT' : inBoat ? 'BRAKE' : aimMode ? 'HIP' : 'AIM';
 
       activeLead.health.update(sdt);
       for (let gi = 0; gi < GUN_KEYS.length; gi++) activeLead.guns[GUN_KEYS[gi]].update(sdt);
       v.health = activeLead.health.frac;
 
-      if (inBoat && boatCtrl) {
+      if (inHeli && heliCtrl) {
+        const heliUp = !modalOpen && (pad.buttons.FIRE.isDown || keys.held(' ') || keys.held('q') || keys.held('Q'));
+        const heliDown = !modalOpen && (pad.buttons.AIM.isDown || keys.held('Shift') || keys.held('z') || keys.held('Z'));
+        heliCtrl.update(sdt, {
+          x: 0,
+          y: Math.abs(sy) > 0.08 ? clamp(-sy, -1, 1) : 0,
+          up: (heliUp ? 1 : 0) - (heliDown ? 1 : 0),
+          yaw: Math.abs(sx) > 0.05 ? clamp(sx, -1, 1) : 0,
+        });
+        if (lookDragId === null && heliCtrl.speed > 2.0) {
+          camRig.yaw *= Math.exp(-sdt * 2.5);
+          camRig.pitch *= Math.exp(-sdt * 2.5);
+        }
+        engOpts.from = 80 + heliCtrl.speed * 7 + (heliUp ? 35 : 0);
+        engOpts.vol = heliCtrl.onGround && !heliUp ? 0.01 : 0.028;
+        engineSound?.set(engOpts, 0.1);
+
+        playerQuery.x = heliCtrl.pos.x;
+        playerQuery.z = heliCtrl.pos.z;
+        playerQuery.y = heliCtrl.pos.y;
+        playerQuery.heading = Math.PI - heliCtrl.heading;
+        playerQuery.v = heliCtrl.speed;
+        playerQuery.car = false;
+        playerQuery.boat = false;
+        playerQuery.swim = false;
+
+        rigTarget.position.set(heliCtrl.pos.x, heliCtrl.pos.y + 1.2, heliCtrl.pos.z);
+        rigTarget.yaw = Math.PI - heliCtrl.heading;
+        rigTarget.grounded = heliCtrl.onGround;
+
+        if (heliCtrl.crashed && !overKind) {
+          stepOut(true);
+          if (!overKind) {
+            const lost = activeLead.health.hurt(62, { from: heliCtrl.pos, at: activeLead.foot, facing: activeLead.foot.heading });
+            v.hit?.(lost);
+            v.health = activeLead.health.frac;
+            if (activeLead.health.dead) triggerOver('WASTED');
+          }
+        }
+      } else if (inBoat && boatCtrl) {
         boatInput.throttle = Math.abs(sy) > 0.08 ? clamp(-sy * 1.15, -1, 1) : 0;
         boatInput.steer = Math.abs(sx) > 0.05 ? Math.sign(sx) * Math.pow(Math.abs(sx), 1.25) : 0;
         boatCtrl.update(sdt, boatInput);
@@ -2414,14 +2910,14 @@ function make(api) {
         playerQuery.x = boatCtrl.x;
         playerQuery.z = boatCtrl.z;
         playerQuery.y = boatCtrl.y;
-        playerQuery.heading = boatCtrl.heading + Math.PI;
+        playerQuery.heading = Math.PI - boatCtrl.heading;
         playerQuery.v = boatCtrl.speed;
         playerQuery.car = false;
         playerQuery.boat = true;
         playerQuery.swim = false;
 
         rigTarget.position.set(boatCtrl.x, boatCtrl.y + 0.6, boatCtrl.z);
-        rigTarget.yaw = boatCtrl.heading + Math.PI;
+        rigTarget.yaw = Math.PI - boatCtrl.heading;
         rigTarget.grounded = true;
       } else if (inCar && carCtrl && activeCarMesh) {
         const makoBonus = activeLead.name === 'Mako';
@@ -2431,7 +2927,8 @@ function make(api) {
         carInput.drift = actBrake && Math.abs(sx) > 0.22 && carCtrl.speed > 7;
         carInput.brake = actBrake && !carInput.drift;
 
-        carCtrl.top = K.carTop * activeCarProfile.topMult;
+        const engHealthScale = 0.45 + 0.55 * (activeCarMesh.engine ?? 1);
+        carCtrl.top = K.carTop * activeCarProfile.topMult * (activeCarMesh._tuned ? 1.08 : 1) * engHealthScale;
         carCtrl.accel = K.carAccel * activeCarProfile.accelMult * (makoBonus ? 1.06 : 1);
         carCtrl.turn = K.carTurn;
         carCtrl.grip = K.carGrip * activeCarProfile.gripMult * (makoBonus ? 1.12 : 1);
@@ -2490,6 +2987,10 @@ function make(api) {
           if (Math.abs(carCtrl.speed) > 6 && hitT <= 0) {
             hitT = 0.45;
             feel.hit?.(W * 0.5, H * 0.5, { power: 0.45 });
+            if (Math.abs(carCtrl.speed) > 9) {
+              activeCarMesh.harm?.(clamp((Math.abs(carCtrl.speed) - 8) * 0.014, 0.05, 0.2));
+              activeCarMesh.hit?.(playerQuery, { power: 0.45 });
+            }
           }
           carCtrl.bump(nx / len, nz / len, BUMP_OPTS);
         }
@@ -2499,6 +3000,7 @@ function make(api) {
           if (hitCar) {
             hitT = 0.8;
             metro.cars.bump(hitCar);
+            if (Math.abs(carCtrl.speed) > 8) activeCarMesh.harm?.(clamp((Math.abs(carCtrl.speed) - 7) * 0.012, 0.04, 0.16));
             carCtrl.bump();
             law.crime('crash', playerQuery);
             metro.people.scare(playerQuery, 12);
@@ -2513,8 +3015,32 @@ function make(api) {
           }
         }
 
-        activeCarMesh.position.set(carCtrl.x, gy, carCtrl.y);
-        activeCarMesh.rotation.set(0, heading + Math.PI, 0);
+        // Check Bayshore Stunt Jumps at high speed
+        if (Math.abs(carCtrl.speed) > 15 && carJumpT <= 0) {
+          for (const sj of stuntJumps) {
+            if (sj.cd <= 0 && Math.hypot(carCtrl.x - sj.x, carCtrl.y - sj.z) < 5.2) {
+              sj.cd = 15;
+              carJumpT = 0.65;
+              try { sounds.jump?.(1.1); } catch {}
+              rep?.did('stunt');
+              cash += 200;
+              awardRep(10, 'STUNT +$200', '#ffd166');
+              say('STUNT JUMP! +$200 · +10 REP', '#ffd166', 2.8);
+              break;
+            }
+          }
+        }
+        let jumpY = 0;
+        let jumpPitch = 0;
+        if (carJumpT > 0) {
+          carJumpT = Math.max(0, carJumpT - sdt);
+          const u = carJumpT / 0.65;
+          jumpY = Math.sin(u * Math.PI) * 2.4;
+          jumpPitch = Math.sin(u * Math.PI) * 0.24;
+        }
+
+        activeCarMesh.position.set(carCtrl.x, gy + jumpY, carCtrl.y);
+        activeCarMesh.rotation.set(jumpPitch, heading + Math.PI, 0);
         if (activeCarMesh.move) activeCarMesh.move(sdt, carCtrl.speed, { steer: carInput.steer });
         else {
           activeCarMesh.roll?.(carCtrl.speed * sdt);
@@ -2522,11 +3048,12 @@ function make(api) {
         }
 
         const nl = sky.night > 0.2;
-        if (activeCarMesh === barracuda || activeCarMesh === hotCoupe) {
+        if (activeCarMesh === barracuda || activeCarMesh === hotCoupe || activeCarMesh === bikeMesh) {
           if (lastCarLights !== nl) {
             lastCarLights = nl;
             barracuda.lights?.(nl);
             hotCoupe.lights?.(nl);
+            bikeMesh.lights?.(nl);
           }
         } else if (lastActiveCarMesh !== activeCarMesh || lastActiveCarLit !== nl) {
           lastActiveCarMesh = activeCarMesh;
@@ -2608,11 +3135,11 @@ function make(api) {
       }
 
       // Physics step + bulletproof ground floor net for both leads
-      if (!inCar && !inBoat) mover.stepMove(sdt);
-      if (inBoat) world.step(sdt);
+      if (!inCar && !inBoat && !inHeli) mover.stepMove(sdt);
+      if (inBoat || inHeli) world.step(sdt);
       else if (!inCar && (st & 1) === 1) world.step(Math.min(0.033, sdt * 2));
 
-      if (!inCar && !inBoat) {
+      if (!inCar && !inBoat && !inHeli) {
         const f = activeLead.foot;
         const mp = mover.feet;
         const wet = !!metro.water?.wet(mp.x, mp.z);
@@ -2743,11 +3270,11 @@ function make(api) {
         }
       }
 
-      // Update camera, FPS gun, aim-assist, acoustics, FX, bullets & gang crew
+      // Update camera, FPS gun, aim-assist, acoustics, FX, bullets, rockets, grenades & gang crew
       camRig.update(sdt, rigTarget);
-      if (aimMode && fpsAim && !inCar && !inBoat) gunRig.update(sdt);
+      if (aimMode && fpsAim && !inCar && !inBoat && !inHeli) gunRig.update(sdt);
 
-      if ((st & 1) === 0 && (aimMode || inCar || inBoat)) {
+      if ((st & 1) === 0 && (aimMode || inCar || inBoat) && !inHeli) {
         v.cam.getWorldDirection(camDirVec);
         lockedTarget = findAimAssistTarget(v.cam.position, camDirVec);
       } else if (!aimMode && !inCar && !inBoat) {
@@ -2770,6 +3297,73 @@ function make(api) {
           tm.life -= sdt;
           if (tm.life <= 0) tm.mesh.visible = false;
         }
+      }
+      for (const gr of grenadePool) {
+        if (!gr.active) continue;
+        gr.fuse -= sdt;
+        gr.vy -= 18 * sdt;
+        gr.x += gr.vx * sdt;
+        gr.y += gr.vy * sdt;
+        gr.z += gr.vz * sdt;
+        const floorY = metro.ground(gr.x, gr.z, gr.y + 1.0) + 0.1;
+        if (gr.y <= floorY) {
+          gr.y = floorY;
+          if (gr.vy < -1.5) gr.vy = -gr.vy * 0.38;
+          else gr.vy = 0;
+          gr.vx *= 0.62;
+          gr.vz *= 0.62;
+        }
+        gr.mesh.position.set(gr.x, gr.y, gr.z);
+        if (gr.fuse <= 0) {
+          gr.active = false;
+          gr.mesh.visible = false;
+          detonateAt(gr.x, gr.y + 0.2, gr.z, 8.2, 115);
+        }
+      }
+      if (shots.list.length > 0) {
+        const rHits = shots.update(sdt, world);
+        for (const h of rHits) {
+          const rs = h.shot?.rocketSlot;
+          if (rs) { rs.active = false; rs.mesh.visible = false; }
+          detonateAt(h.at.x, h.at.y, h.at.z, 9.5, 140);
+        }
+        for (const p of shots.list) {
+          const rs = p.rocketSlot;
+          if (rs) {
+            rs.mesh.position.set(p.x, p.y, p.z);
+            if ((rs.smokeT -= sdt) <= 0) {
+              rs.smokeT = 0.04;
+              fx3d.sparks(p, { count: 2, power: 0.3, light: false });
+            }
+          }
+          let directHit = false;
+          for (const g of gangPool) {
+            if (g.alive && Math.hypot(p.x - g.x, p.y - (g.y + 1.0), p.z - g.z) < 2.2) { directHit = true; break; }
+          }
+          if (!directHit) {
+            for (const o of law.officers) {
+              if (!o.gone && o.alive !== false && Math.hypot(p.x - o.x, p.y - ((o.body?.position?.y ?? 0) + 1.0), p.z - o.z) < 2.2) { directHit = true; break; }
+            }
+          }
+          if (!directHit) {
+            for (const b of law.boats || []) {
+              if (!b.down && b.craft && Math.hypot(p.x - b.craft.x, p.y - 1.0, p.z - b.craft.z) < 3.6) { directHit = true; break; }
+            }
+          }
+          if (!directHit && law.heli && !law.heli.down && law.heli.model) {
+            const hp = law.heli.model.position;
+            if (Math.hypot(p.x - hp.x, p.y - hp.y, p.z - hp.z) < 4.5) {
+              directHit = true;
+              law.heli.model.blow?.();
+            }
+          }
+          if (directHit || p.left <= 0.08) {
+            p.dead = true;
+            if (rs) { rs.active = false; rs.mesh.visible = false; }
+            detonateAt(p.x, p.y, p.z, 9.5, 140);
+          }
+        }
+        if (shots.list.some(p => p.dead)) shots.list = shots.list.filter(p => !p.dead);
       }
 
       // Update rival gang crew
@@ -2889,21 +3483,41 @@ function make(api) {
       worldSave.update(sdt);
 
       // Mission progression checks
+      if (bayCrates.length > 0 && (phase === 'board_boat' || phase === 'deliver_boat')) {
+        for (let i = 0; i < bayCrates.length; i++) {
+          const bc = bayCrates[i];
+          if (bc.taken) {
+            if (bc.mesh) bc.mesh.visible = false;
+            continue;
+          }
+          const wy = metro.water?.height ? metro.water.height(bc.x, bc.z) : 0;
+          if (bc.mesh) {
+            bc.mesh.visible = true;
+            bc.mesh.position.set(bc.x, (wy > -50 ? wy : 0) + 0.25 + Math.sin(t * 2.6 + i) * 0.14, bc.z);
+            bc.mesh.rotation.y = t * 1.1 + i;
+          }
+          if (inBoat && Math.hypot(bc.x - playerQuery.x, bc.z - playerQuery.z) < 9.5) {
+            bc.taken = true;
+            if (bc.mesh) bc.mesh.visible = false;
+            cratesLeft = bayCrates.filter(c => !c.taken).length;
+            cash += 100;
+            sounds.coin?.(1.2);
+            feel.coin(W * 0.5, H * 0.38, { color: '#2ef2b8', text: 'CRATE +$100' });
+            hudSub = cratesLeft > 0 ? `Bay Crates ${bayCrates.length - cratesLeft}/${bayCrates.length} -> Port Yard` : 'All 3 Crates Secured! Dock at Port Yard';
+          }
+        }
+      }
+
       if (phase === 'pickup' && pickupPos) {
         const dp = Math.hypot(pickupPos.x - playerQuery.x, pickupPos.z - playerQuery.z);
         if (inCar || dp < 4.2) {
           if (!inCar) seatLeadInCar(hotCoupe, pickupPos.x, pickupPos.z, pickupPos.heading || 0);
         }
       } else if (phase === 'interior') {
-        if (inside.entered || inside.room) {
-          jobsDoneCount++;
-          const pay = activeLead.name === 'Nadia' ? Math.round(job.pay * 1.2) : job.pay;
-          cash += pay;
-          if (law.stars < job.heat) law.set(job.heat);
-          say(`Ledger secured indoors! +${job.rep} Rep · +$${pay}`, '#68f8c4', 3.4);
-          if (awardRep(job.rep, `+${job.rep} REP · +$${pay}`, '#68f8c4')) return;
-          announceNews('Old Naranja shopkeepers report a ledger heist', false);
-          assignJob(jobIdx + 1);
+        if ((inside.entered || inside.room) && !shakedownOpen) {
+          shakedownOpen = true;
+          hudSub = 'Confront adjuster or bolt!';
+          say('Adjuster inside — pick action!', '#ffd166', 3.0);
         }
       } else if (phase === 'board_boat') {
         if (inBoat) phase = 'deliver_boat';
@@ -2913,9 +3527,13 @@ function make(api) {
         if (dd < reachD && Math.abs(playerQuery.v) < 13) {
           jobsDoneCount++;
           const pts = job?.rep ?? K.dropRep;
-          const basePay = job?.pay ?? 300;
+          const allCratesBonus = phase === 'deliver_boat' && bayCrates.length > 0 && cratesLeft === 0 ? 150 : 0;
+          const basePay = (job?.pay ?? 300) + allCratesBonus;
           const pay = activeLead.name === 'Nadia' ? Math.round(basePay * 1.2) : basePay;
           cash += pay;
+          rep?.did('mission');
+          for (const bm of bayCrateMeshes) bm.visible = false;
+          bayCrates = [];
           say(`${job.name} complete! +${pts} Rep · +$${pay}`, '#68f8c4', 3.2);
           if (awardRep(pts, `+${pts} REP · +$${pay}`, '#68f8c4')) return;
           announceNews(`Suspect spotted fleeing ${lastDistrictName}`, false);
@@ -2953,12 +3571,22 @@ function make(api) {
         armsRing.visible = t <= 0.25 || (dxA * dxA + dzA * dzA < 180 * 180);
         if (armsRing.visible) armsRing.rotation.z = -t * 1.2;
       }
+      if (dinerRing) {
+        const dxD = v.cam.position.x - dinerPos.x, dzD = v.cam.position.z - dinerPos.z;
+        dinerRing.visible = t <= 0.25 || (dxD * dxD + dzD * dzD < 180 * 180);
+        if (dinerRing.visible) dinerRing.rotation.z = t * 0.9;
+      }
+      if (heliRing) {
+        const dxH = v.cam.position.x - HELI_POS.x, dzH = v.cam.position.z - HELI_POS.z;
+        heliRing.visible = t <= 0.25 || (dxH * dxH + dzH * dzH < 180 * 180);
+        if (heliRing.visible) heliRing.rotation.z = -t * 0.8;
+      }
 
       const activeTarget = (phase === 'pickup' || phase === 'board_boat') && pickupPos ? pickupPos : targetPos;
       const nxt = gps.ahead(14, aheadPt) || activeTarget;
       if (nxt && !aimMode) {
         arrowMesh.visible = true;
-        arrowMesh.position.set(playerQuery.x, playerQuery.y + (inCar || inBoat ? 2.55 : 2.35) + Math.sin(t * 4) * 0.06, playerQuery.z);
+        arrowMesh.position.set(playerQuery.x, playerQuery.y + (inCar || inBoat || inHeli ? 2.55 : 2.35) + Math.sin(t * 4) * 0.06, playerQuery.z);
         arrowMesh.lookAt(nxt.x, arrowMesh.position.y, nxt.z);
         arrowMesh.rotateX(Math.PI / 2);
       } else {
@@ -2985,6 +3613,38 @@ function make(api) {
       }
 
       pad.draw(c);
+
+      // Sniper scope lens + mil-dot crosshair overlay
+      if (aimMode && activeLead.weaponKind === 'sniper' && !inCar && !inBoat && !inHeli && !overKind) {
+        const scX = W * 0.5, scY = H * 0.5;
+        const scR = Math.min(W, H) * 0.42;
+        c.save();
+        c.fillStyle = 'rgba(2, 6, 12, 0.88)';
+        c.beginPath();
+        c.rect(0, 0, W, H);
+        c.arc(scX, scY, scR, 0, Math.PI * 2, true);
+        c.fill();
+        c.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+        c.lineWidth = 1.6;
+        c.beginPath();
+        c.arc(scX, scY, scR, 0, Math.PI * 2);
+        c.stroke();
+        c.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(scX - scR, scY); c.lineTo(scX + scR, scY);
+        c.moveTo(scX, scY - scR); c.lineTo(scX, scY + scR);
+        c.stroke();
+        c.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        for (let m = 1; m <= 4; m++) {
+          const d = m * (scR * 0.2);
+          c.fillRect(scX - d - 1, scY - 2, 2, 4);
+          c.fillRect(scX + d - 1, scY - 2, 2, 4);
+          c.fillRect(scX - 2, scY - d - 1, 4, 2);
+          c.fillRect(scX - 2, scY + d - 1, 4, 2);
+        }
+        c.restore();
+      }
 
       // Dynamic GTA crosshair + spread + lock-on tint + reload arc + hitmarkers
       const showCrosshair = aimMode || recentShotT > 0 || ((inCar || inBoat) && fireHeld);
@@ -3082,7 +3742,7 @@ function make(api) {
         c.fillText(fitText(c, 'stars', stTxt, maxHudW - 76), sxPos + 2, topY + 31);
       } else {
         c.fillStyle = '#8ef5c8';
-        const modeTxt = inBoat ? 'At Helm' : inCar ? activeCarProfile.label : swim.state !== 'out' ? 'Swimming' : hide.busy ? 'In Cover' : 'On Foot';
+        const modeTxt = inHeli ? 'Chopper' : inBoat ? 'At Helm' : inCar ? activeCarProfile.label : swim.state !== 'out' ? 'Swimming' : hide.busy ? 'In Cover' : 'On Foot';
         if (activeLead.name !== lastModeLead || modeTxt !== lastModeKind) {
           lastModeLead = activeLead.name;
           lastModeKind = modeTxt;
@@ -3125,13 +3785,13 @@ function make(api) {
 
       const wk = activeLead.weaponKind;
       const gObj = activeGun(activeLead);
-      const ammoClip = gObj ? gObj.ammo : -1;
+      const ammoClip = gObj ? gObj.ammo : wk === 'grenade' ? activeLead.pouch.count('grenades') : -1;
       const ammoPool = gObj ? activeLead.pouch.count(ARSENAL[wk].ammo) : -1;
       if (wk !== lastAmmoKind || ammoClip !== lastAmmoClip || ammoPool !== lastAmmoPool) {
         lastAmmoKind = wk;
         lastAmmoClip = ammoClip;
         lastAmmoPool = ammoPool;
-        lastAmmoText = gObj ? `${WEAPON_LABELS[wk]} ${ammoClip}/${ammoPool}` : WEAPON_LABELS[wk];
+        lastAmmoText = gObj ? `${WEAPON_LABELS[wk]} ${ammoClip}/${ammoPool}` : wk === 'grenade' ? `GRENADE ${ammoClip}` : WEAPON_LABELS[wk];
       }
       c.fillStyle = weaponWheelOpen ? 'rgba(255, 209, 102, 0.28)' : 'rgba(10, 14, 24, 0.8)';
       c.beginPath(); c.roundRect(gunRect.x, gunRect.y, gunRect.w, gunRect.h, 6); c.fill();
@@ -3139,7 +3799,7 @@ function make(api) {
       c.fillText(fitText(c, 'gun', lastAmmoText, gunRect.w - 10), gunRect.x + 5, gunRect.y + 15);
 
       // Row 2 Pills: COVER / CAM or SIREN
-      if (!inCar && !inBoat) {
+      if (!inCar && !inBoat && !inHeli) {
         c.fillStyle = hide.busy ? 'rgba(56, 248, 176, 0.28)' : 'rgba(10, 14, 24, 0.8)';
         c.beginPath(); c.roundRect(covRect.x, covRect.y, covRect.w, covRect.h, 6); c.fill();
         c.fillStyle = '#8ef5c8';
@@ -3197,6 +3857,17 @@ function make(api) {
           c.fillStyle = '#ffa502';
           c.beginPath(); c.arc(mapPtScratch[0], mapPtScratch[1], 2.5, 0, Math.PI * 2); c.fill();
         }
+        for (const bc of bayCrates) {
+          if (bc.taken) continue;
+          gps.toMap(miniM, bc.x, bc.z, mapPtScratch);
+          c.fillStyle = '#2ef2b8';
+          c.fillRect(mapPtScratch[0] - 2.5, mapPtScratch[1] - 2.5, 5, 5);
+        }
+        if (heliCtrl && !inHeli && !heliMesh.wrecked) {
+          gps.toMap(miniM, heliCtrl.pos.x, heliCtrl.pos.z, mapPtScratch);
+          c.fillStyle = '#f4b938';
+          c.beginPath(); c.arc(mapPtScratch[0], mapPtScratch[1], 3, 0, Math.PI * 2); c.fill();
+        }
         c.restore();
       }
       const nx = gps.next;
@@ -3219,12 +3890,21 @@ function make(api) {
       }
       c.restore();
 
-      // Vehicle Speedometer pill
-      if (inCar || inBoat) {
-        const kmh = Math.round(Math.abs(inCar && carCtrl ? carCtrl.speed : boatCtrl ? boatCtrl.speed : 0) * 3.6);
-        if (kmh !== lastSpeedVal) {
-          lastSpeedVal = kmh;
-          lastSpeedStr = `${kmh} KM/H`;
+      // Vehicle Speedometer / Altitude pill & Engine Health bar
+      if (inCar || inBoat || inHeli) {
+        let hudNum = 0;
+        let unitLabel = 'KM/H';
+        if (inHeli && heliCtrl) {
+          const gy = metro.ground(heliCtrl.pos.x, heliCtrl.pos.z, heliCtrl.pos.y + 1.5);
+          hudNum = Math.max(0, Math.round(heliCtrl.pos.y - gy));
+          unitLabel = 'M ALT';
+        } else {
+          hudNum = Math.round(Math.abs(inCar && carCtrl ? carCtrl.speed : boatCtrl ? boatCtrl.speed : 0) * 3.6);
+        }
+        const spKey = inHeli ? hudNum + 10000 : hudNum;
+        if (spKey !== lastSpeedVal) {
+          lastSpeedVal = spKey;
+          lastSpeedStr = `${hudNum} ${unitLabel}`;
         }
         c.save();
         c.fillStyle = 'rgba(10, 14, 24, 0.78)';
@@ -3233,22 +3913,55 @@ function make(api) {
         c.textAlign = 'center';
         c.fillStyle = carInput.drift ? '#ff9f43' : '#e8f4ff';
         c.fillText(lastSpeedStr, W - 48, H - 108);
+
+        const curVeh = inHeli ? heliMesh : inBoat ? boatMesh : activeCarMesh;
+        const vh = curVeh?.health ?? 1;
+        if (vh < 0.72) {
+          c.fillStyle = 'rgba(10, 14, 24, 0.8)';
+          c.fillRect(W - 86, H - 129, 76, 4);
+          c.fillStyle = curVeh?.burning && Math.floor(t * 6) % 2 === 0 ? '#ff3b30' : vh < 0.35 ? '#ff5e57' : '#ffae38';
+          c.fillRect(W - 86, H - 129, 76 * Math.max(0, vh), 4);
+        }
         c.restore();
       }
 
-      // Context Service Shop prompt (Solis Customs / Bayside Arms)
+      // Context Shakedown / Service Shop prompt (Solis Customs / Bayside Arms / Tia Carmen's Diner)
       const nearShop = nearServiceShop();
-      if (nearShop && !weaponWheelOpen && !radioWheelOpen) {
+      if ((shakedownOpen || nearShop) && !weaponWheelOpen && !radioWheelOpen) {
         c.save();
         c.textAlign = 'center';
         c.font = '700 10px Rubik, sans-serif';
-        if (nearShop === 'respray') {
+        if (shakedownOpen) {
+          c.fillStyle = 'rgba(32, 16, 42, 0.94)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.strokeStyle = '#ff6b9d'; c.lineWidth = 1; c.stroke();
+          c.fillStyle = '#ffeef6';
+          c.fillText('[1] PRESSURE ADJUSTER (+$150)', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+
+          c.fillStyle = 'rgba(16, 36, 46, 0.94)';
+          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 7); c.fill();
+          c.strokeStyle = '#38f8b0'; c.stroke();
+          c.fillStyle = '#38f8b0';
+          c.fillText('[2] GRAB LEDGER & BOLT', shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 17);
+        } else if (nearShop === 'diner') {
+          c.fillStyle = 'rgba(42, 34, 14, 0.92)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.strokeStyle = '#ffcf5c'; c.lineWidth = 1; c.stroke();
+          c.fillStyle = '#fff5d6';
+          c.fillText("TIA CARMEN'S DINER · REST & HEAL", shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+
+          c.fillStyle = 'rgba(20, 26, 38, 0.92)';
+          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 7); c.fill();
+          c.strokeStyle = '#7ee8ff'; c.stroke();
+          c.fillStyle = '#7ee8ff';
+          c.fillText(`SWAP TO ${otherLead.name.toUpperCase()}`, shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 17);
+        } else if (nearShop === 'respray') {
           const cost = cash >= 250 ? 250 : law.stars > 0 && jobsDoneCount === 0 ? 0 : 250;
           c.fillStyle = 'rgba(16, 46, 66, 0.9)';
           c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
           c.strokeStyle = '#3cd8ff'; c.lineWidth = 1; c.stroke();
           c.fillStyle = '#e8fbff';
-          c.fillText(cost ? `SOLIS CUSTOMS · RESPRAY $${cost}` : 'SOLIS CUSTOMS · FREE RESPRAY', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+          c.fillText(cost ? `SOLIS CUSTOMS · RESPRAY & TUNE $${cost}` : 'SOLIS CUSTOMS · FREE RESPRAY & TUNE', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
         } else {
           c.fillStyle = 'rgba(42, 28, 12, 0.9)';
           c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
@@ -3344,7 +4057,7 @@ function make(api) {
         c.restore();
       }
 
-      // GTA Weapon Wheel Overlay
+      // GTA Weapon Wheel Overlay (2 x 4 for 8 weapons + reload button)
       if (weaponWheelOpen) {
         const px = wheelPanelRect.x, py = wheelPanelRect.y, pw = wheelPanelRect.w;
         c.save();
@@ -3359,27 +4072,27 @@ function make(api) {
           const k = WEAPON_ORDER[i];
           const col = i % 2, row = Math.floor(i / 2);
           const bx = px + 10 + col * (colW + 10);
-          const by = py + 34 + row * 50;
+          const by = py + 32 + row * 42;
           const owned = activeLead.unlocked.has(k);
           const equipped = activeLead.weaponKind === k;
           c.fillStyle = equipped ? 'rgba(255, 209, 102, 0.28)' : owned ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
-          c.beginPath(); c.roundRect(bx, by, colW, 42, 7); c.fill();
+          c.beginPath(); c.roundRect(bx, by, colW, 36, 7); c.fill();
           c.strokeStyle = equipped ? '#ffd166' : 'rgba(255,255,255,0.18)'; c.lineWidth = 1; c.stroke();
           c.textAlign = 'left'; c.font = '700 10px Rubik, sans-serif';
           c.fillStyle = owned ? '#ffffff' : '#7b879c';
-          c.fillText(WEAPON_LABELS[k], bx + 8, by + 17);
+          c.fillText(WEAPON_LABELS[k], bx + 8, by + 15);
           c.font = '500 9px Rubik, sans-serif';
           const g = activeLead.guns[k];
-          const sub = !owned ? `ARMS $${WEAPON_COSTS[k]}` : g ? `${g.ammo}/${activeLead.pouch.count(ARSENAL[k].ammo)}` : 'MELEE';
+          const sub = !owned ? `ARMS $${WEAPON_COSTS[k]}` : g ? `${g.ammo}/${activeLead.pouch.count(ARSENAL[k].ammo)}` : k === 'grenade' ? `${activeLead.pouch.count('grenades')} LEFT` : 'MELEE';
           c.fillStyle = owned ? '#a6c4e0' : '#ffb24a';
-          c.fillText(sub, bx + 8, by + 33);
+          c.fillText(sub, bx + 8, by + 29);
         }
         // Reload button at bottom of wheel
-        const rby = py + 190;
+        const rby = py + 206;
         c.fillStyle = 'rgba(56, 248, 176, 0.2)';
-        c.beginPath(); c.roundRect(px + 10, rby, pw - 20, 34, 7); c.fill();
+        c.beginPath(); c.roundRect(px + 10, rby, pw - 20, 32, 7); c.fill();
         c.fillStyle = '#38f8b0'; c.textAlign = 'center'; c.font = '700 11px Rubik, sans-serif';
-        c.fillText('RELOAD ACTIVE WEAPON [R]', px + pw * 0.5, rby + 21);
+        c.fillText('RELOAD ACTIVE WEAPON [R]', px + pw * 0.5, rby + 20);
         c.restore();
       }
 
@@ -3440,8 +4153,8 @@ function make(api) {
         for (let i = 0; i < WEAPON_ORDER.length; i++) {
           const col = i % 2, row = Math.floor(i / 2);
           const bx = px + 10 + col * (colW + 10);
-          const by = py + 34 + row * 50;
-          if (x >= bx && x <= bx + colW && y >= by && y <= by + 42) {
+          const by = py + 32 + row * 42;
+          if (x >= bx && x <= bx + colW && y >= by && y <= by + 36) {
             const k = WEAPON_ORDER[i];
             if (equipWeapon(activeLead, k)) {
               sounds.click();
@@ -3452,8 +4165,8 @@ function make(api) {
             return;
           }
         }
-        const rby = py + 190;
-        if (x >= px + 10 && x <= px + pw - 10 && y >= rby && y <= rby + 34) {
+        const rby = py + 206;
+        if (x >= px + 10 && x <= px + pw - 10 && y >= rby && y <= rby + 32) {
           triggerReload();
           weaponWheelOpen = false;
         }
@@ -3489,7 +4202,7 @@ function make(api) {
       if (hitBox(swapRect, x, y)) { swapKey = true; return; }
       if (hitBox(gunRect, x, y)) { weaponWheelOpen = true; radioWheelOpen = false; sounds.click(); return; }
 
-      if (!inCar && !inBoat) {
+      if (!inCar && !inBoat && !inHeli) {
         if (hitBox(covRect, x, y)) { coverKey = true; return; }
         if (hitBox(camRect, x, y)) {
           fpsAim = !fpsAim;
@@ -3504,9 +4217,15 @@ function make(api) {
         return;
       }
 
-      if (nearServiceShop()) {
+      if (shakedownOpen) {
+        if (hitBox(shopActionRect, x, y)) { completeEscrowShakedown(true); return; }
+        if (hitBox(shopAltRect, x, y)) { completeEscrowShakedown(false); return; }
+      }
+
+      const nearShopTap = nearServiceShop();
+      if (nearShopTap) {
         if (hitBox(shopActionRect, x, y) && useServiceAction(0)) return;
-        if (nearServiceShop() === 'arms' && nextLockedWeapon() && hitBox(shopAltRect, x, y) && useServiceAction(1)) return;
+        if ((nearShopTap === 'arms' && nextLockedWeapon() || nearShopTap === 'diner') && hitBox(shopAltRect, x, y) && useServiceAction(1)) return;
       }
 
       if (phoneT > 0 && hitBox(phoneCardRect, x, y)) {
@@ -3558,7 +4277,12 @@ function make(api) {
         else if (k === 'c' || k === 'C') swapKey = true;
         else if (k === 'Tab') gunKey = true;
         else if (k === 'v' || k === 'V') aimKey = true;
-        else if (k === 'h' || k === 'H') { if (inCar && activeCarProfile.cop) activeCarMesh?.siren?.(!activeCarMesh.sirenOn); }
+        else if (k === 'h' || k === 'H') {
+          if (inCar && activeCarProfile.cop) activeCarMesh?.siren?.(!activeCarMesh.sirenOn);
+          else if (inCar) { try { sounds.horn?.(); } catch {} }
+        }
+        else if (shakedownOpen && k === '1') completeEscrowShakedown(true);
+        else if (shakedownOpen && k === '2') completeEscrowShakedown(false);
         else if (k === '[') tuneRadioStation((radio.power ? radio.index : 0) - 1);
         else if (k === ']') tuneRadioStation(radio.power ? radio.index + 1 : 0);
         else if (k === 'n' || k === 'N') { radioWheelOpen = !radioWheelOpen; weaponWheelOpen = false; }
@@ -3582,7 +4306,7 @@ export default {
   maxW: 600,
   maxH: 520,
   goal: 100,
-  hint: 'Steal rides, shoot with shoulder/FPS ADS, visit shops, tune 5 radio stations, and shake 5★ SBPD for 100 Rep.',
+  hint: 'Drive cars & bikes, pilot the chopper, shoot or blast 3 crews, visit Solis Customs & Tia Carmen\'s, and shake 5★ SBPD for 100 Rep.',
   creator: 'Rob',
   make,
 };
