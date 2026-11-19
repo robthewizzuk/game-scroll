@@ -171,8 +171,15 @@ export class Boat {
     this.spin += (steer * this.turnK * clamp(Math.abs(along) / 4, 0, 1) * Math.sign(along || 1) - this.spin) * Math.min(1, dt * 4);
     this.heading += this.spin * dt; this.crash = null;
     let nx = this.x + this.vx * dt, nz = this.z + this.vz * dt;
-    // ride the waves: height from the middle, pitch and roll from bow, stern and sides
+    // ride the waves: height from the middle, pitch and roll from bow, stern and sides (and keep boats out of dry land)
     const L = this.length / 2, W = this.width / 2, f2 = this.forward, r2 = V(-f2.z, 0, f2.x), H = this.h;
+    if (H(this.x, this.z) > -Infinity && H(nx, nz) === -Infinity) {
+      const wetX = H(nx, this.z) > -Infinity, wetZ = H(this.x, nz) > -Infinity;
+      if (wetX && !wetZ) { nz = this.z; this.vz *= -.15; }
+      else if (wetZ && !wetX) { nx = this.x; this.vx *= -.15; }
+      else { nx = this.x; nz = this.z; this.vx *= .15; this.vz *= .15; }
+      this.spin *= .5;
+    }
     const at = (x, z) => { const v = H(x, z); return v > -Infinity ? v : this.y + this.draft; };   // (dry there: as it is)
     const hb = at(nx + f2.x * L, nz + f2.z * L), hs = at(nx - f2.x * L, nz - f2.z * L), hr = at(nx + r2.x * W, nz + r2.z * W), hl = at(nx - r2.x * W, nz - r2.z * W);
     const target = (hb + hs + hr + hl) / 4 - this.draft - sink * sink * ((car?.size?.height ?? 1.5) + (car?.draft ?? .3) + 1);   // (going down: lower and lower, then under)

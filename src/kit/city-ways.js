@@ -313,8 +313,8 @@ export class Ways {
           const k1 = gap * .55, k2 = 80, P1 = [P0[0] + o[0] * k1, P0[1] + o[1] * k1], P2 = [Q[0] - tq[0] * k2, Q[1] - tq[1] * k2];
           const L = Math.hypot(Q[0] - P0[0], Q[1] - P0[1]) + gap, nn = Math.max(10, Math.ceil(L / 4)), pts = [[p.x, p.z]];
           for (let i = 0; i <= nn; i++) { const t = i / nn, u = 1 - t; pts.push([u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * Q[0], u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * Q[1]]); }
-          // it fits: clear of the other districts, the roads between districts, the river and the slip roads already made
-          const clear = pts.every(([x, z], i) => i < 3 || (!this.m.districts.some(e => e !== d && distToRect(e.rect, x, z) < 20) && distToRect(d.rect, x, z) > -1 && this.riverD(x, z) > RW + 8
+          // it fits: clear of the other districts, the sea/bay, the roads between districts, the river and the slip roads already made
+          const clear = pts.every(([x, z], i) => i < 3 || (!this.m.districts.some(e => e !== d && distToRect(e.rect, x, z) < 20) && !this.seas.some(s => inRect(s, x, z)) && distToRect(d.rect, x, z) > -1 && this.riverD(x, z) > RW + 8
             && !this.m.connectors.some(c => c.points.some(([a, b]) => Math.hypot(a - x, b - z) < c.width / 2 + 9)) && !out.some(c => c.points.some(([a, b]) => Math.hypot(a - x, b - z) < 30))));
           if (!clear) continue;
           const at = [0]; for (let i = 1; i < pts.length; i++) at.push(at[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));

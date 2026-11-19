@@ -215,13 +215,12 @@ export class Metro {
     city.cars.guests = this.cars.roam.list; this.cars.learn(city.plan);   // (the big city's police and chases are in its roads too: its traffic pulls over and swerves round them)
     city.water = this.water; if (city.waterMesh && (this.sea || this.waters)) city.waterMesh.visible = false;   // (the metro's sea, or its bay, is drawn whole)
     if (d.harbour && !this.waters) this.ways.seaShown(false);
-    if (this.world) city.solid(this.world, { ...this.solidOpts, floor: false });
+    if (this.world) { city.solid(this.world, { ...this.solidOpts, floor: false }); this.world.queries?.(); }
     this.view.shadowsDirty?.();
   }
   letGo(d) {
     d.city.dispose(); d.city = null; d.stand.group.visible = true; this.view.shadowsDirty?.();
     if (d.harbour && !this.waters && !this.districts.some(e => e.harbour && e.city)) this.ways.seaShown(true);
-    if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
   // one district made a step at a time (the nearest wanted first), and one let go a frame once the player is well past it
   stream(f) {
@@ -312,35 +311,67 @@ export class Metro {
   /* ---------- the roads between districts ---------- */
   // which districts face each other across the land, and a road between the two outer junctions most nearly in line
   connect() {
-    const D = this.districts, out = [], joined = new Set(), group = D.map((_, i) => i), top = i => group[i] === i ? i : (group[i] = top(group[i]));
+    const D = this.districts, out = [], joined = new Set(), usedNodes = new Set(), group = D.map((_, i) => i), top = i => group[i] === i ? i : (group[i] = top(group[i]));
     const outer = (d, side) => d.plan.nodes.filter(n => side === 'e' ? n.i === d.plan.nx : side === 'w' ? n.i === 0 : side === 's' ? n.j === d.plan.nz : n.j === 0);
     const dirOf = { e: [1, 0], w: [-1, 0], s: [0, 1], n: [0, -1] }, back = { e: 'w', w: 'e', s: 'n', n: 's' };
-    const add = (a, b, sa) => {
+    const crossesOther = (a, b, pts) => pts.slice(2, -2).some(([x, z]) => D.some(d => d !== a && d !== b && x >= d.rect.x0 - 6 && x <= d.rect.x1 + 6 && z >= d.rect.z0 - 6 && z <= d.rect.z1 + 6));
+    const pierPenalty = (d, sd, n) => {
+      if (d.plan.water?.side !== sd || !d.plan.marina?.piers) return 0;
+      const coord = sd === 'e' || sd === 'w' ? n.z : n.x;
+      return d.plan.marina.piers.some(pr => Math.abs(coord - pr.a) < 12) ? 60 : 0;
+    };
+    const pickRoad = (a, b, sa) => {
       const sb = back[sa], A = outer(a, sa), B = outer(b, sb); let best = null;
-      for (const p of A) for (const q of B) { const lateral = sa === 'e' || sa === 'w' ? Math.abs(p.z - q.z) : Math.abs(p.x - q.x), s = lateral + .25 * Math.hypot(p.x - q.x, p.z - q.z); if (!best || s < best[2]) best = [p, q, s]; }
-      if (!best) return;
-      const [p, q] = best, wa = sa === 'e' || sa === 'w' ? a.plan.wz[p.j] : a.plan.wx[p.i], wb = sb === 'e' || sb === 'w' ? b.plan.wz[q.j] : b.plan.wx[q.i];
-      out.push(this.road3(a, p, dirOf[sa], b, q, dirOf[sb], Math.max(wa, wb), out.length)); group[top(D.indexOf(a))] = top(D.indexOf(b)); joined.add(a.name + '|' + b.name);
+      for (const p of A) for (const q of B) {
+        const lateral = sa === 'e' || sa === 'w' ? Math.abs(p.z - q.z) : Math.abs(p.x - q.x);
+        let s = lateral + .25 * Math.hypot(p.x - q.x, p.z - q.z) + (usedNodes.has(p) ? 25 : 0) + (usedNodes.has(q) ? 25 : 0) + pierPenalty(a, sa, p) + pierPenalty(b, sb, q);
+        const wa = sa === 'e' || sa === 'w' ? a.plan.wz[p.j] : a.plan.wx[p.i], wb = sb === 'e' || sb === 'w' ? b.plan.wz[q.j] : b.plan.wx[q.i];
+        const cand = this.road3(a, p, dirOf[sa], b, q, dirOf[sb], Math.max(wa, wb), out.length);
+        const cross = crossesOther(a, b, cand.points);
+        if (cross) s += 5000;
+        if (!best || s < best.score) best = { p, q, road: cand, cross, score: s };
+      }
+      return best;
+    };
+    const add = (a, b, sa, chosen = null) => {
+      const best = chosen || pickRoad(a, b, sa); if (!best) return;
+      usedNodes.add(best.p); usedNodes.add(best.q);
+      best.road.id = out.length;
+      out.push(best.road); group[top(D.indexOf(a))] = top(D.indexOf(b)); joined.add(a.name + '|' + b.name);
+    };
+    const blockedBetween = (a, b, axis) => {
+      const x0 = axis === 'e' ? a.rect.x1 : Math.max(a.rect.x0, b.rect.x0), x1 = axis === 'e' ? b.rect.x0 : Math.min(a.rect.x1, b.rect.x1);
+      const z0 = axis === 's' ? a.rect.z1 : Math.max(a.rect.z0, b.rect.z0), z1 = axis === 's' ? b.rect.z0 : Math.min(a.rect.z1, b.rect.z1);
+      return D.some(c => c !== a && c !== b && c.rect.x1 > x0 && c.rect.x0 < x1 && c.rect.z1 > z0 && c.rect.z0 < z1);
     };
     for (const a of D) for (const b of D) {
       if (a === b) continue;
       const zo = Math.min(a.rect.z1, b.rect.z1) - Math.max(a.rect.z0, b.rect.z0), xo = Math.min(a.rect.x1, b.rect.x1) - Math.max(a.rect.x0, b.rect.x0);
-      if (b.rect.x0 > a.rect.x1 && zo > 60 && b.rect.x0 - a.rect.x1 < 600) add(a, b, 'e');
-      if (b.rect.z0 > a.rect.z1 && xo > 60 && b.rect.z0 - a.rect.z1 < 600) add(a, b, 's');
+      if (b.rect.x0 > a.rect.x1 && zo > 60 && b.rect.x0 - a.rect.x1 < 600 && !blockedBetween(a, b, 'e')) add(a, b, 'e');
+      if (b.rect.z0 > a.rect.z1 && xo > 60 && b.rect.z0 - a.rect.z1 < 600 && !blockedBetween(a, b, 's')) add(a, b, 's');
     }
-    // any left on their own: joined to the nearest of the rest, on the sides facing most nearly
+    // any disconnected component left on its own: join via the closest unobstructed pair across components
     for (let guard = 0; guard < D.length; guard++) {
-      const lone = D.findIndex((_, i) => top(i) !== top(0)); if (lone < 0) break;
-      const a = D[lone]; let best = null;
-      for (const b of D) if (top(D.indexOf(b)) === top(0)) { const dx = (b.rect.x0 + b.rect.x1 - a.rect.x0 - a.rect.x1) / 2, dz = (b.rect.z0 + b.rect.z1 - a.rect.z0 - a.rect.z1) / 2, d = Math.hypot(dx, dz); if (!best || d < best[1]) best = [b, d, Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 'e' : 'w') : (dz > 0 ? 's' : 'n')]; }
-      add(a, best[0], best[2]);
+      if (!D.some((_, i) => top(i) !== top(0))) break;
+      let best = null;
+      for (let i = 0; i < D.length; i++) if (top(i) !== top(0)) for (let j = 0; j < D.length; j++) if (top(j) === top(0)) {
+        const a = D[i], b = D[j], dx = (b.rect.x0 + b.rect.x1 - a.rect.x0 - a.rect.x1) / 2, dz = (b.rect.z0 + b.rect.z1 - a.rect.z0 - a.rect.z1) / 2;
+        const sa = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 'e' : 'w') : (dz > 0 ? 's' : 'n');
+        const cand = pickRoad(a, b, sa); if (!cand) continue;
+        const cost = cand.road.len + (cand.cross ? 5000 : 0);
+        if (!best || cost < best.cost) best = { a, b, sa, cand, cost };
+      }
+      if (!best) break;
+      add(best.a, best.b, best.sa, best.cand);
     }
     return out;
   }
   // a road from junction p of district a (leaving along out a) to junction q of b: a curve sampled every few metres
   road3(a, p, oa, b, q, ob, width, id) {
-    const L = Math.hypot(q.x - p.x, q.z - p.z), k = L * .42, ha = oa[0] ? p.hx : p.hz, hb = ob[0] ? q.hx : q.hz;
-    const P0 = [p.x + oa[0] * ha, p.z + oa[1] * ha], P3 = [q.x + ob[0] * hb, q.z + ob[1] * hb], P1 = [P0[0] + oa[0] * k, P0[1] + oa[1] * k], P2 = [P3[0] + ob[0] * k, P3[1] + ob[1] * k];
+    const L = Math.hypot(q.x - p.x, q.z - p.z), ha = oa[0] ? p.hx : p.hz, hb = ob[0] ? q.hx : q.hz;
+    const axA = Math.abs((q.x - p.x) * oa[0] + (q.z - p.z) * oa[1]), axB = Math.abs((p.x - q.x) * ob[0] + (p.z - q.z) * ob[1]);
+    const ka = Math.min(L * .38, Math.max(16, axA * .48)), kb = Math.min(L * .38, Math.max(16, axB * .48));
+    const P0 = [p.x + oa[0] * ha, p.z + oa[1] * ha], P3 = [q.x + ob[0] * hb, q.z + ob[1] * hb], P1 = [P0[0] + oa[0] * ka, P0[1] + oa[1] * ka], P2 = [P3[0] + ob[0] * kb, P3[1] + ob[1] * kb];
     const n = Math.max(8, Math.ceil(L / 4)), pts = [[p.x, p.z]];
     for (let i = 0; i <= n; i++) { const t = i / n, u = 1 - t, x = u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * P3[0], z = u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * P3[1]; pts.push([x, z]); }
     pts.push([q.x, q.z]);
@@ -522,7 +553,7 @@ export class Metro {
     if (!this.wet) this.floorBody ||= world.floor?.(0);
     else if (!this.floorBody && world.ground) {
       const g = new Quads(), tile = (x0, z0, x1, z1, y) => { const n = Math.ceil((x1 - x0) / 400), k = Math.ceil((z1 - z0) / 400); for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) g.top(x0 + (x1 - x0) * i / n, z0 + (z1 - z0) * j / k, x0 + (x1 - x0) * (i + 1) / n, z0 + (z1 - z0) * (j + 1) / k, y); };
-      for (const d of this.districts) { const r = d.rect, sd = d.plan.water?.side; tile(r.x0 - (sd === 'west' ? 2 : 40), r.z0 - (sd === 'north' ? 2 : 40), r.x1 + (sd === 'east' ? 2 : 40), r.z1 + (sd === 'south' ? 2 : 40), 0); }
+      for (const d of this.districts) { const r = d.rect, sd = d.plan.water?.side; tile(r.x0 - (sd === 'west' ? 2 : 46), r.z0 - (sd === 'north' ? 2 : 46), r.x1 + (sd === 'east' ? 2 : 46), r.z1 + (sd === 'south' ? 2 : 46), 0); }
       for (const s of this.ways.seas) tile(s.x0, s.z0, s.x1, s.z1, SEA_BED);
       this.floorBody = [world.ground(new Mesh(g.geometry()), { sound: 'stone' }), world.ground(this.ways.land.far, { sound: 'stone' })];
       if (this.ways.flat) this.floorBody.push(world.ground(this.ways.land.near, { sound: 'stone' }));
