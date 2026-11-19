@@ -81,3 +81,11 @@ All six flagged kit requirements have landed in `src/kit/` and `src/gamescroll.d
 5. **High-Heat Police Escalation & Tiny Brains (#456)** — `Wanted` spawns armed `Squad` officers from 2 stars (`hitOfficer`), a spotlight police helicopter from 3 stars (`law.helicopter`, `hitHelicopter`), and water patrol launches (`law.boats`, `hitBoat`), all driven by `law.brains` (`cars`, `turns`, `support`, `squad`).
 6. **Populated Interiors & Boat/Bike `DriveBy` (#456)** — `Interiors` (`{ people: true }`) populates rooms with a `keeper` and `patrons` (`onEnter`/`onLeave`), and `DriveBy` supports `'rider'`, `'helm'`, and `'seat'` firing arcs.
 
+---
+
+## 7. Implementation Status (Phases 3–5)
+
+- **Phase 3 (#478):** Full 5-district `Metro` open world, Mako & Nadia dual-lead swap, driving + boats, initial weapons, 5-star SBPD pursuit, `WorldSave`, and starter missions.
+- **Phase 4 (#479):** Phone-playtest polish + shared engine fixes in `src/kit/` (`craft.js` boat wet containment, `city-force.js` offshore standoff + bow shore probes, `city-metro.js` streaming `world.queries?.()` + unobstructed connectors + preserving pooled scene lamps, `city-ways.js` ramp sea exclusion), calibrated lighting/sky blending, bulletproof ground collision, 5-station Radio + Radio Wheel, proportionally tuned driving/drifting, 3rd-person shoulder + 1st-person ADS + lock-on aim assist, 6-weapon Arsenal Wheel, Solis Customs, Bayside Arms, rival NPCs (`Reactions`), and explosive barrels.
+- **Phase 5 (`feat/solis-bay-phase5`):** Sport motorcycle (*Solis Fang* at Coral Strip beachfront + horn + open `DriveBy`), flyable light helicopter (`gs.craft.Hover` at Pelican Marina quay with climb/descend/altitude HUD), vehicle crash wear & fire/explosion wrecks, real Solis Customs 8-colour respray + speed tune, thrown `grenade` + tracked `launcher` RPG (`gs.combat.Shots`) + `sniper` scope vignette/mil-dots + 22° zoom, 3 rival crews tracked in `gs.rpg.Reputation`, *Tia Carmen's Diner* safehouse in Old Naranja (heal + advance time + swap lead), 3 Bayshore stunt jumps, and multi-stage upgrades for *Pelican Cut* (3 bobbing bay contraband crates), *Escrow Shakedown* (interactive adjuster confrontation choices), and *Sawgrass Extraction*.
+
