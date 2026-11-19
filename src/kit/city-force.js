@@ -301,7 +301,7 @@ export class Force {
     const live = this.boats.filter(b => !b.leave && !b.down);
     if (live.length < want && (this.boatT -= dt) <= 0) { this.boatT = 6; this.callBoat(); }
     for (const b of [...this.boats]) {
-      if (!law.stars || this.dryT > 25) b.leave = true;
+      if (!law.stars || this.dryT > 16) b.leave = true;
       this.boat(b, dt);
     }
   }
@@ -318,7 +318,7 @@ export class Force {
     if (!at) return null;
     if (model.health < 1 || model.wrecked) model.mend?.();
     model.visible = true;
-    const craft = new Boat({ at, heading: Math.atan2(me.x - at.x, -(me.z - at.z)), power: 9, top: 19, turn: 1.3, vehicle: model, water: { height: (x, z) => this.waterOf.waterAt(x, z, 0).y } });
+    const craft = new Boat({ at, heading: Math.atan2(me.x - at.x, -(me.z - at.z)), power: 9, top: 19, turn: 1.3, vehicle: model, world: this.world, water: { height: (x, z) => this.waterOf.waterAt(x, z, 0).y } });
     const b = { model, craft, mind: this.wave?.mind() || null, tactic: 'close', thinkT: 0, felt: 0, t: 0, leave: false, down: false, crew: [], fireT: 2, air: false };
     if (this.crew && this.law.cops) { const p = this.law.cops[(this.boats.length + 1) % this.law.cops.length].twin(); model.putIn(p, 'helm'); b.crew.push(p); }
     model.siren?.(true);
@@ -338,12 +338,32 @@ export class Force {
     if (law.seen && d < 18 && me.v > 6 && (b.felt -= dt) <= 0) { b.felt = 3; b.mind?.feel(.6); }
     let tx = me.x, tz = me.z, keep = 9, full = false;
     if (b.leave) { tx = c.x + (c.x - me.x) * 3; tz = c.z + (c.z - me.z) * 3; keep = 0; if (d > 150) { this.dropBoat(b); return; } }
+    else if (!this.wet) {
+      // Player went ashore: patrol offshore at the nearest wet point instead of driving onto land
+      const ux = (c.x - me.x) / (d || 1), uz = (c.z - me.z) / (d || 1);
+      for (let off = 12; off <= Math.max(24, d); off += 6) {
+        const px = me.x + ux * off, pz = me.z + uz * off;
+        if (this.waterOf.waterAt(px, pz, 0).y > -Infinity) { tx = px; tz = pz; break; }
+      }
+      keep = 16;
+    }
     else if (b.tactic === 'ahead') { tx += clamp(me.vx * 4, -40, 40); tz += clamp(me.vz * 4, -40, 40); keep = 4; }
     else if (b.tactic === 'wide') keep = 26;
     else if (b.tactic === 'ram') { keep = 0; full = true; }
     const gd = Math.hypot(tx - c.x, tz - c.z), want = Math.atan2(tx - c.x, -(tz - c.z)), turn = wrap(want - c.heading);
-    const throttle = full ? 1 : gd > keep + 6 ? 1 : gd > keep ? .35 : -.3;
-    c.update(dt, { throttle: Math.abs(turn) > 2.2 && gd < 15 ? -.4 : throttle, steer: clamp(turn * 1.6, -1, 1) });
+    let throttle = full ? 1 : gd > keep + 6 ? 1 : gd > keep ? .35 : -.3;
+    let steer = clamp(turn * 1.6, -1, 1);
+    if (Math.abs(turn) > 2.2 && gd < 15) throttle = -.4;
+    // Shore avoidance: reverse and steer back into open water if dry land lies right ahead of the bow
+    const fwd = c.forward, probe6 = this.waterOf.waterAt(c.x + fwd.x * 6, c.z + fwd.z * 6, 0).y, probe10 = this.waterOf.waterAt(c.x + fwd.x * 10, c.z + fwd.z * 10, 0).y;
+    if (probe6 === -Infinity || probe10 === -Infinity) {
+      throttle = probe6 === -Infinity ? -.45 : .15;
+      const lx = Math.sin(c.heading - 1.1), lz = -Math.cos(c.heading - 1.1), rx = Math.sin(c.heading + 1.1), rz = -Math.cos(c.heading + 1.1);
+      const wetL = this.waterOf.waterAt(c.x + lx * 10, c.z + lz * 10, 0).y > -Infinity;
+      const wetR = this.waterOf.waterAt(c.x + rx * 10, c.z + rz * 10, 0).y > -Infinity;
+      steer = wetL && !wetR ? -1 : wetR && !wetL ? 1 : (turn >= 0 ? 1 : -1);
+    }
+    c.update(dt, { throttle, steer });
     if (c.crash && c.crash.speed > 3) { b.model.hit?.(c.crash.point || c.pos, { power: c.crash.speed / 8 }); if (c.crash.thing === me.body || c.crash.thing?.owner === me.body) law.crime('cop', me, { weight: 0 }); }
     // the crew shoot from three stars, when they can see you
     if (law.stars >= 3 && d < 45 && (b.fireT -= dt) <= 0) {
