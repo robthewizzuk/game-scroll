@@ -218,7 +218,7 @@ function stand(kind, v, k, opts) {
   for (const s of plan.spares || []) wheel(s, shell);
   const points = {};
   for (const [name, p] of Object.entries(plan.points || {})) { const at = Array.isArray(p) ? p : p.at, o = points[name] = new Object3D(); o.name = name; o.position.set(...at); (p.on ? parts[p.on] : shell).add(o); }
-  Object.assign(root, { kind, style: plan.style, shell, wheels, parts, points, size: { length: mm(plan.size.length), width: mm(plan.size.width), height: mm(plan.size.height) }, wheelbase: plan.wheelbase || 0, track: plan.track || 0, radius: plan.radius || 0, tris: Math.round(tris), look: { kind, ...opts, ...k } });
+  Object.assign(root, { kind, style: plan.style, shell, wheels, parts, points, size: { length: mm(plan.size.length), width: mm(plan.size.width), height: mm(plan.size.height) }, roof: mm(plan.roof || 0), clear: mm(plan.clear ?? 0), wheelbase: plan.wheelbase || 0, track: plan.track || 0, radius: plan.radius || 0, tris: Math.round(tris), look: { kind, ...opts, ...k } });
   if (plan.length) { root.length = plan.length; root.reach = plan.reach; }
   const tracks = plan.tracks ? laid(root, shell, plan.tracks, k) : null; if (tracks) tris += tracks.tris;
   if (tracks) root.belts = { x: plan.tracks.x, width: plan.tracks.link.w };   // (where its two caterpillar tracks run: gs.outdoors.Marks lays their marks)

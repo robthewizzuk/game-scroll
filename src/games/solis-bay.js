@@ -7,12 +7,12 @@ import gs from '../gamescroll.js';
 
 const { Feel } = gs.effects;
 const { twoThumb, Keys } = gs.controls;
-const { Radio, sounds, bed, noise, score: filmScore, Ears, mixer } = gs.sound;
+const { Radio, sounds, bed, noise, score: filmScore, Ears, Foley, mixer } = gs.sound;
 const { icon } = gs.icons;
 const { clamp } = gs.util;
 const { rng } = gs.math;
 const { Sky, Weather } = gs.sky;
-const { Metro, Gps, Wanted, Interiors } = gs.city;
+const { Metro, Gps, Wanted, Interiors, City } = gs.city;
 const { Car } = gs.vehicles;
 const { Boat, Hover } = gs.craft;
 const { Swimmer } = gs.climb;
@@ -20,13 +20,12 @@ const { arm, Pouch, Pickups, Health, DriveBy, Markers, Explosives, Shots, ARSENA
 const { Reputation } = gs.rpg;
 const { Cover3D, TakeCover } = gs.tactics;
 const { CameraRig, GunRig } = gs.camera;
-const { World3D } = gs.physics3d;
-const { Ground } = gs.outdoors;
+const { World3D, loadPhysics3D, physics3DReady } = gs.physics3d;
 const { Reactions } = gs.characters;
 const { Impacts, Particles3D } = gs.fx3d;
 const { WorldSave } = gs.missions;
 const { vehicle, human, prop, weapon, material, wear } = gs.models;
-const { HDView, pbr, sun, mark, THREE } = gs.hd;
+const { HDView, HD, pbr, sun, mark, THREE } = gs.hd;
 
 let W = 300, H = 480;
 
@@ -179,7 +178,7 @@ const NADIA_LOOK = {
 
 /** @type {Parameters<typeof human>[0]} */
 const GANG_LOOK = {
-  look: 'real',
+  look: 'clean',
   sex: 'm',
   age: 32,
   seed: 73,
@@ -264,8 +263,23 @@ const INDOOR_PLACE = { tail: 0.55, wet: 0.22, echo: 0.1, delay: 0.06 };
 const exitCand = { x: 0, y: 0, z: 0, heading: 0 };
 const mapPtScratch = [0, 0];
 const barrelBoomHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), mesh: null };
-const wieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: true, keep: true };
+const wieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: true, keep: false };
 const gangWieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: false, keep: false };
+const gangMuzzleScratch = { x: 0, y: 0, z: 0 };
+const gangMuzzleOpts = { count: 4, power: 0.4, light: false };
+const rktSmokeOpts = { count: 2, power: 0.3, light: false };
+const driftFxOpts = { burst: 2, life: [0.35, 0.55], speed: [0.4, 1.0], size: [0.3, 0.55], colors: ['#b8bcc4', '#7a7e86'], glow: false, grow: true };
+const copFlashRed = { col: '#ff3030', i: 14, reach: 9, life: 0.16 };
+const copFlashBlue = { col: '#3060ff', i: 14, reach: 9, life: 0.16 };
+const boardNearOpts = { parked: true };
+const enterCarOpts = { seat: 'driver', walk: 4.5, pace: 1.85 };
+const pullCarOpts = { walk: 4.8, pace: 1.75 };
+const exitCarOpts = { pace: 1.9 };
+const enterHeliOpts = { seat: 'pilot', walk: 4.2, pace: 1.75 };
+const enterBoatOpts = { seat: 'helm', from: undefined, pace: 1.65 };
+const exitBoatOpts = { pace: 1.65 };
+const exitHeliOpts = { pace: 1.75 };
+const tripWorldPos = new THREE.Vector3();
 const GUN_KEYS = ['pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'launcher'];
 
 const tmpBox = new THREE.Box3();
@@ -394,8 +408,8 @@ function makeRiderMover(world, mesh, { radius = 0.38, height = 1.8, step = 0.35,
 }
 
 function make(api) {
-  let v, world, light, weather, sky, metro, gps, law, radio, scoreMusic, ears;
-  let inside, cover, hide, swim, pickups, yardGround;
+  let v, world, light, weather, sky, metro, gps, law, radio, scoreMusic, ears, foley;
+  let inside, cover, hide, swim, pickups, yardPadMesh;
   let fx3d, impacts, markers, explosives, shots, rep, worldSave;
   let yardPropsGroup, beachPropsGroup, serviceGroup;
   let mako, nadia, barracuda, hotCoupe, bikeMesh, heliMesh, boatMesh, arrowMesh;
@@ -410,11 +424,13 @@ function make(api) {
   let tracerPool = [];
   let barrelPool = [];
   let gangPool = [];
+  let pulledDrivers = [];
   let fpWeapons = {};
   let wpWieldMako = {}, wpWieldNadia = {};
   let camRig, gunRig;
   let yardBoundsShapes = [];
   let decalTargetMeshes = [];
+  let fleetNear = 4, fleetReach = 28, npcFullMax = 2;
   let worldReady = false;
 
   const makeBeacon = (col) => {
@@ -499,23 +515,33 @@ function make(api) {
       }
     }
 
-    yardGround = new Ground(v, {
-      size: [60, 44],
-      kind: 'yard',
-      at: [YARD_X, YARD_Z],
-      y: YARD_Y,
-      bumps: 0.35,
-    });
-    yardGround.lane(YARD_X - 27, YARD_Z, YARD_X + 27, YARD_Z, { width: 4.5, strength: 0.85 });
-    yardGround.line(YARD_X - 26, YARD_Z - 18, YARD_X + 26, YARD_Z - 18, { colour: 'yellow', width: 0.16, strength: 0.75 });
-    yardGround.line(YARD_X - 26, YARD_Z + 18, YARD_X + 26, YARD_Z + 18, { colour: 'yellow', width: 0.16, strength: 0.75 });
-    yardGround.bay(YARD_X - 12, YARD_Z - 11, 3.2, 7.2, { colour: 'yellow', strength: 0.7 });
-    yardGround.bay(YARD_X + 2, YARD_Z - 11, 3.2, 7.2, { colour: 'yellow', strength: 0.7 });
-    yardGround.bay(YARD_X + 14, YARD_Z + 11, 3.2, 7.2, { colour: 'white', angle: Math.PI, strength: 0.65 });
-    yardGround.hatch(YARD_X - 19, YARD_Z + 9, 6.5, 4.2, { colour: 'yellow', strength: 0.75 });
-    yardGround.stamp(YARD_X - 6, YARD_Z + 2, 'oil', { size: 1.9, strength: 0.8 });
-    yardGround.stamp(YARD_X + 8, YARD_Z - 1, 'skid', { size: 4.2, angle: 0.3, strength: 0.75 });
-    yardGround.stamp(YARD_X + 14, YARD_Z + 7, 'scorch', { size: 2.1, strength: 0.7 });
+    const yardPadGeo = new THREE.PlaneGeometry(60, 44).rotateX(-Math.PI / 2);
+    const yardPadMat = pbr('#a6a299', { rough: 0.85 });
+    yardPadMesh = new THREE.Mesh(yardPadGeo, yardPadMat);
+    yardPadMesh.position.set(YARD_X, YARD_Y, YARD_Z);
+    yardPadMesh.receiveShadow = true;
+    yardPadMesh.name = 'yardGround';
+    yardPropsGroup.add(yardPadMesh);
+    v.mirror?.(yardPadMesh, { y: YARD_Y });
+    if (metro.paint) {
+      metro.paint.add(yardPadMesh, 'yard');
+      metro.paint.lane(YARD_X - 27, YARD_Z, YARD_X + 27, YARD_Z, { width: 4.5, strength: 0.85 });
+      metro.paint.line(YARD_X - 26, YARD_Z - 18, YARD_X + 26, YARD_Z - 18, { colour: 'yellow', width: 0.16, strength: 0.75 });
+      metro.paint.line(YARD_X - 26, YARD_Z + 18, YARD_X + 26, YARD_Z + 18, { colour: 'yellow', width: 0.16, strength: 0.75 });
+      const drawYardBay = (x, z, w, d, opts, flip = false) => {
+        const hw = w * 0.5, hd = d * 0.5;
+        metro.paint.line(x - hw, z - hd, x - hw, z + hd, opts);
+        metro.paint.line(x + hw, z - hd, x + hw, z + hd, opts);
+        metro.paint.line(x - hw, z + (flip ? hd : -hd), x + hw, z + (flip ? hd : -hd), opts);
+      };
+      drawYardBay(YARD_X - 12, YARD_Z - 11, 3.2, 7.2, { colour: 'yellow', strength: 0.7 });
+      drawYardBay(YARD_X + 2, YARD_Z - 11, 3.2, 7.2, { colour: 'yellow', strength: 0.7 });
+      drawYardBay(YARD_X + 14, YARD_Z + 11, 3.2, 7.2, { colour: 'white', strength: 0.65 }, true);
+      metro.paint.stamp(YARD_X - 19, YARD_Z + 9, 'hatch', { size: 6.5, width: 4.2, colour: 'yellow', dash: 0.6, strength: 0.75 });
+      metro.paint.stamp(YARD_X - 6, YARD_Z + 2, 'oil', { size: 1.9, strength: 0.8 });
+      metro.paint.stamp(YARD_X + 8, YARD_Z - 1, 'skid', { size: 4.2, angle: 0.3, strength: 0.75 });
+      metro.paint.stamp(YARD_X + 14, YARD_Z + 7, 'scorch', { size: 2.1, strength: 0.7 });
+    }
 
     const shapes = [];
     shapes.push({ box: [60, 0.34, 44], at: { x: YARD_X, y: -0.005, z: YARD_Z } });
@@ -581,13 +607,19 @@ function make(api) {
   };
 
   const setupWorld = () => {
-    // World3D first so Rapier WASM StillLoading aborts cleanly before WebGL init
+    // Batch all human sculpts (leads + crew + pedestrians + police) + Rapier WASM in one pass for faster first start
+    const allLooks = [MAKO_LOOK, NADIA_LOOK, GANG_LOOK, ...(City.folk || []), ...(Wanted.looks || [])];
+    const physP = typeof physics3DReady === 'function' && !physics3DReady() && typeof loadPhysics3D === 'function' ? loadPhysics3D() : null;
+    try {
+      human.need(allLooks);
+    } catch (e) {
+      if (e?.kitLoading && physP) e.kitLoading = Promise.all([e.kitLoading, physP]);
+      throw e;
+    }
     world = new World3D({ gravity: -20 });
 
-    human.need([MAKO_LOOK, NADIA_LOOK, GANG_LOOK]);
+    const tierIdx = HD?.tier ?? 1;
     v = new HDView({ bg: '#7aa8d8', fog: 0.00018, env: 0.45, amb: 0.5, fov: 60 });
-    v.autoOcclude = false;
-    v.occluders?.(null);
 
     light = sun('#ffd6a6', 2.2, 90, [0.55, 0.58, -0.45]);
     light.softShadows(2);
@@ -611,39 +643,73 @@ function make(api) {
     });
     if (sky.mat?.uniforms?.disc) sky.mat.uniforms.disc.value = 4.0;
 
+    const trafficScale = tierIdx === 0 ? 0.14 : tierIdx === 1 ? 0.18 : 0.22;
+    const peopleScale = tierIdx === 0 ? 0.12 : tierIdx === 1 ? 0.14 : 0.16;
+    fleetNear = 1;
+    fleetReach = tierIdx === 0 ? 16 : 20;
+    npcFullMax = 1;
+
     metro = new Metro(v, {
       seed: 77,
       districts: DISTRICTS,
       coast: 'bay',
       bay: 380,
       climate: 'tropical',
-      live: 190,
+      live: 165,
       budget: 0.9,
-      keep: 340,
+      keep: 270,
       sea: true,
       far: true,
       hills: 0.1,
       river: true,
       highway: true,
       sky,
-      traffic: 0.005,
-      people: 0.005,
-      crowd: false,
-      paint: false,
-      fleet: false,
-      sound: false,
+      traffic: trafficScale,
+      people: peopleScale,
+      crowd: true,
+      paint: true,
+      fleet: true,
+      parked: true,
+      sound: true,
     });
-    v.occluders?.(null);
+    v.autoOcclude = false;
+    v.occluders(null);
+    if (metro.crowd) metro.crowd.far = tierIdx === 0 ? 42 : tierIdx === 1 ? 48 : 55;
     v.lampLights?.(26);
-    metro.solid(world, { cars: 0, people: 0, within: 0, furniture: false, parked: true });
-    for (const c of metro.cities) if (c.people) c.people.fullMax = 0;
+    metro.solid(world, { cars: 4, people: 0, within: 48, furniture: false, parked: true });
+    for (const c of metro.cities) {
+      if (c.cars?.fleet) { c.cars.fleet.nearMax = fleetNear; c.cars.fleet.reach = fleetReach; }
+      if (c.people) c.people.fullMax = npcFullMax;
+    }
+    if (metro.cars?.roam?.fleet) { metro.cars.roam.fleet.nearMax = fleetNear; metro.cars.roam.fleet.reach = fleetReach; }
+    if (metro.ways?.traffic) {
+      metro.ways.traffic.max = tierIdx === 0 ? 8 : tierIdx === 1 ? 10 : 12;
+      metro.ways.traffic.reset();
+      if (metro.ways.traffic.fleet) { metro.ways.traffic.fleet.nearMax = 0; metro.ways.traffic.fleet.reach = fleetReach; }
+    }
 
     ears = new Ears({ level: world, rays: 1, hard: 0.58, auto: false });
+    foley = new Foley({
+      ears,
+      world,
+      weather,
+      link: false,
+      ground: (x, z) => {
+        if (metro.water?.wet(x, z)) return 'water';
+        const d = metro.districtAt(x, z, 20);
+        if (d?.name === 'Coral Strip' && x > 1630) return 'sand';
+        if (d?.name === 'Pelican Marina' && x > 1060) return 'wood';
+        if (d?.name === 'Sawgrass Edge') return 'grass';
+        return 'stone';
+      },
+    });
 
     gps = new Gps(metro, { off: 48, arrive: 14, icon, colour: '#38f8b0' });
     law = new Wanted(metro, api, { max: 5, cars: 3, officers: true, brains: true, armed: true, air: true, water: true });
     warmupCop = law?.cops?.[0]?.twin() || null;
     if (warmupCop) warmupCop.lod = 0;
+    warmupFolk = metro.crowd?.folk?.[0]?.twin() || null;
+    if (warmupFolk) warmupFolk.lod = 0;
 
     inside = new Interiors(metro, { world, link: false, reach: 3.0, people: 1, auto: true, seed: 77 });
     cover = new Cover3D({ world, ms: 0.25, space: 2.0, floors: 1, cell: 4 });
@@ -665,14 +731,13 @@ function make(api) {
 
     mako = human(MAKO_LOOK);
     nadia = human(NADIA_LOOK);
-    mako.lod = 0;
-    nadia.lod = 1;
     for (const hBody of [mako, nadia]) {
       if (hBody.rig) hBody.rig.steps = false;
       if (hBody.breath) hBody.breath.on = false;
       if (hBody.idle) hBody.idle.on = false;
       if (hBody.rig?.follow) hBody.rig.follow.amount = 0;
       v.scene.add(hBody);
+      foley.watch(hBody);
     }
 
     // Pre-warm all 6 weapon models (FPS + Mako 3rd-person + Nadia 3rd-person)
@@ -853,7 +918,8 @@ function make(api) {
   let bannerText, bannerCol, bannerT, hitT, rideCooldown, engineSound, radioStarted, savedStationIdx = 0;
   let lastDistrictName, skyTick, poseTick, lawTick, lawDt, gpsDt, lastCityCount = 0;
   let pendingRadioOn = 0, pendingGpsGoal = null, pendingGpsLabel = '', pendingGpsKind = 'target', pendingGpsDelay = 0, pendingPickupLaw = null;
-  let gpsShown, hudSub, wasIndoor, warmupCop = null, warmedCop = false;
+  let gpsShown, hudSub, wasIndoor, warmupCop = null, warmupFolk = null, warmedCop = false;
+  let carTrip = null, copBlinkT = 0, copRed = false;
   let lastScoreThreat = -1, lastScoreFinal = false;
   let lastCarLights = null, lastActiveCarMesh = null, lastActiveCarLit = null, lastWantedStars = 0;
   let activeCarProfile = { topMult: 1, accelMult: 1, gripMult: 1, label: 'Barracuda', cop: false, bike: false };
@@ -901,6 +967,7 @@ function make(api) {
 
   const triggerOver = (kind) => {
     if (overKind) return;
+    cancelCarTrip();
     overKind = kind;
     overT = 1.15;
     fireHeld = false;
@@ -946,8 +1013,8 @@ function make(api) {
     const tgtHaze = clamp(0.0008 + gladesW * 0.0019 + marinaW * 0.0005 + duskW * 0.0005 + nightW * 0.0007, 0.0007, 0.0032);
     const tgtMist = clamp(gladesW * 0.0036 + nightW * gladesW * 0.0014, 0, 0.005);
     const tgtRain = clamp((nightW > 0.55 ? 0.35 : 0) + duskW * 0.16 * (0.4 + 0.6 * marinaW), 0, 0.45);
-    const tgtWet = clamp(0.1 + tgtRain * 0.85 + marinaW * 0.15, 0.1, 0.72);
-    const tgtPools = clamp(tgtRain * 0.9, 0, 0.45);
+    const tgtWet = clamp(0.16 + tgtRain * 0.85 + marinaW * 0.16, 0.16, 0.80);
+    const tgtPools = clamp(tgtRain * 1.15, 0, 0.55);
     const tgtBloom = 0.21 + duskW * 0.04 + nightW * 0.08;
     const tgtExp = 0.98 + nightW * 0.06;
     const tgtSunI = nightW > 0.7 ? 0.55 : 2.15 - duskW * 0.65;
@@ -1060,10 +1127,12 @@ function make(api) {
   };
 
   const updateWieldModels = () => {
-    for (const lead of leads) {
+    for (let li = 0; li < leads.length; li++) {
+      const lead = leads[li];
       const show3p = !lead.inVehicle && !(lead === activeLead && aimMode && fpsAim);
-      for (const [k, w] of Object.entries(lead.wields)) {
-        w.gun.visible = show3p && lead.weaponKind === k;
+      const list = lead.wieldList;
+      for (let wi = 0; wi < list.length; wi++) {
+        list[wi][1].gun.visible = show3p && lead.weaponKind === list[wi][0];
       }
       lead.body.visible = !(lead === activeLead && aimMode && fpsAim);
     }
@@ -1324,10 +1393,9 @@ function make(api) {
     });
   };
 
-  const seatLeadInCar = (vehMesh, cx, cz, heading) => {
-    if (activeCarMesh && activeCarMesh !== barracuda && activeCarMesh !== hotCoupe && activeCarMesh !== bikeMesh && activeCarMesh !== vehMesh) {
-      activeCarMesh.visible = false;
-    }
+  const enterRiderOpts = { seat: 'rider', walk: 4.5, pace: 1.85 };
+
+  const finishSeatInCar = (vehMesh, cx, cz, heading, alreadySeated = false) => {
     wireVehicleWreck(vehMesh);
     setAimMode(false);
     hipShoulder = false;
@@ -1338,7 +1406,7 @@ function make(api) {
     activeCarMesh.position.set(cx, metro.ground(cx, cz), cz);
     activeCarMesh.rotation.set(0, heading + Math.PI, 0);
     const seatName = activeCarProfile.bike ? 'rider' : 'driver';
-    activeCarMesh.putIn?.(activeLead.body, seatName);
+    if (!alreadySeated) activeCarMesh.putIn?.(activeLead.body, seatName);
     activeLead.inVehicle = true;
     inCar = true;
     inBoat = false;
@@ -1391,7 +1459,7 @@ function make(api) {
     }
   };
 
-  const boardBoat = () => {
+  const finishBoardBoat = (alreadySeated = false) => {
     wireVehicleWreck(boatMesh);
     setAimMode(false);
     hipShoulder = false;
@@ -1406,7 +1474,7 @@ function make(api) {
     mover.walk(0, 0);
     mover.setActive(false);
     mover.place(boatCtrl.x, -120, boatCtrl.z);
-    boatMesh.putIn?.(activeLead.body, 'helm', { from: swim.state !== 'out' ? 'water' : undefined });
+    if (!alreadySeated) boatMesh.putIn?.(activeLead.body, 'helm', { from: swim.state !== 'out' ? 'water' : undefined });
     driveBy = new DriveBy(boatMesh, { seat: 'helm', open: true });
     camRig.to('chase', 0.25, { distance: 10.5, height: 4.4, look: 1.3, walls: false });
     if (!radioStarted) pendingRadioOn = 2;
@@ -1422,7 +1490,7 @@ function make(api) {
     }
   };
 
-  const boardHeli = () => {
+  const finishBoardHeli = (alreadySeated = false) => {
     if (!heliCtrl || heliMesh.wrecked) return;
     wireVehicleWreck(heliMesh);
     setAimMode(false);
@@ -1439,13 +1507,111 @@ function make(api) {
     mover.walk(0, 0);
     mover.setActive(false);
     mover.place(heliCtrl.pos.x, -120, heliCtrl.pos.z);
-    heliMesh.putIn?.(activeLead.body, 'pilot');
+    if (!alreadySeated) heliMesh.putIn?.(activeLead.body, 'pilot');
     driveBy = null;
     camRig.to('chase', 0.25, { distance: 13.5, height: 5.8, look: 1.2, walls: false });
     if (!radioStarted) pendingRadioOn = 2;
     radio.listen({ inside: true });
     updateWieldModels();
     say('Solis Chopper airborne · UP/DOWN to climb!', '#ffd166', 3.2);
+  };
+
+  const cancelCarTrip = () => {
+    if (!carTrip) return;
+    const { veh, kind, trip, seatedStarted, threwVictim, isBoat, isHeli } = carTrip;
+    carTrip = null;
+    if (kind === 'pull' && !threwVictim && trip?.victim) {
+      veh?.takeOut?.(trip.victim);
+      trip.victim.removeFromParent?.();
+    }
+    if (!seatedStarted || kind === 'exit') {
+      veh?.takeOut?.(activeLead.body);
+      if (activeLead.body.parent && activeLead.body.parent !== v.scene) v.scene.add(activeLead.body);
+      veh?.shut?.('all', { speed: 4 });
+      if (kind === 'exit') {
+        activeLead.inVehicle = false;
+        inCar = false;
+        inBoat = false;
+        inHeli = false;
+      } else if (!isBoat && !isHeli) {
+        activeLead.inVehicle = false;
+        mover.mesh = activeLead.body;
+        mover.gravity = -20;
+        mover.setActive(true);
+        mover.place(activeLead.foot.x, activeLead.foot.y + 0.08, activeLead.foot.z);
+        updateWieldModels();
+      }
+    }
+  };
+
+  const startBoardVehicle = (vehMesh, cx, cz, heading, isBoat = false, isHeli = false) => {
+    if (carTrip) return;
+    setAimMode(false);
+    hipShoulder = false;
+    hide.leave();
+    if (!isBoat && !isHeli) {
+      if (activeCarMesh && activeCarMesh !== barracuda && activeCarMesh !== hotCoupe && activeCarMesh !== bikeMesh && activeCarMesh !== vehMesh) {
+        activeCarMesh.visible = false;
+      }
+      wireVehicleWreck(vehMesh);
+      activeCarMesh = vehMesh;
+      activeCarProfile = carProfileFor(vehMesh, barracuda, hotCoupe, bikeMesh);
+      activeCarMesh.visible = true;
+      activeCarMesh.position.set(cx, metro.ground(cx, cz), cz);
+      activeCarMesh.rotation.set(0, heading + Math.PI, 0);
+    } else {
+      wireVehicleWreck(vehMesh);
+    }
+
+    activeLead.inVehicle = true;
+    mover.mesh = null;
+    mover.gravity = 0;
+    mover.walk(0, 0);
+    mover.setActive(false);
+    mover.place(cx, -120, cz);
+    updateWieldModels();
+
+    const seatName = isHeli ? 'pilot' : isBoat ? 'helm' : (activeCarProfile.bike ? 'rider' : 'driver');
+    const prevDriver = !isBoat && !isHeli ? vehMesh.who?.(seatName) : null;
+    let trip = null;
+    if (isBoat) {
+      enterBoatOpts.from = swim.state !== 'out' ? 'water' : undefined;
+      trip = vehMesh.enter?.(activeLead.body, enterBoatOpts) || null;
+    } else if (isHeli) {
+      trip = vehMesh.enter?.(activeLead.body, enterHeliOpts) || null;
+    } else if (prevDriver && prevDriver !== activeLead.body) {
+      if (!prevDriver.react) {
+        prevDriver.react = new Reactions(prevDriver, { world: false, ground: (x, z) => metro.ground(x, z), rest: 2.2 });
+      }
+      trip = vehMesh.pull?.(seatName, activeLead.body, pullCarOpts) || null;
+    } else {
+      trip = vehMesh.enter?.(activeLead.body, activeCarProfile.bike ? enterRiderOpts : enterCarOpts) || null;
+    }
+
+    if (!trip) {
+      if (isHeli) finishBoardHeli(false);
+      else if (isBoat) finishBoardBoat(false);
+      else finishSeatInCar(vehMesh, cx, cz, heading, false);
+      return;
+    }
+
+    carTrip = {
+      trip,
+      veh: vehMesh,
+      kind: prevDriver && prevDriver !== activeLead.body ? 'pull' : 'enter',
+      seatName,
+      heading,
+      isBoat,
+      isHeli,
+      seatedStarted: false,
+      threwVictim: false,
+    };
+    camRig.to('chase', 0.35, {
+      distance: isHeli ? 11.5 : isBoat ? 9.5 : activeCarProfile.bike ? 6.2 : 7.8,
+      height: isHeli ? 4.8 : isBoat ? 3.9 : 3.2,
+      look: 1.25,
+      walls: false,
+    });
   };
 
   const findSafeExit = (bx, bz, baseHeading, candOffsets, preferDry) => {
@@ -1473,7 +1639,56 @@ function make(api) {
     return best || { x: bx, y: metro.ground(bx, bz), z: bz };
   };
 
+  const finishAnimatedExit = (veh, baseHeading, isBoat, isHeli) => {
+    const f = activeLead.foot;
+    if (activeLead.body.parent && activeLead.body.parent !== v.scene) {
+      v.scene.attach(activeLead.body);
+    }
+    const bx = activeLead.body.position.x, bz = activeLead.body.position.z;
+    const gy = metro.ground(bx, bz, 3);
+    const wet = !!metro.water?.wet(bx, bz);
+    exitCand.x = bx; exitCand.y = gy; exitCand.z = bz;
+    const clipped = !!metro.collide(exitCand, 0.42, gy);
+    if (clipped || (!isBoat && wet)) {
+      const refX = isHeli && heliCtrl ? heliCtrl.pos.x : isBoat && boatCtrl ? boatCtrl.x : (veh?.position?.x ?? bx);
+      const refZ = isHeli && heliCtrl ? heliCtrl.pos.z : isBoat && boatCtrl ? boatCtrl.z : (veh?.position?.z ?? bz);
+      const safe = findSafeExit(refX, refZ, baseHeading, isHeli ? [[2.8, 0], [-2.8, 0], [0, 3.2]] : isBoat ? [[2.4, 0], [-2.4, 0], [0, 2.8]] : [[-1.75, 0], [1.75, 0], [0, 3.0]], true);
+      f.x = safe.x; f.y = safe.y; f.z = safe.z;
+    } else {
+      f.x = bx;
+      f.y = wet ? Math.max(-0.2, gy) : gy;
+      f.z = bz;
+    }
+    f.heading = activeLead.body.rotation.y;
+    f.v = 0;
+    inCar = false;
+    inBoat = false;
+    inHeli = false;
+    activeLead.inVehicle = false;
+    mover.mesh = activeLead.body;
+    mover.gravity = -20;
+    mover.setActive(true);
+    world.queries?.();
+    mover.place(f.x, f.y + 0.08, f.z);
+    activeLead.body.position.set(f.x, f.y, f.z);
+    activeLead.body.rotation.set(0, f.heading, 0);
+    activeLead.body.rig.blend(BLEND_OPTS, 0);
+    rigUpdOpts.speed = 0;
+    rigUpdOpts.aim = 0;
+    activeLead.body.rig.update(0, rigUpdOpts);
+    radio.listen({ inside: false, distance: 4 });
+    if (!radio.now.on) scoreMusic?.resume();
+    if (engineSound) engineSound.set({ vol: 0 }, 0.08);
+    camRig.to('chase', 0.28, { distance: 5.8, height: 2.3, look: 1.35, walls: world });
+    updateWieldModels();
+  };
+
   const stepOut = (force = false) => {
+    if (carTrip) {
+      if (carTrip.seatedStarted) carTrip = null;
+      else if (!force) return;
+      else cancelCarTrip();
+    }
     if (inHeli && heliCtrl) {
       const hx = heliCtrl.pos.x, hz = heliCtrl.pos.z;
       const gy = metro.ground(hx, hz, heliCtrl.pos.y + 1.5);
@@ -1482,6 +1697,14 @@ function make(api) {
       if (!force && !heliCtrl.onGround && !wet && alt > 4.0) {
         say('Descend lower to exit chopper!', '#ffd166', 2.0);
         return;
+      }
+      if (!force && Math.abs(heliCtrl.speed) < 5 && heliMesh.exit) {
+        const trip = heliMesh.exit(activeLead.body, exitHeliOpts);
+        if (trip) {
+          inHeli = false;
+          carTrip = { trip, veh: heliMesh, kind: 'exit', seatName: 'pilot', heading: Math.PI - heliCtrl.heading, isBoat: false, isHeli: true, seatedStarted: false, threwVictim: false };
+          return;
+        }
       }
       heliMesh.takeOut?.(activeLead.body);
       const safe = findSafeExit(hx, hz, Math.PI - heliCtrl.heading, [[2.8, 0], [-2.8, 0], [0, 3.2]], true);
@@ -1509,6 +1732,14 @@ function make(api) {
       return;
     }
     if (inBoat && boatCtrl) {
+      if (!force && Math.abs(boatCtrl.speed) < 5 && boatMesh.exit) {
+        const trip = boatMesh.exit(activeLead.body, exitBoatOpts);
+        if (trip) {
+          inBoat = false;
+          carTrip = { trip, veh: boatMesh, kind: 'exit', seatName: 'helm', heading: Math.PI - boatCtrl.heading, isBoat: true, isHeli: false, seatedStarted: false, threwVictim: false };
+          return;
+        }
+      }
       boatMesh.takeOut?.(activeLead.body);
       const safe = findSafeExit(boatCtrl.x, boatCtrl.z, Math.PI - boatCtrl.heading, [[2.4, 0], [-2.4, 0], [0, 2.8]], true);
       const f = activeLead.foot;
@@ -1533,8 +1764,18 @@ function make(api) {
       return;
     }
     if (!inCar || !activeCarMesh) return;
-    activeCarMesh.takeOut?.(activeLead.body);
     const carHeading = Math.PI / 2 - carCtrl.angle;
+    if (!force && Math.abs(carCtrl.speed) < 6 && activeCarMesh.exit) {
+      carCtrl.speed = 0;
+      const trip = activeCarMesh.exit(activeLead.body, exitCarOpts);
+      if (trip) {
+        inCar = false;
+        carTrip = { trip, veh: activeCarMesh, kind: 'exit', seatName: activeCarProfile.bike ? 'rider' : 'driver', heading: carHeading, isBoat: false, isHeli: false, seatedStarted: false, threwVictim: false };
+        if (engineSound) engineSound.set({ vol: 0 }, 0.08);
+        return;
+      }
+    }
+    activeCarMesh.takeOut?.(activeLead.body);
     const safe = findSafeExit(carCtrl.x, carCtrl.y, carHeading, [[-1.75, 0], [1.75, 0], [0, 3.0]], true);
     const f = activeLead.foot;
     f.x = safe.x;
@@ -1565,42 +1806,44 @@ function make(api) {
   const tryBoardOrExit = () => {
     if (rideCooldown > 0) return;
     rideCooldown = 0.35;
+    if (carTrip && !carTrip.seatedStarted) return;
     if (inCar || inBoat || inHeli) {
       stepOut();
       return;
     }
     const p = { x: activeLead.foot.x, z: activeLead.foot.z };
     if (heliCtrl && !heliMesh.wrecked && Math.hypot(heliCtrl.pos.x - p.x, heliCtrl.pos.z - p.z) < 6.2) {
-      boardHeli();
+      startBoardVehicle(heliMesh, heliCtrl.pos.x, heliCtrl.pos.z, Math.PI - heliCtrl.heading, false, true);
       return;
     }
     if (bikeMesh && !bikeMesh.wrecked && Math.hypot(bikeMesh.position.x - p.x, bikeMesh.position.z - p.z) < 4.8) {
       const h = Math.atan2(-Math.sin(bikeMesh.rotation.y), -Math.cos(bikeMesh.rotation.y));
-      seatLeadInCar(bikeMesh, bikeMesh.position.x, bikeMesh.position.z, h);
+      startBoardVehicle(bikeMesh, bikeMesh.position.x, bikeMesh.position.z, h, false, false);
       return;
     }
     if (boatCtrl && !boatMesh.wrecked && Math.hypot(boatCtrl.x - p.x, boatCtrl.z - p.z) < 6.0) {
-      boardBoat();
+      startBoardVehicle(boatMesh, boatCtrl.x, boatCtrl.z, Math.PI - boatCtrl.heading, true, false);
       return;
     }
     if (!barracuda.wrecked && Math.hypot(barracuda.position.x - p.x, barracuda.position.z - p.z) < 4.8) {
       const h = Math.atan2(-Math.sin(barracuda.rotation.y), -Math.cos(barracuda.rotation.y));
-      seatLeadInCar(barracuda, barracuda.position.x, barracuda.position.z, h);
+      startBoardVehicle(barracuda, barracuda.position.x, barracuda.position.z, h, false, false);
       return;
     }
     if (hotCoupe.visible && !hotCoupe.wrecked && Math.hypot(hotCoupe.position.x - p.x, hotCoupe.position.z - p.z) < 5.5) {
       const h = Math.atan2(-Math.sin(hotCoupe.rotation.y), -Math.cos(hotCoupe.rotation.y));
-      seatLeadInCar(hotCoupe, hotCoupe.position.x, hotCoupe.position.z, h);
+      startBoardVehicle(hotCoupe, hotCoupe.position.x, hotCoupe.position.z, h, false, false);
       return;
     }
-    const nearParked = metro.cars.near(p, 5.5, { parked: true })[0];
+    const nearParked = metro.cars.near(p, 5.5, boardNearOpts)[0];
     const nearTraffic = nearParked || metro.cars.near(p, 5.5)[0];
     if (nearTraffic) {
-      const taken = metro.cars.take(nearTraffic, { driver: false, by: activeLead.body });
+      const hasDriver = !nearTraffic.parked && !nearTraffic.police;
+      const taken = metro.cars.take(nearTraffic, { driver: hasDriver, by: activeLead.body });
       if (taken) {
         v.scene.add(taken);
         const h = Math.atan2(-Math.sin(taken.rotation.y), -Math.cos(taken.rotation.y));
-        seatLeadInCar(taken, taken.position.x, taken.position.z, h);
+        startBoardVehicle(taken, taken.position.x, taken.position.z, h, false, false);
         return;
       }
     }
@@ -1608,6 +1851,7 @@ function make(api) {
   };
 
   const swapLead = () => {
+    cancelCarTrip();
     if (inCar || inBoat || inHeli) stepOut(true);
     setAimMode(false);
     hide.leave();
@@ -1621,7 +1865,10 @@ function make(api) {
     const jumpDist = Math.hypot(activeLead.foot.x - otherLead.foot.x, activeLead.foot.z - otherLead.foot.z);
     if (jumpDist > 200 || !metro.districtAt(activeLead.foot.x, activeLead.foot.z, 40)) {
       metro.switchTo(activeLead.foot, { reset: true });
-      for (const c of metro.cities) if (c.people && c.people.fullMax !== 0) c.people.fullMax = 0;
+      for (const c of metro.cities) {
+        if (c.cars?.fleet) { c.cars.fleet.nearMax = fleetNear; c.cars.fleet.reach = fleetReach; }
+        if (c.people) c.people.fullMax = npcFullMax;
+      }
     }
     activeLead.foot.y = metro.ground(activeLead.foot.x, activeLead.foot.z, activeLead.foot.y + 1.5);
     world.queries?.();
@@ -1982,7 +2229,7 @@ function make(api) {
         const wHit = world.ray(s.from, s.dir, range, c => c !== mover?.rider && c !== mover);
         if (wHit && wHit.point) {
           endDist = wHit.distance;
-          impacts.hit(wHit, { from: s.from, mark: !!decalTargetMeshes.includes(wHit.mesh) || wHit.mesh === yardGround?.mesh });
+          impacts.hit(wHit, { from: s.from, mark: !!decalTargetMeshes.includes(wHit.mesh) || wHit.mesh === yardPadMesh });
         }
       }
 
@@ -2388,7 +2635,15 @@ function make(api) {
       lastDistrictName = 'Coral Strip';
       hudSub = 'Board Barracuda or boost Palma GT';
       if (yardPropsGroup) yardPropsGroup.visible = true;
-      if (yardGround?.mesh) yardGround.mesh.visible = true;
+      if (yardPadMesh) yardPadMesh.visible = true;
+      cancelCarTrip();
+      for (const p of pulledDrivers) {
+        p.mesh?.removeFromParent();
+        p.mesh?.dispose?.();
+      }
+      pulledDrivers.length = 0;
+      copBlinkT = 0;
+      copRed = false;
 
       if (!engineSound) {
         engineSound = bed({ vol: 0, from: 110, filter: 'lowpass', q: 4 });
@@ -2424,6 +2679,7 @@ function make(api) {
           name: 'Mako',
           body: mako,
           wields: wpWieldMako,
+          wieldList: Object.entries(wpWieldMako),
           pouch: mkPouch,
           health: mkHp,
           guns: makeLeadGuns(mkPouch),
@@ -2436,6 +2692,7 @@ function make(api) {
           name: 'Nadia',
           body: nadia,
           wields: wpWieldNadia,
+          wieldList: Object.entries(wpWieldNadia),
           pouch: ndPouch,
           health: ndHp,
           guns: makeLeadGuns(ndPouch),
@@ -2485,15 +2742,19 @@ function make(api) {
       // Prepare ground collider BEFORE placing both characters!
       const makoSpot = placeAtDistrict('Coral Strip');
       metro.prepare(makoSpot).reset(makoSpot);
-      for (const c of metro.cities) if (c.people) c.people.fullMax = 0;
+      for (const c of metro.cities) {
+        if (c.cars?.fleet) {
+          c.cars.fleet.nearMax = fleetNear;
+          c.cars.fleet.reach = fleetReach;
+        }
+        if (c.people) c.people.fullMax = npcFullMax;
+      }
       lastCityCount = metro.cities.length;
       world.queries?.();
 
       makoSpot.y = metro.ground(makoSpot.x, makoSpot.z);
       const mh = makoSpot.heading || 0;
-      const nx = makoSpot.x + Math.sin(mh) * 4.5 - Math.cos(mh) * 2.0;
-      const nz = makoSpot.z + Math.cos(mh) * 4.5 + Math.sin(mh) * 2.0;
-      const nadiaSpot = { x: nx, y: metro.ground(nx, nz), z: nz, heading: mh + Math.PI };
+      const nadiaSpot = placeAtDistrict('Coral Strip', makoSpot, 78, 125);
       metro.collide(nadiaSpot, 0.45, nadiaSpot.y);
       nadiaSpot.y = metro.ground(nadiaSpot.x, nadiaSpot.z);
 
@@ -2561,7 +2822,7 @@ function make(api) {
       inHeli = false;
 
       mako.lod = warmedCop ? 1 : 0;
-      nadia.lod = 1;
+      nadia.lod = warmedCop ? 1 : 0;
       mako.position.set(activeLead.foot.x, activeLead.foot.y, activeLead.foot.z);
       mako.rotation.set(0, activeLead.foot.heading, 0);
       mako.rig.blend(BLEND_OPTS, 0);
@@ -2599,6 +2860,17 @@ function make(api) {
           warmupCop.rotation.set(0, activeLead.foot.heading + Math.PI, 0);
           warmupCop.visible = true;
           if (!warmupCop.parent) v.scene.add(warmupCop);
+        }
+        if (warmupFolk) {
+          warmupFolk.lod = 1;
+          warmupFolk.position.set(
+            activeLead.foot.x - Math.sin(activeLead.foot.heading) * 1.4,
+            activeLead.foot.y,
+            activeLead.foot.z - Math.cos(activeLead.foot.heading) * 1.4
+          );
+          warmupFolk.rotation.set(0, activeLead.foot.heading, 0);
+          warmupFolk.visible = true;
+          if (!warmupFolk.parent) v.scene.add(warmupFolk);
         }
       }
 
@@ -2707,9 +2979,14 @@ function make(api) {
         warmedCop = true;
         warmupCop?.removeFromParent();
         warmupCop = null;
+        warmupFolk?.removeFromParent();
+        warmupFolk = null;
         mako.visible = false;
         mako.lod = 1;
         mako.visible = true;
+        nadia.visible = false;
+        nadia.lod = 1;
+        nadia.visible = true;
         nadia.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
         impacts.clear();
         fx3d.clear();
@@ -2750,6 +3027,21 @@ function make(api) {
       driftSkidCd = Math.max(0, driftSkidCd - sdt);
       newsCooldown = Math.max(0, newsCooldown - sdt);
       for (const sj of stuntJumps) if (sj.cd > 0) sj.cd = Math.max(0, sj.cd - sdt);
+      for (let i = pulledDrivers.length - 1; i >= 0; i--) {
+        const p = pulledDrivers[i];
+        p.age += sdt;
+        p.react?.update(sdt);
+        if (!p.react?.busy) p.mesh?.rig?.update(sdt, { speed: 0 });
+        if (p.age > 7) {
+          p.mesh?.removeFromParent();
+          p.mesh?.dispose?.();
+          pulledDrivers.splice(i, 1);
+        }
+      }
+      if (carTrip && carTrip.seatedStarted && carTrip.trip.done) {
+        foley?.hit?.(carTrip.veh.position, 'metal', { speed: 4.5, size: 0.45 });
+        carTrip = null;
+      }
       rep?.update(sdt);
       if (phoneT > 0) phoneT = Math.max(0, phoneT - sdt);
       if (phoneHoldLeft > 0) {
@@ -2773,6 +3065,10 @@ function make(api) {
             lastCarLights = nl;
             barracuda.lights?.(nl);
             hotCoupe.lights?.(nl);
+            bikeMesh.lights?.(nl);
+            if (activeCarMesh && activeCarMesh !== barracuda && activeCarMesh !== hotCoupe && activeCarMesh !== bikeMesh) {
+              activeCarMesh.lights?.(nl);
+            }
           }
         }
       }
@@ -2815,13 +3111,13 @@ function make(api) {
       const modalOpen = weaponWheelOpen || radioWheelOpen || gps.opened || shakedownOpen;
       const actRide = !modalOpen && (pad.buttons.RIDE.pressed() || rideKey);
       const actAimTap = !modalOpen && (pad.buttons.AIM.pressed() || aimKey);
-      const actFire = !modalOpen && !inHeli && (pad.buttons.FIRE.isDown || fireHeld || keys.held('f') || keys.held('Enter'));
+      const actFire = !modalOpen && !inHeli && !(carTrip && !carTrip.seatedStarted) && (pad.buttons.FIRE.isDown || fireHeld || keys.held('f') || keys.held('Enter'));
       const actBrake = !modalOpen && (pad.buttons.AIM.isDown || keys.held(' ') || keys.held('Shift'));
       rideKey = aimKey = false;
 
       if (coverKey) {
         coverKey = false;
-        if (!inCar && !inBoat && !inHeli) {
+        if (!inCar && !inBoat && !inHeli && !carTrip) {
           if (hide.busy) hide.leave();
           else {
             cover.around(mover.feet, 6);
@@ -2843,10 +3139,10 @@ function make(api) {
       }
 
       if (actRide) tryBoardOrExit();
-      if (actAimTap && !inCar && !inBoat && !inHeli) setAimMode(!aimMode);
+      if (actAimTap && !inCar && !inBoat && !inHeli && !carTrip) setAimMode(!aimMode);
 
       // Dynamic button labels
-      pad.buttons.RIDE.label = (inCar || inBoat || inHeli) ? 'EXIT' : 'RIDE';
+      pad.buttons.RIDE.label = (inCar || inBoat || inHeli) ? 'EXIT' : carTrip ? '...' : 'RIDE';
       pad.buttons.FIRE.label = inHeli ? 'UP' : (!inCar && !inBoat && activeLead.weaponKind === 'baton') ? 'HIT' : (!inCar && !inBoat && activeLead.weaponKind === 'grenade') ? 'TOSS' : 'FIRE';
       pad.buttons.AIM.label = inHeli ? 'DOWN' : inCar ? 'DRIFT' : inBoat ? 'BRAKE' : aimMode ? 'HIP' : 'AIM';
 
@@ -2945,7 +3241,7 @@ function make(api) {
           }
           if (driftSmokeAcc >= 0.14) {
             driftSmokeAcc = 0;
-            fx3d.make(playerQuery, { burst: 2, life: [0.35, 0.55], speed: [0.4, 1.0], size: [0.3, 0.55], colors: ['#b8bcc4', '#7a7e86'], glow: false, grow: true });
+            fx3d.make(playerQuery, driftFxOpts);
           }
         } else if (driftSec > 1.2) {
           const bonusCash = Math.min(100, Math.round(driftSec * 28));
@@ -3061,6 +3357,16 @@ function make(api) {
           activeCarMesh.lights?.(nl);
         }
 
+        if (activeCarProfile.cop && activeCarMesh.sirenOn) {
+          copBlinkT += sdt;
+          if (copBlinkT >= 0.18) {
+            copBlinkT = 0;
+            copRed = !copRed;
+            tripWorldPos.set(carCtrl.x, gy + 1.9, carCtrl.y);
+            v.flash(tripWorldPos, copRed ? copFlashRed : copFlashBlue);
+          }
+        }
+
         avoidQuery.x = carCtrl.x;
         avoidQuery.z = carCtrl.y;
         avoidQuery.vx = Math.cos(carCtrl.angle) * carCtrl.speed;
@@ -3070,6 +3376,51 @@ function make(api) {
         rigTarget.position.set(carCtrl.x, gy, carCtrl.y);
         rigTarget.yaw = heading;
         rigTarget.grounded = true;
+      } else if (carTrip && !carTrip.seatedStarted) {
+        const ct = carTrip;
+        ct.veh.update?.(sdt);
+        const step = ct.trip.step;
+        if (step !== ct.lastStep) {
+          if (step === 'open') foley?.hit?.(ct.veh.position, 'metal', { speed: 2.0, size: 0.2 });
+          else if (step === 'close') foley?.hit?.(ct.veh.position, 'metal', { speed: 4.5, size: 0.45 });
+          ct.lastStep = step;
+        }
+        if (ct.kind === 'pull' && !ct.threwVictim && ct.trip.thrown) {
+          ct.threwVictim = true;
+          const vic = ct.trip.thrown;
+          pulledDrivers.push({ mesh: vic, react: vic.react || null, age: 0 });
+          law.crime('theft', playerQuery);
+          metro.people.scare(playerQuery, 12);
+          try { sounds.hit?.(0.9); } catch {}
+        }
+        activeLead.body.getWorldPosition(tripWorldPos);
+        playerQuery.x = tripWorldPos.x;
+        playerQuery.y = tripWorldPos.y;
+        playerQuery.z = tripWorldPos.z;
+        playerQuery.heading = ct.heading;
+        playerQuery.v = 0;
+        playerQuery.car = false;
+        playerQuery.boat = false;
+        playerQuery.swim = false;
+        rigTarget.position.set(tripWorldPos.x, tripWorldPos.y + 0.5, tripWorldPos.z);
+        rigTarget.yaw = ct.heading;
+        rigTarget.grounded = true;
+        if (ct.kind === 'exit') {
+          if (ct.trip.done) {
+            const { veh, heading, isBoat, isHeli } = ct;
+            carTrip = null;
+            finishAnimatedExit(veh, heading, isBoat, isHeli);
+          }
+        } else if (!ct.isBoat && !ct.isHeli && (step === 'close' || ct.trip.done)) {
+          ct.seatedStarted = true;
+          finishSeatInCar(ct.veh, ct.veh.position.x, ct.veh.position.z, ct.heading, true);
+          if (ct.trip.done) carTrip = null;
+        } else if (ct.trip.done) {
+          const { isBoat, isHeli } = ct;
+          carTrip = null;
+          if (isHeli) finishBoardHeli(true);
+          else if (isBoat) finishBoardBoat(true);
+        }
       } else {
         // On foot / swimming / in cover
         const f = activeLead.foot;
@@ -3135,11 +3486,11 @@ function make(api) {
       }
 
       // Physics step + bulletproof ground floor net for both leads
-      if (!inCar && !inBoat && !inHeli) mover.stepMove(sdt);
+      if (!inCar && !inBoat && !inHeli && !carTrip) mover.stepMove(sdt);
       if (inBoat || inHeli) world.step(sdt);
       else if (!inCar && (st & 1) === 1) world.step(Math.min(0.033, sdt * 2));
 
-      if (!inCar && !inBoat && !inHeli) {
+      if (!inCar && !inBoat && !inHeli && !carTrip) {
         const f = activeLead.foot;
         const mp = mover.feet;
         const wet = !!metro.water?.wet(mp.x, mp.z);
@@ -3171,7 +3522,8 @@ function make(api) {
         activeLead.body.position.set(f.x, f.y, f.z);
         activeLead.body.rotation.set(0, f.heading, 0);
         const rigActive = f.v > 0.01 || aimMode || recentShotT > 0 || hide.busy || swim.state !== 'out';
-        if (rigActive ? ((poseTick++ & 1) === 0) : st === 7) {
+        const rigStep = rigActive ? ((poseTick++ & 1) === 0) : st === 7;
+        if (rigStep) {
           v.cam.getWorldDirection(camDirVec);
           const aimPitch = Math.asin(clamp(camDirVec.y, -1, 1));
           if (swim.pose) {
@@ -3206,11 +3558,12 @@ function make(api) {
 
         const wk = activeLead.weaponKind;
         const aw = activeLead.wields[wk];
-        if (aw && !(aimMode && fpsAim)) {
+        if (aw && !(aimMode && fpsAim) && (aimMode || recentShotT > 0 || rigStep)) {
           v.cam.getWorldDirection(camDirVec);
           wieldOpts.pitch = Math.asin(clamp(camDirVec.y, -1, 1));
           wieldOpts.how = aimMode ? 'aim' : recentShotT > 0 ? 'hip' : 'ready';
-          aw.update(sdt, wieldOpts);
+          wieldOpts.keep = aimMode || recentShotT > 0;
+          aw.update((aimMode || recentShotT > 0) ? sdt : (rigActive ? sdt * 2 : sdt * 8), wieldOpts);
         }
 
         if (otherLead && !otherLead.inVehicle) {
@@ -3333,7 +3686,7 @@ function make(api) {
             rs.mesh.position.set(p.x, p.y, p.z);
             if ((rs.smokeT -= sdt) <= 0) {
               rs.smokeT = 0.04;
-              fx3d.sparks(p, { count: 2, power: 0.3, light: false });
+              fx3d.sparks(p, rktSmokeOpts);
             }
           }
           let directHit = false;
@@ -3392,7 +3745,10 @@ function make(api) {
           if (g.fireCd <= 0 && !g.react.busy && !overKind) {
             g.fireCd = 1.65 + Math.random() * 0.9;
             weaponSound('pistol', 'fire', g);
-            fx3d.sparks({ x: g.x + Math.sin(g.heading) * 0.5, y: g.y + 1.4, z: g.z + Math.cos(g.heading) * 0.5 }, { count: 4, power: 0.4, light: false });
+            gangMuzzleScratch.x = g.x + Math.sin(g.heading) * 0.5;
+            gangMuzzleScratch.y = g.y + 1.4;
+            gangMuzzleScratch.z = g.z + Math.cos(g.heading) * 0.5;
+            fx3d.sparks(gangMuzzleScratch, gangMuzzleOpts);
             aimDirObj.x = dx / (dist || 1);
             aimDirObj.y = (playerQuery.y - g.y) / (dist || 1);
             aimDirObj.z = dz / (dist || 1);
@@ -3431,7 +3787,10 @@ function make(api) {
       metro.update(sdt, playerQuery);
       if (metro.cities.length !== lastCityCount) {
         lastCityCount = metro.cities.length;
-        for (const c of metro.cities) if (c.people && c.people.fullMax !== 0) c.people.fullMax = 0;
+        for (const c of metro.cities) {
+          if (c.cars?.fleet) { c.cars.fleet.nearMax = fleetNear; c.cars.fleet.reach = fleetReach; }
+          if (c.people) c.people.fullMax = npcFullMax;
+        }
         world.queries?.();
       }
       if (inside.room || wasIndoor || (!inCar && !inBoat && st === 3)) {
@@ -3449,6 +3808,7 @@ function make(api) {
         v.cam.getWorldDirection(camDirVec);
         ears.place(v.cam.position, camDirVec);
       }
+      if ((st & 1) === 1) foley?.update(sdt * 2);
 
       lawDt += sdt;
       const lawIdle = law.stars === 0 && !law.units.length && !law.officers.length && !law.calls.length && !metro.events.length && !law.search && !actFire;
@@ -3499,7 +3859,9 @@ function make(api) {
           if (inBoat && Math.hypot(bc.x - playerQuery.x, bc.z - playerQuery.z) < 9.5) {
             bc.taken = true;
             if (bc.mesh) bc.mesh.visible = false;
-            cratesLeft = bayCrates.filter(c => !c.taken).length;
+            let rem = 0;
+            for (let k = 0; k < bayCrates.length; k++) if (!bayCrates[k].taken) rem++;
+            cratesLeft = rem;
             cash += 100;
             sounds.coin?.(1.2);
             feel.coin(W * 0.5, H * 0.38, { color: '#2ef2b8', text: 'CRATE +$100' });
@@ -3511,7 +3873,7 @@ function make(api) {
       if (phase === 'pickup' && pickupPos) {
         const dp = Math.hypot(pickupPos.x - playerQuery.x, pickupPos.z - playerQuery.z);
         if (inCar || dp < 4.2) {
-          if (!inCar) seatLeadInCar(hotCoupe, pickupPos.x, pickupPos.z, pickupPos.heading || 0);
+          if (!inCar && !carTrip) startBoardVehicle(hotCoupe, pickupPos.x, pickupPos.z, pickupPos.heading || 0, false, false);
         }
       } else if (phase === 'interior') {
         if ((inside.entered || inside.room) && !shakedownOpen) {
@@ -3593,13 +3955,23 @@ function make(api) {
         arrowMesh.visible = false;
       }
 
-      const dxY = v.cam.position.x - YARD_X, dzY = v.cam.position.z - YARD_Z;
-      const nearYard = t <= 0.25 || (dxY * dxY + dzY * dzY < 220 * 220);
+      const camX = v.cam.position.x, camZ = v.cam.position.z;
+      const dxY = camX - YARD_X, dzY = camZ - YARD_Z;
+      const nearYard = t <= 0.25 || (dxY * dxY + dzY * dzY < 160 * 160);
       if (yardPropsGroup) yardPropsGroup.visible = nearYard;
-      if (yardGround?.mesh) yardGround.mesh.visible = nearYard;
-      if (nearYard) yardGround?.update(v.cam.position);
-      const dxB = v.cam.position.x - BEACH_LOT.x, dzB = v.cam.position.z - BEACH_LOT.z;
-      if (beachPropsGroup) beachPropsGroup.visible = t <= 0.25 || (dxB * dxB + dzB * dzB < 280 * 280);
+      if (yardPadMesh) yardPadMesh.visible = nearYard;
+      const dxB = camX - BEACH_LOT.x, dzB = camZ - BEACH_LOT.z;
+      if (beachPropsGroup) beachPropsGroup.visible = t <= 0.25 || (dxB * dxB + dzB * dzB < 130 * 130);
+      const farCut = 72 * 72;
+      if (barracuda) barracuda.visible = t <= 0.25 || (inCar && activeCarMesh === barracuda) || carTrip?.veh === barracuda || ((camX - barracuda.position.x) ** 2 + (camZ - barracuda.position.z) ** 2 < farCut);
+      if (hotCoupe && (phase === 'pickup' || activeCarMesh === hotCoupe || carTrip?.veh === hotCoupe)) {
+        hotCoupe.visible = t <= 0.25 || activeCarMesh === hotCoupe || carTrip?.veh === hotCoupe || ((camX - hotCoupe.position.x) ** 2 + (camZ - hotCoupe.position.z) ** 2 < farCut);
+      }
+      if (bikeMesh) bikeMesh.visible = t <= 0.25 || (inCar && activeCarMesh === bikeMesh) || carTrip?.veh === bikeMesh || ((camX - bikeMesh.position.x) ** 2 + (camZ - bikeMesh.position.z) ** 2 < farCut);
+      if (heliMesh) heliMesh.visible = t <= 0.25 || inHeli || carTrip?.veh === heliMesh || ((camX - heliMesh.position.x) ** 2 + (camZ - heliMesh.position.z) ** 2 < farCut);
+      if (boatMesh) boatMesh.visible = t <= 0.25 || inBoat || carTrip?.veh === boatMesh || ((camX - boatMesh.position.x) ** 2 + (camZ - boatMesh.position.z) ** 2 < farCut);
+      if (activeLead?.body) activeLead.body.visible = true;
+      if (otherLead?.body) otherLead.body.visible = t <= 0.25 || ((camX - otherLead.body.position.x) ** 2 + (camZ - otherLead.body.position.z) ** 2 < farCut);
 
       light.fit(v, LIGHT_FIT_OPTS);
       v.fit(W, H);

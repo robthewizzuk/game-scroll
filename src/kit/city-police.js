@@ -482,5 +482,6 @@ export class Wanted {
     }
   }
 }
+Wanted.looks = COPS;
 const dist = (a, b) => Math.hypot(a.x - b.x, (a.z ?? a.y) - (b.z ?? b.y));
 const dot = (me, c) => (c.x - me.x) * Math.sin(me.heading) + (c.z - me.z) * Math.cos(me.heading);

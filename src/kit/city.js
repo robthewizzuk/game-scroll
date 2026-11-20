@@ -856,8 +856,10 @@ export class Traffic {
     if (this.list.length >= this.cap) return null;
     let e = o.edge, k = o.lane ?? 0, s = o.s;
     if (!e) { const r = this.city.road(o.x, o.z ?? o.y); e = r.edge; k = r.lane; s = r.s; }
-    const F = this.fleet, style = F ? o.style ?? Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch')) : 0;
-    const c = this.made(e, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? (o.police ? POLICE_PAINT : undefined) });
+    const F = this.fleet, polIdx = o.police && F ? F.styles.indexOf('police') : -1;
+    const style = F ? o.style ?? (polIdx >= 0 ? polIdx : Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch'))) : 0;
+    const defCol = o.police ? (polIdx >= 0 ? '#e6e8ea' : POLICE_PAINT) : undefined;
+    const c = this.made(e, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? defCol });
     if (o.police) { c.vmax = e.speed * 1.05; this.lightBars(); }
     if (F && !F.slotFor(c)) return null;
     this.list.push(c); return c;
@@ -977,15 +979,16 @@ export class Traffic {
     if (this.bars) return this.bars;
     const mk = (col, x) => { const m = new InstancedMesh(barGeo(x), new MeshBasicMaterial({ color: col, toneMapped: false }), EXTRA); m.count = 0; m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(EXTRA * 3).fill(1), 3); m.name = 'light bar'; this.city.group.add(m); return m; };
     // (and a police car as cars.take() gives one, hidden: its shaders built with the rest, so taking one builds none)
-    if (this.fleet && !this.city.group.getObjectByName('police car shaders')) { const w = vehicle('car', { style: 'police', colour: POLICE_PAINT }); w.name = 'police car shaders'; w.visible = false; this.city.group.add(w); }
+    if (this.fleet && !this.city.group.getObjectByName('police car shaders')) { const w = vehicle('car', { style: 'police', colour: '#e6e8ea' }); w.name = 'police car shaders'; w.visible = false; this.city.group.add(w); }
     return (this.bars = [mk('#ff2a2a', -.27), mk('#2a5cff', .27)]);
   }
   drawBars(night) {
     const [r, b] = this.bars, F = this.fleet, t = this.city.t; let n = 0;
     for (const c of this.list) {
       if (!c.police || n >= EXTRA) continue;
-      const top = F ? F.kits[c.style].size.height : c.kind === 'van' ? 2.0 : 1.42;
-      carMatrix(c); _m.multiply(_m2.makeTranslation(0, top + .05, -.15));
+      const kit = F ? F.kits[c.style] : null, isPol = kit?.style === 'police';
+      const top = kit ? kit.size.height : c.kind === 'van' ? 2.0 : 1.42;
+      carMatrix(c); _m.multiply(_m2.makeTranslation(0, isPol ? top - .055 : top + .05, isPol ? -.205 : -.15));
       r.setMatrixAt(n, _m); b.setMatrixAt(n, _m);
       const ph = (t * 3.3 + c.id * .37) % 1, on = c.siren ? 1 : 0, k = .35 + night * 2.2;
       r.setColorAt(n, _c.setScalar(on && ph < .5 ? 2.2 + k : .18)); b.setColorAt(n, _c.setScalar(on && ph >= .5 ? 2.2 + k : .18));
@@ -1046,7 +1049,7 @@ export function takenCar(T, c) {
   let car;
   if (c.police) {
     T.fleet?.real(c);   // (its copies gone; the shape is the police car's own)
-    car = vehicle('car', { style: 'police', colour: '#' + new Color(c.colour ?? POLICE_PAINT).getHexString(), seed: c.id | 0 });
+    car = vehicle('car', { style: 'police', colour: '#' + new Color(c.colour ?? '#e6e8ea').getHexString(), seed: c.id | 0 });
     car.siren?.(!!c.siren);
   } else car = T.fleet ? T.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
   car.position.set(c.x, c.y || 0, c.z); car.rotation.y = c.heading + Math.PI;
@@ -2051,6 +2054,7 @@ export class City {
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
 }
+City.folk = FOLK;
 const norm = (x, z) => { const l = Math.hypot(x, z) || 1; return { x: x / l, z: z / l }; };
 
 // per-frame work, timed while the frame lab is open (prof.js)

@@ -58,7 +58,13 @@ export function riders(root, plan) {
     if (seat.stand) return seat.point.position.clone();
     const hips = person.rig?.parts?.hips; if (!hips) return seat.point.position.clone();
     person.updateMatrixWorld(true); const h = shell.worldToLocal(hips.getWorldPosition(H));
-    return V.copy(seat.point.position).add(W.set(0, seat.saddle ? .05 : .09, seat.saddle ? .02 : .06)).sub(h).add(person.position).clone();
+    const roof = plan.roof || (plan.inside ? plan.size?.height : 0), closed = roof > 0 && !seat.stand && !seat.saddle, sc = person.scale?.y || 1;
+    let dy = seat.saddle ? .05 : closed ? .02 : .09;
+    if (closed) {
+      const wantY = seat.point.position.y + dy, roofMax = roof - .11 - .78 * sc, floorMin = (plan.clear ?? .14) + .22;
+      dy = min(wantY, max(floorMin, roofMax)) - seat.point.position.y;
+    }
+    return V.copy(seat.point.position).add(W.set(0, dy, seat.saddle ? .02 : .06)).sub(h).add(person.position).clone();
   };
   const touch = (person, pts, o) => { if (person.touch && Object.keys(pts).length) person.touch(pts, o); };
   const at = o => o.getWorldPosition(new Vector3());
@@ -136,7 +142,7 @@ export function riders(root, plan) {
   // into the seat: from where they stand, a step to the sill, turning, then down onto the cushion as the legs come in
   const inStep = (seat, time = 1.15) => ({ name: 'in', time, run(T, dt) {
     const p = T.person, u = clamp(T.t / time, 0, 1);
-    if (!T.from) { T.from = p.position.clone(); T.r0 = p.rotation.y; T.mid = stepAt(seat); pose(p, seat.saddle ? 'ride' : 'sit', time * .6); }
+    if (!T.from) { T.from = p.position.clone(); T.r0 = p.rotation.y; T.mid = stepAt(seat); pose(p, seatPose(seat), time * .6); }
     p.rig?.update(dt);
     const spot = seatSpot(p, seat), a = ease(u / .45), b = ease((u - .35) / .65), up = seat.saddle ? ease((u - .2) / .4) : b;   // (astride: up first, then the leg over and across)
     p.position.set(lerp(lerp(T.from.x, T.mid.x, a), spot.x, seat.saddle ? ease((u - .45) / .55) : b), lerp(0, spot.y, up), lerp(lerp(T.from.z, T.mid.z, a), spot.z, b));
@@ -159,13 +165,13 @@ export function riders(root, plan) {
 
   // a boat: aboard from where they are (a jetty beside it, or the water: from 'water', or found by how low they are), up
   // over its side where it is nearest them and onto the seat or the deck; the time goes with how far they have to come
-  const aboard = (seat, from) => ({ name: 'board', time: null, run(T, dt) {
+  const aboard = (seat, from, pace = 1) => ({ name: 'board', time: null, run(T, dt) {
     const p = T.person;
     if (!T.from) {
       T.from = p.position.clone(); T.r0 = p.rotation.y; const sd = Math.sign(T.from.x || seat.side || 1);
       T.wet = from === 'water' || (from == null && T.from.y < -.25);
       T.rail = new Vector3(sd * (hw - .05), max(seat.point.position.y, 0) + (seat.stand ? .35 : .25), clamp(T.from.z, seat.point.position.z - 1.5, seat.point.position.z + 1.5));
-      T.time = clamp(.8 + T.from.distanceTo(T.rail) * .35, .9, 2.4) + (T.wet ? .6 : 0);
+      T.time = (clamp(.8 + T.from.distanceTo(T.rail) * .35, .9, 2.4) + (T.wet ? .6 : 0)) / max(.25, pace);
       if (!T.wet) pose(p, 'jump', .15);
     }
     const u = clamp(T.t / T.time, 0, 1), a = ease(u / .6), b = ease((u - .55) / .45);
@@ -191,7 +197,7 @@ export function riders(root, plan) {
     }
     return { at: new Vector3((seat.side || 1) * (hw + .7), -1.05, z), water: true };   // (treading water: shoulders at the surface)
   };
-  const overSide = (seat, off) => ({ name: off.water ? 'jump' : 'step', time: off.water ? 1.1 : .95, run(T, dt) {
+  const overSide = (seat, off, pace = 1) => ({ name: off.water ? 'jump' : 'step', time: (off.water ? 1.1 : .95) / max(.25, pace), run(T, dt) {
     const p = T.person, u = clamp(T.t / this.time, 0, 1);
     if (!T.from) { T.from = p.position.clone(); T.r0 = p.rotation.y; seat.who = null; pose(p, off.water ? 'jump' : 'idle', .2); T.rail = new Vector3(Math.sign(off.at.x || 1) * (hw - .05), max(T.from.y, 0) + .3, (T.from.z + off.at.z) / 2); }
     if (off.water && u > .6 && T.posed !== 1) { T.posed = 1; pose(p, 'tread', .25); }
@@ -207,24 +213,25 @@ export function riders(root, plan) {
    * in and sits, and pulls it shut behind them (shut: false leaves it open). A motorbike is got astride from its left.
    * Returns the trip: { step, done, then(fn) }; person.vehicle is the vehicle from now on and person.seat the seat once in.
    */
-  root.enter = (person, { seat: which = null, walk = 1.5, shut = true, from = null } = {}) => {
+  root.enter = (person, { seat: which = null, walk = 1.5, shut = true, from = null, pace = 1 } = {}) => {
     which ??= wheelSeat; const seat = seats[which]; if (!seat) throw new Error(`gs.models.vehicle: no seat '${which}' (try ${Object.keys(seats).join(', ')})`);
-    if (afloat) { if (seat.who && seat.who !== person) return null; return trip(person, seat, 'enter', [aboard(seat, from)]); }
-    if (seat.who && seat.who !== person) return root.pull(which, person, { walk });
+    const k = max(.25, pace);
+    if (afloat) { if (seat.who && seat.who !== person) return null; return trip(person, seat, 'enter', [aboard(seat, from, k)]); }
+    if (seat.who && seat.who !== person) return root.pull(which, person, { walk, pace: k });
     const steps = [walkTo(standAt(seat), faceIn(seat), walk)];
-    if (doorOf(seat)) steps.push(doorStep(seat, 1, { back: .12 }));
-    steps.push(inStep(seat));
-    if (doorOf(seat) && shut) steps.push(doorStep(seat, 0, { inside: true, time: .65, speed: 2.6 }));
+    if (doorOf(seat)) steps.push(doorStep(seat, 1, { back: .12, time: .75 / k, speed: 2.2 * k }));
+    steps.push(inStep(seat, 1.15 / k));
+    if (doorOf(seat) && shut) steps.push(doorStep(seat, 0, { inside: true, time: .65 / k, speed: 2.6 * k }));
     return trip(person, seat, 'enter', steps);
   };
   /** Someone gets out (a seat's name, or the person): opens the door from inside, steps out and stands, and shuts it (shut: false leaves it open). They are the game's again once it is done. */
-  root.exit = (which = null, { shut = true, to = null } = {}) => {
-    const seat = seatOf(which); if (!seat?.who) return null; const person = seat.who;
-    if (afloat) { const off = ashore(seat, to); return trip(person, seat, 'exit', [overSide(seat, off)], { leaves: true, into: off.water ? 'water' : 'land' }); }
+  root.exit = (which = null, { shut = true, to = null, pace = 1 } = {}) => {
+    const seat = seatOf(which); if (!seat?.who) return null; const person = seat.who, k = max(.25, pace);
+    if (afloat) { const off = ashore(seat, to); return trip(person, seat, 'exit', [overSide(seat, off, k)], { leaves: true, into: off.water ? 'water' : 'land' }); }
     const steps = [];
-    if (doorOf(seat)) steps.push(doorStep(seat, 1, { inside: true, speed: 2 }));
-    steps.push(outStep(seat));
-    if (doorOf(seat) && shut) steps.push(doorStep(seat, 0, { speed: 2.4, time: .6 }));
+    if (doorOf(seat)) steps.push(doorStep(seat, 1, { inside: true, time: .75 / k, speed: 2 * k }));
+    steps.push(outStep(seat, 1.05 / k));
+    if (doorOf(seat) && shut) steps.push(doorStep(seat, 0, { time: .6 / k, speed: 2.4 * k }));
     return trip(person, seat, 'exit', steps, { leaves: true });
   };
   /**
@@ -233,19 +240,20 @@ export function riders(root, plan) {
    * gs.characters.Reactions if they have one (made for them, or person.react), else they are stood beside it; trip.thrown
    * is who it was, the moment they leave the seat (theirs, the game's, again). With nobody in the seat it is enter().
    */
-  root.pull = (which = null, by, { walk = 2.6, throw: hard = 3.2 } = {}) => {
+  root.pull = (which = null, by, { walk = 2.6, throw: hard = 3.2, pace = 1 } = {}) => {
     which ??= wheelSeat; const seat = seats[which]; if (!seat) throw new Error(`gs.models.vehicle: no seat '${which}'`);
-    if (!seat.who) return root.enter(by, { seat: which, walk });
-    const victim = seat.who;
+    const k = max(.25, pace);
+    if (!seat.who) return root.enter(by, { seat: which, walk, pace: k });
+    const victim = seat.who, grabT = .55 / k, throwT = .32 / k;
     const steps = [walkTo(standAt(seat), faceIn(seat), walk)];
-    if (doorOf(seat)) steps.push(doorStep(seat, 1, { speed: 4.5, time: .45, back: .1 }));
-    steps.push({ name: 'grab', time: .55, run(T, dt) {   // both hands in to the one at the wheel, who turns and throws an arm up
-      const p = T.person, u = T.t / .55; pose(p, 'takedown'); p.rig?.update(dt, { speed: 0 });
-      const step = stepAt(seat); p.position.lerp(V.set(step.x + seat.side * .28, 0, step.z + .15), min(1, dt * 6));
+    if (doorOf(seat)) steps.push(doorStep(seat, 1, { speed: 4.5 * k, time: .45 / k, back: .1 }));
+    steps.push({ name: 'grab', time: grabT, run(T, dt) {   // both hands in to the one at the wheel, who turns and throws an arm up
+      const p = T.person, u = T.t / grabT; pose(p, 'takedown'); p.rig?.update(dt, { speed: 0 });
+      const step = stepAt(seat); p.position.lerp(V.set(step.x + seat.side * .28, 0, step.z + .15), min(1, dt * 6 * k));
       if (seat.who === victim) { victim.rig?.play('sit', { fade: .2 }); victim.rig?.update(dt); victim.position.copy(seatSpot(victim, seat)); const chest = (victim.rig?.parts?.spine || victim).getWorldPosition(new Vector3()); touch(p, { handL: chest, handR: chest.clone().add(W.set(0, -.12, 0)) }, { blend: ease(u * 1.6) }); }
       return u >= 1;
     } });
-    steps.push({ name: 'throw', time: .32, run(T, dt) {   // out they come, thrown down on the road
+    steps.push({ name: 'throw', time: throwT, run(T, dt) {   // out they come, thrown down on the road
       const p = T.person; pose(p, 'idle'); p.rig?.update(dt, { speed: 0 });
       if (seat.who === victim) {   // (stood just outside the door, facing in, and thrown back from it)
         seat.who = null; T.thrown = victim; shell.updateMatrixWorld(true);
@@ -255,10 +263,10 @@ export function riders(root, plan) {
         const push = out.multiplyScalar(hard); push.y = .6;
         if (react) react.fall(push); else victim.rig?.play('downed', { fade: .25 });
       }
-      return T.t >= .32;
+      return T.t >= throwT;
     } });
-    steps.push(inStep(seat, .95));
-    if (doorOf(seat)) steps.push(doorStep(seat, 0, { inside: true, time: .55, speed: 3.2 }));
+    steps.push(inStep(seat, .95 / k));
+    if (doorOf(seat)) steps.push(doorStep(seat, 0, { inside: true, time: .55 / k, speed: 3.2 * k }));
     return trip(by, seat, 'pull', steps, { victim, thrown: null });
   };
 

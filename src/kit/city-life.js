@@ -221,6 +221,7 @@ export function promote(L, p) {
   if (p.full || !L.crowd || !L.folk) return p.full || null;
   const src = L.folk[p.kind], m = L.members[L.list.indexOf(p)]; if (!src || !m) return null;
   const body = src.twin(); addMoves(body.rig);
+  body.lod = 1;
   body.scale.setScalar(L.sizes[p.kind] * p.h); body.position.set(p.x, L.yOf(p), p.z); body.rotation.y = p.heading;
   L.city.group.add(body);
   const react = new Reactions(body, { rest: 1.1 + L.R() * .8 });

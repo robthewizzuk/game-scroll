@@ -258,7 +258,7 @@ export function car(o = {}) {
   Object.assign(points, { exhaust: [.42, c.clear + .04, Z(L + .05)], lampL: [-(wide(0) - .19), deck(0) - .13, Z(-.05)], lampR: [wide(0) - .19, deck(0) - .13, Z(-.05)], hitch: [0, c.clear + .2, Z(L + .08)] });
   const bx = b.bounds();
   beacons.forEach((q, i) => { points['beacon' + i] = q.at; });
-  return { kind: 'car', style, parts, doors: doorList, inside: !c.open && o.inside !== false, screen: c.open ? null : [deck(c.cab[0] + .04) + .03, Z(c.cab[0] + .05)], body: b, wheels, spares, points, beacons, size: { length: bx.l, width: bx.w, height: bx.hi[1] }, wheelbase: c.base, track: wheelX(zf) * 2, radius: c.r, clear: c.clear, mid: (zf + zr) / 2 - L / 2 };
+  return { kind: 'car', style, parts, doors: doorList, inside: !c.open && o.inside !== false, screen: c.open ? null : [deck(c.cab[0] + .04) + .03, Z(c.cab[0] + .05)], body: b, wheels, spares, points, beacons, size: { length: bx.l, width: bx.w, height: bx.hi[1] }, roof: c.open ? 0 : c.H, wheelbase: c.base, track: wheelX(zf) * 2, radius: c.r, clear: c.clear, mid: (zf + zr) / 2 - L / 2 };
 }
 // a working car's livery and lamps (c.livery): bands along its sides in its trim colour, a light bar, a taxi's sign; returns its flashing lamps
 function livery(b, sh, c, zf, zr) {

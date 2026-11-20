@@ -126,7 +126,7 @@ export function carKit(style) {
   const P = join(paint), R0 = join(rest), R = join([R0, ...inner].map(g => g.clone())), G = join(glass), lampAt = v.points.lampL?.position;
   const whole = join([R, ...wheelsFar, ...lensed].map(g => g.clone())), closed = join([R0, ...shut, ...wheelsFar, ...lensed].map(g => g.clone()));   // (whole: a parked car's close by, wheels, unlit lamps and its inside in, its glass apart; closed: with dark glass and no inside)
   k = {
-    style, rough: !canKeep, size: { ...v.size }, driver: v.points.driver ? { x: v.points.driver.position.x, y: v.points.driver.position.y, z: v.points.driver.position.z } : null, length: v.size.length, width: Math.min(v.size.width, 2), wheelbase: v.wheelbase, lampY: lampAt ? lampAt.y : .6,
+    style, rough: !canKeep, size: { ...v.size }, roof: v.roof || v.size.height, clear: v.clear ?? .15, driver: v.points.driver ? { x: v.points.driver.position.x, y: v.points.driver.position.y, z: v.points.driver.position.z } : null, length: v.size.length, width: Math.min(v.size.width, 2), wheelbase: v.wheelbase, lampY: lampAt ? lampAt.y : .6,
     paint: P, rest: R, whole, closed, glass: G, head: join(head), tail: join(tail), wheel, wheels: W, paintLook: pLook, glassLook: gLook,
     far: { paint: farShape(P, .12), rest: farShape(join([R0, ...shut, ...wheelsFar].map(g => g.clone())), .1) },
   };
@@ -326,7 +326,8 @@ export class Fleet {
       r.driver = crowd.add({ x: c.x, y: 0, z: c.z, kind: n % kinds, move: 'drive', size: .94 + (n % 7) * .02, phase: (n % 13) / 13 });
     }
     const d = k.driver, yaw = c.heading + Math.PI, cs = Math.cos(yaw), sn = Math.sin(yaw), m = r.driver, size = m.size || 1;
-    m.x = c.x + d.x * cs + d.z * sn; m.z = c.z - d.x * sn + d.z * cs; m.y = d.y + .09 - SIT_HIPS * size; m.turn = yaw + Math.PI;
+    const roof = k.roof || k.size.height || 1.45, floorMin = (k.clear || .15) + .22, hipY = Math.min(d.y + .02, Math.max(floorMin, roof - .11 - .78 * size));
+    m.x = c.x + d.x * cs + d.z * sn; m.z = c.z - d.x * sn + d.z * cs; m.y = hipY - SIT_HIPS * size; m.turn = yaw + Math.PI;
   }
   // a close-up car each frame: where it is, its body on its springs, its wheels, its brake lamps
   pose(c, r, dt, night) {

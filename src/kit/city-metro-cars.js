@@ -38,7 +38,7 @@ let Roam = null;
 function roamClass() {
   return Roam ||= class RoamTraffic extends Traffic {
     constructor(metro, plans, { fleet = false, cap = 12 } = {}) {
-      const styles = [...new Set(['saloon', 'hatch', ...metro.districts.flatMap(d => CITY_CARS[d.style] || CITY_CARS.downtown)])];
+      const styles = [...new Set(['saloon', 'hatch', 'police', ...metro.districts.flatMap(d => CITY_CARS[d.style] || CITY_CARS.downtown)])];
       const T = { cur: null };
       const city = {
         metro, seed: metro.seed * 17 + 5, group: metro.group, plan: { bounds: metro.bounds, side: metro.side, nodes: [], edges: [] },
@@ -73,8 +73,10 @@ function roamClass() {
         at = { x, z, y: o.y ?? (r && r.d < 6 ? r.y : null) ?? m.carY(x, z, 0), heading: o.heading ?? r?.heading ?? 0 };
         e = r?.edge || null; k = r?.lane ?? 0; s = r?.s ?? 0;
       }
-      const F = this.fleet, style = F ? o.style ?? Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch')) : 0;
-      const c = this.made(e || WAY, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? (o.police ? POLICE_PAINT : undefined) });
+      const F = this.fleet, polIdx = o.police && F ? F.styles.indexOf('police') : -1;
+      const style = F ? o.style ?? (polIdx >= 0 ? polIdx : Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch'))) : 0;
+      const defCol = o.police ? (polIdx >= 0 ? '#e6e8ea' : POLICE_PAINT) : undefined;
+      const c = this.made(e || WAY, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? defCol });
       if (at) Object.assign(c, at);
       if (o.police) { c.vmax = 30; this.lightBars(); }
       if (F && !F.slotFor(c)) return null;

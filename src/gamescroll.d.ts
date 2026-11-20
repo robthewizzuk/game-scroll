@@ -4022,14 +4022,14 @@ export type VehicleT = Loose & {
    * Someone already in that seat is pulled out (pull()).
    * A boat is boarded by stepping over its rail from a dock beside it, or from the water (from: 'water', or anyone below the waterline) by climbing out over the side.
    */
-  enter?(person: Loose, o?: { seat?: string; walk?: number; shut?: boolean; from?: 'land' | 'water' }): VehicleTrip;
+  enter?(person: Loose, o?: { seat?: string; walk?: number; shut?: boolean; from?: 'land' | 'water'; pace?: number }): VehicleTrip;
   /**
    * Someone gets out (a seat's name, or the person; the wheel's seat when left out): opens the door, steps out, stands clear and shuts it. They are the game's again when the trip is done. null if nobody sits there.
    * Off a boat: over the rail onto `to`, else onto a dock or shore beside it (the World3D's floor), else into the water, treading it (trip.into 'land' | 'water').
    */
-  exit?(which?: string | Loose | null, o?: { shut?: boolean; to?: P3 }): (VehicleTrip & { into?: 'land' | 'water' }) | null;
+  exit?(which?: string | Loose | null, o?: { shut?: boolean; to?: P3; pace?: number }): (VehicleTrip & { into?: 'land' | 'water' }) | null;
   /** by pulls whoever sits in the seat out (thrown down by their gs.characters.Reactions where they have one: made for them or person.react), then gets in and shuts the door. trip.thrown is who came out, from that moment. With nobody there it is enter(). */
-  pull?(which: string | null, by: Loose, o?: { walk?: number; throw?: number }): VehicleTrip;
+  pull?(which: string | null, by: Loose, o?: { walk?: number; throw?: number; pace?: number }): VehicleTrip;
   /** Puts someone in a seat at once (a car that comes with its driver), posed and holding the wheel. */
   putIn?(person: Loose, which?: string | null): VehicleT;
   /** Takes someone out of their seat at once and stands them beside it, the game's again (null if they were in none). */
@@ -5242,7 +5242,7 @@ export interface CityPart {
    * A made-up city from a seed, in a gs.hd HDView (or any view with .scene and .cam). Call reset() from
    * your reset() and update(dt, player) each frame. Cars brake for what you pass to avoid().
    */
-  City: new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: CityStyleName | Record<string, Loose>; side?: 'right' | 'left';
+  City: (new (view: Loose, o?: { seed?: number; blocks?: number | [number, number]; style?: CityStyleName | Record<string, Loose>; side?: 'right' | 'left';
     /** The trees and grass: 'temperate' (round trees and pines), 'tropical' (palms, bushes; drier grass), 'wetland' (bald cypresses, bushes, olive grass); the style's own by default. kinds / parkKinds: your own weights of tree kinds ({ palm: 8, round: 2 }) for the streets / parks. */ climate?: CityClimate; kinds?: Record<string, number>; parkKinds?: Record<string, number>;
     /** The water side ('south' | 'north' | 'east' | 'west' | false) and its shore ('quay' | 'beach' | 'marina'): the style's by default. */ water?: 'south' | 'north' | 'east' | 'west' | false; shore?: 'quay' | 'beach' | 'marina';
     /** The water drawn as a gs.outdoors Sea (swell, surf up the beach, wet sand), or its options ({ waves, wind... }); default false: flat water. Either way city.water answers swimmers and boats. */ sea?: boolean | Loose;
@@ -5254,7 +5254,7 @@ export interface CityPart {
     /** What the street walls wear: posters between the ground floor's windows, made-up tags, damp streaks, grime at the foot (default true). */ walls?: boolean;
     /** The city to the horizon: stand-ins past the streets in its colours (true: out to 6 km, or metres), lit windows and far street lights at night, land with hills to 10 km; raises the camera's far to 10.8 km; needs thin air to be seen (default false). */ far?: boolean | number;
     /** Metres from the player within which the blocks are built (600); past it they are let go and stand as lit boxes, so a big city's memory stays bounded (less while the phone is short of memory; Infinity keeps all). */ keep?: number;
-    /** Where the city's middle is, [x, z] (a moved city is the same city, moved: districts side by side). */ centre?: [number, number] | null; [style: string]: Loose }) => CityWorld;
+    /** Where the city's middle is, [x, z] (a moved city is the same city, moved: districts side by side). */ centre?: [number, number] | null; [style: string]: Loose }) => CityWorld) & { readonly folk: Loose[] };
   /**
    * One big city of districts side by side (a downtown, an old town, suburbs, a harbour on the south edge with the sea past it),
    * joined by roads across open land. Only the districts near the player are made (each a City), a few milliseconds a frame as
@@ -5325,7 +5325,7 @@ export interface CityPart {
     update(dt: number, player: { x: number; z: number; heading: number; v: number; car?: boolean; body?: Loose; /** Height (on foot, for shots and the water). */ y?: number; /** In a boat / in the water: police launches come. */ boat?: boolean; swim?: boolean }): Loose;
     /** Can a police car or officer see this point? */ policeSee(p: { x: number; z?: number; y?: number }, r?: number | null): boolean;
     /** The road out of the player's next junction they are likely to take, d metres along it (on a Metro's roads between, d metres on along the road: road, s). */ ahead(d?: number): { x: number; z: number; y?: number; heading: number; edge?: Loose; road?: CityRoad; s?: number; turn: 'left' | 'straight' | 'right'; node?: Loose } | null;
-  }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown> };
+  }) & { /** Resolves when the officers are sculpted (tools and tests). */ ready(): Promise<unknown>; readonly looks: Loose[] };
   /** How bad each crime is, in heat (stars at 1, 4, 9, 16 and 26 heat). */
   CRIMES: Record<string, number>;
   /**
