@@ -264,6 +264,7 @@ const exitCand = { x: 0, y: 0, z: 0, heading: 0 };
 const mapPtScratch = [0, 0];
 const barrelBoomHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), mesh: null };
 const wieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: true, keep: false };
+const fireWieldOpts = { how: 'hip', pitch: 0, yaw: 0, hands: false, keep: false };
 const gangWieldOpts = { how: 'ready', pitch: 0, yaw: 0, hands: false, keep: false };
 const gangMuzzleScratch = { x: 0, y: 0, z: 0 };
 const gangMuzzleOpts = { count: 4, power: 0.4, light: false };
@@ -656,8 +657,9 @@ function make(api) {
       bay: 380,
       climate: 'tropical',
       live: 165,
-      budget: 0.9,
+      budget: 0.4,
       keep: 270,
+      landCell: 12,
       sea: true,
       far: true,
       hills: 0.1,
@@ -674,9 +676,13 @@ function make(api) {
     });
     v.autoOcclude = false;
     v.occluders(null);
-    if (metro.crowd) metro.crowd.far = tierIdx === 0 ? 42 : tierIdx === 1 ? 48 : 55;
+    if (metro.ways?.land?.near) metro.ways.land.near.castShadow = false;
+    if (metro.crowd) {
+      metro.crowd.far = tierIdx === 0 ? 40 : tierIdx === 1 ? 46 : 52;
+      metro.crowd.minLod = 1;
+    }
     v.lampLights?.(26);
-    metro.solid(world, { cars: 4, people: 0, within: 48, furniture: false, parked: true });
+    metro.solid(world, { cars: 2, people: 0, within: 34, furniture: false, parked: true });
     for (const c of metro.cities) {
       if (c.cars?.fleet) { c.cars.fleet.nearMax = fleetNear; c.cars.fleet.reach = fleetReach; }
       if (c.people) c.people.fullMax = npcFullMax;
@@ -688,7 +694,7 @@ function make(api) {
       if (metro.ways.traffic.fleet) { metro.ways.traffic.fleet.nearMax = 0; metro.ways.traffic.fleet.reach = fleetReach; }
     }
 
-    ears = new Ears({ level: world, rays: 1, hard: 0.58, auto: false });
+    ears = new Ears({ level: false, hrtf: false, hard: 0.58, auto: false });
     foley = new Foley({
       ears,
       world,
@@ -707,9 +713,9 @@ function make(api) {
     gps = new Gps(metro, { off: 48, arrive: 14, icon, colour: '#38f8b0' });
     law = new Wanted(metro, api, { max: 5, cars: 3, officers: true, brains: true, armed: true, air: true, water: true });
     warmupCop = law?.cops?.[0]?.twin() || null;
-    if (warmupCop) warmupCop.lod = 0;
+    if (warmupCop) { warmupCop.lod = 1; warmupCop.userData.noFade = true; }
     warmupFolk = metro.crowd?.folk?.[0]?.twin() || null;
-    if (warmupFolk) warmupFolk.lod = 0;
+    if (warmupFolk) { warmupFolk.lod = 1; warmupFolk.userData.noFade = true; }
 
     inside = new Interiors(metro, { world, link: false, reach: 3.0, people: 1, auto: true, seed: 77 });
     cover = new Cover3D({ world, ms: 0.25, space: 2.0, floors: 1, cell: 4 });
@@ -732,6 +738,8 @@ function make(api) {
     mako = human(MAKO_LOOK);
     nadia = human(NADIA_LOOK);
     for (const hBody of [mako, nadia]) {
+      hBody.lod = 1;
+      hBody.userData.noFade = true;
       if (hBody.rig) hBody.rig.steps = false;
       if (hBody.breath) hBody.breath.on = false;
       if (hBody.idle) hBody.idle.on = false;
@@ -759,6 +767,7 @@ function make(api) {
     for (let i = 0; i < 3; i++) {
       const gb = human(GANG_LOOK);
       gb.lod = 1;
+      gb.userData.noFade = true;
       if (gb.rig) gb.rig.steps = false;
       if (gb.breath) gb.breath.on = false;
       if (gb.idle) gb.idle.on = false;
@@ -911,12 +920,19 @@ function make(api) {
     }
     return out;
   };
+  const drawShadowText = (c, txt, x, y, col) => {
+    c.fillStyle = 'rgba(0, 0, 0, 0.76)';
+    c.fillText(txt, x + 1, y + 1);
+    c.fillStyle = col;
+    c.fillText(txt, x, y);
+  };
 
   let R, t, score, cash, inCar, inBoat, inHeli, carCtrl, boatCtrl, heliCtrl, driveBy, activeCarMesh;
   let mover, leads, leadIdx, activeLead, otherLead;
+  const rayNotRider = c => c !== mover?.rider && c !== mover;
   let phase, jobIdx, job, targetPos, pickupPos, jobsDoneCount = 0;
   let bannerText, bannerCol, bannerT, hitT, rideCooldown, engineSound, radioStarted, savedStationIdx = 0;
-  let lastDistrictName, skyTick, poseTick, lawTick, lawDt, gpsDt, lastCityCount = 0;
+  let lastDistrictName, skyTick, poseTick, lawTick, lawDt, metroDt, gpsDt, lastCityCount = 0;
   let pendingRadioOn = 0, pendingGpsGoal = null, pendingGpsLabel = '', pendingGpsKind = 'target', pendingGpsDelay = 0, pendingPickupLaw = null;
   let gpsShown, hudSub, wasIndoor, warmupCop = null, warmupFolk = null, warmedCop = false;
   let carTrip = null, copBlinkT = 0, copRed = false;
@@ -925,7 +941,7 @@ function make(api) {
   let activeCarProfile = { topMult: 1, accelMult: 1, gripMult: 1, label: 'Barracuda', cop: false, bike: false };
   let rideKey = false, coverKey = false, swapKey = false, gunKey = false, aimKey = false;
   let aimMode = false, fpsAim = false, fireHeld = false, lawWired = false, expWired = false, saveWired = false, scoreStarted = false;
-  let recentShotT = 0, batonCd = 0, grenadeCd = 0, driftSec = 0, driftSkidCd = 0, driftSmokeAcc = 0, newsCooldown = 0;
+  let recentShotT = 0, batonCd = 0, grenadeCd = 0, shotCrimeCd = 0, driftSec = 0, driftSkidCd = 0, driftSmokeAcc = 0, newsCooldown = 0;
   let carJumpT = 0, paintIdx = 0, shakedownOpen = false, cratesLeft = 0;
   let hipShoulder = false, hasLitBarrel = false, radioDirty = true;
   let lockedTarget = null;
@@ -935,16 +951,14 @@ function make(api) {
   let curHaze = 0.0009, curMist = 0, curWet = 0.12, curRain = 0, curPools = 0;
   let curBloom = 0.22, curExp = 0.98, curSunI = 2.0, curHemiI = 0.5;
   let lastClockStr, lastClockMin, lookDragId = null, lookLastX = 0, lookLastY = 0;
-  let lastDistHud = '', lastDistClock = '', lastDistText = '';
   let lastAmmoKind = '', lastAmmoClip = -1, lastAmmoPool = -1, lastAmmoText = '';
   let lastCashVal = -1, lastCashStr = '$500';
   let lastSpeedVal = -1, lastSpeedStr = '0 KM/H';
   let lastNextIn = -1, lastNextTurn = '', lastNextStr = '';
-  let lastSwapName = '', lastSwapStr = 'SWAP Nadia';
-  let lastModeLead = '', lastModeKind = '', lastModeStr = 'Mako · On Foot';
+  let lastSwapName = '', lastSwapStr = 'SWAP NADIA';
   let lastLawSec = -1, lastLawSecStr = '0s';
-  let cachedRadOn = false, cachedRadTitle = 'Radio · 5 Stations', cachedRadSub = '';
-  let lastHudW = -1, lastHudH = -1, lastHudWeaponOpen = false;
+  let cachedRadOn = false, cachedRadTitle = 'Radio Off', cachedRadShort = 'RADIO · OFF';
+  let lastHudW = -1, lastHudH = -1, lastHudWeaponOpen = false, lastHudStars = false, lastHudDriving = false;
 
   const say = (txt, col = '#ffffff', dur = 3.2) => {
     bannerText = txt;
@@ -2007,7 +2021,7 @@ function make(api) {
         weaponSound('baton', 'bash', f);
         law.crime('fight', playerQuery);
       }
-      return;
+      return true;
     }
 
     // Thrown grenade on foot
@@ -2040,7 +2054,7 @@ function make(api) {
       law.crime('shots', playerQuery);
       metro.people.scare(playerQuery, 22);
       if (law.stars < 1) law.set(1);
-      return;
+      return true;
     }
 
     const gun = activeGun(activeLead);
@@ -2049,6 +2063,7 @@ function make(api) {
       triggerReload();
       return;
     }
+    if (gun.cool > 0 || gun.reloadLeft > 0 || (!gun.auto && gun.held)) return;
 
     v.cam.getWorldDirection(camDirVec);
     camPosVec.copy(v.cam.position);
@@ -2056,7 +2071,7 @@ function make(api) {
 
     // 3rd-person crosshair convergence + soft aim assist
     let convDist = range;
-    const camWall = world.ray(camPosVec, camDirVec, range, c => c !== mover?.rider && c !== mover);
+    const camWall = world.ray(camPosVec, camDirVec, range, rayNotRider);
     if (camWall && camWall.distance > 1.2) convDist = camWall.distance;
     if (lockedTarget && lockedTarget.dist < convDist + 0.5) {
       shootTargetVec.set(lockedTarget.x, lockedTarget.y, lockedTarget.z);
@@ -2104,7 +2119,11 @@ function make(api) {
     } else {
       f.heading = camRig.targetYaw + camRig.yaw;
       recentShotT = 0.7;
-      activeWield?.update(0, { how: aimMode ? 'aim' : 'hip', pitch: Math.asin(clamp(camDirVec.y, -1, 1)), yaw: 0, hands: true, keep: true });
+      const shotHow = aimMode ? 'aim' : 'hip';
+      fireWieldOpts.how = shotHow;
+      fireWieldOpts.pitch = Math.asin(clamp(camDirVec.y, -1, 1));
+      fireWieldOpts.hands = activeWield ? activeWield.how !== shotHow : false;
+      activeWield?.update(0, fireWieldOpts);
       const mp = activeWield?.muzzle;
       if (mp && (mp.x !== 0 || mp.y !== 0 || mp.z !== 0)) {
         aimOrigin.x = mp.x;
@@ -2126,8 +2145,11 @@ function make(api) {
 
     if (!fired.length) return;
     recentShotT = 0.7;
-    law.crime('shots', playerQuery);
-    metro.people.scare(playerQuery, 26);
+    if (shotCrimeCd <= 0) {
+      shotCrimeCd = 1.0;
+      law.crime('shots', playerQuery);
+      metro.people.scare(playerQuery, 26);
+    }
     if (law.stars < 1) law.set(1);
 
     const rec = ARSENAL[k]?.gun?.recoil ?? 0.05;
@@ -2153,7 +2175,7 @@ function make(api) {
         rSlot.mesh.visible = true;
         shots.add(s, { rocketSlot: rSlot, not: mover?.rider });
       }
-      return;
+      return true;
     }
 
     for (const s of fired) {
@@ -2226,7 +2248,7 @@ function make(api) {
 
       // 4. World wall / floor / prop hit
       if (!hitHandled) {
-        const wHit = world.ray(s.from, s.dir, range, c => c !== mover?.rider && c !== mover);
+        const wHit = world.ray(s.from, s.dir, range, rayNotRider);
         if (wHit && wHit.point) {
           endDist = wHit.distance;
           impacts.hit(wHit, { from: s.from, mark: !!decalTargetMeshes.includes(wHit.mesh) || wHit.mesh === yardPadMesh });
@@ -2240,106 +2262,88 @@ function make(api) {
       );
       spawnTracer(s.from, tracerToVec);
     }
+    return true;
   };
 
-  // Interactive HUD hitboxes (dynamic layout, clear of api.scoreArea(), minimap & thumbsticks)
-  const rdRect = { x: 8, y: 150, w: 170, h: 30 };
-  const rdPrevRect = { x: 8, y: 150, w: 24, h: 30 };
-  const rdNextRect = { x: 154, y: 150, w: 24, h: 30 };
-  const mrRect = { x: W - 90, y: 10, w: 80, h: 80 };
-  const swapRect = { x: 8, y: 80, w: 72, h: 22 };
-  const gunRect = { x: 84, y: 80, w: 96, h: 22 };
-  const covRect = { x: 8, y: 106, w: 74, h: 22 };
-  const camRect = { x: 86, y: 106, w: 72, h: 22 };
-  const shopActionRect = { x: 60, y: H - 90, w: 180, h: 28 };
-  const shopAltRect = { x: 60, y: H - 58, w: 180, h: 28 };
-  const wheelPanelRect = { x: 20, y: 80, w: 260, h: 260 };
-  const phoneCardRect = { x: 20, y: 20, w: 160, h: 46 };
-  const hudLayout = { mr: mrRect, maxHudW: 160, topY: 8 };
+  // Interactive HUD hitboxes (minimal GTA IV/V layout, clear of api.scoreArea() & touch controls)
+  const rdRect = { x: 8, y: 48, w: 128, h: 18 };
+  const rdPrevRect = { x: 8, y: 48, w: 20, h: 18 };
+  const rdNextRect = { x: 116, y: 48, w: 20, h: 18 };
+  const mrRect = { x: W - 80, y: 8, w: 72, h: 72 };
+  const gunRect = { x: 8, y: 25, w: 80, h: 19 };
+  const covRect = { x: 92, y: 25, w: 34, h: 19 };
+  const shopActionRect = { x: 40, y: H - 150, w: 220, h: 24 };
+  const shopAltRect = { x: 40, y: H - 122, w: 220, h: 24 };
+  const wheelPanelRect = { x: 20, y: 80, w: 260, h: 264 };
+  const phoneCardRect = { x: 12, y: H - 132, w: 276, h: 34 };
+  const hudLayout = { mr: mrRect, leftMax: 132, topY: 8 };
 
   const layoutTopHud = () => {
-    if (W === lastHudW && H === lastHudH && weaponWheelOpen === lastHudWeaponOpen) return hudLayout;
+    const hasStars = law.stars > 0;
+    const drivingHud = inCar || inBoat || inHeli;
+    if (W === lastHudW && H === lastHudH && weaponWheelOpen === lastHudWeaponOpen && hasStars === lastHudStars && drivingHud === lastHudDriving) return hudLayout;
     lastHudW = W;
     lastHudH = H;
     lastHudWeaponOpen = weaponWheelOpen;
-    const s = Math.min(82, W * 0.25);
-    mrRect.x = W - s - 10;
-    mrRect.y = 10;
+    lastHudStars = hasStars;
+    lastHudDriving = drivingHud;
+
+    const s = Math.min(72, Math.round(W * 0.22));
+    mrRect.x = W - s - 8;
+    mrRect.y = 8;
     mrRect.w = s;
     mrRect.h = s;
-    const maxW = Math.max(134, Math.min(194, mrRect.x - 16));
+
     const sa = api.scoreArea ? api.scoreArea() : null;
-    const topY = sa && 8 + maxW > sa.x - 2 ? Math.round(sa.bottom + 4) : 8;
+    const leftMax = sa ? Math.max(96, Math.min(132, Math.floor(sa.x - 12))) : Math.min(132, mrRect.x - 16);
+    const topY = 8;
+    const pillY = hasStars ? topY + 30 : topY + 17;
 
-    const pillY1 = topY + 76;
-    const pillY2 = pillY1 + 26;
-    swapRect.x = 8;
-    swapRect.y = pillY1;
-    swapRect.w = Math.min(78, Math.floor((maxW - 4) * 0.44));
+    gunRect.x = 8;
+    gunRect.y = pillY;
+    gunRect.w = Math.max(66, Math.min(84, leftMax - 32));
+    gunRect.h = 19;
 
-    gunRect.x = swapRect.x + swapRect.w + 4;
-    gunRect.y = pillY1;
-    gunRect.w = Math.max(72, maxW - swapRect.w - 4);
+    covRect.x = gunRect.x + gunRect.w + 4;
+    covRect.y = pillY;
+    covRect.w = Math.max(28, Math.min(38, leftMax - gunRect.w - 4));
+    covRect.h = 19;
 
-    covRect.x = 8;
-    covRect.y = pillY2;
-    covRect.w = Math.min(86, Math.floor((maxW - 4) * 0.54));
-
-    camRect.x = covRect.x + covRect.w + 4;
-    camRect.y = pillY2;
-    camRect.w = Math.max(54, maxW - covRect.w - 4);
-
-    // Place radio bar completely clear of left thumbstick!
-    if (W >= 420) {
-      rdRect.w = 216;
-      rdRect.h = 32;
-      rdRect.x = Math.round((W - rdRect.w) * 0.5);
-      rdRect.y = H - 40;
-    } else {
-      rdRect.x = 8;
-      rdRect.y = pillY2 + 26;
-      rdRect.w = maxW;
-      rdRect.h = 28;
-    }
+    rdRect.x = 8;
+    rdRect.y = pillY + 23;
+    rdRect.w = Math.min(136, Math.max(leftMax, 118));
+    rdRect.h = 18;
     rdPrevRect.x = rdRect.x;
     rdPrevRect.y = rdRect.y;
-    rdPrevRect.w = 24;
-    rdPrevRect.h = rdRect.h;
-    rdNextRect.x = rdRect.x + rdRect.w - 24;
+    rdPrevRect.w = 20;
+    rdPrevRect.h = 18;
+    rdNextRect.x = rdRect.x + rdRect.w - 20;
     rdNextRect.y = rdRect.y;
-    rdNextRect.w = 24;
-    rdNextRect.h = rdRect.h;
+    rdNextRect.w = 20;
+    rdNextRect.h = 18;
 
-    const pw = Math.min(264, W - 28);
+    const pw = Math.min(260, W - 24);
     wheelPanelRect.w = pw;
     wheelPanelRect.x = Math.round((W - pw) * 0.5);
-    wheelPanelRect.h = weaponWheelOpen ? 248 : 262;
-    wheelPanelRect.y = Math.round(Math.max(topY + 30, (H - wheelPanelRect.h) * 0.44));
+    wheelPanelRect.h = weaponWheelOpen ? 264 : 262;
+    wheelPanelRect.y = Math.round(Math.max(10, (H - wheelPanelRect.h) * 0.5));
 
-    const sbW = Math.min(210, W - 100);
+    const sbW = Math.min(220, W - 28);
     shopActionRect.w = sbW;
-    shopActionRect.h = 26;
+    shopActionRect.h = 24;
     shopActionRect.x = Math.round((W - sbW) * 0.5);
-    shopActionRect.y = W >= 420 ? H - 74 : H - 122;
+    shopActionRect.y = H - 150;
     shopAltRect.w = sbW;
-    shopAltRect.h = 26;
+    shopAltRect.h = 24;
     shopAltRect.x = shopActionRect.x;
-    shopAltRect.y = shopActionRect.y + 30;
+    shopAltRect.y = H - 122;
 
-    const centerGap = mrRect.x - (8 + maxW) - 12;
-    if (W >= 460 && centerGap >= 140) {
-      phoneCardRect.w = Math.min(196, centerGap);
-      phoneCardRect.h = 42;
-      phoneCardRect.x = Math.round(8 + maxW + (centerGap + 12 - phoneCardRect.w) * 0.5);
-      phoneCardRect.y = sa ? Math.round(sa.bottom + 4) : 10;
-    } else {
-      phoneCardRect.w = Math.min(256, W - 20);
-      phoneCardRect.h = 38;
-      phoneCardRect.x = 10;
-      phoneCardRect.y = W >= 420 ? topY + 132 : rdRect.y + rdRect.h + 6;
-    }
+    phoneCardRect.w = Math.min(276, W - 16);
+    phoneCardRect.h = 34;
+    phoneCardRect.x = Math.round((W - phoneCardRect.w) * 0.5);
+    phoneCardRect.y = Math.max(mrRect.y + mrRect.h + 26, drivingHud ? H - 154 : H - 132);
 
-    hudLayout.maxHudW = maxW;
+    hudLayout.leftMax = leftMax;
     hudLayout.topY = topY;
     return hudLayout;
   };
@@ -2565,6 +2569,7 @@ function make(api) {
       recentShotT = 0;
       batonCd = 0;
       grenadeCd = 0;
+      shotCrimeCd = 0;
       driftSec = 0;
       driftSkidCd = 0;
       driftSmokeAcc = 0;
@@ -2593,9 +2598,9 @@ function make(api) {
       phoneT = 0;
       phoneHoldLeft = 0;
       lastHudW = -1;
+      lastHudStars = false;
+      lastHudDriving = false;
       lastSwapName = '';
-      lastModeLead = '';
-      lastModeKind = '';
       lastLawSec = -1;
       rideKey = coverKey = swapKey = gunKey = aimKey = false;
       bannerText = '';
@@ -2611,6 +2616,7 @@ function make(api) {
       poseTick = 0;
       lawTick = 1;
       lawDt = 0;
+      metroDt = 0;
       gpsDt = 0;
       pendingRadioOn = 0;
       pendingGpsGoal = null;
@@ -2627,7 +2633,6 @@ function make(api) {
       gpsShown = false;
       lastClockStr = '15:36';
       lastClockMin = -1;
-      lastDistHud = '';
       lastAmmoKind = '';
       lastCashVal = -1;
       lastSpeedVal = -1;
@@ -2821,8 +2826,8 @@ function make(api) {
       inBoat = false;
       inHeli = false;
 
-      mako.lod = warmedCop ? 1 : 0;
-      nadia.lod = warmedCop ? 1 : 0;
+      mako.lod = 1;
+      nadia.lod = 1;
       mako.position.set(activeLead.foot.x, activeLead.foot.y, activeLead.foot.z);
       mako.rotation.set(0, activeLead.foot.heading, 0);
       mako.rig.blend(BLEND_OPTS, 0);
@@ -2843,15 +2848,17 @@ function make(api) {
       nadia.rig.update(0, rigUpdOpts);
 
       if (!warmedCop) {
-        // Warm particles, brass shells, and tracer shader behind Play loading screen
+        // Warm particles, brass shells, impact marks, and tracer shader behind Play loading screen
         fx3d.sparks(makoSpot, { count: 2, light: false });
+        impacts.hit({ point: { x: makoSpot.x, y: makoSpot.y + 0.05, z: makoSpot.z + 1.5 }, normal: { x: 0, y: 1, z: 0 }, mesh: yardPadMesh }, { from: makoSpot, mark: true });
         impacts.shell(makoSpot, { kind: 'pistol' });
         impacts.shell(makoSpot, { kind: 'rifle' });
         impacts.shell(makoSpot, { kind: 'shotgun' });
+        impacts.update(0.001);
         tracerPool[0].mesh.position.set(makoSpot.x, makoSpot.y + 1.2, makoSpot.z + 2);
         tracerPool[0].mesh.visible = true;
         if (warmupCop) {
-          warmupCop.lod = 0;
+          warmupCop.lod = 1;
           warmupCop.position.set(
             activeLead.foot.x + Math.sin(activeLead.foot.heading) * 1.4,
             activeLead.foot.y,
@@ -2975,18 +2982,14 @@ function make(api) {
         return;
       }
 
-      if (!warmedCop && t > 0.04) {
+      if (!warmedCop && t > 0.01) {
         warmedCop = true;
         warmupCop?.removeFromParent();
         warmupCop = null;
         warmupFolk?.removeFromParent();
         warmupFolk = null;
-        mako.visible = false;
         mako.lod = 1;
-        mako.visible = true;
-        nadia.visible = false;
         nadia.lod = 1;
-        nadia.visible = true;
         nadia.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
         impacts.clear();
         fx3d.clear();
@@ -3022,6 +3025,7 @@ function make(api) {
       bannerT = Math.max(0, bannerT - sdt);
       rideCooldown = Math.max(0, rideCooldown - sdt);
       recentShotT = Math.max(0, recentShotT - sdt);
+      shotCrimeCd = Math.max(0, shotCrimeCd - sdt);
       batonCd = Math.max(0, batonCd - sdt);
       grenadeCd = Math.max(0, grenadeCd - sdt);
       driftSkidCd = Math.max(0, driftSkidCd - sdt);
@@ -3488,7 +3492,9 @@ function make(api) {
       // Physics step + bulletproof ground floor net for both leads
       if (!inCar && !inBoat && !inHeli && !carTrip) mover.stepMove(sdt);
       if (inBoat || inHeli) world.step(sdt);
-      else if (!inCar && (st & 1) === 1) world.step(Math.min(0.033, sdt * 2));
+      else if (!inCar && (carTrip || pulledDrivers.length > 0 ? (st & 1) === 1 : (st & 3) === 1)) {
+        world.step(Math.min(0.033, sdt * (carTrip || pulledDrivers.length > 0 ? 2 : 4)));
+      }
 
       if (!inCar && !inBoat && !inHeli && !carTrip) {
         const f = activeLead.foot;
@@ -3558,12 +3564,13 @@ function make(api) {
 
         const wk = activeLead.weaponKind;
         const aw = activeLead.wields[wk];
-        if (aw && !(aimMode && fpsAim) && (aimMode || recentShotT > 0 || rigStep)) {
+        const nextHow = aimMode ? 'aim' : recentShotT > 0 ? 'hip' : 'ready';
+        if (aw && !(aimMode && fpsAim) && (rigStep || aw.how !== nextHow)) {
           v.cam.getWorldDirection(camDirVec);
           wieldOpts.pitch = Math.asin(clamp(camDirVec.y, -1, 1));
-          wieldOpts.how = aimMode ? 'aim' : recentShotT > 0 ? 'hip' : 'ready';
-          wieldOpts.keep = aimMode || recentShotT > 0;
-          aw.update((aimMode || recentShotT > 0) ? sdt : (rigActive ? sdt * 2 : sdt * 8), wieldOpts);
+          wieldOpts.how = nextHow;
+          wieldOpts.keep = false;
+          aw.update(rigStep ? (rigActive ? sdt * 2 : sdt * 8) : sdt, wieldOpts);
         }
 
         if (otherLead && !otherLead.inVehicle) {
@@ -3572,7 +3579,7 @@ function make(api) {
           otherLead.body.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
         }
 
-        if (f.v > 0.1) {
+        if (f.v > 0.1 && (st & 1) === 0) {
           avoidQuery.x = f.x;
           avoidQuery.z = f.z;
           avoidQuery.vx = Math.sin(f.heading) * f.v;
@@ -3634,7 +3641,12 @@ function make(api) {
         lockedTarget = null;
       }
 
-      if (actFire) fireShot();
+      let firedThisFrame = false;
+      if (actFire) firedThisFrame = !!fireShot();
+      else {
+        const curGun = activeGun(activeLead);
+        if (curGun?.held) curGun.held = false;
+      }
 
       if (impacts.cases.length) impacts.update(sdt);
       if (fx3d.live.size > 0) fx3d.update(sdt);
@@ -3753,7 +3765,7 @@ function make(api) {
             aimDirObj.y = (playerQuery.y - g.y) / (dist || 1);
             aimDirObj.z = dz / (dist || 1);
             aimOrigin.x = g.x; aimOrigin.y = g.y + 1.4; aimOrigin.z = g.z;
-            const blocked = world.ray(aimOrigin, aimDirObj, Math.max(0.5, dist - 0.8), c => c !== mover?.rider && c !== mover);
+            const blocked = world.ray(aimOrigin, aimDirObj, Math.max(0.5, dist - 0.8), rayNotRider);
             if (!blocked || blocked.distance >= dist - 1.1) {
               const hitChance = hide.busy ? 0.18 * hide.exposed : inCar ? 0.25 : 0.48;
               if (Math.random() < hitChance) {
@@ -3784,7 +3796,13 @@ function make(api) {
         }
       }
 
-      metro.update(sdt, playerQuery);
+      metroDt += sdt;
+      const drivingAny = inCar || inBoat || inHeli;
+      const metroDue = t < 0.05 || (!firedThisFrame && (drivingAny || (st & 1) === 0 || metroDt >= 0.04));
+      if (metroDue) {
+        metro.update(metroDt, playerQuery);
+        metroDt = 0;
+      }
       if (metro.cities.length !== lastCityCount) {
         lastCityCount = metro.cities.length;
         for (const c of metro.cities) {
@@ -3811,10 +3829,13 @@ function make(api) {
       if ((st & 1) === 1) foley?.update(sdt * 2);
 
       lawDt += sdt;
-      const lawIdle = law.stars === 0 && !law.units.length && !law.officers.length && !law.calls.length && !metro.events.length && !law.search && !actFire;
-      const lawDue = !lawIdle ? ((lawTick++ & 1) === 0 || metro.events.length > 0 || actFire) : st === 6;
+      const lawIdle = law.stars === 0 && !law.units.length && !law.officers.length && !law.calls.length && !metro.events.length && !law.search;
+      const lawDue = !firedThisFrame && (lawIdle
+        ? st === 3
+        : (drivingAny ? ((lawTick++ & 1) === 0 || metro.events.length > 0) : (st & 1) === 1));
       if (lawDue) {
         law.update(lawDt, playerQuery);
+        if (metro.events.length) metro.events.length = 0;
         lawDt = 0;
       }
 
@@ -3839,7 +3860,11 @@ function make(api) {
       }
 
       const dist = metro.districtAt(playerQuery.x, playerQuery.z);
-      lastDistrictName = dist ? dist.name : 'Solis Bay';
+      const nextDistName = dist ? dist.name : 'Solis Bay';
+      if (nextDistName !== lastDistrictName && t > 1.5 && bannerT <= 0 && phoneT <= 0) {
+        say(nextDistName.toUpperCase(), '#e8f4ff', 2.2);
+      }
+      lastDistrictName = nextDistName;
       worldSave.update(sdt);
 
       // Mission progression checks
@@ -4057,7 +4082,7 @@ function make(api) {
         c.restore();
       }
 
-      const { mr, maxHudW, topY } = layoutTopHud();
+      const { mr, leftMax, topY } = layoutTopHud();
       const clockMin = Math.floor(sky.time * 60) % 1440;
       if (clockMin !== lastClockMin) {
         lastClockMin = clockMin;
@@ -4065,44 +4090,30 @@ function make(api) {
         const mm = String(clockMin % 60).padStart(2, '0');
         lastClockStr = `${hh}:${mm}`;
       }
-      if (lastDistrictName !== lastDistHud || lastClockStr !== lastDistClock) {
-        lastDistHud = lastDistrictName;
-        lastDistClock = lastClockStr;
-        lastDistText = `${lastDistrictName} · ${lastClockStr}`;
-      }
       if (cash !== lastCashVal) {
         lastCashVal = cash;
         lastCashStr = `$${cash}`;
       }
 
-      // Top-left status card (clear of score badge & minimap)
+      // Top-left minimal borderless cash, clock, stars & single compact pill row
       c.save();
-      c.fillStyle = 'rgba(10, 14, 24, 0.8)';
-      c.beginPath();
-      c.roundRect(8, topY, maxHudW, 72, 8);
-      c.fill();
-
-      c.font = '700 11px Rubik, sans-serif';
+      c.font = '700 12px Rubik, sans-serif';
       c.textAlign = 'left';
-      c.fillStyle = '#e8f4ff';
-      c.fillText(fitText(c, 'dist', lastDistText, maxHudW - 58), 15, topY + 15);
-      c.textAlign = 'right';
-      c.fillStyle = '#52f295';
-      c.fillText(lastCashStr, 8 + maxHudW - 8, topY + 15);
+      drawShadowText(c, lastCashStr, 8, topY + 11, '#52f295');
+      const cashW = Math.min(54, c.measureText(lastCashStr).width + 7);
+      c.font = '600 9.5px Rubik, sans-serif';
+      drawShadowText(c, lastClockStr, 8 + cashW, topY + 11, 'rgba(232, 244, 255, 0.85)');
 
-      c.textAlign = 'left';
       if (law.stars > 0) {
         const pulseRed = law.seen && Math.floor(t * 4) % 2 === 0;
-        let sxPos = 15;
-        c.font = '700 11px Rubik, sans-serif';
+        let sxPos = 8;
+        c.font = '700 10px Rubik, sans-serif';
         for (let i = 0; i < 5; i++) {
           const lit = i < law.stars;
-          c.fillStyle = lit ? (law.seen ? (pulseRed ? '#ff4d5a' : '#4da6ff') : '#ffd166') : 'rgba(255,255,255,0.22)';
-          c.fillText(lit ? '★' : '☆', sxPos, topY + 31);
-          sxPos += 11;
+          drawShadowText(c, lit ? '★' : '☆', sxPos, topY + 24, lit ? (law.seen ? (pulseRed ? '#ff4d5a' : '#4da6ff') : '#ffd166') : 'rgba(255, 255, 255, 0.28)');
+          sxPos += 9.5;
         }
-        c.font = '700 10px Rubik, sans-serif';
-        c.fillStyle = law.seen ? (pulseRed ? '#ff6b6b' : '#74b9ff') : '#ffd166';
+        c.font = '700 9.5px Rubik, sans-serif';
         let stTxt;
         if (law.busting > 0.15) stTxt = 'BUST!';
         else if (law.seen) stTxt = 'PURSUIT';
@@ -4111,49 +4122,8 @@ function make(api) {
           if (sec !== lastLawSec) { lastLawSec = sec; lastLawSecStr = `${sec}s`; }
           stTxt = lastLawSecStr;
         }
-        c.fillText(fitText(c, 'stars', stTxt, maxHudW - 76), sxPos + 2, topY + 31);
-      } else {
-        c.fillStyle = '#8ef5c8';
-        const modeTxt = inHeli ? 'Chopper' : inBoat ? 'At Helm' : inCar ? activeCarProfile.label : swim.state !== 'out' ? 'Swimming' : hide.busy ? 'In Cover' : 'On Foot';
-        if (activeLead.name !== lastModeLead || modeTxt !== lastModeKind) {
-          lastModeLead = activeLead.name;
-          lastModeKind = modeTxt;
-          lastModeStr = `${activeLead.name} · ${modeTxt}`;
-        }
-        c.fillText(fitText(c, 'stars', lastModeStr, maxHudW - 14), 15, topY + 31);
+        drawShadowText(c, fitText(c, 'stars', stTxt, Math.max(24, leftMax - 50)), sxPos + 2, topY + 24, law.seen ? (pulseRed ? '#ff6b6b' : '#74b9ff') : '#ffd166');
       }
-
-      c.font = '500 10px Rubik, sans-serif';
-      c.fillStyle = '#b9c9e4';
-      c.fillText(fitText(c, 'sub', hudSub, maxHudW - 14), 15, topY + 45);
-
-      // Health bar + Armor bar (+ breath bar underwater)
-      const barW = maxHudW - 22;
-      c.fillStyle = 'rgba(255,255,255,0.16)';
-      c.fillRect(15, topY + 52, barW, 4);
-      c.fillStyle = activeLead.health.frac > 0.4 ? '#38f8b0' : '#ff5e57';
-      c.fillRect(15, topY + 52, barW * activeLead.health.frac, 4);
-
-      c.fillStyle = 'rgba(255,255,255,0.14)';
-      c.fillRect(15, topY + 58, barW, 3);
-      const armFrac = activeLead.health.maxArmour > 0 ? activeLead.health.armour / activeLead.health.maxArmour : 0;
-      c.fillStyle = '#48a8ff';
-      c.fillRect(15, topY + 58, barW * armFrac, 3);
-
-      if (swim.under) {
-        c.fillStyle = '#48dbfb';
-        c.fillRect(15, topY + 63, barW * swim.air, 3);
-      }
-
-      // Row 1 Pills: SWAP + WEAPON/AMMO (opens Weapon Wheel)
-      if (otherLead.name !== lastSwapName) {
-        lastSwapName = otherLead.name;
-        lastSwapStr = `SWAP ${otherLead.name}`;
-      }
-      c.fillStyle = 'rgba(10, 14, 24, 0.8)';
-      c.beginPath(); c.roundRect(swapRect.x, swapRect.y, swapRect.w, swapRect.h, 6); c.fill();
-      c.fillStyle = '#7ee8ff'; c.font = '700 10px Rubik, sans-serif';
-      c.fillText(fitText(c, 'swap', lastSwapStr, swapRect.w - 10), swapRect.x + 5, swapRect.y + 15);
 
       const wk = activeLead.weaponKind;
       const gObj = activeGun(activeLead);
@@ -4163,35 +4133,38 @@ function make(api) {
         lastAmmoKind = wk;
         lastAmmoClip = ammoClip;
         lastAmmoPool = ammoPool;
-        lastAmmoText = gObj ? `${WEAPON_LABELS[wk]} ${ammoClip}/${ammoPool}` : wk === 'grenade' ? `GRENADE ${ammoClip}` : WEAPON_LABELS[wk];
+        lastAmmoText = gObj ? `${WEAPON_LABELS[wk]} ${ammoClip}/${ammoPool}` : wk === 'grenade' ? `GREN ${ammoClip}` : WEAPON_LABELS[wk];
       }
-      c.fillStyle = weaponWheelOpen ? 'rgba(255, 209, 102, 0.28)' : 'rgba(10, 14, 24, 0.8)';
-      c.beginPath(); c.roundRect(gunRect.x, gunRect.y, gunRect.w, gunRect.h, 6); c.fill();
+      c.fillStyle = weaponWheelOpen ? 'rgba(255, 209, 102, 0.28)' : 'rgba(10, 14, 24, 0.54)';
+      c.beginPath(); c.roundRect(gunRect.x, gunRect.y, gunRect.w, gunRect.h, 5); c.fill();
+      c.strokeStyle = 'rgba(255, 255, 255, 0.14)'; c.lineWidth = 1; c.stroke();
+      c.font = '700 9.5px Rubik, sans-serif';
+      c.textAlign = 'left';
       c.fillStyle = '#ffd166';
-      c.fillText(fitText(c, 'gun', lastAmmoText, gunRect.w - 10), gunRect.x + 5, gunRect.y + 15);
+      c.fillText(fitText(c, 'gun', lastAmmoText, gunRect.w - 8), gunRect.x + 5, gunRect.y + 13);
 
-      // Row 2 Pills: COVER / CAM or SIREN
       if (!inCar && !inBoat && !inHeli) {
-        c.fillStyle = hide.busy ? 'rgba(56, 248, 176, 0.28)' : 'rgba(10, 14, 24, 0.8)';
-        c.beginPath(); c.roundRect(covRect.x, covRect.y, covRect.w, covRect.h, 6); c.fill();
+        c.fillStyle = hide.busy ? 'rgba(56, 248, 176, 0.30)' : 'rgba(10, 14, 24, 0.54)';
+        c.beginPath(); c.roundRect(covRect.x, covRect.y, covRect.w, covRect.h, 5); c.fill();
+        c.strokeStyle = hide.busy ? 'rgba(56, 248, 176, 0.5)' : 'rgba(255, 255, 255, 0.14)'; c.stroke();
         c.fillStyle = '#8ef5c8';
-        c.fillText(hide.busy ? 'LEAVE COV' : 'COVER [Q]', covRect.x + 5, covRect.y + 15);
-
-        c.fillStyle = fpsAim ? 'rgba(126, 232, 255, 0.25)' : 'rgba(10, 14, 24, 0.8)';
-        c.beginPath(); c.roundRect(camRect.x, camRect.y, camRect.w, camRect.h, 6); c.fill();
-        c.fillStyle = '#d8e8ff';
-        c.fillText(fpsAim ? '1ST-P' : '3RD-P', camRect.x + 6, camRect.y + 15);
+        c.font = '700 9px Rubik, sans-serif';
+        c.textAlign = 'center';
+        c.fillText(hide.busy ? 'OUT' : 'COV', covRect.x + covRect.w * 0.5, covRect.y + 13);
       } else if (inCar && activeCarProfile.cop) {
-        c.fillStyle = activeCarMesh?.sirenOn ? 'rgba(255, 77, 90, 0.35)' : 'rgba(10, 14, 24, 0.8)';
-        c.beginPath(); c.roundRect(covRect.x, covRect.y, covRect.w, covRect.h, 6); c.fill();
+        c.fillStyle = activeCarMesh?.sirenOn ? 'rgba(255, 77, 90, 0.35)' : 'rgba(10, 14, 24, 0.54)';
+        c.beginPath(); c.roundRect(covRect.x, covRect.y, covRect.w, covRect.h, 5); c.fill();
+        c.strokeStyle = activeCarMesh?.sirenOn ? 'rgba(255, 110, 140, 0.55)' : 'rgba(255, 255, 255, 0.14)'; c.stroke();
         c.fillStyle = '#ff9ff3';
-        c.fillText(activeCarMesh?.sirenOn ? 'SIREN ON' : 'SIREN [H]', covRect.x + 5, covRect.y + 15);
+        c.font = '700 9px Rubik, sans-serif';
+        c.textAlign = 'center';
+        c.fillText('SIREN', covRect.x + covRect.w * 0.5, covRect.y + 13);
       }
       c.restore();
 
-      // Top-right minimap + live SBPD / gang / shop overlays + turn prompt
+      // Top-right minimap + attached GTA health/armor bars + turn prompt
       c.save();
-      c.globalAlpha = 0.92;
+      c.globalAlpha = 0.9;
       gps.mini(c, mr.x, mr.y, mr.w, mr.h, MINI_OPTS);
       c.globalAlpha = 1;
       const miniM = gps._mini;
@@ -4242,6 +4215,26 @@ function make(api) {
         }
         c.restore();
       }
+
+      const barY = mr.y + mr.h + 4;
+      c.fillStyle = 'rgba(10, 14, 24, 0.58)';
+      c.fillRect(mr.x, barY, mr.w, 3.5);
+      c.fillStyle = activeLead.health.frac > 0.4 ? '#38f8b0' : '#ff5e57';
+      c.fillRect(mr.x, barY, mr.w * activeLead.health.frac, 3.5);
+
+      c.fillStyle = 'rgba(10, 14, 24, 0.52)';
+      c.fillRect(mr.x, barY + 5, mr.w, 2.5);
+      const armFrac = activeLead.health.maxArmour > 0 ? activeLead.health.armour / activeLead.health.maxArmour : 0;
+      c.fillStyle = '#48a8ff';
+      c.fillRect(mr.x, barY + 5, mr.w * armFrac, 2.5);
+
+      if (swim.under) {
+        c.fillStyle = 'rgba(10, 14, 24, 0.52)';
+        c.fillRect(mr.x, barY + 9, mr.w, 2.5);
+        c.fillStyle = '#48dbfb';
+        c.fillRect(mr.x, barY + 9, mr.w * swim.air, 2.5);
+      }
+
       const nx = gps.next;
       if (nx && nx.turn !== 'arrive' && nx.in < 160) {
         const rndIn = Math.max(5, Math.round(nx.in / 5) * 5);
@@ -4250,15 +4243,15 @@ function make(api) {
           lastNextTurn = nx.turn;
           lastNextStr = `${nx.turn === 'left' ? '↰' : '↱'} ${rndIn} m`;
         }
-        const ty = mr.y + mr.h + 14;
-        c.fillStyle = 'rgba(10, 14, 24, 0.8)';
+        const ty = barY + (swim.under ? 14 : 10);
+        c.fillStyle = 'rgba(10, 14, 24, 0.56)';
         c.beginPath();
-        c.roundRect(mr.x, ty - 11, mr.w, 18, 6);
+        c.roundRect(mr.x, ty, mr.w, 15, 4);
         c.fill();
-        c.font = '700 10px Rubik, sans-serif';
+        c.font = '700 9.5px Rubik, sans-serif';
         c.textAlign = 'center';
         c.fillStyle = '#68f8c4';
-        c.fillText(lastNextStr, mr.x + mr.w * 0.5, ty + 2);
+        c.fillText(lastNextStr, mr.x + mr.w * 0.5, ty + 11);
       }
       c.restore();
 
@@ -4279,20 +4272,21 @@ function make(api) {
           lastSpeedStr = `${hudNum} ${unitLabel}`;
         }
         c.save();
-        c.fillStyle = 'rgba(10, 14, 24, 0.78)';
-        c.beginPath(); c.roundRect(W - 86, H - 122, 76, 20, 6); c.fill();
-        c.font = '700 11px Rubik, sans-serif';
+        c.fillStyle = 'rgba(10, 14, 24, 0.54)';
+        c.beginPath(); c.roundRect(W - 74, H - 110, 66, 17, 5); c.fill();
+        c.strokeStyle = 'rgba(255, 255, 255, 0.14)'; c.lineWidth = 1; c.stroke();
+        c.font = '700 10px Rubik, sans-serif';
         c.textAlign = 'center';
         c.fillStyle = carInput.drift ? '#ff9f43' : '#e8f4ff';
-        c.fillText(lastSpeedStr, W - 48, H - 108);
+        c.fillText(lastSpeedStr, W - 41, H - 98);
 
         const curVeh = inHeli ? heliMesh : inBoat ? boatMesh : activeCarMesh;
         const vh = curVeh?.health ?? 1;
         if (vh < 0.72) {
-          c.fillStyle = 'rgba(10, 14, 24, 0.8)';
-          c.fillRect(W - 86, H - 129, 76, 4);
+          c.fillStyle = 'rgba(10, 14, 24, 0.65)';
+          c.fillRect(W - 74, H - 115, 66, 3);
           c.fillStyle = curVeh?.burning && Math.floor(t * 6) % 2 === 0 ? '#ff3b30' : vh < 0.35 ? '#ff5e57' : '#ffae38';
-          c.fillRect(W - 86, H - 129, 76 * Math.max(0, vh), 4);
+          c.fillRect(W - 74, H - 115, 66 * Math.max(0, vh), 3);
         }
         c.restore();
       }
@@ -4302,169 +4296,196 @@ function make(api) {
       if ((shakedownOpen || nearShop) && !weaponWheelOpen && !radioWheelOpen) {
         c.save();
         c.textAlign = 'center';
-        c.font = '700 10px Rubik, sans-serif';
+        c.font = '700 9.5px Rubik, sans-serif';
         if (shakedownOpen) {
-          c.fillStyle = 'rgba(32, 16, 42, 0.94)';
-          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(32, 16, 42, 0.92)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 6); c.fill();
           c.strokeStyle = '#ff6b9d'; c.lineWidth = 1; c.stroke();
           c.fillStyle = '#ffeef6';
-          c.fillText('[1] PRESSURE ADJUSTER (+$150)', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+          c.fillText('[1] PRESSURE ADJUSTER (+$150)', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 15);
 
-          c.fillStyle = 'rgba(16, 36, 46, 0.94)';
-          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(16, 36, 46, 0.92)';
+          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 6); c.fill();
           c.strokeStyle = '#38f8b0'; c.stroke();
           c.fillStyle = '#38f8b0';
-          c.fillText('[2] GRAB LEDGER & BOLT', shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 17);
+          c.fillText('[2] GRAB LEDGER & BOLT', shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 15);
         } else if (nearShop === 'diner') {
-          c.fillStyle = 'rgba(42, 34, 14, 0.92)';
-          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(42, 34, 14, 0.9)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 6); c.fill();
           c.strokeStyle = '#ffcf5c'; c.lineWidth = 1; c.stroke();
           c.fillStyle = '#fff5d6';
-          c.fillText("TIA CARMEN'S DINER · REST & HEAL", shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+          c.fillText("TIA CARMEN'S DINER · REST & HEAL", shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 15);
 
-          c.fillStyle = 'rgba(20, 26, 38, 0.92)';
-          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(20, 26, 38, 0.9)';
+          c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 6); c.fill();
           c.strokeStyle = '#7ee8ff'; c.stroke();
           c.fillStyle = '#7ee8ff';
-          c.fillText(`SWAP TO ${otherLead.name.toUpperCase()}`, shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 17);
+          c.fillText(`SWAP TO ${otherLead.name.toUpperCase()}`, shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 15);
         } else if (nearShop === 'respray') {
           const cost = cash >= 250 ? 250 : law.stars > 0 && jobsDoneCount === 0 ? 0 : 250;
-          c.fillStyle = 'rgba(16, 46, 66, 0.9)';
-          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(16, 46, 66, 0.88)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 6); c.fill();
           c.strokeStyle = '#3cd8ff'; c.lineWidth = 1; c.stroke();
           c.fillStyle = '#e8fbff';
-          c.fillText(cost ? `SOLIS CUSTOMS · RESPRAY & TUNE $${cost}` : 'SOLIS CUSTOMS · FREE RESPRAY & TUNE', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+          c.fillText(cost ? `SOLIS CUSTOMS · RESPRAY & TUNE $${cost}` : 'SOLIS CUSTOMS · FREE RESPRAY & TUNE', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 15);
         } else {
-          c.fillStyle = 'rgba(42, 28, 12, 0.9)';
-          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 7); c.fill();
+          c.fillStyle = 'rgba(42, 28, 12, 0.88)';
+          c.beginPath(); c.roundRect(shopActionRect.x, shopActionRect.y, shopActionRect.w, shopActionRect.h, 6); c.fill();
           c.strokeStyle = '#ffb24a'; c.lineWidth = 1; c.stroke();
           c.fillStyle = '#fff5dc';
-          c.fillText('BAYSIDE ARMS · +50 ARMOR & AMMO ($150)', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 17);
+          c.fillText('BAYSIDE ARMS · +50 ARMOR & AMMO ($150)', shopActionRect.x + shopActionRect.w * 0.5, shopActionRect.y + 15);
 
           const nxtW = nextLockedWeapon();
           if (nxtW) {
-            c.fillStyle = 'rgba(20, 26, 38, 0.92)';
-            c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 7); c.fill();
+            c.fillStyle = 'rgba(20, 26, 38, 0.9)';
+            c.beginPath(); c.roundRect(shopAltRect.x, shopAltRect.y, shopAltRect.w, shopAltRect.h, 6); c.fill();
             c.strokeStyle = '#ffd166'; c.stroke();
             c.fillStyle = '#ffd166';
-            c.fillText(`BUY ${WEAPON_LABELS[nxtW]} ($${WEAPON_COSTS[nxtW]})`, shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 17);
+            c.fillText(`BUY ${WEAPON_LABELS[nxtW]} ($${WEAPON_COSTS[nxtW]})`, shopAltRect.x + shopAltRect.w * 0.5, shopAltRect.y + 15);
           }
         }
         c.restore();
       }
 
-      // Burner Phone Call Banner
-      if (phoneT > 0 && phoneLine && !weaponWheelOpen && !radioWheelOpen) {
-        c.save();
-        c.globalAlpha = Math.min(1, phoneT * 2);
-        c.fillStyle = 'rgba(10, 22, 34, 0.9)';
-        c.beginPath(); c.roundRect(phoneCardRect.x, phoneCardRect.y, phoneCardRect.w, phoneCardRect.h, 8); c.fill();
-        c.strokeStyle = '#38f8b0'; c.lineWidth = 1; c.stroke();
-        c.font = '700 9px Rubik, sans-serif';
-        c.textAlign = 'left';
-        c.fillStyle = '#38f8b0';
-        c.fillText(fitText(c, 'ph1', phoneTitleStr, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 12);
-        c.font = '500 9px Rubik, sans-serif';
-        c.fillStyle = '#e8f4ff';
-        c.fillText(fitText(c, 'ph2', phoneLine1, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 24);
-        c.fillText(fitText(c, 'ph3', phoneLine2, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 34);
-        c.restore();
-      }
-
-      // Multi-Station Radio Bar (< PREV | Station 1/5 -> Wheel | NEXT >)
+      // In-Vehicle Single-Line Radio Chip (full station picker stays in Radio Wheel)
       if (radioDirty || ((skyTick & 15) === 0 && radio.power)) {
         radioDirty = false;
         const rn = radio.now;
         cachedRadOn = rn.on;
-        cachedRadTitle = rn.on ? `${rn.station} ${rn.freq} (${rn.index + 1}/${STATIONS.length})` : 'Radio · 5 Stations';
-        cachedRadSub = rn.on ? (rn.kind === 'talk' ? (rn.line || rn.dj) : rn.song ? `${rn.song.title} · ${rn.song.artist}` : '') : '';
+        cachedRadTitle = rn.on ? rn.station : 'Radio Off';
+        cachedRadShort = rn.on ? `RADIO · ${rn.station.split(' ')[0].toUpperCase()}` : 'RADIO · OFF';
       }
-      c.save();
-      c.fillStyle = 'rgba(10, 14, 24, 0.84)';
-      c.beginPath();
-      c.roundRect(rdRect.x, rdRect.y, rdRect.w, rdRect.h, 8);
-      c.fill();
-      c.strokeStyle = cachedRadOn ? 'rgba(255, 178, 74, 0.5)' : 'rgba(255, 255, 255, 0.22)';
-      c.lineWidth = 1;
-      c.stroke();
-
-      c.font = '700 11px Rubik, sans-serif';
-      c.fillStyle = '#d8e2f5';
-      c.textAlign = 'center';
-      c.fillText('◀', rdPrevRect.x + 12, rdRect.y + rdRect.h * 0.62);
-      c.fillText('▶', rdNextRect.x + 12, rdRect.y + rdRect.h * 0.62);
-
-      const centerLeft = rdRect.x + 24;
-      const centerW = rdRect.w - 48;
-      icon(c, cachedRadOn ? 'musical-notes' : 'speaker-off', centerLeft + 10, rdRect.y + rdRect.h * 0.5, 13, cachedRadOn ? ICON_RAD_ON : ICON_RAD_OFF);
-      c.textAlign = 'left';
-      if (!cachedRadOn) {
-        c.font = '600 10px Rubik, sans-serif';
-        c.fillStyle = '#c8d0e0';
-        c.fillText(fitText(c, 'rad1', cachedRadTitle, centerW - 22), centerLeft + 20, rdRect.y + rdRect.h * 0.63);
-      } else {
-        c.font = '700 10px Rubik, sans-serif';
-        c.fillStyle = '#ffffff';
-        c.fillText(fitText(c, 'rad1', cachedRadTitle, centerW - 22), centerLeft + 20, rdRect.y + 12);
-        c.font = '500 9px Rubik, sans-serif';
-        c.fillStyle = '#b8c4dc';
-        c.fillText(fitText(c, 'rad2', cachedRadSub, centerW - 22), centerLeft + 20, rdRect.y + 23);
-      }
-      c.restore();
-
-      // Objective toast banner (strictly below radio bar & phone banner)
-      if (bannerT > 0 && bannerText && !weaponWheelOpen && !radioWheelOpen && !overKind) {
-        const minBanTop = Math.max(mr.y + mr.h + 26, rdRect.y + rdRect.h + 10, phoneT > 0 ? phoneCardRect.y + phoneCardRect.h + 10 : 0);
-        const banY = minBanTop + 15;
+      if (inCar || inBoat || inHeli) {
         c.save();
-        c.globalAlpha = Math.min(1, bannerT * 2);
-        c.font = '700 11px Rubik, sans-serif';
-        c.textAlign = 'center';
-        c.fillStyle = 'rgba(8, 12, 20, 0.8)';
+        c.fillStyle = 'rgba(10, 14, 24, 0.54)';
         c.beginPath();
-        c.roundRect(14, banY - 15, W - 28, 22, 7);
+        c.roundRect(rdRect.x, rdRect.y, rdRect.w, rdRect.h, 5);
         c.fill();
-        c.fillStyle = bannerCol;
-        c.fillText(fitText(c, 'ban', bannerText, W - 40), W * 0.5, banY);
+        c.strokeStyle = cachedRadOn ? 'rgba(255, 178, 74, 0.42)' : 'rgba(255, 255, 255, 0.14)';
+        c.lineWidth = 1;
+        c.stroke();
+
+        c.font = '700 9px Rubik, sans-serif';
+        c.fillStyle = '#d8e2f5';
+        c.textAlign = 'center';
+        c.fillText('◀', rdPrevRect.x + 10, rdRect.y + 12);
+        c.fillText('▶', rdNextRect.x + 10, rdRect.y + 12);
+
+        const centerLeft = rdRect.x + 20;
+        const centerW = rdRect.w - 40;
+        icon(c, cachedRadOn ? 'musical-notes' : 'speaker-off', centerLeft + 7, rdRect.y + 9, 10, cachedRadOn ? ICON_RAD_ON : ICON_RAD_OFF);
+        c.textAlign = 'left';
+        c.fillStyle = cachedRadOn ? '#ffffff' : '#c8d0e0';
+        c.fillText(fitText(c, 'rad1', cachedRadTitle, centerW - 15), centerLeft + 14, rdRect.y + 12);
         c.restore();
       }
 
-      // GTA Weapon Wheel Overlay (2 x 4 for 8 weapons + reload button)
+      // Burner Phone Call Banner (compact bottom subtitle zone)
+      if (phoneT > 0 && phoneLine && !weaponWheelOpen && !radioWheelOpen) {
+        c.save();
+        c.globalAlpha = Math.min(1, phoneT * 2);
+        c.fillStyle = 'rgba(8, 18, 28, 0.82)';
+        c.beginPath(); c.roundRect(phoneCardRect.x, phoneCardRect.y, phoneCardRect.w, phoneCardRect.h, 7); c.fill();
+        c.strokeStyle = '#38f8b0'; c.lineWidth = 1; c.stroke();
+        c.font = '700 8.5px Rubik, sans-serif';
+        c.textAlign = 'left';
+        c.fillStyle = '#38f8b0';
+        c.fillText(fitText(c, 'ph1', phoneTitleStr, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 10);
+        c.font = '500 8.5px Rubik, sans-serif';
+        c.fillStyle = '#e8f4ff';
+        c.fillText(fitText(c, 'ph2', phoneLine1, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 21);
+        c.fillText(fitText(c, 'ph3', phoneLine2, phoneCardRect.w - 14), phoneCardRect.x + 8, phoneCardRect.y + 30);
+        c.restore();
+      }
+
+      // Bottom Subtitle Zone: Toast Banner OR Quiet Objective Line
+      if (bannerT > 0 && bannerText && phoneT <= 0 && !weaponWheelOpen && !radioWheelOpen && !overKind) {
+        const banY = (inCar || inBoat || inHeli) ? H - 140 : H - 116;
+        c.save();
+        c.globalAlpha = Math.min(1, bannerT * 2);
+        c.font = '700 10.5px Rubik, sans-serif';
+        c.textAlign = 'center';
+        const banTxt = fitText(c, 'ban', bannerText, W - 40);
+        const banW = Math.min(W - 28, Math.max(96, Math.ceil(c.measureText(banTxt).width + 20)));
+        const banX = Math.round((W - banW) * 0.5);
+        c.fillStyle = 'rgba(8, 12, 20, 0.68)';
+        c.beginPath();
+        c.roundRect(banX, banY, banW, 20, 6);
+        c.fill();
+        c.fillStyle = bannerCol;
+        c.fillText(banTxt, W * 0.5, banY + 13);
+        c.restore();
+      } else if (!weaponWheelOpen && !radioWheelOpen && !overKind && phoneT <= 0 && hudSub) {
+        c.save();
+        c.font = '600 9.5px Rubik, sans-serif';
+        c.textAlign = 'center';
+        drawShadowText(c, fitText(c, 'sub', hudSub, W - 24), W * 0.5, H - 7, 'rgba(235, 244, 255, 0.88)');
+        c.restore();
+      }
+
+      // GTA Weapon Wheel Overlay (2 x 4 for 8 weapons + Reload / Swap / Cam / Radio footer)
       if (weaponWheelOpen) {
         const px = wheelPanelRect.x, py = wheelPanelRect.y, pw = wheelPanelRect.w;
+        if (otherLead.name !== lastSwapName) {
+          lastSwapName = otherLead.name;
+          lastSwapStr = `SWAP ${otherLead.name.toUpperCase()}`;
+        }
         c.save();
         c.fillStyle = 'rgba(8, 12, 22, 0.92)';
         c.beginPath(); c.roundRect(px, py, pw, wheelPanelRect.h, 12); c.fill();
         c.strokeStyle = '#ffd166'; c.lineWidth = 1.5; c.stroke();
         c.font = '700 12px Rubik, sans-serif'; c.fillStyle = '#ffd166'; c.textAlign = 'center';
-        c.fillText('ARSENAL WHEEL', px + pw * 0.5, py + 22);
+        c.fillText('ARSENAL WHEEL', px + pw * 0.5, py + 20);
 
         const colW = Math.floor((pw - 30) / 2);
         for (let i = 0; i < WEAPON_ORDER.length; i++) {
           const k = WEAPON_ORDER[i];
           const col = i % 2, row = Math.floor(i / 2);
           const bx = px + 10 + col * (colW + 10);
-          const by = py + 32 + row * 42;
+          const by = py + 28 + row * 40;
           const owned = activeLead.unlocked.has(k);
           const equipped = activeLead.weaponKind === k;
           c.fillStyle = equipped ? 'rgba(255, 209, 102, 0.28)' : owned ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
-          c.beginPath(); c.roundRect(bx, by, colW, 36, 7); c.fill();
+          c.beginPath(); c.roundRect(bx, by, colW, 35, 7); c.fill();
           c.strokeStyle = equipped ? '#ffd166' : 'rgba(255,255,255,0.18)'; c.lineWidth = 1; c.stroke();
           c.textAlign = 'left'; c.font = '700 10px Rubik, sans-serif';
           c.fillStyle = owned ? '#ffffff' : '#7b879c';
-          c.fillText(WEAPON_LABELS[k], bx + 8, by + 15);
+          c.fillText(WEAPON_LABELS[k], bx + 8, by + 14);
           c.font = '500 9px Rubik, sans-serif';
           const g = activeLead.guns[k];
           const sub = !owned ? `ARMS $${WEAPON_COSTS[k]}` : g ? `${g.ammo}/${activeLead.pouch.count(ARSENAL[k].ammo)}` : k === 'grenade' ? `${activeLead.pouch.count('grenades')} LEFT` : 'MELEE';
           c.fillStyle = owned ? '#a6c4e0' : '#ffb24a';
-          c.fillText(sub, bx + 8, by + 29);
+          c.fillText(sub, bx + 8, by + 27);
         }
-        // Reload button at bottom of wheel
-        const rby = py + 206;
+
+        const halfW = Math.floor((pw - 26) / 2);
+        const rx2 = px + 16 + halfW;
+        const rby1 = py + 194;
+        const rby2 = py + 226;
+
         c.fillStyle = 'rgba(56, 248, 176, 0.2)';
-        c.beginPath(); c.roundRect(px + 10, rby, pw - 20, 32, 7); c.fill();
-        c.fillStyle = '#38f8b0'; c.textAlign = 'center'; c.font = '700 11px Rubik, sans-serif';
-        c.fillText('RELOAD ACTIVE WEAPON [R]', px + pw * 0.5, rby + 20);
+        c.beginPath(); c.roundRect(px + 10, rby1, halfW, 28, 7); c.fill();
+        c.strokeStyle = 'rgba(56, 248, 176, 0.45)'; c.lineWidth = 1; c.stroke();
+        c.fillStyle = '#38f8b0'; c.textAlign = 'center'; c.font = '700 10px Rubik, sans-serif';
+        c.fillText('RELOAD', px + 10 + halfW * 0.5, rby1 + 18);
+
+        c.fillStyle = 'rgba(126, 232, 255, 0.18)';
+        c.beginPath(); c.roundRect(rx2, rby1, halfW, 28, 7); c.fill();
+        c.strokeStyle = 'rgba(126, 232, 255, 0.45)'; c.stroke();
+        c.fillStyle = '#7ee8ff';
+        c.fillText(fitText(c, 'wswap', lastSwapStr, halfW - 10), rx2 + halfW * 0.5, rby1 + 18);
+
+        c.fillStyle = fpsAim ? 'rgba(126, 232, 255, 0.24)' : 'rgba(255, 255, 255, 0.08)';
+        c.beginPath(); c.roundRect(px + 10, rby2, halfW, 26, 7); c.fill();
+        c.strokeStyle = 'rgba(216, 232, 255, 0.25)'; c.stroke();
+        c.fillStyle = '#d8e8ff'; c.font = '700 9.5px Rubik, sans-serif';
+        c.fillText(fpsAim ? 'CAM · 1ST-P' : 'CAM · 3RD-P', px + 10 + halfW * 0.5, rby2 + 16);
+
+        c.fillStyle = cachedRadOn ? 'rgba(255, 178, 74, 0.22)' : 'rgba(255, 255, 255, 0.08)';
+        c.beginPath(); c.roundRect(rx2, rby2, halfW, 26, 7); c.fill();
+        c.strokeStyle = cachedRadOn ? 'rgba(255, 178, 74, 0.5)' : 'rgba(255, 255, 255, 0.2)'; c.stroke();
+        c.fillStyle = '#ffb24a';
+        c.fillText(fitText(c, 'wrad', cachedRadShort, halfW - 10), rx2 + halfW * 0.5, rby2 + 16);
         c.restore();
       }
 
@@ -4525,8 +4546,8 @@ function make(api) {
         for (let i = 0; i < WEAPON_ORDER.length; i++) {
           const col = i % 2, row = Math.floor(i / 2);
           const bx = px + 10 + col * (colW + 10);
-          const by = py + 32 + row * 42;
-          if (x >= bx && x <= bx + colW && y >= by && y <= by + 36) {
+          const by = py + 28 + row * 40;
+          if (x >= bx && x <= bx + colW && y >= by && y <= by + 35) {
             const k = WEAPON_ORDER[i];
             if (equipWeapon(activeLead, k)) {
               sounds.click();
@@ -4537,10 +4558,36 @@ function make(api) {
             return;
           }
         }
-        const rby = py + 206;
-        if (x >= px + 10 && x <= px + pw - 10 && y >= rby && y <= rby + 32) {
-          triggerReload();
-          weaponWheelOpen = false;
+        const halfW = Math.floor((pw - 26) / 2);
+        const rx2 = px + 16 + halfW;
+        const rby1 = py + 194;
+        const rby2 = py + 226;
+        if (y >= rby1 && y <= rby1 + 28) {
+          if (x >= px + 10 && x <= px + 10 + halfW) {
+            triggerReload();
+            weaponWheelOpen = false;
+            return;
+          }
+          if (x >= rx2 && x <= rx2 + halfW) {
+            swapKey = true;
+            weaponWheelOpen = false;
+            return;
+          }
+        }
+        if (y >= rby2 && y <= rby2 + 26) {
+          if (x >= px + 10 && x <= px + 10 + halfW) {
+            fpsAim = !fpsAim;
+            if (aimMode) setAimMode(true);
+            sounds.click();
+            say(fpsAim ? 'First-Person ADS Active' : 'Over-Shoulder ADS Active', '#7ee8ff', 1.8);
+            return;
+          }
+          if (x >= rx2 && x <= rx2 + halfW) {
+            weaponWheelOpen = false;
+            radioWheelOpen = true;
+            sounds.click();
+            return;
+          }
         }
         return;
       }
@@ -4571,18 +4618,10 @@ function make(api) {
       }
 
       if (hitBox(mr, x, y)) { gps.open(); return; }
-      if (hitBox(swapRect, x, y)) { swapKey = true; return; }
       if (hitBox(gunRect, x, y)) { weaponWheelOpen = true; radioWheelOpen = false; sounds.click(); return; }
 
       if (!inCar && !inBoat && !inHeli) {
         if (hitBox(covRect, x, y)) { coverKey = true; return; }
-        if (hitBox(camRect, x, y)) {
-          fpsAim = !fpsAim;
-          if (aimMode) setAimMode(true);
-          sounds.click();
-          say(fpsAim ? 'First-Person ADS Active' : 'Over-Shoulder ADS Active', '#7ee8ff', 1.8);
-          return;
-        }
       } else if (inCar && activeCarProfile.cop && hitBox(covRect, x, y)) {
         activeCarMesh?.siren?.(!activeCarMesh.sirenOn);
         sounds.click();
@@ -4607,9 +4646,11 @@ function make(api) {
         return;
       }
 
-      if (hitBox(rdPrevRect, x, y)) { tuneRadioStation((radio.power ? radio.index : 0) - 1); return; }
-      if (hitBox(rdNextRect, x, y)) { tuneRadioStation(radio.power ? radio.index + 1 : 0); return; }
-      if (hitBox(rdRect, x, y)) { radioWheelOpen = true; weaponWheelOpen = false; sounds.click(); return; }
+      if (inCar || inBoat || inHeli) {
+        if (hitBox(rdPrevRect, x, y)) { tuneRadioStation((radio.power ? radio.index : 0) - 1); return; }
+        if (hitBox(rdNextRect, x, y)) { tuneRadioStation(radio.power ? radio.index + 1 : 0); return; }
+        if (hitBox(rdRect, x, y)) { radioWheelOpen = true; weaponWheelOpen = false; sounds.click(); return; }
+      }
 
       pad.down(x, y, id);
       let padClaimed = pad.left.id === id;

@@ -222,10 +222,15 @@ export function promote(L, p) {
   const src = L.folk[p.kind], m = L.members[L.list.indexOf(p)]; if (!src || !m) return null;
   const body = src.twin(); addMoves(body.rig);
   body.lod = 1;
+  body.userData.noFade = true;
+  if (body.rig) body.rig.steps = false;
+  if (body.breath) body.breath.on = false;
+  if (body.idle) body.idle.on = false;
+  if (body.rig?.follow) body.rig.follow.amount = 0;
   body.scale.setScalar(L.sizes[p.kind] * p.h); body.position.set(p.x, L.yOf(p), p.z); body.rotation.y = p.heading;
   L.city.group.add(body);
   const react = new Reactions(body, { rest: 1.1 + L.R() * .8 });
-  p.full = { body, react, move: null, speed: 0, look: 0 }; m.hide = true;
+  p.full = { body, react, move: null, speed: 0, look: 0, rigTick: 0, rigDt: 0 }; m.hide = true;
   L.fulls.add(p);
   return p.full;
 }
@@ -236,6 +241,8 @@ export function demote(L, p) {
   const m = L.members[L.list.indexOf(p)]; if (m) { m.hide = false; m.x = p.x; m.z = p.z; m.turn = p.heading; }
   p.full = null; L.fulls.delete(p);
 }
+const WALK_BLEND = { idle: 0, walk: 1.4, run: 4 };
+const _rigOpts = { speed: 0, toward: null }, _toward = { x: 0, z: 0 };
 /** Each frame: who is promoted (the nearest few to the camera), and the full people posed from what they are doing. */
 export function fullStep(L, dt) {
   if (!L.crowd || !L.folk) return;
@@ -259,10 +266,17 @@ export function fullStep(L, dt) {
     const sp = dt > 0 ? Math.hypot(p.x - ox, p.z - oz) / dt : 0; f.speed += (Math.min(sp, 7) - f.speed) * Math.min(1, dt * 8);
     B.rotation.y += wrap(p.heading - B.rotation.y) * Math.min(1, dt * 9);
     const move = p.act ? p.act.move : null;
-    if (move) { if (f.move !== move) { B.rig.play(move); f.move = move; } }
-    else { f.move = null; B.rig.blend({ idle: 0, walk: 1.4, run: 4 }, f.speed); }
-    B.rig.update(dt, { speed: f.speed, toward: p.free ? { x: p.free.x, z: p.free.z } : null });
-    R.update(dt);
+    const calm = R.state === 'steady' && !R.own && !(R.guardT > 0) && !(R.ik > 0);
+    f.rigDt = (f.rigDt || 0) + dt;
+    if (!calm || (f.rigTick = (f.rigTick || 0) ^ 1)) {
+      const rdt = f.rigDt; f.rigDt = 0;
+      if (move) { if (f.move !== move) { B.rig.play(move); f.move = move; } }
+      else { f.move = null; B.rig.blend(WALK_BLEND, f.speed); }
+      if (p.free) { _toward.x = p.free.x; _toward.z = p.free.z; _rigOpts.toward = _toward; } else _rigOpts.toward = null;
+      _rigOpts.speed = f.speed;
+      B.rig.update(rdt, _rigOpts);
+      R.update(rdt);
+    }
     // eyes on the camera when it is close (not while on the phone)
     if (B.face && (f.look -= dt) <= 0) { f.look = .5; const d = Math.hypot(p.x - cx, p.z - cz); B.face.look(d < 4 && move !== 'phone' && cam ? cam : null); }
   }

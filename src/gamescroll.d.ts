@@ -4462,6 +4462,8 @@ export interface CrowdT {
   visible: boolean;
   /** 0, 1 or 2: every member at that one of its figure's own levels of detail. null (the default): by its size on screen. */
   lod: number | null;
+  /** Coarsest own level allowed when picking by size on screen (0: all levels; 1: skip level 0). */
+  minLod: number;
   /** Metres past which nobody is drawn. */
   far: number;
   /** What the last update() drew: members, how many were sent to be drawn, how many at each level of detail (finest first), draws and triangles a frame. */
@@ -5267,6 +5269,7 @@ export interface CityPart {
     /** The climate of the land and of every district that has none of its own (its style's, else this). Its hills by default: tropical .1, wetland 0. */ climate?: CityClimate; /** The water drawn as one gs.outdoors Sea (as City's). */ sea?: boolean | Loose; /** Metres from a district within which it is made (380). */ live?: number; /** ms a frame spent making one (3). */ budget?: number;
     /** How hilly the land between and round the districts is, 0..1 (.5; districts stay level). */ hills?: number; /** A river down the gap between the first two districts, bridged (true). */ river?: boolean;
     /** A highway round the whole city on piers, with a slip road to each district it can reach (true). */ highway?: boolean;
+    /** Grid spacing in metres for the land mesh between districts (6). */ landCell?: number;
     side?: 'right' | 'left'; at?: { x: number; z: number } | null; keep?: number; far?: boolean | number; night?: number; sky?: Loose; lamps?: boolean; sound?: boolean; traffic?: number; people?: number; paint?: boolean; crowd?: boolean; link?: boolean; [option: string]: Loose }) => CityMetro;
   /** A driving route across a plan's roads (from layout()), with no 3D: as City.route(). */
   routeOn(plan: CityPlan, a: { x: number; z?: number; y?: number }, b: { x: number; z?: number; y?: number }): { points: [number, number][]; path: Loose; length: number; nodes: CityPlan['nodes'] };

@@ -3851,6 +3851,10 @@ export class HDView {
     // (baked for a round being played or got ready, not for a card in the feed; pics: how many pictures a material may read)
     if (this._baked && HD.baked !== false) { const g = gpuFor(this); this._baked.before(g, !baking && !speed.offscreen && (getready.warming || speed.playing()), g ? g.r?.backend?.device?.limits?.maxSampledTexturesPerShaderStage ?? 16 : R?.capabilities?.maxTextures); }
     else this._baked?.hide();
+    if (this._groundPaint && !speed.offscreen) {
+      if (this._onGpu === undefined) gpuFor(this);
+      this._groundPaint.update(this.cam.position);
+    }
     // (far from the world's centre: drawn with every place worked out from near the camera, origin.js)
     const t0 = performance.now(), near = !baking && speed.offscreen ? false : originOn(this), t1 = performance.now();
     try { this.draw3d(c, w, h, baking); } finally { const t2 = performance.now(); if (near) originOff(this); if (!baking) HD.info.originMs = t1 - t0 + performance.now() - t2; }
@@ -4705,7 +4709,7 @@ function fadeOn(v, G, r, smooth, still) {
   const keep = v._fadeKeep ||= []; keep.length = 0;
   const ready = still ? NOT_NOW : fadeReady(v, G, r, 'object');
   fadeStep(v.scene, ready, smooth, FADE_LIST);
-  if (!still && !fadeBusy.has(r) && !getready.warming) fadeAhead(v, r, ready);   // (not under a loading screen: it waits for no more than it did)
+  if (!still && FADE.on && !fadeBusy.has(r) && !getready.warming) fadeAhead(v, r, ready);   // (not under a loading screen: it waits for no more than it did)
   for (let i = 0; i < FADE_LIST.length; i += 3) {
     const o = FADE_LIST[i], val = FADE_LIST[i + 1], casts = FADE_LIST[i + 2];
     keep.push(o, o.material, o.visible, o.castShadow, o.onBeforeRender);

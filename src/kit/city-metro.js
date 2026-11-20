@@ -146,7 +146,7 @@ export class Metro {
    * options (traffic, people, night, sky, lamps, sound, side, rooms, dress, parked, walls, detail...) go to every district.
    */
   constructor(view, { seed = 1, districts = 4, between = [120, 240], side = 'right', at = null, live = 380, budget = 3, keep = 600, far = false, night = null, sky = null,
-    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = null, river = true, highway = true, climate = null, coast = 'south', bay = 420, sea = false, ...over } = {}) {
+    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = null, river = true, highway = true, climate = null, coast = 'south', bay = 420, sea = false, landCell = null, ...over } = {}) {
     this.view = view; this.seed = seed; this.live = live; this.budget = budget; this.t = 0;
     this.links = linksFor(view, link); this.links?.join('city', this);
     this.sky = sky || null; this.seeksSky = sky == null && night == null && !!this.links; this._night = night ?? 0;
@@ -171,7 +171,7 @@ export class Metro {
     view.occluders?.(this.occluders());
     // the roads between the districts, then the land under everything that is not a district or the sea
     this.connectors = this.connect();
-    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, grass: CL.grass, waters: M.waters });
+    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, grass: CL.grass, waters: M.waters, ...(landCell ? { cell: landCell } : {}) });
     // the water of the whole city as one thing to find: each district's shore and ponds first, then the river, bay and sea
     // between (links.js 'water': swimmers, boats, floating things, rain and splashes); a gs.outdoors Sea drawn for it with sea
     const ws = this.ways;
@@ -308,7 +308,7 @@ export class Metro {
       v.placeLamps(all, f.x, 2, f.z, this.t);
     } else if (v.lamps?.length) for (const l of v.lamps) l.intensity = 0;
     this.crowd?.update(dt);
-    this.paint?.update(v.cam.position);
+    if (this.paint && v._groundPaint !== this.paint) this.paint.update(v.cam.position);
     this.far?.update(this._night);
     return this;
   }

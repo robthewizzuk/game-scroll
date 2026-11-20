@@ -269,24 +269,36 @@ export class Fleet {
   freeSlot(c) { const F = this.far[c.style]; if (!F || c.slot == null) return; this.drop(c); F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); (F.free ||= []).push(c.slot); F.paint.instanceMatrix.needsUpdate = F.rest.instanceMatrix.needsUpdate = true; }
   kitOf(c) { return this.kits[c.style]; }
   draw(list, night, dt) {
+    if (!list.length && !this.close.size) return;
     // which cars are drawn whole: the nearest few within reach (a car already close keeps it a little further)
-    const f = this.focus, d2 = this._d2 ||= [];
-    d2.length = 0;
+    const f = this.focus, d2 = this._d2 ||= [], pool = this._d2Pool ||= [], want = this._want ||= new Set(), dropList = this._drop ||= [];
+    d2.length = 0; want.clear(); dropList.length = 0;
+    let dn = 0;
     // (and among them a car already close counts as a few metres nearer, so two cars about as far off don't swap back and
     // forth between whole and copy, their lamps and headlights with them, as they drive along)
-    if (f) for (const c of list) { const d = Math.hypot(c.x - f.x, c.z - f.z), was = this.close.has(c), r = was ? this.reach + 6 : this.reach; if (d < r) d2.push([was ? d - 5 : d, c]); }
-    d2.sort((a, b) => a[0] - b[0]);
-    const want = new Set(d2.slice(0, this.nearMax).map(e => e[1]));
-    for (const c of [...this.close.keys()]) if (!want.has(c)) this.drop(c);
+    if (f && this.nearMax > 0) {
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i], d = Math.hypot(c.x - f.x, c.z - f.z), was = this.close.has(c), r = was ? this.reach + 6 : this.reach;
+        if (d < r) {
+          let e = pool[dn]; if (!e) e = pool[dn] = { d: 0, c: null };
+          e.d = was ? d - 5 : d; e.c = c; d2[dn++] = e;
+        }
+      }
+      if (dn > 1) d2.sort((a, b) => a.d - b.d);
+      for (let i = 0, lim = Math.min(dn, this.nearMax); i < lim; i++) want.add(d2[i].c);
+      for (let i = 0; i < dn; i++) d2[i].c = null;
+    }
+    for (const c of this.close.keys()) if (!want.has(c)) dropList.push(c);
+    for (let i = 0; i < dropList.length; i++) this.drop(dropList[i]);
     for (const c of want) if (!this.close.has(c)) this.take(c);
     for (const F of this.far) { F.paint.count = F.rest.count = F.n; }
-    for (const c of list) {
-      const F = this.far[c.style];
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i], F = this.far[c.style];
       if (this.close.has(c)) { F.paint.setMatrixAt(c.slot, ZERO); F.rest.setMatrixAt(c.slot, ZERO); this.pose(c, this.close.get(c), dt, night); continue; }
       turnOf(c, _q); _m.compose(_p.set(c.x, c.y || 0, c.z), _q, _s);
       F.paint.setMatrixAt(c.slot, _m); F.rest.setMatrixAt(c.slot, _m); F.paint.setColorAt(c.slot, paintOf(c));
     }
-    for (const F of this.far) { sendUsed(F.paint.instanceMatrix, F.n); sendUsed(F.rest.instanceMatrix, F.n); sendUsed(F.paint.instanceColor, F.n); }
+    for (const F of this.far) if (F.n > 0) { sendUsed(F.paint.instanceMatrix, F.n); sendUsed(F.rest.instanceMatrix, F.n); sendUsed(F.paint.instanceColor, F.n); }
     const hm = lampMat('head'), tm = lampMat('tail');
     hm.emissiveIntensity = .05 + night * 3.2; tm.emissiveIntensity = .1 + night * 1.6; lampMat('brake').emissiveIntensity = 2.2 + night * 1.4;
   }
@@ -343,11 +355,12 @@ export class Fleet {
     }
     r.h = c.heading; r.v = c.v;
     r.body.rotation.set(r.pitch, 0, r.lean);
-    k.wheels.forEach((w, i) => {
+    for (let i = 0; i < k.wheels.length; i++) {
+      const w = k.wheels[i];
       _w.position.set(w.x, w.y, w.z); _w.rotation.order = 'YXZ'; _w.rotation.set(-r.odo / w.r, w.steers ? -r.steer : 0, 0); _w.updateMatrix();
       if (w.flip) _w.matrix.multiply(_m.makeRotationY(Math.PI));
       r.wheels.setMatrixAt(i, _w.matrix);
-    });
+    }
     r.wheels.instanceMatrix.needsUpdate = true;
     if (r.tail) r.tail.material = lampMat(c.braking ? 'brake' : 'tail');
     this.driverOf(c, r, k);

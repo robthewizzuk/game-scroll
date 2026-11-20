@@ -1088,7 +1088,7 @@ const FOLK = [
   { seed: 36, sex: 'f', hairStyle: 'short', body: '#e0b84a', legs: '#24324f', strands: false },
 ];
 /** One of the city's people as a full person (gs.models human), for the wheel of a car taken from the traffic. */
-export const cityDriver = (i = 0) => human(FOLK[Math.abs(i | 0) % FOLK.length]);
+export const cityDriver = (i = 0) => { const h = human(FOLK[Math.abs(i | 0) % FOLK.length]); h.lod = 1; h.userData.noFade = true; return h; };
 /** The sculpted people a city's pavements are full of, as one gs.props Crowd (a big city's districts share one: gs.city Metro); its folk and sizes are the figures it was made from (city-life.js promote). */
 export function cityCrowd(view) {
   const folk = FOLK.map(o => { const h = human(o); addMoves(h.rig); return h; }), sizes = folk.map(h => h.scale.y || 1);
@@ -1684,7 +1684,7 @@ export class City {
       this.view.placeLamps(near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f); else if (this.hum) { this.hum.stop(); this.hum = null; }
-    if (!this.sharedPaint) this.groundPaint?.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
+    if (!this.sharedPaint && this.groundPaint && this.view._groundPaint !== this.groundPaint) this.groundPaint.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
     this.far?.update(this.night);
     this.sea?.update(dt, this.view.cam.position);
     this.plantTick?.(null, this.view.scene);   // (the palms' fronds sway on the plants' clock)

@@ -38,7 +38,7 @@ let drawn = 0;
 /** Marks root as a thing whose level changes can fade (gs.models.human and creature call it); parts(): every object any of its levels shows. */
 export function fadeable(root, parts = null) { ROOTS.add(root); root.userData.gsSeen = -9; if (parts) PARTS.set(root, parts); return root; }
 /** Each fadeable thing a view drew this frame (after fadeStep), with every object its levels show: fn(root, parts); false from fn stops. */
-export function fadeAheadList(fn) { for (const r of ROOTS) if (r.userData.gsSeen === drawn && fn(r, PARTS.get(r)?.() || r.lods || []) === false) return; }
+export function fadeAheadList(fn) { for (const r of ROOTS) if (r.userData.gsSeen === drawn && !r.userData.noFade && fn(r, PARTS.get(r)?.() || r.lods || []) === false) return; }
 // shown: the root and everything above it visible, in a scene
 function shown(o) { let x = o; for (; x; x = x.parent) { if (!x.visible) return false; if (x.isScene) return true; } return false; }
 
@@ -58,7 +58,7 @@ export function fadeLevels(root, from, to, done) {
     }
     finish(root, f);
   }
-  const on = FADE.on && root.userData.gsSeen >= drawn - 1 && shown(root);
+  const on = FADE.on && !root.userData.noFade && root.userData.gsSeen >= drawn - 1 && shown(root);
   if (!on) { show(from, false); show(to, true); done?.(); return false; }
   show(to, true);
   FADING.set(root, { from, to, t: 0, at: performance.now(), t0: performance.now(), wait: 0, done });
