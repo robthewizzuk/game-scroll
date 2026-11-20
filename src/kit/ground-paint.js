@@ -215,9 +215,9 @@ export class GroundPaint {
   /**
    * view: an HDView. levels: [[size in metres, texels], ...] fine first (two). perFrame: strips painted a frame at most.
    */
-  constructor(view, { levels = [[32, 1024], [128, 1024]], perFrame = 2 } = {}) {
+  constructor(view, { levels = [[32, 1024], [128, 1024]], perFrame = 2, onRender = false } = {}) {
     this.view = view; this.perFrame = perFrame;
-    if (view && typeof view.render === 'function') view._groundPaint = this;
+    if (onRender && view && typeof view.render === 'function') view._groundPaint = this;
     this.levels = levels.slice(0, 2).map(([size, px]) => ({ size, px, cx: NaN, cz: NaN, rt: null, gpu: null, todo: [] }));
     while (this.levels.length < 2) this.levels.push({ ...this.levels[0], todo: [] });
     // (looking straight down, +x to the right and -z up the picture: the pictures' rows run along -z, so v = -z / size)

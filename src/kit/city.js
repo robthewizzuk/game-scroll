@@ -1429,7 +1429,7 @@ export class City {
     }
     if (!this.water) this.water = null;
     // the ground with no repeats: painted round the camera from what each piece is, read in place of the tiled pictures
-    this.groundPaint = this.sharedPaint || (paint ? new GroundPaint(view) : null);
+    this.groundPaint = this.sharedPaint || (paint ? new GroundPaint(view, { onRender: true }) : null);
     if (this.groundPaint) {
       this.groundPaint.add(road, 'asphalt', { base: S.ground }); if (ground) this.groundPaint.add(ground, 'grass', { base: grassCol });
       if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });

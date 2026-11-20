@@ -163,7 +163,7 @@ export class Metro {
       carKit('police');
     }
     this.crowd = crowd && people > 0 ? cityCrowd(view) : null;
-    this.paint = paint ? new GroundPaint(view) : null;
+    this.paint = paint ? new GroundPaint(view, { onRender: true }) : null;
     this.next = []; this.events = [];
     // every material the districts can be built with, built with the rest before play (a district made later builds no shaders)
     this.warmers = cityWarmers(this.districts.map(d => d.plan), { dress: over.dress ?? true, walls: over.walls ?? true }); this.group.add(this.warmers);

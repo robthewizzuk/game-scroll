@@ -1241,12 +1241,12 @@ function ground({ gs, size }) {
   const sky = new gs.sky.Sky(v, { time: 11.5, speed: 0, stars: 0, sun, physical: true, fog: true, env: true });
   const blocks = size < .3 ? 2 : Math.max(3, Math.round(5 * Math.sqrt(Math.min(1, size)))), busy = Math.max(.2, Math.min(.6, size));
   let city = null, mode = '';
-  const sum = { n: 0, ms: 0, t: 0, strips: 0, texels: 0 };
+  const sum = { n: 0, ms: 0, t: 0, s0: null, x0: null };
   const enter = key => async draw => {
     const t0 = performance.now(), opts = { seed: 11, blocks, style: 'oldtown', sky, traffic: busy, people: busy, crowd: false, sound: false, paint: key === 'on', walls: key === 'on' };
     let done = false, err = null; City.ready(opts).then(() => { done = true; }, e => { err = e; done = true; });
     await until(draw, () => done); if (err) throw err;
-    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0, strips: 0, texels: 0 });
+    city?.dispose(); city = new City(v, opts); city.warm(); mode = key; Object.assign(sum, { n: 0, ms: 0, t: 0, s0: null, x0: null });
     const build = performance.now() - t0;
     for (let i = 0; i < 4; i++) await draw();
     return { build, note: `${num(city.plan.buildings.length)} buildings, ${num(city.parked.length)} parked cars${city.groundPaint ? `, ${num(city.groundPaint.stamps.length)} marks on the ground` : ''}` };
@@ -1266,14 +1266,17 @@ function ground({ gs, size }) {
       const span = B.x1 - B.x0 - 30, x = B.x0 + 15 + (t * 9) % span;
       cam.position.set(x, 1.3, z); ahead.set(x + 14, .2, z + .6 * Math.sin(t * .3)); cam.lookAt(ahead); cam.updateMatrixWorld();
       sun.follow(x, 0, z); sky.update(dt);
-      const i0 = city.groundPaint?.info, s0 = i0 ? i0.strips : 0, x0 = i0 ? i0.texels : 0;
+      const i0 = city.groundPaint?.info;
+      if (i0 && sum.s0 == null) { sum.s0 = i0.strips; sum.x0 = i0.texels; }
       const t0 = performance.now(); city.update(dt, cam.position); sum.ms += performance.now() - t0; sum.n++;
-      if (i0) { sum.strips += i0.strips - s0; sum.texels += i0.texels - x0; }
     },
     tell() {
       if (!city || !sum.n) return null;
       const ms = `the city's code ${(sum.ms / sum.n).toFixed(2)} ms a frame`;
-      return mode === 'off' ? ms : `${ms} · ${num(sum.strips)} strips painted, ${num(sum.texels / sum.n)} texels a frame · ${num(city.groundPaint.stamps.length)} marks · ${num(city.wallMarks || 0)} things on the walls`;
+      const i0 = city.groundPaint?.info;
+      const strips = i0 && sum.s0 != null ? i0.strips - sum.s0 : 0;
+      const texels = i0 && sum.x0 != null ? i0.texels - sum.x0 : 0;
+      return mode === 'off' ? ms : `${ms} · ${num(strips)} strips painted, ${num(texels / sum.n)} texels a frame · ${num(city.groundPaint.stamps.length)} marks · ${num(city.wallMarks || 0)} things on the walls`;
     },
     dispose() { city?.dispose(); city = null; sky.dispose(); clear(v); },
   };
