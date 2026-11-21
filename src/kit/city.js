@@ -1962,28 +1962,64 @@ export class City {
   // the bodies of the nearest cars and people follow them (a few of each, round the player)
   solidSync() {
     const S = this.bodies; if (!S || !S.world.world) return;
-    const W = S.world, f = this.focus || this.start || { x: 0, z: 0 }, far = { x: f.x, y: -500, z: f.z };
-    const fill = (pool, n, make) => { for (let i = 0; i < pool.length; i++) if (pool[i].dead) pool.splice(i--, 1); while (pool.length < n) pool.push(make()); };
-    fill(S.cars, S.ncars, () => { const b = W.box(null, 1.9, 1.45, 4.5, { moving: true, at: far, tag: 'car', sound: 'metal' }); b.car = null; b.owner = this; return b; });
-    fill(S.people, S.npeople, () => { const b = W.capsule(null, .28, 1.7, { moving: true, at: far, tag: 'person', sound: 'body' }); b.person = null; b.owner = this; return b; });
-    const near = (list, n, ok) => { const out = []; for (const c of list) { if (!ok(c)) continue; const d = Math.abs(c.x - f.x) + Math.abs(c.z - f.z); if (d < S.within * 1.4) out.push([d, c]); } return out.sort((a, b) => a[0] - b[0]).slice(0, n).map(x => x[1]); };
-    const go = (pool, want, put) => {
-      const keep = new Set(want), free = [];
-      for (const b of pool) if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b);
-      for (const who of keep) { const b = free.pop(); if (!b) break; b.who = who; put(b, who, true); }
-      for (const b of free) if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); }
-      for (const b of pool) if (b.who) put(b, b.who, false);
+    const W = S.world, f = this.focus || this.start || { x: 0, z: 0 };
+    const far = S._far ||= { x: 0, y: -500, z: 0 }; far.x = f.x; far.y = -500; far.z = f.z;
+    for (let i = 0; i < S.cars.length; i++) if (S.cars[i].dead) S.cars.splice(i--, 1);
+    while (S.cars.length < S.ncars) { const b = W.box(null, 1.9, 1.45, 4.5, { moving: true, at: far, tag: 'car', sound: 'metal' }); b.car = null; b.owner = this; S.cars.push(b); }
+    for (let i = 0; i < S.people.length; i++) if (S.people[i].dead) S.people.splice(i--, 1);
+    while (S.people.length < S.npeople) { const b = W.capsule(null, .28, 1.7, { moving: true, at: far, tag: 'person', sound: 'body' }); b.person = null; b.owner = this; S.people.push(b); }
+    const lim = S.within * 1.4, want = S._want ||= [], dists = S._dists ||= [], keep = S._keep ||= new Set(), free = S._free ||= [];
+    const tv = S._tv ||= { x: 0, y: 0, z: 0 }, tq = S._tq ||= { x: 0, y: 0, z: 0, w: 1 }, the = S._the ||= { x: 0, y: .72, z: 0 };
+    const pickNear = (list, n, isCar) => {
+      want.length = 0; dists.length = 0;
+      if (n <= 0) return;
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i]; if (isCar ? c.body : c.down > 0) continue;
+        const d = Math.abs(c.x - f.x) + Math.abs(c.z - f.z); if (d >= lim) continue;
+        let k = want.length;
+        if (k === n && d >= dists[k - 1]) continue;
+        if (k < n) { want.push(c); dists.push(d); } else { want[k - 1] = c; dists[k - 1] = d; k--; }
+        while (k > 0 && dists[k] < dists[k - 1]) {
+          const td = dists[k]; dists[k] = dists[k - 1]; dists[k - 1] = td;
+          const tc = want[k]; want[k] = want[k - 1]; want[k - 1] = tc; k--;
+        }
+      }
     };
-    const qy = h => ({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) });
-    go(S.cars, near(this.cars.list, S.ncars, c => !c.body), (b, c, jump) => {
-      const p = W.inner({ x: c.x, y: .75 + (c.y || 0), z: c.z }), r = qy(c.heading);   // (y: a big city's cars on its bridges and highway)
-      if (jump) { b.collider.setHalfExtents({ x: c.wid / 2, y: .72, z: c.len / 2 }); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(r, false); }
-      else { b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(r); }
-    });
-    go(S.people, near(this.people.list, S.npeople, q => q.down <= 0), (b, q, jump) => {
-      const y = (this.ground(q.x, q.z) || 0) + .85 * q.h, p = W.inner({ x: q.x, y, z: q.z });
-      if (jump) { b.person = q; b.body.setTranslation(p, false); } else b.body.setNextKinematicTranslation(p);
-    });
+    // cars
+    pickNear(this.cars.list, S.ncars, true);
+    keep.clear(); free.length = 0;
+    for (let i = 0; i < want.length; i++) keep.add(want[i]);
+    for (let i = 0; i < S.cars.length; i++) { const b = S.cars[i]; if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b); }
+    for (const c of keep) {
+      const b = free.pop(); if (!b) break; b.who = c;
+      tv.x = c.x; tv.y = .75 + (c.y || 0); tv.z = c.z; const p = W.inner(tv);
+      tq.y = Math.sin(c.heading * .5); tq.w = Math.cos(c.heading * .5);
+      the.x = c.wid * .5; the.z = c.len * .5;
+      b.collider.setHalfExtents(the); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(tq, false);
+    }
+    for (let i = 0; i < free.length; i++) { const b = free[i]; if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); } }
+    for (let i = 0; i < S.cars.length; i++) {
+      const b = S.cars[i], c = b.who; if (!c) continue;
+      tv.x = c.x; tv.y = .75 + (c.y || 0); tv.z = c.z; const p = W.inner(tv);
+      tq.y = Math.sin(c.heading * .5); tq.w = Math.cos(c.heading * .5);
+      b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(tq);
+    }
+    // people
+    pickNear(this.people.list, S.npeople, false);
+    keep.clear(); free.length = 0;
+    for (let i = 0; i < want.length; i++) keep.add(want[i]);
+    for (let i = 0; i < S.people.length; i++) { const b = S.people[i]; if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b); }
+    for (const q of keep) {
+      const b = free.pop(); if (!b) break; b.who = q;
+      tv.x = q.x; tv.y = (this.ground(q.x, q.z) || 0) + .85 * q.h; tv.z = q.z;
+      b.person = q; b.body.setTranslation(W.inner(tv), false);
+    }
+    for (let i = 0; i < free.length; i++) { const b = free[i]; if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); } }
+    for (let i = 0; i < S.people.length; i++) {
+      const b = S.people[i], q = b.who; if (!q) continue;
+      tv.x = q.x; tv.y = (this.ground(q.x, q.z) || 0) + .85 * q.h; tv.z = q.z;
+      b.body.setNextKinematicTranslation(W.inner(tv));
+    }
   }
   // something hit a car or a person of the city hard enough: the car stops a moment, the person falls over
   // something hit a car or a person of the city hard enough: the car stops a moment, or crashes when hit harder, the person falls over

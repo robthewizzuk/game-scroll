@@ -12,7 +12,7 @@ function cutLastGL(a, b) {
   if (CUT_LAST.on) { const ca = isCut(a.material), cb = isCut(b.material); if (ca !== cb) return ca ? 1 : -1; }
   if (a.material.id !== b.material.id) return a.material.id - b.material.id;
   if (a.materialVariant !== b.materialVariant) return (a.materialVariant || 0) - (b.materialVariant || 0);
-  if (a.z !== b.z) return a.z - b.z;
+  if (a.z !== b.z) return a.z < b.z ? -1 : 1;
   return a.id - b.id;
 }
 

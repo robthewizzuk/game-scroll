@@ -3339,6 +3339,7 @@ export class HDView {
       const sf = o.userData.gsShadowFor;
       if (sf) { const on = HD.shadowBody !== false; if (o.castShadow !== on) { o.castShadow = on; for (let j = 0; j < sf.length; j++) sf[j].castShadow = !on; } }
       if (!o.castShadow) { if (o.layers.mask & SH_BITS) o.layers.mask &= ~SH_BITS; return; }
+      if (!gpu) ownDepthMat(o);
       const e = o.matrixWorld.elements, w = (o.id % 89) + 1, held = (o.layers.mask & HOLD_BIT) !== 0;
       let h = ((o.geometry?.id ?? 0) % 97 * .37 + e[0] * 1.3 + e[1] * 1.7 + e[2] * 2.3 + e[4] * 2.9 + e[5] * 3.1 + e[6] * 3.7 + e[8] * 4.1 + e[9] * 4.3 + e[10] * 4.7 + e[12] * 5.3 + e[13] * 5.9 + e[14] * 6.1 + (held ? .5 : 0)) * w;
       let wide = false, copies = 1, ball = false;   // instanced things and things placed on the chip: counted for every light (their bounds move without the object)
@@ -4364,7 +4365,23 @@ function swapOne(o, scene, G, cam, seen, air, view) {
 // walk of its own, six a frame on WebGPU with the two in drawGPU that now read v.suns and v.sets: a scene
 // that keeps thousands of things switched off, a pool, the other half of a level, paid for them all six times).
 function gpuSwap(v, G) {
-  const seen = G ? v.shSeen ||= new Set() : null, props = v.sets ||= [], suns = v.suns ||= []; props.length = suns.length = 0;
+  const suns = v.suns ||= [];
+  if (G) v._everGpu = true;
+  else if (!v._everGpu) {
+    const T = thingsOf(v.scene);
+    if (v._sunsT !== T) {
+      v._sunsT = T;
+      suns.length = 0;
+      for (let i = 0; i < T.length; i++) if (T[i].isDirectionalLight) suns.push(T[i]);
+    }
+    if (v.sims?.length) {
+      const chipMs = HD.info.gpuMs, frameMs = 1000 / (Q.game ? fpsFor(Q.game) : 60);
+      for (const s of v.sims) s.gpuStep(null, chipMs, frameMs);
+    }
+    return;
+  }
+  v._sunsT = null;
+  const seen = G ? v.shSeen ||= new Set() : null, props = v.sets ||= []; props.length = suns.length = 0;
   if (AREA_LTC && G && !AREA_GPU) { G.fx.areaLTC(AREA_LTC); AREA_GPU = true; }   // area lights' tables for WebGPU (panel)
   // shadow maps: each renderer keeps its own. WebGL drew into WebGPU's map when it found one on the light
   // (and the other way round), which made WebGPU remake it in the middle of a frame that still used it:
@@ -4802,7 +4819,7 @@ for (const k of ['intersectObject', 'intersectObjects']) {   // (a batched mesh 
   const f = Raycaster.prototype[k];
   Raycaster.prototype[k] = function (...a) { const m = this.layers.mask; if (m & 1) this.layers.mask = m | BATCH_BIT; try { return f.apply(this, a); } finally { this.layers.mask = m; } };
 }
-const BATCH_SNAP = new WeakMap(), NO_RAY = () => {};
+const BATCH_SNAP = new WeakMap(), BATCH_GKEY = new WeakMap(), NO_RAY = () => {};
 function batchable(o) {
   if (!o.isMesh || o.isInstancedMesh || o.isInstancedMesh2 || o.isBatchedMesh || o.isSkinnedMesh || o.morphTargetInfluences || o.userData.noBatch || o.userData.gsTwin || o.userData.gsLod) return false;
   const m = o.material, g = o.geometry;
@@ -4812,7 +4829,9 @@ function batchable(o) {
 }
 function batchKey(o) {
   const g = o.geometry, e = o.matrixWorld.elements, cell = Math.floor(e[12] / BATCH_CELL) + ',' + Math.floor(e[14] / BATCH_CELL);   // (by area too, so off-screen groups are still skipped whole)
-  return o.material.id + '|' + Object.keys(g.attributes).sort().map(k => k + g.attributes[k].itemSize).join(',') + (g.index ? '+i' : '') + '|' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0) + '|' + cell;
+  let gk = BATCH_GKEY.get(g);
+  if (gk === undefined) BATCH_GKEY.set(g, gk = Object.keys(g.attributes).sort().map(k => k + g.attributes[k].itemSize).join(',') + (g.index ? '+i' : ''));
+  return o.material.id + '|' + gk + '|' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0) + '|' + cell;
 }
 // (kept in the scene's own numbers, so the drawing's centre moving along, origin.js, is not a piece moving: se is the scene's world matrix now)
 function sameMatrix(a, b, se) { for (let i = 0; i < 16; i++) { const t = i === 12 ? se[12] : i === 13 ? se[13] : i === 14 ? se[14] : 0; if (Math.abs(a[i] - t - b[i]) > 1e-7) return false; } return true; }
@@ -4929,7 +4948,7 @@ function detailFits(o) {
   const ud = o.userData; if (ud.detail === false || ud.gsTwin || ud.gsReflect || ud.decal) return false;
   if (o.isInstancedMesh && (o.isSkinnedMesh || o.morphTargetInfluences || o.count > DETAIL_COPIES || o.count < 1)) return false;
   if (o.isSkinnedMesh && !o.skeleton) return false;
-  if (!detailMaterials(ud.gsGlMat || o.material) || o.customDepthMaterial || o.customDistanceMaterial) return false;
+  if (!detailMaterials(ud.gsGlMat || o.material) || (o.customDepthMaterial && !o.userData.gsOwnDepth) || o.customDistanceMaterial) return false;
   return (o.layers.mask & ~SH_BITS) === 1 && o.onBeforeRender === OBR && o.onAfterRender === OAR;
 }
 function detailable(o) {
@@ -5201,12 +5220,30 @@ function detailShow(v) {
       else if (o.layers.mask & HOLD_BIT) { o.layers.mask = (o.layers.mask | 1) & ~HOLD_BIT; v.held?.delete(o); }   // (the mesh stands in for its twins: it never waits as well)
     } else {
       for (const p of e.parts) if (!(p.twin.layers.mask & 1)) p.twin.layers.mask |= 1;
-      e.shown = true; o.userData.gsDetailed = true; if (e.kind === 'cut') { v._shAgain = 3; v._fadeOk = null; } if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
+      const newly = !e.shown || o.layers.mask !== BATCH_BIT;
+      e.shown = true; o.userData.gsDetailed = true; if (newly && e.kind === 'cut') { v._shAgain = 3; v._fadeOk = null; } if (o.layers.mask !== BATCH_BIT) { o.layers.mask = BATCH_BIT; v.occHid?.delete(o); v.held?.delete(o); }
     }
   }
 }
 // shadowLights(): scratch (no garbage per frame)
 let SH_H = new Float64Array(40); const SH_S = new Sphere(), SH_P = new Vector3(), SH_LAST = new WeakMap();
+const SKIN_DEPTH = new MeshDepthMaterial();
+const INST_DEPTH = new MeshDepthMaterial(), INST_COL_DEPTH = new MeshDepthMaterial();
+const BATCH_DEPTH = new MeshDepthMaterial(), BATCH_COL_DEPTH = new MeshDepthMaterial();
+function ownDepthMat(o) {
+  if (o.isInstancedMesh2 || o.isDetailMesh || o.isCutMesh || o.morphTexture || o.morphTargetInfluences) return;
+  if (o.customDepthMaterial && !o.userData.gsOwnDepth) return;
+  const g = o.geometry, m = o.material;
+  if (!g || g.morphAttributes?.position || !m || Array.isArray(m) || m.alphaTest > 0 || m.alphaToCoverage || m.displacementMap || m.clipShadows || m.userData?.gsGpu) {
+    if (o.userData.gsOwnDepth) { o.customDepthMaterial = undefined; delete o.userData.gsOwnDepth; }
+    return;
+  }
+  let dm = null;
+  if (o.isSkinnedMesh) dm = SKIN_DEPTH;
+  else if (o.isInstancedMesh) dm = o.instanceColor ? INST_COL_DEPTH : INST_DEPTH;
+  else if (o.isBatchedMesh) dm = o._colorsTexture ? BATCH_COL_DEPTH : BATCH_DEPTH;
+  if (dm) { o.customDepthMaterial = dm; o.userData.gsOwnDepth = true; }
+}
 // the still/moving shadow split: frames before a thing counts as still, the layers that pick still or
 // moving things for a shadow drawing (no camera of the game's draws them), and how many still triangles
 // a light needs before keeping a copy pays for itself (the copy is one full-map depth copy per redraw)
@@ -5221,11 +5258,12 @@ const PRE_BIT = 1 << 25, PRE_N = 6, PRE_LOOK = 400;
 // (asked for every visible thing every frame: when nothing changed, the answer comes back without
 // building any strings, so it leaves no garbage)
 const KEYS = new WeakMap();
+const matVer = m => m.transparent && m.side === DoubleSide && !m.forceSinglePass ? -1 : m.version;
 function sameMats(c, mat, g) {
   if (c.g !== (g?.id ?? '')) return false;
-  if (!Array.isArray(mat)) return c.n === -1 && c.m === mat && c.v === mat.version;
+  if (!Array.isArray(mat)) return c.n === -1 && c.m === mat && c.v === matVer(mat);
   if (c.n !== mat.length) return false;
-  for (let i = 0; i < mat.length; i++) if (c.ids[i] !== mat[i].id || c.vs[i] !== mat[i].version) return false;
+  for (let i = 0; i < mat.length; i++) if (c.ids[i] !== mat[i].id || c.vs[i] !== matVer(mat[i])) return false;
   return true;
 }
 // (a list kept in fewer bytes, slim.js, is another layout to WebGPU, which builds a pipeline for each: so it is part of the key.
@@ -5269,8 +5307,8 @@ function shaderKeyAs(o, m) {
 }
 function remember(o, sig, key, mat, g) {
   const arr = Array.isArray(mat);
-  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o.userData.gsPoseOf || o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : mat.version,
-    ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(m => m.version) : null });
+  KEYS.set(o, { sig, key, rs: o.receiveShadow, pk: SKIN_POOLED.has(o.userData.gsPoseOf || o), g: g?.id ?? '', n: arr ? mat.length : -1, m: arr ? null : mat, v: arr ? 0 : matVer(mat),
+    ids: arr ? mat.map(m => m.id) : null, vs: arr ? mat.map(matVer) : null });
 }
 export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
   const s = new DirectionalLight(col, i), c = s.shadow.camera, d = new Vector3(...dir).normalize();
@@ -5316,8 +5354,12 @@ export function sun(col = '#fff2d8', i = 3, size = 18, dir = [-.45, 1, .35]) {
       if (n.parent !== s.parent) s.parent.add(n, n.target);
       n.visible = true; n.castShadow = true; n.color.copy(s.color); n.intensity = s.intensity;
       const ms = s.shadow.mapSize.x; if (n.shadow.mapSize.x !== ms) shadowSize(n.shadow, ms);
-      fitShadow(n, view, { ...o, far: nf, around: 0, max: nf * 2 });
-      view.cascade = { near: n, far: s, fade: o.fade ?? .06 };
+      const no = s._nearOpts ||= {};
+      for (const k in no) delete no[k];
+      Object.assign(no, o); no.far = nf; no.around = 0; no.max = nf * 2;
+      fitShadow(n, view, no);
+      const cas = view.cascade || (view.cascade = { near: n, far: s, fade: .06 });
+      cas.near = n; cas.far = s; cas.fade = o.fade ?? .06;
     } else if (s.nearLight?.visible) { s.nearLight.visible = false; view.cascade = null; }
     return r;
   };

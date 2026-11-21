@@ -525,8 +525,24 @@ export class WayTraffic {
    * their sirens on: a car with one coming up behind it pulls over to the kerb side and stops until it has gone by).
    */
   update(dt, f, night = 0, avoid = [], sirens = []) {
-    const W = this.w, ring = W.ring, groups = this._g ||= new Map(); groups.clear();
-    for (const c of this.list) { const key = c.r.id + (c.back ? '<' : '>') + c.k; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(c); }
+    if (f && this._did) {
+      let near = false;
+      for (let i = 0; i < this.list.length; i++) {
+        const c = this.list[i], dx = c.x - f.x, dz = c.z - f.z;
+        if (dx * dx + dz * dz < 19600) { near = true; break; }
+      }
+      if (!near && (this._skip = !this._skip)) { this._dt = (this._dt || 0) + dt; return; }
+    }
+    this._did = true;
+    dt += this._dt || 0; this._dt = 0;
+    const W = this.w, ring = W.ring, groups = this._g ||= new Map(), pool = this._gPool ||= [];
+    let gn = 0; groups.clear();
+    for (let i = 0; i < this.list.length; i++) {
+      const c = this.list[i], key = c.r.id + (c.back ? '<' : '>') + c.k;
+      let arr = groups.get(key);
+      if (!arr) { arr = pool[gn] || (pool[gn] = []); arr.length = 0; gn++; groups.set(key, arr); }
+      arr.push(c);
+    }
     for (const g of groups.values()) g.sort((a, b) => a.u - b.u);
     for (const g of groups.values()) for (let i = 0; i < g.length; i++) {
       const c = g[i], r = c.r; let gap = Infinity;
@@ -565,11 +581,12 @@ export class WayTraffic {
   }
   draw(dt, night, f) {
     const m = this._m ||= new Matrix4(), q = this._q ||= new Quaternion(), e = this._e ||= new Euler(0, 0, 0, 'YXZ'), p = this._v ||= new Vector3(), one = this._one ||= new Vector3(1, 1, 1);
-    this.list.forEach((c, i) => {
+    for (let i = 0; i < this.list.length; i++) {
+      const c = this.list[i];
       e.set(-c.pitch, c.heading, 0); q.setFromEuler(e); m.compose(p.set(c.x, c.y, c.z), q, one);   // (these face +z: a climb lifts the nose)
       this.head.setMatrixAt(i, m); this.tail.setMatrixAt(i, m);
       if (this.boxes) { this.boxes.setMatrixAt(i, m); this.boxes.setColorAt(i, c.colour); }
-    });
+    }
     for (const M of [this.head, this.tail, this.boxes]) if (M) { M.count = this.list.length; M.instanceMatrix.needsUpdate = true; if (M.instanceColor) M.instanceColor.needsUpdate = true; }
     this.head.material.color.setScalar(.25 + night * .75); this.tail.material.color.setRGB(.35 + night * .65, .05, .03);
     if (this.fleet) { this.fleet.focus = f; this.fleet.draw(this.list, night, dt); }

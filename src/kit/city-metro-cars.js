@@ -84,6 +84,7 @@ function roamClass() {
     }
     // (cars of the big city's own drive off the lanes only: a district's lanes are its own traffic's)
     update(dt, focus, t = 0) {
+      if (!this.list.length) { this.noise = 0; return; }
       const m = this.city.metro; let noisy = 0;
       // what they steer round besides each other: the cars of the districts and of the roads between (city-drive.js chaseCar)
       const O = this.others ||= []; O.length = 0; for (const c of m.cities) for (const x of c.cars.list) O.push(x); for (const x of m.cars.ways) O.push(x);
@@ -247,7 +248,7 @@ export class MetroCars {
   update(dt, f, t) {
     const R = this.roam, m = this.m;
     R.update(dt, f, t);
-    for (const c of m.cities) meet(R, dt, c.cars);
+    if (R.list.length) for (const c of m.cities) meet(R, dt, c.cars);
     // the cars between the districts brake for those of the big city's own in their way, and pull over for their sirens
     const S = this._sirens; S.length = 0;
     for (const c of R.list) {
@@ -255,7 +256,7 @@ export class MetroCars {
       if (c.mode !== 'lane') { const h = c.hz ||= { x: 0, z: 0, r: 1, car: c }; h.x = c.x; h.z = c.z; h.y = c.y || 0; h.r = 1.2; (m._avoid ||= []).push(h); }
     }
     if (this.phys) this.sync();
-    R.draw(m.night, dt);
+    if (R.list.length || R.fleet?.close.size) R.draw(m.night, dt);
     return this;
   }
   /** The sirens on the big city's own cars now (for the cars on the roads between). */

@@ -166,13 +166,21 @@ export const CONSOLE_8BIT = { on: true };
 // half; renderOrder and groups still come first. (CUT_LAST.on false: three's own order, for a before/after.)
 export const CUT_LAST = { on: true };
 /** Whether a material may throw pixels away (its draw can't fill the chip's coarse depth test). */
-export const isCut = m => !!m && (m.alphaTest > 0 || m.alphaHash === true || m.alphaToCoverage === true || m.userData?.gsCut === true);
+const CUT_V = new WeakMap(), CUT_A = new WeakMap();
+export const isCut = m => {
+  if (!m) return false;
+  if (m.alphaHash === true || m.alphaToCoverage === true || m.userData?.gsCut === true) return true;
+  if (m.version !== undefined && CUT_V.get(m) === m.version) return CUT_A.get(m);
+  const a = m.alphaTest > 0;
+  if (m.version !== undefined) { CUT_V.set(m, m.version); CUT_A.set(m, a); }
+  return a;
+};
 /** three's opaque order with cut-outs after solid things (renderer.setOpaqueSort). */
 export function cutLast(a, b) {
   if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
   if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
   if (CUT_LAST.on) { const ca = isCut(a.material), cb = isCut(b.material); if (ca !== cb) return ca ? 1 : -1; }
-  if (a.z !== b.z) return a.z - b.z;
+  if (a.z !== b.z) return a.z < b.z ? -1 : 1;
   return a.id - b.id;
 }
 export const SEND_CHANGED = { on: true };

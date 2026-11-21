@@ -633,7 +633,7 @@ function make(api) {
 
     sky = new Sky(v, {
       time: 15.6,
-      speed: 0.12,
+      speed: 0.04,
       physical: { haze: 4.2, blue: 1.7, mie: 0.0022, glow: 0.65, bright: 0.42 },
       clouds: 0.32,
       gap: 0.5,
@@ -648,7 +648,7 @@ function make(api) {
     const peopleScale = tierIdx === 0 ? 0.12 : tierIdx === 1 ? 0.14 : 0.16;
     fleetNear = 1;
     fleetReach = tierIdx === 0 ? 16 : 20;
-    npcFullMax = 1;
+    npcFullMax = tierIdx >= 3 ? 1 : 0;
 
     metro = new Metro(v, {
       seed: 77,
@@ -844,7 +844,6 @@ function make(api) {
     const bayMat = pbr('#2ef2b8', { glow: 0.85, rough: 0.35, metal: 0.25 });
     for (let i = 0; i < 3; i++) {
       const bm = new THREE.Mesh(bayGeo, bayMat);
-      bm.castShadow = true;
       bm.visible = false;
       v.scene.add(bm);
       bayCrateMeshes.push(bm);
@@ -874,7 +873,6 @@ function make(api) {
     const crateCols = ['#48e08a', '#f7b731', '#4bcffa', '#ff6b6b', '#a55eea'];
     for (let i = 0; i < 6; i++) {
       const pm = new THREE.Mesh(crateGeo, pbr(crateCols[i % crateCols.length], { rough: 0.35, metal: 0.3, glow: 0.45 }));
-      pm.castShadow = true;
       pm.visible = false;
       v.scene.add(pm);
       pickupMeshes.push(pm);
@@ -896,7 +894,7 @@ function make(api) {
     carAccel: [14.5, 7, 24, 'driving acceleration (m/s^2)'],
     carTurn: [2.15, 1.2, 3.6, 'steering responsiveness'],
     carGrip: [8.2, 4, 13, 'lateral cornering grip'],
-    daySpeed: [0.12, 0, 1, 'time-of-day speed (hours per real minute scale)'],
+    daySpeed: [0.04, 0, 1, 'time-of-day speed (hours per real second)'],
     dropRep: [28, 15, 60, 'Rep earned per mission objective'],
     escapeRep: [25, 10, 50, 'Rep earned when escaping SBPD pursuit'],
   });
@@ -932,12 +930,13 @@ function make(api) {
   const rayNotRider = c => c !== mover?.rider && c !== mover;
   let phase, jobIdx, job, targetPos, pickupPos, jobsDoneCount = 0;
   let bannerText, bannerCol, bannerT, hitT, rideCooldown, engineSound, radioStarted, savedStationIdx = 0;
-  let lastDistrictName, skyTick, poseTick, lawTick, lawDt, metroDt, gpsDt, lastCityCount = 0;
+  let lastDistrictName, skyTick, lawDt, metroDt, gpsDt, lastCityCount = 0;
   let pendingRadioOn = 0, pendingGpsGoal = null, pendingGpsLabel = '', pendingGpsKind = 'target', pendingGpsDelay = 0, pendingPickupLaw = null;
   let gpsShown, hudSub, wasIndoor, warmupCop = null, warmupFolk = null, warmedCop = false;
   let carTrip = null, copBlinkT = 0, copRed = false;
   let lastScoreThreat = -1, lastScoreFinal = false;
   let lastCarLights = null, lastActiveCarMesh = null, lastActiveCarLit = null, lastWantedStars = 0;
+  let lastSunX = 0, lastSunY = 1, lastSunZ = 0, hasSunAim = false;
   let activeCarProfile = { topMult: 1, accelMult: 1, gripMult: 1, label: 'Barracuda', cop: false, bike: false };
   let rideKey = false, coverKey = false, swapKey = false, gunKey = false, aimKey = false;
   let aimMode = false, fpsAim = false, fireHeld = false, lawWired = false, expWired = false, saveWired = false, scoreStarted = false;
@@ -1046,17 +1045,24 @@ function make(api) {
     curHemiI += (tgtHemiI - curHemiI) * k;
 
     // Unified sun/moon directional lighting without horizon blinding
+    let aimX, aimY, aimZ;
     if (nightW < 0.75) {
       const sd = sky.sunDir;
-      light.aim?.(sd.x, Math.max(0.24, sd.y), sd.z);
+      aimX = sd.x; aimY = Math.max(0.24, sd.y); aimZ = sd.z;
       sunClrScratch.copy(sky.sunCol);
       const maxC = Math.max(sunClrScratch.r, sunClrScratch.g, sunClrScratch.b, 1);
       if (maxC > 1) sunClrScratch.multiplyScalar(1 / maxC);
       sunClrScratch.lerp(moonClrScratch, nightW * 0.5);
       light.color.copy(sunClrScratch);
     } else {
-      light.aim?.(-0.42, 0.58, 0.68);
+      aimX = -0.42; aimY = 0.58; aimZ = 0.68;
       light.color.copy(moonClrScratch);
+    }
+    const aimLen = Math.hypot(aimX, aimY, aimZ) || 1;
+    aimX /= aimLen; aimY /= aimLen; aimZ /= aimLen;
+    if (snap || !hasSunAim || (aimX * lastSunX + aimY * lastSunY + aimZ * lastSunZ) < 0.995) {
+      lastSunX = aimX; lastSunY = aimY; lastSunZ = aimZ; hasSunAim = true;
+      light.aim?.(aimX, aimY, aimZ);
     }
     light.intensity = curSunI;
 
@@ -1942,7 +1948,7 @@ function make(api) {
     aimDirObj.x = (best.x - camPos.x) / best.dist;
     aimDirObj.y = (best.y - camPos.y) / best.dist;
     aimDirObj.z = (best.z - camPos.z) / best.dist;
-    const wall = world.ray(camPos, aimDirObj, Math.max(0.5, best.dist - 0.8), c => c !== mover?.rider && c !== mover);
+    const wall = world.ray(camPos, aimDirObj, Math.max(0.5, best.dist - 0.8), rayNotRider);
     if (wall && wall.distance < best.dist - 1.2) return null;
     return best;
   };
@@ -2122,7 +2128,7 @@ function make(api) {
       const shotHow = aimMode ? 'aim' : 'hip';
       fireWieldOpts.how = shotHow;
       fireWieldOpts.pitch = Math.asin(clamp(camDirVec.y, -1, 1));
-      fireWieldOpts.hands = activeWield ? activeWield.how !== shotHow : false;
+      fireWieldOpts.hands = false;
       activeWield?.update(0, fireWieldOpts);
       const mp = activeWield?.muzzle;
       if (mp && (mp.x !== 0 || mp.y !== 0 || mp.z !== 0)) {
@@ -2248,9 +2254,10 @@ function make(api) {
 
       // 4. World wall / floor / prop hit
       if (!hitHandled) {
-        const wHit = world.ray(s.from, s.dir, range, rayNotRider);
+        const reuseCamHit = !lockedTarget && k !== 'shotgun' && (!camWall || camWall.distance > 1.2);
+        const wHit = reuseCamHit ? camWall : world.ray(s.from, s.dir, range, rayNotRider);
         if (wHit && wHit.point) {
-          endDist = wHit.distance;
+          endDist = Math.hypot(wHit.point.x - s.from.x, wHit.point.y - s.from.y, wHit.point.z - s.from.z);
           impacts.hit(wHit, { from: s.from, mark: !!decalTargetMeshes.includes(wHit.mesh) || wHit.mesh === yardPadMesh });
         }
       }
@@ -2613,8 +2620,6 @@ function make(api) {
       try { mixer.place(null, 0.05); } catch {}
       scoreStarted = false;
       skyTick = 1;
-      poseTick = 0;
-      lawTick = 1;
       lawDt = 0;
       metroDt = 0;
       gpsDt = 0;
@@ -2629,6 +2634,7 @@ function make(api) {
       lastActiveCarMesh = null;
       lastActiveCarLit = null;
       lastWantedStars = 0;
+      hasSunAim = false;
       wasIndoor = false;
       gpsShown = false;
       lastClockStr = '15:36';
@@ -3060,9 +3066,9 @@ function make(api) {
 
       sky.speed = K.daySpeed;
       const st = skyTick++ & 7;
-      if (st === 0) sky.update(sdt * 8);
-      if ((st & 1) === 0) {
-        updateAtmosphere(sdt * 2, false);
+      if (st === 1) sky.update(sdt * 8);
+      if (st === 1 || st === 5) {
+        updateAtmosphere(sdt * 4, false);
         if (warmedCop) {
           const nl = sky.night > 0.2;
           if (lastCarLights !== nl) {
@@ -3076,7 +3082,7 @@ function make(api) {
           }
         }
       }
-      if (st === 4) weather?.update(sdt * 8);
+      if (st === 5) weather?.update(sdt * 8);
 
       if (pendingPickupLaw) {
         const pl = pendingPickupLaw;
@@ -3151,7 +3157,7 @@ function make(api) {
       pad.buttons.AIM.label = inHeli ? 'DOWN' : inCar ? 'DRIFT' : inBoat ? 'BRAKE' : aimMode ? 'HIP' : 'AIM';
 
       activeLead.health.update(sdt);
-      for (let gi = 0; gi < GUN_KEYS.length; gi++) activeLead.guns[GUN_KEYS[gi]].update(sdt);
+      activeGun(activeLead)?.update(sdt);
       v.health = activeLead.health.frac;
 
       if (inHeli && heliCtrl) {
@@ -3371,11 +3377,13 @@ function make(api) {
           }
         }
 
-        avoidQuery.x = carCtrl.x;
-        avoidQuery.z = carCtrl.y;
-        avoidQuery.vx = Math.cos(carCtrl.angle) * carCtrl.speed;
-        avoidQuery.vz = Math.sin(carCtrl.angle) * carCtrl.speed;
-        metro.avoid(avoidQuery, 1.3);
+        if ((st & 1) === 0) {
+          avoidQuery.x = carCtrl.x;
+          avoidQuery.z = carCtrl.y;
+          avoidQuery.vx = Math.cos(carCtrl.angle) * carCtrl.speed;
+          avoidQuery.vz = Math.sin(carCtrl.angle) * carCtrl.speed;
+          metro.avoid(avoidQuery, 1.3);
+        }
 
         rigTarget.position.set(carCtrl.x, gy, carCtrl.y);
         rigTarget.yaw = heading;
@@ -3492,8 +3500,12 @@ function make(api) {
       // Physics step + bulletproof ground floor net for both leads
       if (!inCar && !inBoat && !inHeli && !carTrip) mover.stepMove(sdt);
       if (inBoat || inHeli) world.step(sdt);
-      else if (!inCar && (carTrip || pulledDrivers.length > 0 ? (st & 1) === 1 : (st & 3) === 1)) {
-        world.step(Math.min(0.033, sdt * (carTrip || pulledDrivers.length > 0 ? 2 : 4)));
+      else if (!inCar) {
+        const fastPhys = carTrip || pulledDrivers.length > 0;
+        const activePhys = fastPhys || law.units.length > 0 || law.officers.length > 0 || hasLitBarrel || shots.list.length > 0;
+        if (fastPhys ? (st & 1) === 1 : activePhys ? (st & 3) === 1 : st === 5) {
+          world.step(Math.min(0.033, sdt * (fastPhys ? 2 : activePhys ? 4 : 8)));
+        }
       }
 
       if (!inCar && !inBoat && !inHeli && !carTrip) {
@@ -3528,7 +3540,7 @@ function make(api) {
         activeLead.body.position.set(f.x, f.y, f.z);
         activeLead.body.rotation.set(0, f.heading, 0);
         const rigActive = f.v > 0.01 || aimMode || recentShotT > 0 || hide.busy || swim.state !== 'out';
-        const rigStep = rigActive ? ((poseTick++ & 1) === 0) : st === 7;
+        const rigStep = rigActive ? ((st & 1) === 1) : st === 7;
         if (rigStep) {
           v.cam.getWorldDirection(camDirVec);
           const aimPitch = Math.asin(clamp(camDirVec.y, -1, 1));
@@ -3573,7 +3585,7 @@ function make(api) {
           aw.update(rigStep ? (rigActive ? sdt * 2 : sdt * 8) : sdt, wieldOpts);
         }
 
-        if (otherLead && !otherLead.inVehicle) {
+        if (st === 7 && otherLead && !otherLead.inVehicle) {
           const ogy = metro.ground(otherLead.foot.x, otherLead.foot.z);
           if (Number.isFinite(ogy)) otherLead.foot.y = ogy;
           otherLead.body.position.set(otherLead.foot.x, otherLead.foot.y, otherLead.foot.z);
@@ -3591,42 +3603,44 @@ function make(api) {
         rigTarget.yaw = (aimMode || recentShotT > 0) ? camRig.targetYaw : f.heading;
       }
 
-      // Collect world pickups
-      const offered = pickups.update(sdt, playerQuery);
-      for (const p of offered) {
-        let took = false;
-        if (p.kind === 'health' && activeLead.health.hp < activeLead.health.max) {
-          activeLead.health.heal(p.amount || 40);
-          took = true;
-        } else if (p.kind === 'armour' && activeLead.health.armour < activeLead.health.maxArmour) {
-          activeLead.health.addArmour(p.amount || 35);
-          took = true;
-        } else if (p.kind === 'ammo') {
-          activeLead.pouch.add(p.of || 'pistol', p.amount || 30);
-          took = true;
-        } else if (WEAPON_ORDER.includes(p.kind)) {
-          const already = activeLead.unlocked.has(p.kind);
-          for (const ld of leads) ld.unlocked.add(p.kind);
-          const ammoName = ARSENAL[p.kind]?.ammo;
-          if (ammoName) activeLead.pouch.add(ammoName, ARSENAL[p.kind].pickup || 16);
-          if (!already) equipWeapon(activeLead, p.kind);
-          took = true;
+      // Collect world pickups (odd frames, decoupled from metro.update)
+      if ((st & 1) === 1) {
+        const offered = pickups.update(sdt * 2, playerQuery);
+        for (const p of offered) {
+          let took = false;
+          if (p.kind === 'health' && activeLead.health.hp < activeLead.health.max) {
+            activeLead.health.heal(p.amount || 40);
+            took = true;
+          } else if (p.kind === 'armour' && activeLead.health.armour < activeLead.health.maxArmour) {
+            activeLead.health.addArmour(p.amount || 35);
+            took = true;
+          } else if (p.kind === 'ammo') {
+            activeLead.pouch.add(p.of || 'pistol', p.amount || 30);
+            took = true;
+          } else if (WEAPON_ORDER.includes(p.kind)) {
+            const already = activeLead.unlocked.has(p.kind);
+            for (const ld of leads) ld.unlocked.add(p.kind);
+            const ammoName = ARSENAL[p.kind]?.ammo;
+            if (ammoName) activeLead.pouch.add(ammoName, ARSENAL[p.kind].pickup || 16);
+            if (!already) equipWeapon(activeLead, p.kind);
+            took = true;
+          }
+          if (took) {
+            pickups.taken(p);
+            scoreMusic?.hit(0.6);
+            sounds.coin(1.2);
+            feel.coin(W * 0.5, H * 0.4, { color: '#78ff98', text: p.kind.toUpperCase() });
+          }
         }
-        if (took) {
-          pickups.taken(p);
-          scoreMusic?.hit(0.6);
-          sounds.coin(1.2);
-          feel.coin(W * 0.5, H * 0.4, { color: '#78ff98', text: p.kind.toUpperCase() });
-        }
-      }
-      for (let i = 0; i < pickups.list.length; i++) {
-        const p = pickups.list[i];
-        const m = pickupMeshes[p.meshIdx];
-        if (!m) continue;
-        m.visible = p.here;
-        if (p.here) {
-          m.position.set(p.x, p.y + p.bob, p.z);
-          m.rotation.y = p.spin;
+        for (let i = 0; i < pickups.list.length; i++) {
+          const p = pickups.list[i];
+          const m = pickupMeshes[p.meshIdx];
+          if (!m) continue;
+          m.visible = p.here;
+          if (p.here) {
+            m.position.set(p.x, p.y + p.bob, p.z);
+            m.rotation.y = p.spin;
+          }
         }
       }
 
@@ -3634,7 +3648,7 @@ function make(api) {
       camRig.update(sdt, rigTarget);
       if (aimMode && fpsAim && !inCar && !inBoat && !inHeli) gunRig.update(sdt);
 
-      if ((st & 1) === 0 && (aimMode || inCar || inBoat) && !inHeli) {
+      if ((st & 1) === 1 && (aimMode || inCar || inBoat) && !inHeli) {
         v.cam.getWorldDirection(camDirVec);
         lockedTarget = findAimAssistTarget(v.cam.position, camDirVec);
       } else if (!aimMode && !inCar && !inBoat) {
@@ -3785,22 +3799,23 @@ function make(api) {
         }
         g.body.position.set(g.x, g.y, g.z);
         g.body.rotation.set(0, g.heading, 0);
-        if ((st & 1) === 0) {
+        const gStep = dist < 35 ? ((st & 1) === 1) : st === 7;
+        if (gStep) {
+          const gDt = dist < 35 ? sdt * 2 : sdt * 8;
           g.body.rig.upper?.(dist < 28 ? 'aim' : null);
           g.body.rig.blend(BLEND_OPTS, dist < 28 && dist > 9 && !g.react.busy ? 2.1 : 0);
           rigUpdOpts.speed = dist < 28 && dist > 9 ? 2.1 : 0;
           rigUpdOpts.aim = 0;
-          g.body.rig.update(sdt * 2, rigUpdOpts);
+          g.body.rig.update(gDt, rigUpdOpts);
           gangWieldOpts.how = dist < 28 ? 'aim' : 'ready';
-          g.wield.update(sdt * 2, gangWieldOpts);
+          g.wield.update(gDt, gangWieldOpts);
         }
       }
 
       metroDt += sdt;
-      const drivingAny = inCar || inBoat || inHeli;
-      const metroDue = t < 0.05 || (!firedThisFrame && (drivingAny || (st & 1) === 0 || metroDt >= 0.04));
+      const metroDue = t < 0.05 || ((st & 1) === 0 && (!firedThisFrame || metroDt >= 0.10));
       if (metroDue) {
-        metro.update(metroDt, playerQuery);
+        metro.update(Math.min(metroDt, 0.08), playerQuery);
         metroDt = 0;
       }
       if (metro.cities.length !== lastCityCount) {
@@ -3830,9 +3845,7 @@ function make(api) {
 
       lawDt += sdt;
       const lawIdle = law.stars === 0 && !law.units.length && !law.officers.length && !law.calls.length && !metro.events.length && !law.search;
-      const lawDue = !firedThisFrame && (lawIdle
-        ? st === 3
-        : (drivingAny ? ((lawTick++ & 1) === 0 || metro.events.length > 0) : (st & 1) === 1));
+      const lawDue = !firedThisFrame && (lawIdle ? st === 3 : (st & 1) === 1);
       if (lawDue) {
         law.update(lawDt, playerQuery);
         if (metro.events.length) metro.events.length = 0;
