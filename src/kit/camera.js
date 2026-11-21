@@ -131,9 +131,28 @@ export class CameraRig {
     if (!world?.world && !walls?.length) return;
     _d.subVectors(pos, aim); const d = _d.length(); if (d < 1e-3) return;
     _d.divideScalar(d);
-    // a physics world: the first still thing on the way (one ray in its tree, not every triangle of the level's meshes)
-    const hit = world?.world ? world.ray(aim, _d, d, STILL) : (_ray.set(aim, _d), _ray.far = d, _ray.intersectObjects(walls, true)[0]);
-    if (hit) pos.copy(aim).addScaledVector(_d, Math.max(.1, hit.distance - (this.opts.margin ?? .25)));
+    const margin = this.opts.margin ?? .25;
+    if (world?.world) {
+      const n = typeof world.world.colliders?.len === 'function' ? world.world.colliders.len() : -1, c = this._ub;
+      if (n >= 0 && c && c.w === world.world && c.n === n && c.m === margin &&
+        Math.abs(aim.x - c.ax) + Math.abs(aim.y - c.ay) + Math.abs(aim.z - c.az) +
+        Math.abs(pos.x - c.px) + Math.abs(pos.y - c.py) + Math.abs(pos.z - c.pz) < 1e-3) {
+        if (c.hitD != null) pos.copy(aim).addScaledVector(_d, c.hitD);
+        return;
+      }
+      const hit = world.ray(aim, _d, d, STILL);
+      const hitD = hit ? Math.max(.1, hit.distance - margin) : null;
+      if (n >= 0) {
+        const u = this._ub ||= { w: null, n: -1, m: margin, ax: 0, ay: 0, az: 0, px: 0, py: 0, pz: 0, hitD: null };
+        u.w = world.world; u.n = n; u.m = margin; u.ax = aim.x; u.ay = aim.y; u.az = aim.z; u.px = pos.x; u.py = pos.y; u.pz = pos.z; u.hitD = hitD;
+      }
+      if (hitD != null) pos.copy(aim).addScaledVector(_d, hitD);
+      return;
+    }
+    // a mesh array: raycast as before
+    _ray.set(aim, _d); _ray.far = d;
+    const hit = _ray.intersectObjects(walls, true)[0];
+    if (hit) pos.copy(aim).addScaledVector(_d, Math.max(.1, hit.distance - margin));
   }
   // Fresh aim (frame generation, hd3d.js aimNow): the camera turned by however much rig.yaw and
   // rig.pitch changed since update() (a game that turns them as the finger moves gets made frames that

@@ -42,8 +42,8 @@ function shared(k, make) { if (!MATS.has(k)) MATS.set(k, make()); return MATS.ge
 
 export class Ways {
   /** metro: the Metro (its districts, bounds, connectors). hills 0..1, river, highway: as Metro's options. */
-  constructor(metro, { seed = 1, hills = .5, river = null, highway = true, traffic = 1, fleet = false, meshes = true, grass = '#4f7a3a', waters = null } = {}) {
-    this.m = metro; this.amp = 60 * Math.max(0, hills); this.N = makeNoise(seed * 7 + 3); this.R = rng(seed * 19 + 11);
+  constructor(metro, { seed = 1, hills = .5, river = null, highway = true, traffic = 1, fleet = false, meshes = true, grass = '#4f7a3a', waters = null, cell = CELL } = {}) {
+    this.m = metro; this.cell = cell; this.amp = 60 * Math.max(0, hills); this.N = makeNoise(seed * 7 + 3); this.R = rng(seed * 19 + 11);
     const D = metro.districts;
     this.inner = grow(metro.bounds, INNER);
     this.holes = D.map(d => grow(d.rect, 40));
@@ -103,18 +103,18 @@ export class Ways {
   }
   // the grid of heights near the city: the natural land, cut and filled to meet the roads, raised over the tunnels
   heights() {
-    const I = this.inner, nx = Math.ceil((I.x1 - I.x0) / CELL), nz = Math.ceil((I.z1 - I.z0) / CELL);
+    const C = this.cell, I = this.inner, nx = Math.ceil((I.x1 - I.x0) / C), nz = Math.ceil((I.z1 - I.z0) / C);
     this.grid = { x0: I.x0, z0: I.z0, nx, nz };
     const H = this.H = new Float32Array((nx + 1) * (nz + 1)), at = (i, j) => j * (nx + 1) + i;
     if (!this.flat) {
-      for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) H[at(i, j)] = this.natural(I.x0 + i * CELL, I.z0 + j * CELL);
+      for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) H[at(i, j)] = this.natural(I.x0 + i * C, I.z0 + j * C);
       // each road's verge and banks (where it runs on the land), then the land over its tunnels
       const W = new Float32Array(H.length), T = new Float32Array(H.length);
       // (across the road only, a strip each point: a bank never runs on past the end of a stretch on the land, into a river or a valley under a bridge)
       let fx = 0, fz = 0, half = 3.2;
       const stamp = (x, z, r, y, fn) => {
-        const R = r.width / 2 + VERGE + BANK, i0 = Math.max(0, Math.floor((x - R - I.x0) / CELL)), i1 = Math.min(nx, Math.ceil((x + R - I.x0) / CELL)), j0 = Math.max(0, Math.floor((z - R - I.z0) / CELL)), j1 = Math.min(nz, Math.ceil((z + R - I.z0) / CELL));
-        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const dx = I.x0 + i * CELL - x, dz = I.z0 + j * CELL - z; if (Math.abs(dx * fx + dz * fz) <= half) fn(at(i, j), Math.abs(dx * -fz + dz * fx), R); }
+        const R = r.width / 2 + VERGE + BANK, i0 = Math.max(0, Math.floor((x - R - I.x0) / C)), i1 = Math.min(nx, Math.ceil((x + R - I.x0) / C)), j0 = Math.max(0, Math.floor((z - R - I.z0) / C)), j1 = Math.min(nz, Math.ceil((z + R - I.z0) / C));
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const dx = I.x0 + i * C - x, dz = I.z0 + j * C - z; if (Math.abs(dx * fx + dz * fz) <= half) fn(at(i, j), Math.abs(dx * -fz + dz * fx), R); }
       };
       const dirAt = (r, k) => { const a = r.points[Math.max(0, k - 1)], b = r.points[Math.min(r.points.length - 1, k + 1)], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; fx = (b[0] - a[0]) / l; fz = (b[1] - a[1]) / l; half = Math.max(3.2, l / 4 + .6); };   // (half of the way to each neighbour, and a little over)
       for (const r of this.roads) for (let k = 0; k < r.points.length; k++) {
@@ -131,29 +131,29 @@ export class Ways {
       }
     }
     // just under the districts' own ground where it meets theirs
-    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const x = I.x0 + i * CELL, z = I.z0 + j * CELL; if (this.holes.some(h => distToRect(h, x, z) < 1)) H[at(i, j)] = Math.min(H[at(i, j)], -.04); }
+    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const x = I.x0 + i * C, z = I.z0 + j * C; if (this.holes.some(h => distToRect(h, x, z) < 1)) H[at(i, j)] = Math.min(H[at(i, j)], -.04); }
     // the cells: none inside a district, on the sea, or round a tunnel's mouth (its portal stands there)
     const skip = new Uint8Array(nx * nz);
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const x = I.x0 + (i + .5) * CELL, z = I.z0 + (j + .5) * CELL;
+      const x = I.x0 + (i + .5) * C, z = I.z0 + (j + .5) * C;
       if (this.holes.some(h => inRect(h, x, z)) || this.seas.some(s => inRect(s, x, z))) skip[j * nx + i] = 1;
     }
     // (where the land jumps from the cutting's floor up over the tunnel: inside its portal's box, which hides the hole)
     for (const r of this.roads) for (const t of r.tunnels) for (const [c, dir] of [[t.s0, 1], [t.s1, -1]]) {
       const a = this.at(r, c), fx = a.dx * dir, fz = a.dz * dir, lat = portalW(r) - 4.3, R = lat + 12;
-      const i0 = Math.max(0, Math.floor((a.x - R - I.x0) / CELL)), i1 = Math.min(nx - 1, Math.floor((a.x + R - I.x0) / CELL)), j0 = Math.max(0, Math.floor((a.z - R - I.z0) / CELL)), j1 = Math.min(nz - 1, Math.floor((a.z + R - I.z0) / CELL));
+      const i0 = Math.max(0, Math.floor((a.x - R - I.x0) / C)), i1 = Math.min(nx - 1, Math.floor((a.x + R - I.x0) / C)), j0 = Math.max(0, Math.floor((a.z - R - I.z0) / C)), j1 = Math.min(nz - 1, Math.floor((a.z + R - I.z0) / C));
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const dx = I.x0 + (i + .5) * CELL - a.x, dz = I.z0 + (j + .5) * CELL - a.z, lo = dx * fx + dz * fz, la = Math.abs(dx * -fz + dz * fx);
+        const dx = I.x0 + (i + .5) * C - a.x, dz = I.z0 + (j + .5) * C - a.z, lo = dx * fx + dz * fz, la = Math.abs(dx * -fz + dz * fx);
         if (lo > -PORTAL[0] + 4.3 && lo < PORTAL[1] - 4.3 && la < lat) skip[j * nx + i] = 1;
       }
     }
     this.skip = skip;
   }
   makeLand() {
-    const I = this.inner, { nx, nz } = this.grid, H = this.H, skip = this.skip, at = (i, j) => j * (nx + 1) + i;
+    const C = this.cell, I = this.inner, { nx, nz } = this.grid, H = this.H, skip = this.skip, at = (i, j) => j * (nx + 1) + i;
     // the mesh: the grid where it is wanted (shared corners, smooth normals), and level grass from its edge out to the far land
     const pos = new Float32Array((nx + 1) * (nz + 1) * 3), uv = new Float32Array((nx + 1) * (nz + 1) * 2), idx = [];
-    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const v = at(i, j), x = I.x0 + i * CELL, z = I.z0 + j * CELL; pos[v * 3] = x; pos[v * 3 + 1] = H[v]; pos[v * 3 + 2] = z; uv[v * 2] = x; uv[v * 2 + 1] = -z; }
+    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const v = at(i, j), x = I.x0 + i * C, z = I.z0 + j * C; pos[v * 3] = x; pos[v * 3 + 1] = H[v]; pos[v * 3 + 2] = z; uv[v * 2] = x; uv[v * 2 + 1] = -z; }
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) if (!skip[j * nx + i]) { const a = at(i, j), b = at(i + 1, j), c = at(i + 1, j + 1), d = at(i, j + 1); idx.push(a, d, c, a, c, b); }
     const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(pos, 3)); geo.setAttribute('uv', new BufferAttribute(uv, 2));
     geo.setIndex(pos.length / 3 > 65535 ? new BufferAttribute(new Uint32Array(idx), 1) : new BufferAttribute(new Uint16Array(idx), 1)); geo.computeVertexNormals();
@@ -170,7 +170,7 @@ export class Ways {
   }
   /** The land's height at x, z, as its mesh has it (cut, filled and raised for the roads); 0 outside the grid. */
   landAt(x, z) {
-    const G = this.grid, fx = (x - G.x0) / CELL, fz = (z - G.z0) / CELL;
+    const G = this.grid, C = this.cell, fx = (x - G.x0) / C, fz = (z - G.z0) / C;
     if (fx < 0 || fz < 0 || fx >= G.nx || fz >= G.nz) return 0;
     const i = fx | 0, j = fz | 0, u = fx - i, v = fz - j, n = G.nx + 1, H = this.H;
     const a = H[j * n + i], b = H[j * n + i + 1], c = H[(j + 1) * n + i + 1], d = H[(j + 1) * n + i];
@@ -221,7 +221,7 @@ export class Ways {
     return this.bedAt(x, z) < WATER_Y - .02 ? WATER_Y : -Infinity;
   }
   /** The ground under the river and the sea (the land's mesh where it reaches, else the natural land). */
-  bedAt(x, z) { const G = this.grid; return x > G.x0 && z > G.z0 && x < G.x0 + G.nx * CELL && z < G.z0 + G.nz * CELL && !this.seas.some(s => inRect(s, x, z)) ? this.landAt(x, z) : this.natural(x, z); }
+  bedAt(x, z) { const G = this.grid, C = this.cell; return x > G.x0 && z > G.z0 && x < G.x0 + G.nx * C && z < G.z0 + G.nz * C && !this.seas.some(s => inRect(s, x, z)) ? this.landAt(x, z) : this.natural(x, z); }
 
   /* ---------- the roads' heights ---------- */
   // y at each point of road r: the land under it smoothed, held to `grade`, pinned to `ends` where it meets a district or
@@ -525,8 +525,24 @@ export class WayTraffic {
    * their sirens on: a car with one coming up behind it pulls over to the kerb side and stops until it has gone by).
    */
   update(dt, f, night = 0, avoid = [], sirens = []) {
-    const W = this.w, ring = W.ring, groups = this._g ||= new Map(); groups.clear();
-    for (const c of this.list) { const key = c.r.id + (c.back ? '<' : '>') + c.k; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(c); }
+    if (f && this._did) {
+      let near = false;
+      for (let i = 0; i < this.list.length; i++) {
+        const c = this.list[i], dx = c.x - f.x, dz = c.z - f.z;
+        if (dx * dx + dz * dz < 19600) { near = true; break; }
+      }
+      if (!near && (this._skip = !this._skip)) { this._dt = (this._dt || 0) + dt; return; }
+    }
+    this._did = true;
+    dt += this._dt || 0; this._dt = 0;
+    const W = this.w, ring = W.ring, groups = this._g ||= new Map(), pool = this._gPool ||= [];
+    let gn = 0; groups.clear();
+    for (let i = 0; i < this.list.length; i++) {
+      const c = this.list[i], key = c.r.id + (c.back ? '<' : '>') + c.k;
+      let arr = groups.get(key);
+      if (!arr) { arr = pool[gn] || (pool[gn] = []); arr.length = 0; gn++; groups.set(key, arr); }
+      arr.push(c);
+    }
     for (const g of groups.values()) g.sort((a, b) => a.u - b.u);
     for (const g of groups.values()) for (let i = 0; i < g.length; i++) {
       const c = g[i], r = c.r; let gap = Infinity;
@@ -565,11 +581,12 @@ export class WayTraffic {
   }
   draw(dt, night, f) {
     const m = this._m ||= new Matrix4(), q = this._q ||= new Quaternion(), e = this._e ||= new Euler(0, 0, 0, 'YXZ'), p = this._v ||= new Vector3(), one = this._one ||= new Vector3(1, 1, 1);
-    this.list.forEach((c, i) => {
+    for (let i = 0; i < this.list.length; i++) {
+      const c = this.list[i];
       e.set(-c.pitch, c.heading, 0); q.setFromEuler(e); m.compose(p.set(c.x, c.y, c.z), q, one);   // (these face +z: a climb lifts the nose)
       this.head.setMatrixAt(i, m); this.tail.setMatrixAt(i, m);
       if (this.boxes) { this.boxes.setMatrixAt(i, m); this.boxes.setColorAt(i, c.colour); }
-    });
+    }
     for (const M of [this.head, this.tail, this.boxes]) if (M) { M.count = this.list.length; M.instanceMatrix.needsUpdate = true; if (M.instanceColor) M.instanceColor.needsUpdate = true; }
     this.head.material.color.setScalar(.25 + night * .75); this.tail.material.color.setRGB(.35 + night * .65, .05, .03);
     if (this.fleet) { this.fleet.focus = f; this.fleet.draw(this.list, night, dt); }

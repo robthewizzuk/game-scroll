@@ -420,6 +420,12 @@ export class Wanted {
   officer(c, i) {
     const src = this.cops[(c.id + i) % this.cops.length]; if (!src) return null;
     const body = src.twin(); addMoves(body.rig); this.city.group.add(body);
+    body.lod = 1;
+    body.userData.noFade = true;
+    if (body.rig) body.rig.steps = false;
+    if (body.breath) body.breath.on = false;
+    if (body.idle) body.idle.on = false;
+    if (body.rig?.follow) body.rig.follow.amount = 0;
     const sk = this.city.cars.sideK, h = c.heading, side = i ? -1 : 1, lx = Math.cos(h) * sk * side, lz = -Math.sin(h) * sk * side, w = c.wid / 2 + .45;
     const x = c.x + lx * w, z = c.z + lz * w, y = c.y || 0; body.position.set(x, y, z); body.rotation.y = h;
     const o = { body, react: new Reactions(body, { steady: 1.3 }), x, y, z, heading: h, speed: 0, inCar: false, gone: false, move: null, cop: true, unit: c };
@@ -482,5 +488,6 @@ export class Wanted {
     }
   }
 }
+Wanted.looks = COPS;
 const dist = (a, b) => Math.hypot(a.x - b.x, (a.z ?? a.y) - (b.z ?? b.y));
 const dot = (me, c) => (c.x - me.x) * Math.sin(me.heading) + (c.z - me.z) * Math.cos(me.heading);

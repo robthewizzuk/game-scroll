@@ -194,6 +194,8 @@ export class Crowd {
     this.age = 0; this.hooked = false;   // frames the view has drawn since the last update(); whether a view tells us (frame())
     /** Set to 0, 1 or 2 to draw every member at that one of its figure's own levels of detail (null: by size on screen). */
     this.lod = null;
+    /** Coarsest own level allowed when picking by size on screen (0: all levels; 1: skip level 0). */
+    this.minLod = 0;
     /** What the last update() drew: members, how many were sent to be drawn, how many at each level of detail, draws and triangles a frame. */
     this.info = { members: 0, drawn: 0, levels: [], draws: 0, triangles: 0 };
     const srcs = [].concat(of); if (!srcs.length) throw new Error('gs.props.Crowd: give it at least one figure, { of: [human(...)] }');
@@ -348,7 +350,7 @@ export class Crowd {
       // how finely: the coarsest level with triangles enough for how tall it stands on screen (one already in use is kept a little longer, so none flickers between two)
       const px = k.h * s * pxAt1 / Math.max(.1, Math.sqrt(d2)), L = k.levels, want = px * px * FINE; let lv = L.length - 1;
       if (this.lod != null) lv = k.own[Math.max(0, Math.min(k.own.length - 1, this.lod | 0))];
-      else { while (lv > 0 && L[lv].tris < want) lv--; if (lv > c.lv && c.lv >= 0) { let l2 = lv; while (l2 > c.lv && L[l2].tris < want * KEEP) l2--; lv = l2; } }
+      else { const lo = this.minLod > 0 ? (k.own[Math.min(k.own.length - 1, this.minLod | 0)] ?? 0) : 0; while (lv > lo && L[lv].tris < want) lv--; if (lv > c.lv && c.lv >= lo) { let l2 = lv; while (l2 > c.lv && L[l2].tris < want * KEEP) l2--; lv = l2; } }
       c.lv = lv;
       const T = k.levels[lv]; if (caps && d2 < near2) T.near = true; if (T.n >= T.cap) this.grow(T, Math.max(T.cap * 2, 2 ** Math.ceil(Math.log2(this.list.length))));   // (room for them all at once: a list that grows leaves its old one on the chip)
       // its numbers: where and which way, the two rows and how far between them, how big; its colour; and the same as the last frame drew them
@@ -364,12 +366,12 @@ export class Crowd {
     }
     // each level: how many to draw, the ball round them, and a count that says they moved
     I.draws = 0; I.triangles = 0; I.levels.length = 0;
-    for (const k of this.kinds) k.levels.forEach((lv, li) => {
-      const n = lv.n, a = lv.a; lv.geo.instanceCount = n; lv.mesh.visible = n > 0; I.levels[li] = (I.levels[li] || 0) + n;
+    for (const k of this.kinds) for (let li = 0; li < k.levels.length; li++) {
+      const lv = k.levels[li], n = lv.n, a = lv.a; lv.geo.instanceCount = n; lv.mesh.visible = n > 0; I.levels[li] = (I.levels[li] || 0) + n;
       const cast = this.shadows && (!caps || lv.near), own = cast && !(k.body && HD.shadowBody !== false);   // (with the shadow body it casts for them: below)
       lv.casts = cast;
       if (lv.mesh.castShadow !== own) { lv.mesh.castShadow = own; lv.mesh.userData.gsMoved++; }
-      if (!n) return;
+      if (!n) continue;
       if (!cast && caps) for (let i = 0; i < n; i++) {
         const o = i * STRIDE, x = a[o], y = a[o + 1], z = a[o + 2], q = (this.caps ||= [])[this.capN] ||= new Float32Array(8);
         figureCapsule(k.h, k.d, x, y, z, a[o + 3], a[o + 7], q); q[7] = (x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2; this.capN++;
@@ -381,10 +383,13 @@ export class Crowd {
       }
       BALL.center.set((x0 + x1) / 2, (y0 + y1) / 2 + k.cy * big, (z0 + z1) / 2); BALL.radius = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + k.r * big + .2;
       lv.geo.boundingSphere.copy(BALL);
-      lv.buf.clearUpdateRanges(); lv.buf.addUpdateRange(0, n * STRIDE); lv.buf.needsUpdate = true;
+      const ur = lv.buf.updateRanges;
+      if (ur.length === 1) { ur[0].start = 0; ur[0].count = n * STRIDE; }
+      else { lv.buf.clearUpdateRanges(); lv.buf.addUpdateRange(0, n * STRIDE); }
+      lv.buf.needsUpdate = true;
       if (sum !== lv.sum) { lv.sum = sum; lv.mesh.userData.gsMoved++; }   // (the shadow maps draw them again only when one of them moved or stepped on in its move)
       I.draws += lv.draws; I.triangles += lv.tris * n;
-    });
+    }
     for (const k of this.kinds) if (k.body) this.fillBody(k, HD.shadowBody !== false);
     return this;
   }
@@ -397,10 +402,15 @@ export class Crowd {
     if (!n) return;
     let at = 0, sum = n; const a = B.a, S = B.geo.boundingSphere;
     for (const lv of k.levels) if (lv.casts && lv.n) {
-      a.set(lv.a.subarray(0, lv.n * STRIDE), at); at += lv.n * STRIDE; sum += lv.sum * 1.37;
-      if (at === lv.n * STRIDE) S.copy(lv.geo.boundingSphere); else S.union(lv.geo.boundingSphere);
+      const src = lv.a, cnt = lv.n * STRIDE;
+      for (let i = 0; i < cnt; i++) a[at + i] = src[i];
+      at += cnt; sum += lv.sum * 1.37;
+      if (at === cnt) S.copy(lv.geo.boundingSphere); else S.union(lv.geo.boundingSphere);
     }
-    B.buf.clearUpdateRanges(); B.buf.addUpdateRange(0, n * STRIDE); B.buf.needsUpdate = true;
+    const ur = B.buf.updateRanges;
+    if (ur.length === 1) { ur[0].start = 0; ur[0].count = n * STRIDE; }
+    else { B.buf.clearUpdateRanges(); B.buf.addUpdateRange(0, n * STRIDE); }
+    B.buf.needsUpdate = true;
     if (sum !== B.sum) { B.sum = sum; B.mesh.userData.gsMoved++; }
   }
   // Kit use (hd3d.js sunMaskFrame): the capsules of the members whose level casts no shadow into the sun's map, each

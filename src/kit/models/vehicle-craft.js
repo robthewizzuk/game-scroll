@@ -301,13 +301,13 @@ function heli(b, parts, points, { zN, zE, a, bt, bb, cy, boom, R, blades, glassT
   parts.rotor = { shape: P, at: hub, rot: [-PI / 2, 0, 0] };
   parts.tail = { shape: propeller(new Shape(), 2, blades > 2 ? .8 : .62, 'prop', .14), at: [.16, ty + .25, bz1 - .05], rot: [0, PI / 2, 0] };
   Object.assign(points, { pilot: [a * .42, fy + .45, glassTo + .12], copilot: [-a * .42, fy + .45, glassTo + .12], door: [a + .55, 0, glassTo + .15], cabin: [0, fy + .1, glassTo + .9], hook: [0, .2, hz], tailRotor: [.16, ty + .25, bz1 - .05], smoke: [0, top + .3, hz + 1.1] });
-  return { props: ['rotor', 'tail'], rotor: R };
+  return { props: ['rotor', 'tail'], rotor: R, roof: top, clear: fy };
 }
 /** A helicopter: light, police, medic. */
 export function helicopter(o = {}) {
   const style = HELIS[o.style] ? o.style : 'light', b = new Shape(), parts = {}, points = {}, m = HELIS[style](b, o, parts, points);
   (m.beacons || []).forEach((q, i) => { points['beacon' + i] = q.at; });
   const bx = b.bounds();
-  return { kind: 'helicopter', style, body: b, parts, wheels: [], points, beacons: m.beacons || [], size: { length: max(bx.l, m.rotor * 2), width: max(bx.w, m.rotor * 2), height: bx.hi[1] + .4 }, gear: 0, props: m.props, rotor: m.rotor, radius: 0 };
+  return { kind: 'helicopter', style, body: b, parts, wheels: [], points, beacons: m.beacons || [], size: { length: max(bx.l, m.rotor * 2), width: max(bx.w, m.rotor * 2), height: bx.hi[1] + .4 }, roof: m.roof || 0, clear: m.clear ?? 0, gear: 0, props: m.props, rotor: m.rotor, radius: 0 };
 }
 export const CRAFT = { boat: Object.keys(BOATS), plane: Object.keys(PLANES), helicopter: Object.keys(HELIS) };

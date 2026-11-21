@@ -38,7 +38,7 @@ let Roam = null;
 function roamClass() {
   return Roam ||= class RoamTraffic extends Traffic {
     constructor(metro, plans, { fleet = false, cap = 12 } = {}) {
-      const styles = [...new Set(['saloon', 'hatch', ...metro.districts.flatMap(d => CITY_CARS[d.style] || CITY_CARS.downtown)])];
+      const styles = [...new Set(['saloon', 'hatch', 'police', ...metro.districts.flatMap(d => CITY_CARS[d.style] || CITY_CARS.downtown)])];
       const T = { cur: null };
       const city = {
         metro, seed: metro.seed * 17 + 5, group: metro.group, plan: { bounds: metro.bounds, side: metro.side, nodes: [], edges: [] },
@@ -73,8 +73,10 @@ function roamClass() {
         at = { x, z, y: o.y ?? (r && r.d < 6 ? r.y : null) ?? m.carY(x, z, 0), heading: o.heading ?? r?.heading ?? 0 };
         e = r?.edge || null; k = r?.lane ?? 0; s = r?.s ?? 0;
       }
-      const F = this.fleet, style = F ? o.style ?? Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch')) : 0;
-      const c = this.made(e || WAY, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? (o.police ? POLICE_PAINT : undefined) });
+      const F = this.fleet, polIdx = o.police && F ? F.styles.indexOf('police') : -1;
+      const style = F ? o.style ?? (polIdx >= 0 ? polIdx : Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch'))) : 0;
+      const defCol = o.police ? (polIdx >= 0 ? '#e6e8ea' : POLICE_PAINT) : undefined;
+      const c = this.made(e || WAY, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? defCol });
       if (at) Object.assign(c, at);
       if (o.police) { c.vmax = 30; this.lightBars(); }
       if (F && !F.slotFor(c)) return null;
@@ -82,6 +84,7 @@ function roamClass() {
     }
     // (cars of the big city's own drive off the lanes only: a district's lanes are its own traffic's)
     update(dt, focus, t = 0) {
+      if (!this.list.length) { this.noise = 0; return; }
       const m = this.city.metro; let noisy = 0;
       // what they steer round besides each other: the cars of the districts and of the roads between (city-drive.js chaseCar)
       const O = this.others ||= []; O.length = 0; for (const c of m.cities) for (const x of c.cars.list) O.push(x); for (const x of m.cars.ways) O.push(x);
@@ -245,7 +248,7 @@ export class MetroCars {
   update(dt, f, t) {
     const R = this.roam, m = this.m;
     R.update(dt, f, t);
-    for (const c of m.cities) meet(R, dt, c.cars);
+    if (R.list.length) for (const c of m.cities) meet(R, dt, c.cars);
     // the cars between the districts brake for those of the big city's own in their way, and pull over for their sirens
     const S = this._sirens; S.length = 0;
     for (const c of R.list) {
@@ -253,7 +256,7 @@ export class MetroCars {
       if (c.mode !== 'lane') { const h = c.hz ||= { x: 0, z: 0, r: 1, car: c }; h.x = c.x; h.z = c.z; h.y = c.y || 0; h.r = 1.2; (m._avoid ||= []).push(h); }
     }
     if (this.phys) this.sync();
-    R.draw(m.night, dt);
+    if (R.list.length || R.fleet?.close.size) R.draw(m.night, dt);
     return this;
   }
   /** The sirens on the big city's own cars now (for the cars on the roads between). */

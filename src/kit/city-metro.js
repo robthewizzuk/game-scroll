@@ -130,6 +130,8 @@ export function metroPlan({ seed = 1, districts = 4, between = [120, 240], side 
   return { districts: list2, bounds, R, river: flow, waters };
 }
 
+const DEFAULT_MAP_COL = { road: '#2a2d33', block: '#5a5c60', park: '#3f6a3a', building: '#8a8e96', water: '#1d3c52', land: '#46603c', highway: '#3a3f48' };
+
 export class Metro {
   /**
    * view: a gs.hd HDView (or any view a City takes). districts: how many (4), or a list of styles ('downtown', 'oldtown',
@@ -144,7 +146,7 @@ export class Metro {
    * options (traffic, people, night, sky, lamps, sound, side, rooms, dress, parked, walls, detail...) go to every district.
    */
   constructor(view, { seed = 1, districts = 4, between = [120, 240], side = 'right', at = null, live = 380, budget = 3, keep = 600, far = false, night = null, sky = null,
-    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = null, river = true, highway = true, climate = null, coast = 'south', bay = 420, sea = false, ...over } = {}) {
+    lamps = true, sound = true, traffic = 1, people = 1, paint = !!view.placeLamps, crowd = !!view.placeLamps, link = true, hills = null, river = true, highway = true, climate = null, coast = 'south', bay = 420, sea = false, landCell = null, ...over } = {}) {
     this.view = view; this.seed = seed; this.live = live; this.budget = budget; this.t = 0;
     this.links = linksFor(view, link); this.links?.join('city', this);
     this.sky = sky || null; this.seeksSky = sky == null && night == null && !!this.links; this._night = night ?? 0;
@@ -156,9 +158,12 @@ export class Metro {
     // what each district is made with: the options given, and the parts they share (people, the ground painter, lamps)
     if (crowd && people > 0) cityFolkNeed();
     // every district's cars are shaped now, with the first (a new style of car takes a tenth of a second: not in the middle of a drive)
-    if ((over.fleet ?? !!view.placeLamps) && traffic > 0) for (const st of new Set(this.districts.map(d => d.style))) (CITY_CARS[st] || CITY_CARS.downtown).forEach((s, i) => { carKit(s); if (i < 3 && (over.parked ?? !!view.placeLamps)) parkKit(s); });   // (the three commonest park: City)
+    if ((over.fleet ?? !!view.placeLamps) && traffic > 0) {
+      for (const st of new Set(this.districts.map(d => d.style))) (CITY_CARS[st] || CITY_CARS.downtown).forEach((s, i) => { carKit(s); if (i < 3 && (over.parked ?? !!view.placeLamps)) parkKit(s); });   // (the three commonest park: City)
+      carKit('police');
+    }
     this.crowd = crowd && people > 0 ? cityCrowd(view) : null;
-    this.paint = paint ? new GroundPaint(view) : null;
+    this.paint = paint ? new GroundPaint(view, { onRender: true }) : null;
     this.next = []; this.events = [];
     // every material the districts can be built with, built with the rest before play (a district made later builds no shaders)
     this.warmers = cityWarmers(this.districts.map(d => d.plan), { dress: over.dress ?? true, walls: over.walls ?? true }); this.group.add(this.warmers);
@@ -166,7 +171,7 @@ export class Metro {
     view.occluders?.(this.occluders());
     // the roads between the districts, then the land under everything that is not a district or the sea
     this.connectors = this.connect();
-    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, grass: CL.grass, waters: M.waters });
+    this.ways = new Ways(this, { seed, hills, river: M.river, highway, traffic, fleet: (over.fleet ?? !!view.placeLamps) && traffic > 0, grass: CL.grass, waters: M.waters, ...(landCell ? { cell: landCell } : {}) });
     // the water of the whole city as one thing to find: each district's shore and ponds first, then the river, bay and sea
     // between (links.js 'water': swimmers, boats, floating things, rain and splashes); a gs.outdoors Sea drawn for it with sea
     const ws = this.ways;
@@ -303,7 +308,7 @@ export class Metro {
       v.placeLamps(all, f.x, 2, f.z, this.t);
     } else if (v.lamps?.length) for (const l of v.lamps) l.intensity = 0;
     this.crowd?.update(dt);
-    this.paint?.update(v.cam.position);
+    if (this.paint && v._groundPaint !== this.paint) this.paint.update(v.cam.position);
     this.far?.update(this._night);
     return this;
   }
@@ -563,17 +568,20 @@ export class Metro {
     this.cars.solid(world, opts);   // (the nearest cars between the districts and the big city's own: they meet the player's too)
     return this;
   }
+
   /** A top-down map of every district and the roads between, as City.drawMap(). */
   drawMap(c, x, y, w, h, { at = this.focus || this.start, range = 150, turn = 0, colours = {} } = {}) {
-    const col = { road: '#2a2d33', block: '#5a5c60', park: '#3f6a3a', building: '#8a8e96', water: '#1d3c52', land: '#46603c', highway: '#3a3f48', ...colours }, s = Math.min(w, h) / 2 / range;
+    const customCol = colours && Object.keys(colours).length > 0;
+    const col = customCol ? { ...DEFAULT_MAP_COL, ...colours } : DEFAULT_MAP_COL;
+    const s = Math.min(w, h) / 2 / range;
     c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); c.fillStyle = col.land; c.fillRect(x, y, w, h);
     c.translate(x + w / 2, y + h / 2); c.rotate(-turn); c.scale(s, s); c.translate(-at.x, -(at.z ?? at.y));
-    const m = this.mapPicture(col); c.drawImage(m.cv, m.x0, m.z0, m.w, m.h);
+    const m = this.mapPicture(col, customCol ? null : 'default'); c.drawImage(m.cv, m.x0, m.z0, m.w, m.h);
     c.restore();
     this._map = { x, y, w, h, at, s, turn };
   }
-  mapPicture(col) {
-    const key = JSON.stringify(col); if (this._mapPic?.key === key) return this._mapPic;
+  mapPicture(col, keyOverride = null) {
+    const key = keyOverride || JSON.stringify(col); if (this._mapPic?.key === key) return this._mapPic;
     const U = grow(this.bounds, 400), k = Math.min(1.5, 3072 / Math.max(U.x1 - U.x0, U.z1 - U.z0));
     const cv = document.createElement('canvas'); cv.width = Math.ceil((U.x1 - U.x0) * k); cv.height = Math.ceil((U.z1 - U.z0) * k);
     const g = cv.getContext('2d'); g.fillStyle = col.land; g.fillRect(0, 0, cv.width, cv.height); g.scale(k, k); g.translate(-U.x0, -U.z0);

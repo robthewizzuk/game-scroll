@@ -856,8 +856,10 @@ export class Traffic {
     if (this.list.length >= this.cap) return null;
     let e = o.edge, k = o.lane ?? 0, s = o.s;
     if (!e) { const r = this.city.road(o.x, o.z ?? o.y); e = r.edge; k = r.lane; s = r.s; }
-    const F = this.fleet, style = F ? o.style ?? Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch')) : 0;
-    const c = this.made(e, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? (o.police ? POLICE_PAINT : undefined) });
+    const F = this.fleet, polIdx = o.police && F ? F.styles.indexOf('police') : -1;
+    const style = F ? o.style ?? (polIdx >= 0 ? polIdx : Math.max(0, F.styles.indexOf(o.police ? 'saloon' : 'hatch'))) : 0;
+    const defCol = o.police ? (polIdx >= 0 ? '#e6e8ea' : POLICE_PAINT) : undefined;
+    const c = this.made(e, k, s ?? this.ends(e)[0] + 2, null, { ...o, style, colour: o.colour ?? defCol });
     if (o.police) { c.vmax = e.speed * 1.05; this.lightBars(); }
     if (F && !F.slotFor(c)) return null;
     this.list.push(c); return c;
@@ -977,15 +979,16 @@ export class Traffic {
     if (this.bars) return this.bars;
     const mk = (col, x) => { const m = new InstancedMesh(barGeo(x), new MeshBasicMaterial({ color: col, toneMapped: false }), EXTRA); m.count = 0; m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(DynamicDrawUsage); m.instanceColor = new InstancedBufferAttribute(new Float32Array(EXTRA * 3).fill(1), 3); m.name = 'light bar'; this.city.group.add(m); return m; };
     // (and a police car as cars.take() gives one, hidden: its shaders built with the rest, so taking one builds none)
-    if (this.fleet && !this.city.group.getObjectByName('police car shaders')) { const w = vehicle('car', { style: 'police', colour: POLICE_PAINT }); w.name = 'police car shaders'; w.visible = false; this.city.group.add(w); }
+    if (this.fleet && !this.city.group.getObjectByName('police car shaders')) { const w = vehicle('car', { style: 'police', colour: '#e6e8ea' }); w.name = 'police car shaders'; w.visible = false; this.city.group.add(w); }
     return (this.bars = [mk('#ff2a2a', -.27), mk('#2a5cff', .27)]);
   }
   drawBars(night) {
     const [r, b] = this.bars, F = this.fleet, t = this.city.t; let n = 0;
     for (const c of this.list) {
       if (!c.police || n >= EXTRA) continue;
-      const top = F ? F.kits[c.style].size.height : c.kind === 'van' ? 2.0 : 1.42;
-      carMatrix(c); _m.multiply(_m2.makeTranslation(0, top + .05, -.15));
+      const kit = F ? F.kits[c.style] : null, isPol = kit?.style === 'police';
+      const top = kit ? kit.size.height : c.kind === 'van' ? 2.0 : 1.42;
+      carMatrix(c); _m.multiply(_m2.makeTranslation(0, isPol ? top - .055 : top + .05, isPol ? -.205 : -.15));
       r.setMatrixAt(n, _m); b.setMatrixAt(n, _m);
       const ph = (t * 3.3 + c.id * .37) % 1, on = c.siren ? 1 : 0, k = .35 + night * 2.2;
       r.setColorAt(n, _c.setScalar(on && ph < .5 ? 2.2 + k : .18)); b.setColorAt(n, _c.setScalar(on && ph >= .5 ? 2.2 + k : .18));
@@ -1046,7 +1049,7 @@ export function takenCar(T, c) {
   let car;
   if (c.police) {
     T.fleet?.real(c);   // (its copies gone; the shape is the police car's own)
-    car = vehicle('car', { style: 'police', colour: '#' + new Color(c.colour ?? POLICE_PAINT).getHexString(), seed: c.id | 0 });
+    car = vehicle('car', { style: 'police', colour: '#' + new Color(c.colour ?? '#e6e8ea').getHexString(), seed: c.id | 0 });
     car.siren?.(!!c.siren);
   } else car = T.fleet ? T.fleet.real(c) : vehicle('car', { style: c.kind === 'van' ? 'van' : c.taxi ? 'taxi' : 'saloon', colour: '#' + new Color(c.colour ?? '#888888').getHexString() });
   car.position.set(c.x, c.y || 0, c.z); car.rotation.y = c.heading + Math.PI;
@@ -1085,7 +1088,7 @@ const FOLK = [
   { seed: 36, sex: 'f', hairStyle: 'short', body: '#e0b84a', legs: '#24324f', strands: false },
 ];
 /** One of the city's people as a full person (gs.models human), for the wheel of a car taken from the traffic. */
-export const cityDriver = (i = 0) => human(FOLK[Math.abs(i | 0) % FOLK.length]);
+export const cityDriver = (i = 0) => { const h = human(FOLK[Math.abs(i | 0) % FOLK.length]); h.lod = 1; h.userData.noFade = true; return h; };
 /** The sculpted people a city's pavements are full of, as one gs.props Crowd (a big city's districts share one: gs.city Metro); its folk and sizes are the figures it was made from (city-life.js promote). */
 export function cityCrowd(view) {
   const folk = FOLK.map(o => { const h = human(o); addMoves(h.rig); return h; }), sizes = folk.map(h => h.scale.y || 1);
@@ -1426,7 +1429,7 @@ export class City {
     }
     if (!this.water) this.water = null;
     // the ground with no repeats: painted round the camera from what each piece is, read in place of the tiled pictures
-    this.groundPaint = this.sharedPaint || (paint ? new GroundPaint(view) : null);
+    this.groundPaint = this.sharedPaint || (paint ? new GroundPaint(view, { onRender: true }) : null);
     if (this.groundPaint) {
       this.groundPaint.add(road, 'asphalt', { base: S.ground }); if (ground) this.groundPaint.add(ground, 'grass', { base: grassCol });
       if (this.quay) this.groundPaint.add(this.quay, 'paving', { base: S.pavement });
@@ -1681,7 +1684,7 @@ export class City {
       this.view.placeLamps(near, f.x, 2, f.z, this.t);
     } else if (this.view.lamps?.length) for (const l of this.view.lamps) l.intensity = 0;
     if (this.soundOn) this.listen(dt, f); else if (this.hum) { this.hum.stop(); this.hum = null; }
-    if (!this.sharedPaint) this.groundPaint?.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
+    if (!this.sharedPaint && this.groundPaint && this.view._groundPaint !== this.groundPaint) this.groundPaint.update(this.view.cam.position);   // (a shared one is moved by whoever shares it)
     this.far?.update(this.night);
     this.sea?.update(dt, this.view.cam.position);
     this.plantTick?.(null, this.view.scene);   // (the palms' fronds sway on the plants' clock)
@@ -1959,28 +1962,64 @@ export class City {
   // the bodies of the nearest cars and people follow them (a few of each, round the player)
   solidSync() {
     const S = this.bodies; if (!S || !S.world.world) return;
-    const W = S.world, f = this.focus || this.start || { x: 0, z: 0 }, far = { x: f.x, y: -500, z: f.z };
-    const fill = (pool, n, make) => { for (let i = 0; i < pool.length; i++) if (pool[i].dead) pool.splice(i--, 1); while (pool.length < n) pool.push(make()); };
-    fill(S.cars, S.ncars, () => { const b = W.box(null, 1.9, 1.45, 4.5, { moving: true, at: far, tag: 'car', sound: 'metal' }); b.car = null; b.owner = this; return b; });
-    fill(S.people, S.npeople, () => { const b = W.capsule(null, .28, 1.7, { moving: true, at: far, tag: 'person', sound: 'body' }); b.person = null; b.owner = this; return b; });
-    const near = (list, n, ok) => { const out = []; for (const c of list) { if (!ok(c)) continue; const d = Math.abs(c.x - f.x) + Math.abs(c.z - f.z); if (d < S.within * 1.4) out.push([d, c]); } return out.sort((a, b) => a[0] - b[0]).slice(0, n).map(x => x[1]); };
-    const go = (pool, want, put) => {
-      const keep = new Set(want), free = [];
-      for (const b of pool) if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b);
-      for (const who of keep) { const b = free.pop(); if (!b) break; b.who = who; put(b, who, true); }
-      for (const b of free) if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); }
-      for (const b of pool) if (b.who) put(b, b.who, false);
+    const W = S.world, f = this.focus || this.start || { x: 0, z: 0 };
+    const far = S._far ||= { x: 0, y: -500, z: 0 }; far.x = f.x; far.y = -500; far.z = f.z;
+    for (let i = 0; i < S.cars.length; i++) if (S.cars[i].dead) S.cars.splice(i--, 1);
+    while (S.cars.length < S.ncars) { const b = W.box(null, 1.9, 1.45, 4.5, { moving: true, at: far, tag: 'car', sound: 'metal' }); b.car = null; b.owner = this; S.cars.push(b); }
+    for (let i = 0; i < S.people.length; i++) if (S.people[i].dead) S.people.splice(i--, 1);
+    while (S.people.length < S.npeople) { const b = W.capsule(null, .28, 1.7, { moving: true, at: far, tag: 'person', sound: 'body' }); b.person = null; b.owner = this; S.people.push(b); }
+    const lim = S.within * 1.4, want = S._want ||= [], dists = S._dists ||= [], keep = S._keep ||= new Set(), free = S._free ||= [];
+    const tv = S._tv ||= { x: 0, y: 0, z: 0 }, tq = S._tq ||= { x: 0, y: 0, z: 0, w: 1 }, the = S._the ||= { x: 0, y: .72, z: 0 };
+    const pickNear = (list, n, isCar) => {
+      want.length = 0; dists.length = 0;
+      if (n <= 0) return;
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i]; if (isCar ? c.body : c.down > 0) continue;
+        const d = Math.abs(c.x - f.x) + Math.abs(c.z - f.z); if (d >= lim) continue;
+        let k = want.length;
+        if (k === n && d >= dists[k - 1]) continue;
+        if (k < n) { want.push(c); dists.push(d); } else { want[k - 1] = c; dists[k - 1] = d; k--; }
+        while (k > 0 && dists[k] < dists[k - 1]) {
+          const td = dists[k]; dists[k] = dists[k - 1]; dists[k - 1] = td;
+          const tc = want[k]; want[k] = want[k - 1]; want[k - 1] = tc; k--;
+        }
+      }
     };
-    const qy = h => ({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) });
-    go(S.cars, near(this.cars.list, S.ncars, c => !c.body), (b, c, jump) => {
-      const p = W.inner({ x: c.x, y: .75 + (c.y || 0), z: c.z }), r = qy(c.heading);   // (y: a big city's cars on its bridges and highway)
-      if (jump) { b.collider.setHalfExtents({ x: c.wid / 2, y: .72, z: c.len / 2 }); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(r, false); }
-      else { b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(r); }
-    });
-    go(S.people, near(this.people.list, S.npeople, q => q.down <= 0), (b, q, jump) => {
-      const y = (this.ground(q.x, q.z) || 0) + .85 * q.h, p = W.inner({ x: q.x, y, z: q.z });
-      if (jump) { b.person = q; b.body.setTranslation(p, false); } else b.body.setNextKinematicTranslation(p);
-    });
+    // cars
+    pickNear(this.cars.list, S.ncars, true);
+    keep.clear(); free.length = 0;
+    for (let i = 0; i < want.length; i++) keep.add(want[i]);
+    for (let i = 0; i < S.cars.length; i++) { const b = S.cars[i]; if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b); }
+    for (const c of keep) {
+      const b = free.pop(); if (!b) break; b.who = c;
+      tv.x = c.x; tv.y = .75 + (c.y || 0); tv.z = c.z; const p = W.inner(tv);
+      tq.y = Math.sin(c.heading * .5); tq.w = Math.cos(c.heading * .5);
+      the.x = c.wid * .5; the.z = c.len * .5;
+      b.collider.setHalfExtents(the); b.car = c; b.body.setTranslation(p, false); b.body.setRotation(tq, false);
+    }
+    for (let i = 0; i < free.length; i++) { const b = free[i]; if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); } }
+    for (let i = 0; i < S.cars.length; i++) {
+      const b = S.cars[i], c = b.who; if (!c) continue;
+      tv.x = c.x; tv.y = .75 + (c.y || 0); tv.z = c.z; const p = W.inner(tv);
+      tq.y = Math.sin(c.heading * .5); tq.w = Math.cos(c.heading * .5);
+      b.body.setNextKinematicTranslation(p); b.body.setNextKinematicRotation(tq);
+    }
+    // people
+    pickNear(this.people.list, S.npeople, false);
+    keep.clear(); free.length = 0;
+    for (let i = 0; i < want.length; i++) keep.add(want[i]);
+    for (let i = 0; i < S.people.length; i++) { const b = S.people[i]; if (b.who && keep.has(b.who)) keep.delete(b.who); else free.push(b); }
+    for (const q of keep) {
+      const b = free.pop(); if (!b) break; b.who = q;
+      tv.x = q.x; tv.y = (this.ground(q.x, q.z) || 0) + .85 * q.h; tv.z = q.z;
+      b.person = q; b.body.setTranslation(W.inner(tv), false);
+    }
+    for (let i = 0; i < free.length; i++) { const b = free[i]; if (b.who) { b.who = null; b.car = b.person = null; b.body.setTranslation(W.inner(far), false); } }
+    for (let i = 0; i < S.people.length; i++) {
+      const b = S.people[i], q = b.who; if (!q) continue;
+      tv.x = q.x; tv.y = (this.ground(q.x, q.z) || 0) + .85 * q.h; tv.z = q.z;
+      b.body.setNextKinematicTranslation(W.inner(tv));
+    }
   }
   // something hit a car or a person of the city hard enough: the car stops a moment, the person falls over
   // something hit a car or a person of the city hard enough: the car stops a moment, or crashes when hit harder, the person falls over
@@ -2051,6 +2090,7 @@ export class City {
     if (this.view.lamps) for (const l of this.view.lamps) l.intensity = 0;
   }
 }
+City.folk = FOLK;
 const norm = (x, z) => { const l = Math.hypot(x, z) || 1; return { x: x / l, z: z / l }; };
 
 // per-frame work, timed while the frame lab is open (prof.js)
